@@ -3,7 +3,9 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, CommitData, CommitWorkflows, EntryData, WorkflowInfo, WorkflowIntent};
+use crate::commands::{
+    self, CommitData, CommitWorkflows, EntryData, WorkflowData, WorkflowInfo, WorkflowIntent,
+};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
@@ -100,8 +102,8 @@ fn CommitContent(
     // model whose option list carries, per entry, the `WorkflowIntent` it
     // submits. The selected index into that list is the whole client-side
     // state.
-    let previous_workflow_id = data.workflow.as_ref().and_then(|w| w.id.clone());
-    let wf_view = build_workflow_view(&data.workflows, previous_workflow_id.as_deref());
+    let previous_workflow = PreviousWorkflow::from_stamp(data.workflow.as_ref());
+    let wf_view = build_workflow_view(&data.workflows, previous_workflow.preselect_id());
     // `wf_view.initial` is the single source of truth for the starting
     // selection: it both seeds this signal (which submit reads) and is passed
     // to `WorkflowSection` to render the `selected` attribute, so display and
@@ -113,6 +115,25 @@ fn CommitContent(
     // NotConfigured/Unavailable states this is a single `BucketDefault` entry.
     let workflow_intents: Vec<WorkflowIntent> =
         wf_view.options.iter().map(|o| o.intent.clone()).collect();
+
+    // Neutral override note: recomputed as the selection changes, it surfaces
+    // when the current pick diverges from what the previous revision stamped
+    // (the bucket default winning over the previous pick in `preselected_index`
+    // can silently override the user's earlier choice). Only the `Available`
+    // state declares workflows to name; the other states carry an empty list
+    // and never render the note.
+    let note_workflows: Vec<WorkflowInfo> = match &data.workflows {
+        CommitWorkflows::Available { workflows, .. } => workflows.clone(),
+        CommitWorkflows::NotConfigured | CommitWorkflows::Unavailable => Vec::new(),
+    };
+    let note_intents = workflow_intents.clone();
+    let workflow_note = Memo::new(move |_| {
+        let current = note_intents
+            .get(selected_workflow.get())
+            .cloned()
+            .unwrap_or(WorkflowIntent::BucketDefault);
+        previous_workflow_note(&previous_workflow, &current, &note_workflows)
+    });
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -202,6 +223,7 @@ fn CommitContent(
                     <WorkflowSection
                         view=wf_view
                         selected=selected_workflow
+                        note=workflow_note
                     />
 
                     // ── Namespace (readonly) ──
@@ -372,6 +394,79 @@ struct WorkflowOption {
 /// config gave no name.
 fn workflow_label(w: &WorkflowInfo) -> String {
     w.name.clone().unwrap_or_else(|| w.id.clone())
+}
+
+/// The previous revision's workflow stamp, distinguishing the three cases the
+/// override note must tell apart.
+///
+/// `preselected_index` only needs the concrete `Named` id, but the note also
+/// cares whether the previous revision was never pushed versus explicitly
+/// stamped with no workflow — so this is the one place that distinction lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PreviousWorkflow {
+    NeverPushed,
+    ExplicitNone,
+    Named(String),
+}
+
+impl PreviousWorkflow {
+    /// Derive from the previous revision's stamp: absent → never pushed, present
+    /// with no id → an explicit no-workflow choice, present with an id → that
+    /// workflow.
+    fn from_stamp(workflow: Option<&WorkflowData>) -> Self {
+        match workflow {
+            None => Self::NeverPushed,
+            Some(WorkflowData { id: None }) => Self::ExplicitNone,
+            Some(WorkflowData { id: Some(id) }) => Self::Named(id.clone()),
+        }
+    }
+
+    /// The workflow id `preselected_index` treats as the previous pick: only a
+    /// concrete named workflow, collapsing never-pushed and explicit-none (the
+    /// same behavior preselection had before this note existed).
+    fn preselect_id(&self) -> Option<&str> {
+        match self {
+            Self::Named(id) => Some(id),
+            Self::NeverPushed | Self::ExplicitNone => None,
+        }
+    }
+}
+
+/// Neutral note shown under the dropdown when the currently-selected workflow
+/// diverges from what the previous revision stamped, so the override (the
+/// bucket default winning over the previous pick in `preselected_index`) is
+/// visible. `None` means no divergence to report.
+///
+/// Pure and signal-free: the render layer recomputes it whenever the selection
+/// changes.
+fn previous_workflow_note(
+    previous: &PreviousWorkflow,
+    current: &WorkflowIntent,
+    workflows: &[WorkflowInfo],
+) -> Option<String> {
+    match previous {
+        // Nothing was ever stamped, so nothing can be overridden.
+        PreviousWorkflow::NeverPushed => None,
+        PreviousWorkflow::ExplicitNone => match current {
+            WorkflowIntent::NoWorkflow => None,
+            WorkflowIntent::BucketDefault | WorkflowIntent::Named(_) => {
+                Some("The previous revision used no workflow.".to_string())
+            }
+        },
+        PreviousWorkflow::Named(prev) => {
+            if matches!(current, WorkflowIntent::Named(id) if id == prev) {
+                None
+            } else {
+                let label = workflows
+                    .iter()
+                    .find(|w| &w.id == prev)
+                    .map_or_else(|| prev.clone(), workflow_label);
+                Some(format!(
+                    "The previous revision used the \"{label}\" workflow."
+                ))
+            }
+        }
+    }
 }
 
 /// Build the dropdown's option list for the [`CommitWorkflows::Available`]
@@ -563,7 +658,13 @@ fn build_workflow_view(
 // ── Workflow section ──
 
 #[component]
-fn WorkflowSection(view: WorkflowView, selected: RwSignal<usize>) -> impl IntoView {
+fn WorkflowSection(
+    view: WorkflowView,
+    selected: RwSignal<usize>,
+    /// Neutral divergence note, live over `selected`. Rendered only in the
+    /// `Available` state; the other states have no dropdown to override.
+    note: Memo<Option<String>>,
+) -> impl IntoView {
     let WorkflowView {
         kind,
         options,
@@ -573,7 +674,7 @@ fn WorkflowSection(view: WorkflowView, selected: RwSignal<usize>) -> impl IntoVi
     match kind {
         WorkflowViewKind::Available {
             is_workflow_required,
-        } => workflow_dropdown(options, selected, initial, is_workflow_required).into_any(),
+        } => workflow_dropdown(options, selected, initial, is_workflow_required, note).into_any(),
         // Ungoverned bucket: a single disabled `None`, plus a hint explaining
         // why there is no choice to make. Submit already carries `BucketDefault`
         // via `options[0]`.
@@ -611,6 +712,7 @@ fn workflow_dropdown(
     selected: RwSignal<usize>,
     initial: usize,
     is_workflow_required: bool,
+    note: Memo<Option<String>>,
 ) -> impl IntoView {
     // Intents indexed by option position — used to decide whether the current
     // selection is the (disabled) `None` item, which drives the required hint.
@@ -661,6 +763,11 @@ fn workflow_dropdown(
             <Show when=show_required_hint>
                 <span class="error">"Workflow is required for this bucket."</span>
             </Show>
+            // Neutral note: appears when the current pick diverges from the
+            // previous revision's stamp, and disappears when they match again.
+            {move || {
+                note.get().map(|text| view! { <p class="hint">{text}</p> })
+            }}
         </div>
     }
 }
@@ -968,9 +1075,10 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::{
-        WorkflowOption, WorkflowViewKind, build_workflow_view, preselected_index, workflow_options,
+        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, preselected_index,
+        previous_workflow_note, workflow_options,
     };
-    use crate::commands::{CommitWorkflows, WorkflowInfo, WorkflowIntent};
+    use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
     fn wf(id: &str, name: Option<&str>) -> WorkflowInfo {
         WorkflowInfo {
@@ -1253,6 +1361,139 @@ mod tests {
         let idx = preselected_index(&wfs, None, Some("alpha"), false);
         assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
         assert_eq!(opts[idx].label, "Alpha WF (default)");
+    }
+
+    // ── Previous-workflow override note (pure) ──
+
+    #[test]
+    fn note_never_pushed_is_silent() {
+        // No prior stamp → nothing can be overridden, regardless of selection.
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        for current in [
+            WorkflowIntent::BucketDefault,
+            WorkflowIntent::NoWorkflow,
+            WorkflowIntent::Named("alpha".to_string()),
+        ] {
+            assert_eq!(
+                previous_workflow_note(&PreviousWorkflow::NeverPushed, &current, &wfs),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn note_explicit_none_silent_when_current_is_no_workflow() {
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::ExplicitNone,
+                &WorkflowIntent::NoWorkflow,
+                &wfs
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn note_explicit_none_flags_divergence_to_a_workflow() {
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        // Current selection is a named workflow → the previous no-workflow is
+        // being overridden.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::ExplicitNone,
+                &WorkflowIntent::Named("alpha".to_string()),
+                &wfs
+            ),
+            Some("The previous revision used no workflow.".to_string())
+        );
+        // BucketDefault likewise diverges from an explicit no-workflow.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::ExplicitNone,
+                &WorkflowIntent::BucketDefault,
+                &wfs
+            ),
+            Some("The previous revision used no workflow.".to_string())
+        );
+    }
+
+    #[test]
+    fn note_named_silent_when_current_matches_previous() {
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("alpha".to_string()),
+                &WorkflowIntent::Named("alpha".to_string()),
+                &wfs
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn note_named_uses_workflow_name_when_in_list() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        // Current selection differs (another named workflow) → show the
+        // previous workflow's display name.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("alpha".to_string()),
+                &WorkflowIntent::Named("beta".to_string()),
+                &wfs
+            ),
+            Some("The previous revision used the \"Alpha WF\" workflow.".to_string())
+        );
+        // BucketDefault also diverges from the previous named pick; unnamed
+        // workflow falls back to its id as the label.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("beta".to_string()),
+                &WorkflowIntent::BucketDefault,
+                &wfs
+            ),
+            Some("The previous revision used the \"beta\" workflow.".to_string())
+        );
+    }
+
+    #[test]
+    fn note_named_falls_back_to_id_when_absent_from_list() {
+        // Previous workflow id no longer declared → use the raw id in the note.
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("ghost".to_string()),
+                &WorkflowIntent::Named("alpha".to_string()),
+                &wfs
+            ),
+            Some("The previous revision used the \"ghost\" workflow.".to_string())
+        );
+    }
+
+    #[test]
+    fn previous_workflow_from_stamp_and_preselect_id() {
+        // Never pushed / explicit-none collapse to no preselect id; a named
+        // stamp yields exactly that id (preselection behavior is unchanged).
+        assert_eq!(
+            PreviousWorkflow::from_stamp(None),
+            PreviousWorkflow::NeverPushed
+        );
+        assert_eq!(
+            PreviousWorkflow::from_stamp(Some(&WorkflowData { id: None })),
+            PreviousWorkflow::ExplicitNone
+        );
+        assert_eq!(
+            PreviousWorkflow::from_stamp(Some(&WorkflowData {
+                id: Some("alpha".to_string())
+            })),
+            PreviousWorkflow::Named("alpha".to_string())
+        );
+        assert_eq!(PreviousWorkflow::NeverPushed.preselect_id(), None);
+        assert_eq!(PreviousWorkflow::ExplicitNone.preselect_id(), None);
+        assert_eq!(
+            PreviousWorkflow::Named("alpha".to_string()).preselect_id(),
+            Some("alpha")
+        );
     }
 
     #[test]
