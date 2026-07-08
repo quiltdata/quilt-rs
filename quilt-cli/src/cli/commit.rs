@@ -3,6 +3,7 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::lineage::CommitState;
 use quilt_uri::Namespace;
+use tracing::log;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
@@ -42,7 +43,23 @@ async fn commit_package(
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
+            // Preserve the requested id before the intent is consumed so we can
+            // warn if a caller-chosen workflow gets dropped for lack of a remote.
+            let named_id = match &workflow {
+                WorkflowIntent::Named(id) => Some(id.clone()),
+                WorkflowIntent::BucketDefault | WorkflowIntent::NoWorkflow => None,
+            };
             let workflow = installed_package.resolve_workflow(workflow).await?;
+            // A remote-less package has no workflows config to resolve against,
+            // so a `Named` intent silently resolves to nothing. Warn instead of
+            // dropping it quietly — the workflow can be chosen at push/set-remote.
+            if workflow.is_none()
+                && let Some(id) = named_id
+            {
+                log::warn!(
+                    "workflow '{id}' not applied: package has no remote yet; choose it at push/set-remote."
+                );
+            }
             Ok(installed_package
                 .commit(message, user_meta, workflow, host_config)
                 .await?)
@@ -81,6 +98,8 @@ mod tests {
 
     use test_log::test;
 
+    use crate::cli::create;
+    use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
 
     use quilt_rs::io::storage::ByteStream;
@@ -281,6 +300,48 @@ mod tests {
 
             assert_eq!(output.commit.hash, pkg::TOP_HASH);
         }
+
+        Ok(())
+    }
+
+    /// A `Named` intent on a remote-less (local-only) package has no workflows
+    /// config to resolve against, so the workflow is dropped (and a warning is
+    /// logged). The commit still succeeds and stamps no workflow — identical to
+    /// the outcome of an explicit `NoWorkflow` opt-out on the same package.
+    #[test(tokio::test)]
+    async fn test_commit_named_workflow_without_remote_drops_workflow() -> Result<(), Error> {
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let namespace: Namespace = ("local", "no_remote").into();
+
+        let create_output = m
+            .create(create::Input {
+                namespace: namespace.clone(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        // A caller-chosen workflow that cannot be applied yet — no remote.
+        let output = model(
+            m.get_local_domain(),
+            Input {
+                message: "local commit".to_string(),
+                namespace: namespace.clone(),
+                user_meta: UserMeta::Keep,
+                workflow: WorkflowIntent::Named("some-workflow".to_string()),
+                host_config: None,
+            },
+        )
+        .await?;
+
+        assert!(!output.commit.hash.is_empty(), "commit should succeed");
+
+        // No workflow was stamped: the manifest header carries no workflow.
+        let manifest = create_output.installed_package.manifest().await?;
+        assert!(
+            manifest.header.workflow.is_none(),
+            "remote-less Named intent must not stamp a workflow"
+        );
 
         Ok(())
     }

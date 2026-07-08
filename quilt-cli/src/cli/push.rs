@@ -1,5 +1,6 @@
 use quilt_rs::PushOutcome;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
@@ -13,6 +14,9 @@ pub struct Input {
     pub host_config: Option<HostConfig>,
     pub bucket: Option<String>,
     pub origin: Option<Host>,
+    /// Workflow for the first push (when `bucket`/`origin` are set and a
+    /// re-commit is performed). Ignored on subsequent pushes.
+    pub workflow: WorkflowIntent,
 }
 
 #[derive(Debug)]
@@ -44,6 +48,7 @@ async fn push_package(
     host_config: Option<HostConfig>,
     bucket: Option<String>,
     origin: Option<Host>,
+    workflow: WorkflowIntent,
 ) -> Result<PushOutcome, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
@@ -53,7 +58,9 @@ async fn push_package(
             // Note: clap enforces that bucket and origin are always provided
             // together via `requires` constraints.
             if let (Some(bucket), Some(origin)) = (bucket, origin) {
-                installed_package.set_remote(bucket, Some(origin)).await?;
+                installed_package
+                    .set_remote(bucket, Some(origin), workflow)
+                    .await?;
             }
             Ok(installed_package.push(host_config).await?)
         }
@@ -68,9 +75,11 @@ pub async fn model(
         host_config,
         bucket,
         origin,
+        workflow,
     }: Input,
 ) -> Result<Output, Error> {
-    let outcome = push_package(local_domain, namespace, host_config, bucket, origin).await?;
+    let outcome =
+        push_package(local_domain, namespace, host_config, bucket, origin, workflow).await?;
     Ok(Output {
         hash: outcome.manifest_uri.hash,
         certified_latest: outcome.certified_latest,
@@ -108,6 +117,7 @@ mod tests {
                 host_config: None,
                 bucket: None,
                 origin: None,
+                workflow: WorkflowIntent::BucketDefault,
             },
         )
         .await
@@ -135,6 +145,7 @@ mod tests {
                 host_config: None,
                 bucket: None,
                 origin: None,
+                workflow: WorkflowIntent::BucketDefault,
             },
         )
         .await
@@ -202,6 +213,7 @@ mod tests {
                 host_config: host_config.clone(),
                 bucket: None,
                 origin: None,
+                workflow: WorkflowIntent::BucketDefault,
             })
             .await?;
 
@@ -235,6 +247,7 @@ mod tests {
                 host_config,
                 bucket: None,
                 origin: None,
+                workflow: WorkflowIntent::BucketDefault,
             })
             .await?;
 
@@ -294,7 +307,11 @@ mod tests {
         // Step 4: Set remote bucket (no catalog — uses local AWS creds)
         create_output
             .installed_package
-            .set_remote("fiskus-us-east-1".to_string(), None)
+            .set_remote(
+                "fiskus-us-east-1".to_string(),
+                None,
+                WorkflowIntent::BucketDefault,
+            )
             .await?;
 
         // Step 5: Push to S3 (first push — no existing latest tag)
@@ -304,6 +321,7 @@ mod tests {
                 host_config: host_config.clone(),
                 bucket: None,
                 origin: None,
+                workflow: WorkflowIntent::BucketDefault,
             })
             .await?;
 
@@ -396,6 +414,7 @@ mod tests {
                 host_config: host_config.clone(),
                 bucket: None,
                 origin: None,
+                workflow: WorkflowIntent::BucketDefault,
             })
             .await?;
 
@@ -432,6 +451,7 @@ mod tests {
                 host_config,
                 bucket: None,
                 origin: None,
+                workflow: WorkflowIntent::BucketDefault,
             })
             .await?;
 
