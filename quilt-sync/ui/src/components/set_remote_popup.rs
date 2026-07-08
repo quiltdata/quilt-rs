@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use leptos::prelude::*;
+use leptos::reactive::computed::suspense::SuspenseContext;
+use leptos::reactive::signal::ArcRwSignal;
 use wasm_bindgen::JsCast;
 
 use crate::commands;
@@ -33,6 +35,20 @@ pub fn SetRemotePopup(
     refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
+    // Isolate this popup's workflow fetch from the packages-list page's
+    // <Suspense>. Reading a `LocalResource` registers the read with the nearest
+    // `SuspenseContext` (resolved via `use_context` up the reactive-owner
+    // chain); without this, the pending fetch would re-trigger the page's
+    // full-page spinner and the popup would appear only once it resolved.
+    // Providing a throwaway local context here shadows the page's for every
+    // resource read in this component (render AND the Save-disabling memos), so
+    // the popup opens immediately and we drive the loading state ourselves — a
+    // disabled select plus a disabled Save button. Nothing renders off this
+    // context, so the absorbed registrations are inert.
+    provide_context(SuspenseContext {
+        tasks: ArcRwSignal::new(Default::default()),
+    });
+
     let origin = RwSignal::new(current_host.unwrap_or_default());
     let bucket = RwSignal::new(current_bucket.unwrap_or_default());
     let host_error = RwSignal::new(false);
@@ -306,12 +322,19 @@ pub fn SetRemotePopup(
                                 }
                                 .into_any()
                             } else {
-                                // Target set but the config is still loading.
+                                // Target set but the config is still loading:
+                                // render the control's box with a disabled
+                                // select (never a page-level spinner — see the
+                                // local SuspenseContext at the top of this
+                                // component), so the layout is stable and Save
+                                // stays blocked until it loads.
                                 view! {
-                                    <div class="workflow">
-                                        <p class="field">
-                                            <label class="label" for="workflow">"Workflow"</label>
-                                            <span class="hint">"Loading workflows…"</span>
+                                    <div class="qui-workflow">
+                                        <p class="qui-workflow-field">
+                                            <label class="qui-workflow-label" for="workflow">"Workflow"</label>
+                                            <select class="qui-workflow-select" id="workflow" name="workflow" disabled>
+                                                <option selected>"Loading workflows…"</option>
+                                            </select>
                                         </p>
                                     </div>
                                 }

@@ -317,24 +317,24 @@ pub fn WorkflowSection(
         // why there is no choice to make. Submit already carries `BucketDefault`
         // via `options[0]`.
         WorkflowViewKind::NotConfigured => view! {
-            <div class="workflow">
-                <p class="field">
-                    <label class="label" for="workflow">"Workflow"</label>
-                    <select class="input" id="workflow" name="workflow" disabled>
+            <div class="qui-workflow">
+                <p class="qui-workflow-field">
+                    <label class="qui-workflow-label" for="workflow">"Workflow"</label>
+                    <select class="qui-workflow-select" id="workflow" name="workflow" disabled>
                         <option selected>"None"</option>
                     </select>
                 </p>
-                <span class="hint">"This bucket has no workflow configuration."</span>
+                <span class="qui-workflow-hint">"This bucket has no workflow configuration."</span>
             </div>
         }
         .into_any(),
         // Config load failed: no dropdown, just an inline notice. Submit does
         // not block; it re-resolves the bucket default at commit time.
         WorkflowViewKind::Unavailable => view! {
-            <div class="workflow">
-                <p class="field">
-                    <label class="label" for="workflow">"Workflow"</label>
-                    <span class="hint">
+            <div class="qui-workflow">
+                <p class="qui-workflow-field">
+                    <label class="qui-workflow-label" for="workflow">"Workflow"</label>
+                    <span class="qui-workflow-hint">
                         "⚠ Couldn't load this bucket's workflows. Commit will use the bucket default."
                     </span>
                 </p>
@@ -382,11 +382,11 @@ fn workflow_dropdown(
         .collect::<Vec<_>>();
 
     view! {
-        <div class="workflow">
-            <p class="field">
-                <label class="label" for="workflow">"Workflow"</label>
+        <div class="qui-workflow">
+            <p class="qui-workflow-field">
+                <label class="qui-workflow-label" for="workflow">"Workflow"</label>
                 <select
-                    class="input"
+                    class="qui-workflow-select"
                     id="workflow"
                     name="workflow"
                     on:change=move |ev| {
@@ -399,12 +399,12 @@ fn workflow_dropdown(
                 </select>
             </p>
             <Show when=show_required_hint>
-                <span class="error">"Workflow is required for this bucket."</span>
+                <span class="qui-workflow-error">"Workflow is required for this bucket."</span>
             </Show>
             // Neutral note: appears when the current pick diverges from the
             // previous revision's stamp, and disappears when they match again.
             {move || {
-                note.get().map(|text| view! { <p class="hint">{text}</p> })
+                note.get().map(|text| view! { <p class="qui-workflow-hint">{text}</p> })
             }}
         </div>
     }
