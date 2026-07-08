@@ -610,23 +610,28 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(())
     }
 
-    pub async fn resolve_workflow(&self, intent: WorkflowIntent) -> Res<Option<Workflow>> {
+    /// The remote host and the `.quilt/workflows/config.yml` address for this
+    /// package's bucket, or `None` when there is no usable remote. One home for
+    /// the config-key path shared by [`Self::resolve_workflow`] and
+    /// [`Self::workflows_config`].
+    async fn workflows_config_location(&self) -> Res<Option<(Option<Host>, S3Uri)>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
             _ => return Ok(None),
         };
-        let workflows_config_uri = S3Uri {
+        let config_uri = S3Uri {
             key: ".quilt/workflows/config.yml".to_string(),
             ..S3Uri::from(remote_uri.clone())
         };
-        resolve_workflow(
-            &self.remote,
-            &remote_uri.origin,
-            intent,
-            &workflows_config_uri,
-        )
-        .await
+        Ok(Some((remote_uri.origin, config_uri)))
+    }
+
+    pub async fn resolve_workflow(&self, intent: WorkflowIntent) -> Res<Option<Workflow>> {
+        let Some((origin, config_uri)) = self.workflows_config_location().await? else {
+            return Ok(None);
+        };
+        resolve_workflow(&self.remote, &origin, intent, &config_uri).await
     }
 
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
@@ -637,17 +642,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// fetch [`Self::resolve_workflow`] performs, exposed as a read-only view of
     /// the declared workflows rather than a resolution outcome.
     pub async fn workflows_config(&self) -> Res<Option<WorkflowsConfig>> {
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let remote_uri = match lineage.remote_uri.as_ref() {
-            Some(uri) if !uri.bucket.is_empty() => uri.clone(),
-            _ => return Ok(None),
+        let Some((origin, config_uri)) = self.workflows_config_location().await? else {
+            return Ok(None);
         };
-        let workflows_config_uri = S3Uri {
-            key: ".quilt/workflows/config.yml".to_string(),
-            ..S3Uri::from(remote_uri.clone())
-        };
-        let (_, config) =
-            fetch_workflows_config(&self.remote, &remote_uri.origin, &workflows_config_uri).await?;
+        let (_, config) = fetch_workflows_config(&self.remote, &origin, &config_uri).await?;
         Ok(config)
     }
 }

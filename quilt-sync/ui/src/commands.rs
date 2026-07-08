@@ -44,7 +44,7 @@ pub struct CommitData {
     pub message: String,
     pub user_meta: String,
     pub user_meta_error: Option<String>,
-    /// The previous revision's stamped workflow selection ({id, url}), if any.
+    /// The previous revision's stamped workflow selection (its `id`), if any.
     pub workflow: Option<WorkflowData>,
     /// The bucket's workflow-selection situation for the commit dialog.
     pub workflows: CommitWorkflows,
