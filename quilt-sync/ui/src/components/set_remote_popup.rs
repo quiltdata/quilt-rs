@@ -86,10 +86,9 @@ pub fn SetRemotePopup(
     let workflows = LocalResource::new(move || {
         let target = debounced_target.get();
         async move {
-            match target {
-                Some((host, bucket)) => Some(commands::get_bucket_workflows(host, bucket).await),
-                None => None,
-            }
+            let (host, bucket) = target?;
+            let res = commands::get_bucket_workflows(host.clone(), bucket.clone()).await;
+            Some(((host, bucket), res))
         }
     });
 
@@ -98,9 +97,16 @@ pub fn SetRemotePopup(
     // bucket default is preselected. `None` here means "no target / still
     // loading"; a fetch error maps to the `Unavailable` view.
     let wf_view = Memo::new(move |_| {
-        workflows.get().flatten().map(|res| match res {
-            Ok(cw) => build_workflow_view(&cw, None),
-            Err(_) => build_workflow_view(&CommitWorkflows::Unavailable, None),
+        workflows.get().flatten().and_then(|(target, res)| {
+            // Self-keying: ignore a result whose target no longer matches the
+            // typed one. Covers BOTH the debounce-pending window and the
+            // in-flight-refetch window (the resource keeps the previous bucket's
+            // value while re-running), so the view is `None` (loading) until the
+            // fetch for the *current* bucket resolves.
+            (Some(target) == valid_target.get()).then(|| match res {
+                Ok(cw) => build_workflow_view(&cw, None),
+                Err(_) => build_workflow_view(&CommitWorkflows::Unavailable, None),
+            })
         })
     });
 
@@ -116,15 +122,13 @@ pub fn SetRemotePopup(
     // No previous revision on a first push, so the divergence note never shows.
     let workflow_note = Memo::new(|_| None::<String>);
 
-    // True while a valid target's workflow config isn't ready yet — the fetch is
-    // in flight (`wf_view` is `None`) OR the debounce hasn't caught up so the
-    // shown view still belongs to the previous bucket (`valid_target` has moved
-    // ahead of `debounced_target`). Blocking Save on both keeps the submitted
-    // intent matched to the currently-typed bucket, never a stale one.
-    let workflow_loading = Memo::new(move |_| {
-        valid_target.get().is_some()
-            && (wf_view.get().is_none() || valid_target.get() != debounced_target.get())
-    });
+    // True while a valid target's workflow config isn't ready. Because `wf_view`
+    // is self-keyed to the current `valid_target` (above), a `None` here covers
+    // every not-yet-current window — debounce pending AND in-flight refetch —
+    // so blocking Save on it keeps the submitted intent matched to the
+    // currently-typed bucket, never a stale one.
+    let workflow_loading =
+        Memo::new(move |_| valid_target.get().is_some() && wf_view.get().is_none());
     // Disable Save while submitting or while the workflow config is loading, so
     // the submitted intent always corresponds to the displayed bucket's config
     // and never a stale one from an earlier keystroke.
