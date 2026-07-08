@@ -94,6 +94,8 @@ pub async fn publish_package(
             manifest,
             paths,
             storage,
+            remote,
+            &host_config.host,
             working_dir,
             status,
             namespace.clone(),

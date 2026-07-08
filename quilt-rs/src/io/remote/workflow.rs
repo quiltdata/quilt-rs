@@ -11,7 +11,10 @@ use crate::io::remote::Remote;
 use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
+use crate::workflow::EntryView;
+use crate::workflow::PackageCandidate;
 use crate::workflow::WorkflowRules;
+use crate::workflow::validate_package;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 
@@ -362,6 +365,56 @@ async fn fetch_schema_for_key<R: Remote>(
         }
         None => Ok(None),
     }
+}
+
+/// Run the workflow quality gate against a candidate revision, using the
+/// workflow already recorded in its manifest header.
+///
+/// This is the enforcement counterpart to [`resolve_workflow`]: resolution
+/// stamps a workflow into the header, enforcement re-reads that workflow's
+/// config and schema documents and checks the candidate against them. It is
+/// the single I/O + gate seam shared by the commit and push flows.
+///
+/// A vacuously-valid revision is left untouched:
+///
+/// - a header with no workflow (`workflow` is `None`) — an ungoverned bucket;
+/// - a header whose workflow's config has since disappeared from the bucket.
+///
+/// Otherwise the workflow's rules are fetched (schema documents included) and
+/// [`validate_package`] decides. A rule failure surfaces as
+/// [`crate::Error::WorkflowValidation`] — a distinct typed error the sync
+/// watcher classifies as a conflict (pause the namespace), not a transient
+/// (retry) — while a failed *fetch* stays an `Error::S3` and remains transient.
+pub(crate) async fn validate_workflow<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    name: &str,
+    message: Option<&str>,
+    user_meta: Option<&Value>,
+    workflow: Option<&Workflow>,
+    entries: &[EntryView<'_>],
+) -> Res<()> {
+    let Some(workflow) = workflow else {
+        return Ok(());
+    };
+    let (_, config) = fetch_workflows_config(remote, host, &workflow.config).await?;
+    let Some(config) = config else {
+        return Ok(());
+    };
+    let rules = match &workflow.id {
+        Some(workflow_id) => {
+            Some(fetch_workflow_rules(remote, host, &config, &workflow_id.id).await?)
+        }
+        None => None,
+    };
+    let candidate = PackageCandidate {
+        name,
+        message,
+        user_meta,
+        entries,
+    };
+    validate_package(rules.as_ref(), config.is_workflow_required, &candidate)?;
+    Ok(())
 }
 
 /// Resolve the workflow to attach to a manifest header, given the caller's

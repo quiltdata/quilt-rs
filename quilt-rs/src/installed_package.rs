@@ -263,6 +263,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
+        // Captured before `host_config` moves into `flow::status`: the commit
+        // gate fetches the workflow's config + schemas from the same origin the
+        // workflow was resolved against.
+        let host = host_config.host.clone();
+
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
@@ -277,6 +282,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
+            &self.remote,
+            &host,
             package_home,
             status,
             self.namespace.clone(),
