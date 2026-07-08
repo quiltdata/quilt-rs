@@ -244,6 +244,26 @@ pub(crate) async fn fetch_workflows_config<R: Remote>(
     }
 }
 
+/// Fetch and parse the `.quilt/workflows/config.yml` for an arbitrary bucket,
+/// independent of any package's already-set remote.
+///
+/// Builds the config address from `bucket` alone, so the pre-set-remote UI can
+/// preview a bucket's declared workflows before the choice is committed.
+/// Returns `Ok(None)` when the bucket has no config.
+pub async fn fetch_workflows_config_for_bucket<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    bucket: &str,
+) -> Res<Option<WorkflowsConfig>> {
+    let uri = S3Uri {
+        key: ".quilt/workflows/config.yml".to_string(),
+        bucket: bucket.to_string(),
+        version: None,
+    };
+    let (_, config) = fetch_workflows_config(remote, host, &uri).await?;
+    Ok(config)
+}
+
 /// Resolve the workflow to attach to a manifest header, given the caller's
 /// [`WorkflowIntent`] and the presence/contents of `workflows/config.yaml`.
 ///
@@ -692,6 +712,50 @@ workflows:
                 description: None,
             }]
         );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_fetch_workflows_config_for_bucket_present() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+
+        let uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
+        let config = r"
+default_workflow: foo
+workflows:
+  foo:
+    name: Foo
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let parsed = fetch_workflows_config_for_bucket(&remote, &host, "my-bucket")
+            .await?
+            .expect("config present → Some");
+        assert_eq!(parsed.default_workflow, Some("foo".to_string()));
+        assert_eq!(
+            parsed.workflows,
+            vec![WorkflowInfo {
+                id: "foo".to_string(),
+                name: Some("Foo".to_string()),
+                description: None,
+            }]
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_fetch_workflows_config_for_bucket_absent() -> Res<()> {
+        let remote = MockRemote::default();
+        let host = None;
+
+        // No config object for this bucket → None.
+        let result = fetch_workflows_config_for_bucket(&remote, &host, "empty-bucket").await?;
+        assert!(result.is_none());
 
         Ok(())
     }
