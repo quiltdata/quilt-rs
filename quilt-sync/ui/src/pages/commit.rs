@@ -437,8 +437,11 @@ fn workflow_options(
 /// the 2020 package-update dialog (quilt#1856), which chose to reuse the
 /// previous revision's workflow even though `default_workflow` already existed —
 /// a deliberate but lightly-justified UX choice (a one-line "reuse previous"
-/// comment, no recorded rationale). We prefer the bucket default here instead.
-/// Options are laid out as `[None, workflows..]`, so
+/// comment, no recorded rationale). We prefer the bucket default here instead —
+/// it also heals packages whose workflow was set through the earlier error-prone
+/// free-text field: the next commit adopts what the bucket intends rather than
+/// carrying a likely-wrong prior stamp forward. Options are laid out as
+/// `[None, workflows..]`, so
 /// a workflow at position `p` maps to option index `p + 1`. The rule mirrors the
 /// `(default)` marker that [`workflow_options`] applies:
 ///
