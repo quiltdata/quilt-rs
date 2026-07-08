@@ -36,16 +36,22 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
 /// Map the CLI's `(--workflow, --no-workflow)` flag pair to a [`WorkflowIntent`].
 ///
 /// * `(_, true)` → `NoWorkflow` (explicit opt-out)
-/// * `(Some(id), false)` → `Named(id)`
+/// * `(Some(id), false)` with a non-blank `id` → `Named(id)`
+/// * `(Some(id), false)` with an empty-or-whitespace `id` → `BucketDefault`
 /// * `(None, false)` → `BucketDefault`
+///
+/// A blank `--workflow` value is treated as "no id given" (matching the GUI's
+/// care), so we never construct `Named("")` — which would otherwise resolve
+/// downstream to a confusing "Workflow  not found" error. `--no-workflow`
+/// remains the real opt-out.
 ///
 /// clap's `conflicts_with` makes `(Some, true)` unreachable; the arm order
 /// handles it safely regardless.
 fn workflow_intent(workflow_id: Option<String>, no_workflow: bool) -> WorkflowIntent {
     match (workflow_id, no_workflow) {
         (_, true) => WorkflowIntent::NoWorkflow,
-        (Some(id), false) => WorkflowIntent::Named(id),
-        (None, false) => WorkflowIntent::BucketDefault,
+        (Some(id), false) if !id.trim().is_empty() => WorkflowIntent::Named(id),
+        (_, false) => WorkflowIntent::BucketDefault,
     }
 }
 
@@ -95,6 +101,50 @@ pub async fn model(
 }
 
 #[cfg(test)]
+mod intent_tests {
+    use super::workflow_intent;
+    use quilt_rs::io::remote::WorkflowIntent;
+
+    #[test]
+    fn omit_maps_to_bucket_default() {
+        assert_eq!(workflow_intent(None, false), WorkflowIntent::BucketDefault);
+    }
+
+    #[test]
+    fn named_id_maps_to_named() {
+        assert_eq!(
+            workflow_intent(Some("x".to_string()), false),
+            WorkflowIntent::Named("x".to_string())
+        );
+    }
+
+    #[test]
+    fn empty_id_trims_to_bucket_default() {
+        assert_eq!(
+            workflow_intent(Some(String::new()), false),
+            WorkflowIntent::BucketDefault
+        );
+    }
+
+    #[test]
+    fn whitespace_id_trims_to_bucket_default() {
+        assert_eq!(
+            workflow_intent(Some("  ".to_string()), false),
+            WorkflowIntent::BucketDefault
+        );
+    }
+
+    #[test]
+    fn no_workflow_flag_maps_to_no_workflow_regardless_of_id() {
+        assert_eq!(workflow_intent(None, true), WorkflowIntent::NoWorkflow);
+        assert_eq!(
+            workflow_intent(Some("x".to_string()), true),
+            WorkflowIntent::NoWorkflow
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -135,6 +185,45 @@ mod tests {
             )
             .await?;
 
+            assert_eq!(output.commit.hash, pkg::TOP_HASH);
+        }
+
+        Ok(())
+    }
+
+    /// Bucket-default intent (`workflow: None, no_workflow: false`) against a
+    /// bucket whose `workflows/config.yml` is present but declares no top-level
+    /// `default_workflow` (the `udp-spec` bucket used by `workflow_null`).
+    ///
+    /// In that case `resolve_workflow` produces the same null-id workflow record
+    /// as an explicit `NoWorkflow` opt-out, so the manifest bytes — and thus the
+    /// top-hash — are byte-identical to the `NoWorkflow` case pinned by
+    /// [`test_commit_package_with_message_and_null_workflow`]. This documents the
+    /// equivalence rather than introducing a new anchor.
+    #[test(tokio::test)]
+    async fn test_commit_package_bucket_default_equals_null_workflow() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let uri = pkg::URI;
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        {
+            let local_domain = m.get_local_domain();
+
+            let output = model(
+                local_domain,
+                Input {
+                    message: pkg::MESSAGE.to_string(),
+                    namespace: pkg::NAMESPACE.into(),
+                    user_meta: UserMeta::Keep,
+                    workflow: None,
+                    no_workflow: false,
+                    host_config: None,
+                },
+            )
+            .await?;
+
+            // Same hash as the explicit `NoWorkflow` commit: the config has no
+            // `default_workflow`, so bucket-default resolves to the null-id record.
             assert_eq!(output.commit.hash, pkg::TOP_HASH);
         }
 
