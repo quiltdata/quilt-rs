@@ -3,7 +3,7 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, CommitData, EntryData, WorkflowInfo, WorkflowIntent};
+use crate::commands::{self, CommitData, CommitWorkflows, EntryData, WorkflowInfo, WorkflowIntent};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
@@ -96,29 +96,23 @@ fn CommitContent(
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
 
-    // Workflow state: a single dropdown whose selected index is the whole
-    // state. Each option carries the `WorkflowIntent` it submits.
-    let default_workflow = data.default_workflow.clone();
-    let is_workflow_required = data.is_workflow_required;
-    let wf_options = workflow_options(
-        &data.workflows,
-        default_workflow.as_deref(),
-        is_workflow_required,
-    );
-    let initial_workflow = preselected_index(
-        &data.workflows,
-        data.workflow.as_ref().and_then(|w| w.id.as_deref()),
-        default_workflow.as_deref(),
-    );
-    // `initial_workflow` is the single source of truth for the starting
+    // Workflow state: the backend's `CommitWorkflows` state maps to a render
+    // model whose option list carries, per entry, the `WorkflowIntent` it
+    // submits. The selected index into that list is the whole client-side
+    // state.
+    let previous_workflow_id = data.workflow.as_ref().and_then(|w| w.id.clone());
+    let wf_view = build_workflow_view(&data.workflows, previous_workflow_id.as_deref());
+    // `wf_view.initial` is the single source of truth for the starting
     // selection: it both seeds this signal (which submit reads) and is passed
     // to `WorkflowSection` to render the `selected` attribute, so display and
     // submit start from the same index into the same option list.
+    let initial_workflow = wf_view.initial;
     let selected_workflow = RwSignal::new(initial_workflow);
     // Intents mirrored for the submit path — the selected option's intent is
-    // passed straight through, so `Named("")` can never be constructed.
+    // passed straight through, so `Named("")` can never be constructed. On the
+    // NotConfigured/Unavailable states this is a single `BucketDefault` entry.
     let workflow_intents: Vec<WorkflowIntent> =
-        wf_options.iter().map(|o| o.intent.clone()).collect();
+        wf_view.options.iter().map(|o| o.intent.clone()).collect();
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -206,10 +200,8 @@ fn CommitContent(
                 <div class="form">
                     // ── Workflow ──
                     <WorkflowSection
-                        options=wf_options
+                        view=wf_view
                         selected=selected_workflow
-                        initial=initial_workflow
-                        is_workflow_required=is_workflow_required
                     />
 
                     // ── Namespace (readonly) ──
@@ -382,9 +374,8 @@ fn workflow_label(w: &WorkflowInfo) -> String {
     w.name.clone().unwrap_or_else(|| w.id.clone())
 }
 
-/// Build the dropdown's option list.
-///
-/// Normal path (workflows non-empty), matching the web catalog's order:
+/// Build the dropdown's option list for the [`CommitWorkflows::Available`]
+/// state, matching the web catalog's order:
 /// - index 0: `None` → [`WorkflowIntent::NoWorkflow`], disabled when a workflow
 ///   is required. Its label gains `" (default)"` when the config names no
 ///   default and no workflow is required — then `None` is itself the bucket
@@ -395,35 +386,14 @@ fn workflow_label(w: &WorkflowInfo) -> String {
 /// Exactly one option ever bears `" (default)"`: whichever is the bucket's
 /// actual default. A required-but-defaultless bucket has none.
 ///
-/// There is deliberately no `Bucket default` item on the normal path — the
-/// catalog offers only `None` plus the concrete workflows.
-///
-/// Degraded path (workflows empty — a config-less bucket or a config-fetch
-/// failure): a minimal two-item control
-/// `[Bucket default → BucketDefault, No workflow → NoWorkflow]`. Keeping
-/// `BucketDefault` here means a no-touch commit re-resolves the bucket's real
-/// default at commit time instead of forcing `NoWorkflow` on a transient
-/// failure.
+/// There is deliberately no `Bucket default` item — the catalog offers only
+/// `None` plus the concrete workflows. An Available-but-empty workflow list
+/// therefore yields just `[None]`, which is fine.
 fn workflow_options(
     workflows: &[WorkflowInfo],
     default_workflow: Option<&str>,
     is_workflow_required: bool,
 ) -> Vec<WorkflowOption> {
-    if workflows.is_empty() {
-        return vec![
-            WorkflowOption {
-                label: "Bucket default".to_string(),
-                intent: WorkflowIntent::BucketDefault,
-                disabled: false,
-            },
-            WorkflowOption {
-                label: "No workflow".to_string(),
-                intent: WorkflowIntent::NoWorkflow,
-                disabled: false,
-            },
-        ];
-    }
-
     // When the config names no default and doesn't require a workflow, `None`
     // IS the bucket default (the resolver treats `BucketDefault` and
     // `NoWorkflow` identically then), so it bears the `(default)` marker.
@@ -458,23 +428,18 @@ fn workflow_options(
     options
 }
 
-/// Index (into [`workflow_options`]'s output) that should start selected.
+/// Index (into [`workflow_options`]'s output) that should start selected in the
+/// [`CommitWorkflows::Available`] state.
 ///
-/// Normal path: the previous revision's `workflow.id` if it appears in the
-/// list, else the bucket default's id if present, else index 0 (the `None`
-/// item). Options are laid out as `[None, workflows..]`, so a workflow at
-/// position `p` maps to option index `p + 1`.
-///
-/// Degraded path (empty `workflows`): index 0 — the `Bucket default` item, so
-/// a transient config-fetch failure never silently forces `No workflow`.
+/// The previous revision's `workflow.id` if it appears in the list, else the
+/// bucket default's id if present, else index 0 (the `None` item). Options are
+/// laid out as `[None, workflows..]`, so a workflow at position `p` maps to
+/// option index `p + 1`.
 fn preselected_index(
     workflows: &[WorkflowInfo],
     previous_workflow_id: Option<&str>,
     default_workflow: Option<&str>,
 ) -> usize {
-    if workflows.is_empty() {
-        return 0;
-    }
     if let Some(prev) = previous_workflow_id
         && let Some(pos) = workflows.iter().position(|w| w.id == prev)
     {
@@ -485,14 +450,136 @@ fn preselected_index(
     {
         return pos + 1;
     }
-    // The `None` item sits at the head of the normal-path list.
+    // The `None` item sits at the head of the option list.
     0
+}
+
+/// Which of the three [`CommitWorkflows`] states the section renders, plus the
+/// per-state chrome the render needs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WorkflowViewKind {
+    /// The bucket has a config: render the dropdown. Carries whether the bucket
+    /// requires a workflow (drives the "required" hint).
+    Available { is_workflow_required: bool },
+    /// The bucket is ungoverned: a single disabled `None`, no choice to make.
+    NotConfigured,
+    /// The config couldn't be loaded: an inline notice, no dropdown.
+    Unavailable,
+}
+
+/// The commit dialog's workflow section, resolved from the backend state.
+///
+/// `options` and `initial` drive both display and submit uniformly across all
+/// three states: submit reads `options[selected].intent`. On the non-`Available`
+/// states this is a single [`WorkflowIntent::BucketDefault`] entry at index 0,
+/// so a config-less bucket resolves to no-workflow while a transient failure
+/// re-resolves the real default at commit time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkflowView {
+    kind: WorkflowViewKind,
+    options: Vec<WorkflowOption>,
+    initial: usize,
+}
+
+/// Map the backend [`CommitWorkflows`] state to the section's render model.
+fn build_workflow_view(
+    workflows: &CommitWorkflows,
+    previous_workflow_id: Option<&str>,
+) -> WorkflowView {
+    match workflows {
+        CommitWorkflows::Available {
+            workflows,
+            default_workflow,
+            is_workflow_required,
+        } => WorkflowView {
+            kind: WorkflowViewKind::Available {
+                is_workflow_required: *is_workflow_required,
+            },
+            options: workflow_options(
+                workflows,
+                default_workflow.as_deref(),
+                *is_workflow_required,
+            ),
+            initial: preselected_index(
+                workflows,
+                previous_workflow_id,
+                default_workflow.as_deref(),
+            ),
+        },
+        // Ungoverned bucket: a single disabled `None`. Submit sends
+        // `BucketDefault`, which on a config-less bucket resolves to
+        // no-workflow — the honest "let the bucket decide".
+        CommitWorkflows::NotConfigured => WorkflowView {
+            kind: WorkflowViewKind::NotConfigured,
+            options: vec![WorkflowOption {
+                label: "None".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: true,
+            }],
+            initial: 0,
+        },
+        // Config load failed: no dropdown, just a notice. Submit sends
+        // `BucketDefault` so the real default re-resolves at commit time
+        // (the network may have recovered) rather than forcing no-workflow.
+        CommitWorkflows::Unavailable => WorkflowView {
+            kind: WorkflowViewKind::Unavailable,
+            options: vec![WorkflowOption {
+                label: "Bucket default".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: true,
+            }],
+            initial: 0,
+        },
+    }
 }
 
 // ── Workflow section ──
 
 #[component]
-fn WorkflowSection(
+fn WorkflowSection(view: WorkflowView, selected: RwSignal<usize>) -> impl IntoView {
+    let WorkflowView {
+        kind,
+        options,
+        initial,
+    } = view;
+
+    match kind {
+        WorkflowViewKind::Available {
+            is_workflow_required,
+        } => workflow_dropdown(options, selected, initial, is_workflow_required).into_any(),
+        // Ungoverned bucket: a single disabled `None`, plus a hint explaining
+        // why there is no choice to make. Submit already carries `BucketDefault`
+        // via `options[0]`.
+        WorkflowViewKind::NotConfigured => view! {
+            <div class="workflow">
+                <p class="field">
+                    <label class="label" for="workflow">"Workflow"</label>
+                    <select class="input" id="workflow" name="workflow" disabled>
+                        <option selected>"None"</option>
+                    </select>
+                </p>
+                <span class="hint">"This bucket has no workflow configuration."</span>
+            </div>
+        }
+        .into_any(),
+        // Config load failed: no dropdown, just an inline notice. Submit does
+        // not block; it re-resolves the bucket default at commit time.
+        WorkflowViewKind::Unavailable => view! {
+            <div class="workflow">
+                <p class="field">
+                    <label class="label" for="workflow">"Workflow"</label>
+                    <span class="hint">
+                        "⚠ Couldn't load this bucket's workflows. Commit will use the bucket default."
+                    </span>
+                </p>
+            </div>
+        }
+        .into_any(),
+    }
+}
+
+/// The [`CommitWorkflows::Available`] dropdown.
+fn workflow_dropdown(
     options: Vec<WorkflowOption>,
     selected: RwSignal<usize>,
     initial: usize,
@@ -853,8 +940,10 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkflowOption, preselected_index, workflow_options};
-    use crate::commands::{WorkflowInfo, WorkflowIntent};
+    use super::{
+        WorkflowOption, WorkflowViewKind, build_workflow_view, preselected_index, workflow_options,
+    };
+    use crate::commands::{CommitWorkflows, WorkflowInfo, WorkflowIntent};
 
     fn wf(id: &str, name: Option<&str>) -> WorkflowInfo {
         WorkflowInfo {
@@ -980,27 +1069,69 @@ mod tests {
         assert!(!workflow_options(&wfs, None, false)[0].disabled);
     }
 
-    // ── Degraded path (workflows empty) ──
-
     #[test]
-    fn options_degraded_is_bucket_default_then_no_workflow() {
-        // Flags are irrelevant on the degraded path.
-        let opts = workflow_options(&[], Some("x"), true);
+    fn options_available_empty_list_is_just_none() {
+        // An Available-but-empty workflow list yields just `[None]` (labeled the
+        // default, since nothing is required and no default is named).
+        let opts = workflow_options(&[], None, false);
         assert_eq!(
             opts,
-            vec![
-                WorkflowOption {
-                    label: "Bucket default".to_string(),
-                    intent: WorkflowIntent::BucketDefault,
-                    disabled: false,
-                },
-                WorkflowOption {
-                    label: "No workflow".to_string(),
-                    intent: WorkflowIntent::NoWorkflow,
-                    disabled: false,
-                },
-            ]
+            vec![WorkflowOption {
+                label: "None (default)".to_string(),
+                intent: WorkflowIntent::NoWorkflow,
+                disabled: false,
+            }]
         );
+    }
+
+    // ── State → render model (`build_workflow_view`) ──
+
+    #[test]
+    fn view_available_builds_dropdown_options() {
+        let workflows = CommitWorkflows::Available {
+            workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
+            default_workflow: Some("alpha".to_string()),
+            is_workflow_required: false,
+        };
+        let view = build_workflow_view(&workflows, Some("beta"));
+        assert_eq!(
+            view.kind,
+            WorkflowViewKind::Available {
+                is_workflow_required: false
+            }
+        );
+        // Options + preselection match the pure builders for the Available case.
+        assert_eq!(view.options.len(), 3);
+        assert_eq!(view.initial, 2);
+        assert_eq!(
+            view.options[view.initial].intent,
+            WorkflowIntent::Named("beta".to_string())
+        );
+    }
+
+    #[test]
+    fn view_not_configured_is_single_disabled_none_submitting_bucket_default() {
+        let view = build_workflow_view(&CommitWorkflows::NotConfigured, None);
+        assert_eq!(view.kind, WorkflowViewKind::NotConfigured);
+        assert_eq!(view.initial, 0);
+        assert_eq!(
+            view.options,
+            vec![WorkflowOption {
+                label: "None".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn view_unavailable_submits_bucket_default() {
+        let view = build_workflow_view(&CommitWorkflows::Unavailable, Some("ignored"));
+        assert_eq!(view.kind, WorkflowViewKind::Unavailable);
+        assert_eq!(view.initial, 0);
+        // Both non-Available states submit `BucketDefault`, but they are
+        // distinct render inputs (NotConfigured vs Unavailable).
+        assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
     }
 
     // ── Preselection ──
@@ -1030,13 +1161,6 @@ mod tests {
         assert_eq!(preselected_index(&wfs, Some("ghost"), Some("ghost")), 0);
     }
 
-    #[test]
-    fn preselect_degraded_is_bucket_default() {
-        // Empty list → the `Bucket default` item at index 0, regardless of flags.
-        assert_eq!(preselected_index(&[], None, None), 0);
-        assert_eq!(preselected_index(&[], Some("x"), Some("y")), 0);
-    }
-
     // ── Display == submit invariant, guarded at the pure-fn level ──
 
     #[test]
@@ -1054,9 +1178,15 @@ mod tests {
     }
 
     #[test]
-    fn preselected_index_maps_to_submitted_intent_degraded() {
-        let opts = workflow_options(&[], None, false);
-        let idx = preselected_index(&[], None, None);
-        assert_eq!(opts[idx].intent, WorkflowIntent::BucketDefault);
+    fn view_non_available_states_submit_bucket_default() {
+        // The submit path reads `options[selected].intent`; both non-Available
+        // states must send `BucketDefault` from their single option at index 0.
+        for state in [CommitWorkflows::NotConfigured, CommitWorkflows::Unavailable] {
+            let view = build_workflow_view(&state, None);
+            assert_eq!(
+                view.options[view.initial].intent,
+                WorkflowIntent::BucketDefault
+            );
+        }
     }
 }

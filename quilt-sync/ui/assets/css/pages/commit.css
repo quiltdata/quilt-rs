@@ -177,6 +177,13 @@
     cursor: pointer;
   }
 
+  .workflow .hint {
+    color: var(--q-ui-palette-text-secondary);
+    display: block;
+    font-size: var(--q-ui-font-size-small);
+    margin-top: var(--q-ui-size-0-5);
+  }
+
   .field-description {
     font-size: 0.875rem;
     margin: var(--q-ui-size-0-5) 0 0;
