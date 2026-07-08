@@ -3,7 +3,7 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, CommitData, EntryData, WorkflowData, WorkflowIntent};
+use crate::commands::{self, CommitData, EntryData, WorkflowInfo, WorkflowIntent};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
@@ -96,19 +96,25 @@ fn CommitContent(
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
 
-    // Workflow state
-    let workflow = data.workflow.clone();
-    let workflow_id = RwSignal::new(
-        workflow
-            .as_ref()
-            .and_then(|w| w.id.clone())
-            .unwrap_or_default(),
+    // Workflow state: a single dropdown whose selected index is the whole
+    // state. Each option carries the `WorkflowIntent` it submits.
+    let default_workflow = data.default_workflow.clone();
+    let is_workflow_required = data.is_workflow_required;
+    let wf_options = workflow_options(
+        &data.workflows,
+        default_workflow.as_deref(),
+        is_workflow_required,
     );
-    // Pre-check "No workflow" ONLY when the previous revision explicitly
-    // recorded a null-id workflow. A never-pushed package (`None`) seeds
-    // unchecked → submits `BucketDefault`, letting it pick up the bucket
-    // default from the dialog.
-    let workflow_null = RwSignal::new(workflow.as_ref().is_some_and(|w| w.id.is_none()));
+    let initial_workflow = preselected_index(
+        &data.workflows,
+        data.workflow.as_ref().and_then(|w| w.id.as_deref()),
+        default_workflow.as_deref(),
+    );
+    let selected_workflow = RwSignal::new(initial_workflow);
+    // Intents mirrored for the submit path — the selected option's intent is
+    // passed straight through, so `Named("")` can never be constructed.
+    let workflow_intents: Vec<WorkflowIntent> =
+        wf_options.iter().map(|o| o.intent.clone()).collect();
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -153,7 +159,10 @@ fn CommitContent(
         ui_locked.set(true);
         let ns = ns_for_action.clone();
         let meta = get_json_editor_value("metadata-editor");
-        let wf = workflow_intent(workflow_null.get_untracked(), &workflow_id.get_untracked());
+        let wf = workflow_intents
+            .get(selected_workflow.get_untracked())
+            .cloned()
+            .unwrap_or(WorkflowIntent::BucketDefault);
         leptos::task::spawn_local(async move {
             let result = if push {
                 commands::package_commit_and_push(ns.clone(), msg, meta, wf).await
@@ -193,9 +202,9 @@ fn CommitContent(
                 <div class="form">
                     // ── Workflow ──
                     <WorkflowSection
-                        workflow=data.workflow.clone()
-                        workflow_id=workflow_id
-                        workflow_null=workflow_null
+                        options=wf_options
+                        selected=selected_workflow
+                        is_workflow_required=is_workflow_required
                     />
 
                     // ── Namespace (readonly) ──
@@ -350,26 +359,89 @@ fn CommitContent(
     }
 }
 
-// ── Workflow intent construction ──
+// ── Workflow dropdown model ──
 
-/// Map the dialog's two-signal workflow state onto a single [`WorkflowIntent`].
+/// One entry in the workflow dropdown. Carries its own display label and the
+/// [`WorkflowIntent`] it submits, so the commit handler passes the selected
+/// option's intent straight through — no re-derivation, never `Named("")`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkflowOption {
+    label: String,
+    intent: WorkflowIntent,
+    disabled: bool,
+}
+
+/// Display label for a single declared workflow: its name, or its id when the
+/// config gave no name.
+fn workflow_label(w: &WorkflowInfo) -> String {
+    w.name.clone().unwrap_or_else(|| w.id.clone())
+}
+
+/// Build the dropdown's option list, matching the web catalog's order:
+/// - head: `Bucket default (<name-or-id of the default>)` → [`WorkflowIntent::BucketDefault`];
+/// - one entry per declared workflow (label = name or id) → [`WorkflowIntent::Named`];
+/// - tail: `None` → [`WorkflowIntent::NoWorkflow`], disabled when a workflow is required.
 ///
-/// One uniform mapping — no `has_workflow` special case:
-/// - "No workflow" checked → [`WorkflowIntent::NoWorkflow`] (explicit opt-out);
-/// - unchecked, trimmed id non-empty → [`WorkflowIntent::Named`];
-/// - unchecked, id empty (or whitespace-only) → [`WorkflowIntent::BucketDefault`].
+/// An empty `workflows` list (config-less bucket or a fetch failure) degrades
+/// naturally to a two-item bucket-default-vs-None control.
+fn workflow_options(
+    workflows: &[WorkflowInfo],
+    default_workflow: Option<&str>,
+    is_workflow_required: bool,
+) -> Vec<WorkflowOption> {
+    let head_label = match default_workflow {
+        Some(id) => {
+            let display = workflows
+                .iter()
+                .find(|w| w.id == id)
+                .map_or_else(|| id.to_string(), workflow_label);
+            format!("Bucket default ({display})")
+        }
+        None => "Bucket default".to_string(),
+    };
+
+    let mut options = vec![WorkflowOption {
+        label: head_label,
+        intent: WorkflowIntent::BucketDefault,
+        disabled: false,
+    }];
+
+    options.extend(workflows.iter().map(|w| WorkflowOption {
+        label: workflow_label(w),
+        intent: WorkflowIntent::Named(w.id.clone()),
+        disabled: false,
+    }));
+
+    options.push(WorkflowOption {
+        label: "None".to_string(),
+        intent: WorkflowIntent::NoWorkflow,
+        disabled: is_workflow_required,
+    });
+
+    options
+}
+
+/// Index (into [`workflow_options`]'s output) that should start selected.
 ///
-/// A [`WorkflowIntent::Named`] is NEVER constructed with an empty id — that
-/// used to submit `Workflow  not found` downstream.
-fn workflow_intent(workflow_null: bool, id: &str) -> WorkflowIntent {
-    if workflow_null {
-        return WorkflowIntent::NoWorkflow;
+/// Matches the catalog rule: the previous revision's `workflow.id` if it
+/// appears in the list, else the bucket-default head item (when a default
+/// exists), else `None`. Options are laid out as `[head, workflows.., None]`,
+/// so a workflow at position `p` maps to option index `p + 1`.
+fn preselected_index(
+    workflows: &[WorkflowInfo],
+    previous_workflow_id: Option<&str>,
+    default_workflow: Option<&str>,
+) -> usize {
+    if let Some(prev) = previous_workflow_id
+        && let Some(pos) = workflows.iter().position(|w| w.id == prev)
+    {
+        return pos + 1;
     }
-    let id = id.trim();
-    if id.is_empty() {
-        WorkflowIntent::BucketDefault
+    if default_workflow.is_some() {
+        0
     } else {
-        WorkflowIntent::Named(id.to_string())
+        // Tail `None` item sits after the head and every declared workflow.
+        workflows.len() + 1
     }
 }
 
@@ -377,93 +449,56 @@ fn workflow_intent(workflow_null: bool, id: &str) -> WorkflowIntent {
 
 #[component]
 fn WorkflowSection(
-    workflow: Option<WorkflowData>,
-    workflow_id: RwSignal<String>,
-    workflow_null: RwSignal<bool>,
+    options: Vec<WorkflowOption>,
+    selected: RwSignal<usize>,
+    is_workflow_required: bool,
 ) -> impl IntoView {
-    match workflow {
-        Some(w) => {
-            let has_id = w.id.is_some();
-            let url = w.url.clone();
+    // Intents indexed by option position — used to decide whether the current
+    // selection is the (disabled) `None` item, which drives the required hint.
+    let intents: Vec<WorkflowIntent> = options.iter().map(|o| o.intent.clone()).collect();
+    let show_required_hint = move || {
+        is_workflow_required
+            && intents
+                .get(selected.get())
+                .is_some_and(|i| *i == WorkflowIntent::NoWorkflow)
+    };
 
+    // Selection is controlled by the `<select>`'s `prop:value` below, so the
+    // options only need their value and (for the required `None`) disabled flag.
+    let option_views = options
+        .into_iter()
+        .enumerate()
+        .map(|(i, o)| {
             view! {
-                <div class="workflow">
-                    <p class="field">
-                        <label class="label" for="workflow">"Workflow ID"</label>
-                        <input
-                            class="input"
-                            id="workflow"
-                            name="workflow"
-                            prop:value=move || workflow_id.get()
-                            prop:disabled=move || workflow_null.get()
-                            on:input=move |ev| workflow_id.set(event_target_value(&ev))
-                        />
-                    </p>
-                    <p class="field-description">
-                        "Leave empty to use the bucket's default workflow (if configured)."
-                    </p>
-                    <div class="workflow-null">
-                        <input
-                            id="workflow-null"
-                            type="checkbox"
-                            prop:checked=move || workflow_null.get()
-                            on:change=move |_| {
-                                workflow_null.set(!workflow_null.get_untracked());
-                            }
-                        />
-                        <label class="workflow-null-label" for="workflow-null">
-                            "No workflow"
-                        </label>
-                    </div>
-                    {url.map(|url_str| {
-                        let url_for_click = url_str.clone();
-                        view! {
-                            <p class="field-description">
-                                {if has_id { "Use the workflow ID from " } else { "" }}
-                                <a
-                                    class="link"
-                                    on:click=move |_| {
-                                        let url = url_for_click.clone();
-                                        leptos::task::spawn_local(async move {
-                                            let _ = commands::open_in_web_browser(url).await;
-                                        });
-                                    }
-                                >
-                                    ".quilt/workflows/config.yaml"
-                                </a>
-                            </p>
-                        }
-                    })}
-                </div>
+                <option value=i.to_string() disabled=o.disabled>
+                    {o.label}
+                </option>
             }
-            .into_any()
-        }
-        None => view! {
-            <div class="workflow">
-                <p class="field">
-                    <label class="label" for="workflow">"Workflow ID"</label>
-                    <input
-                        class="input"
-                        disabled
-                        prop:value="Bucket's default workflow (if configured)"
-                    />
-                </p>
-                <div class="workflow-null">
-                    <input
-                        id="workflow-null"
-                        type="checkbox"
-                        prop:checked=move || workflow_null.get()
-                        on:change=move |_| {
-                            workflow_null.set(!workflow_null.get_untracked());
+        })
+        .collect::<Vec<_>>();
+
+    view! {
+        <div class="workflow">
+            <p class="field">
+                <label class="label" for="workflow">"Workflow"</label>
+                <select
+                    class="input"
+                    id="workflow"
+                    name="workflow"
+                    prop:value=move || selected.get().to_string()
+                    on:change=move |ev| {
+                        if let Ok(i) = event_target_value(&ev).parse::<usize>() {
+                            selected.set(i);
                         }
-                    />
-                    <label class="workflow-null-label" for="workflow-null">
-                        "No workflow"
-                    </label>
-                </div>
-            </div>
-        }
-        .into_any(),
+                    }
+                >
+                    {option_views}
+                </select>
+            </p>
+            <Show when=show_required_hint>
+                <span class="error">"Workflow is required for this bucket."</span>
+            </Show>
+        </div>
     }
 }
 
@@ -769,37 +804,102 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::workflow_intent;
-    use crate::commands::WorkflowIntent;
+    use super::{WorkflowOption, preselected_index, workflow_options};
+    use crate::commands::{WorkflowInfo, WorkflowIntent};
 
-    #[test]
-    fn checked_is_no_workflow() {
-        assert_eq!(workflow_intent(true, ""), WorkflowIntent::NoWorkflow);
-        // The id in the box is irrelevant while "No workflow" is checked.
-        assert_eq!(workflow_intent(true, "foo"), WorkflowIntent::NoWorkflow);
+    fn wf(id: &str, name: Option<&str>) -> WorkflowInfo {
+        WorkflowInfo {
+            id: id.to_string(),
+            name: name.map(str::to_string),
+            description: None,
+        }
     }
 
     #[test]
-    fn unchecked_with_id_is_named() {
+    fn options_head_middle_tail() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("alpha"), false);
         assert_eq!(
-            workflow_intent(false, "my-wf"),
-            WorkflowIntent::Named("my-wf".to_string())
+            opts,
+            vec![
+                WorkflowOption {
+                    label: "Bucket default (Alpha WF)".to_string(),
+                    intent: WorkflowIntent::BucketDefault,
+                    disabled: false,
+                },
+                WorkflowOption {
+                    label: "Alpha WF".to_string(),
+                    intent: WorkflowIntent::Named("alpha".to_string()),
+                    disabled: false,
+                },
+                WorkflowOption {
+                    // No name → fall back to the id as the label.
+                    label: "beta".to_string(),
+                    intent: WorkflowIntent::Named("beta".to_string()),
+                    disabled: false,
+                },
+                WorkflowOption {
+                    label: "None".to_string(),
+                    intent: WorkflowIntent::NoWorkflow,
+                    disabled: false,
+                },
+            ]
         );
     }
 
     #[test]
-    fn unchecked_empty_is_bucket_default() {
-        assert_eq!(workflow_intent(false, ""), WorkflowIntent::BucketDefault);
+    fn options_default_label_falls_back_to_id() {
+        // Default id present but unnamed → head label uses the id.
+        let wfs = vec![wf("beta", None)];
+        assert_eq!(
+            workflow_options(&wfs, Some("beta"), false)[0].label,
+            "Bucket default (beta)"
+        );
+        // Default id not in the list → head label uses the raw id.
+        assert_eq!(
+            workflow_options(&wfs, Some("ghost"), false)[0].label,
+            "Bucket default (ghost)"
+        );
     }
 
     #[test]
-    fn unchecked_whitespace_only_is_bucket_default_never_named_empty() {
-        // Whitespace-only must collapse to BucketDefault, not Named("") — the
-        // latter errors downstream as `Workflow  not found`.
-        assert_eq!(workflow_intent(false, "   "), WorkflowIntent::BucketDefault);
-        assert_eq!(
-            workflow_intent(false, "\t\n"),
-            WorkflowIntent::BucketDefault
-        );
+    fn options_no_default_is_plain_bucket_default() {
+        let opts = workflow_options(&[], None, false);
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0].label, "Bucket default");
+        assert_eq!(opts[0].intent, WorkflowIntent::BucketDefault);
+        assert_eq!(opts[1].intent, WorkflowIntent::NoWorkflow);
+    }
+
+    #[test]
+    fn options_none_disabled_when_required() {
+        let none = workflow_options(&[], None, true).pop().unwrap();
+        assert_eq!(none.intent, WorkflowIntent::NoWorkflow);
+        assert!(none.disabled);
+    }
+
+    #[test]
+    fn preselect_previous_id_when_in_list() {
+        let wfs = vec![wf("alpha", None), wf("beta", None)];
+        // Options: [head=0, alpha=1, beta=2, none=3].
+        assert_eq!(preselected_index(&wfs, Some("beta"), Some("alpha")), 2);
+    }
+
+    #[test]
+    fn preselect_falls_back_to_bucket_default() {
+        let wfs = vec![wf("alpha", None)];
+        // Previous id not in the list, but a default exists → head (0).
+        assert_eq!(preselected_index(&wfs, Some("ghost"), Some("alpha")), 0);
+        // No previous id, default exists → head (0).
+        assert_eq!(preselected_index(&wfs, None, Some("alpha")), 0);
+    }
+
+    #[test]
+    fn preselect_falls_back_to_none_without_default() {
+        let wfs = vec![wf("alpha", None)];
+        // No previous id and no default → tail None at index len+1 = 2.
+        assert_eq!(preselected_index(&wfs, None, None), 2);
+        // Degraded empty-list, no default → tail None at index 1.
+        assert_eq!(preselected_index(&[], None, None), 1);
     }
 }

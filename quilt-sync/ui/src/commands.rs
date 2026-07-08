@@ -44,7 +44,15 @@ pub struct CommitData {
     pub message: String,
     pub user_meta: String,
     pub user_meta_error: Option<String>,
+    /// The previous revision's stamped workflow selection ({id, url}), if any.
     pub workflow: Option<WorkflowData>,
+    /// Workflows declared under `workflows:` in the bucket's config — the
+    /// choices offered by the commit dialog's dropdown.
+    pub workflows: Vec<WorkflowInfo>,
+    /// The bucket's default workflow id (`default_workflow` in the config).
+    pub default_workflow: Option<String>,
+    /// Whether the bucket requires a workflow (`is_workflow_required`).
+    pub is_workflow_required: bool,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -54,7 +62,18 @@ pub struct CommitData {
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowData {
     pub id: Option<String>,
-    pub url: Option<String>,
+}
+
+/// A workflow declared under `workflows:` in the bucket's config, surfaced to
+/// the commit dialog so the user can pick one. UI-side mirror of the backend
+/// `CommitWorkflowInfo`. Distinct from [`WorkflowData`], which is the previous
+/// revision's stamped selection.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowInfo {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
 }
 
 /// Caller intent for resolving a package's workflow, sent with a commit.
