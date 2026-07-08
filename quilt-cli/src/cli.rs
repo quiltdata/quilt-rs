@@ -150,7 +150,11 @@ enum Commands {
         /// Ex. open.quiltdata.com
         #[arg(short, long, requires = "bucket")]
         origin: Option<Host>,
-        // FIXME: add workflow?
+        // No workflow flag here: push uploads an already-created commit, whose
+        // workflow was decided at `commit` time. The one exception is the first
+        // push of a local package, where set_remote/recommit resolves the
+        // bucket default — letting the caller choose a workflow there is a
+        // deferred cross-client change, not part of this CLI slice.
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
