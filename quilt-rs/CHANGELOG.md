@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha4] - 2026-07-08
+
+### Changed
+
+- `InstalledPackage::set_remote` takes a `WorkflowIntent`, so a local package's first push can stamp a chosen workflow (or opt out) instead of always the bucket default; added `fetch_workflows_config_for_bucket` for resolving a bucket's workflows before its remote is bound (<https://github.com/quiltdata/quilt-rs/pull/748>)
+
 ## [v0.33.0-alpha3] - 2026-07-08
 
 ### Added

@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.27.1-alpha3] - 2026-07-08
+
+### Changed
+
+- `quilt push` gains `--workflow`/`--no-workflow` to choose the workflow for a package's first push; `quilt commit --workflow` on a package with no remote now warns instead of silently ignoring the flag (<https://github.com/quiltdata/quilt-rs/pull/748>)
+
 ## [v0.27.1-alpha2] - 2026-07-08
 
 ### Changed
