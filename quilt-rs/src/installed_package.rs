@@ -562,6 +562,11 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // the remote is still saved and the user can retry.
         self.lineage.write(&self.storage, lineage.clone()).await?;
 
+        // An explicit workflow gesture (`Named`/`NoWorkflow`) must not be
+        // silently dropped: if the recommit that stamps it fails, surface the
+        // error. The no-gesture `BucketDefault` path stays best-effort.
+        let explicit_workflow = !matches!(&workflow, WorkflowIntent::BucketDefault);
+
         // Re-commit with the remote's host_config and workflow so push
         // works immediately without a manual re-commit.
         // This can fail (e.g. not logged in yet) — the remote is already saved,
@@ -572,6 +577,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 .recommit_for_remote(lineage, origin, bucket, workflow)
                 .await
         {
+            if explicit_workflow {
+                // The remote is persisted, but the chosen workflow could not be
+                // applied (e.g. an unknown workflow id, or not logged in).
+                // Fail loudly so the user can fix the workflow id or log in and
+                // re-run Set Remote instead of pushing with the wrong workflow.
+                return Err(err);
+            }
             log::warn!(
                 "Remote saved but recommit failed ({err}); re-run Set Remote (e.g. after logging in) to complete it before pushing."
             );

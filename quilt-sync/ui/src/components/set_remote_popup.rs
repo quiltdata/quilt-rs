@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -51,11 +53,38 @@ pub fn SetRemotePopup(
             .then_some((host, bucket))
     });
 
-    // Fetch the bucket's workflows for the current target. `None` (the resource
-    // is pending) renders the loading hint; a fetch error degrades to the
-    // `Unavailable` notice, matching the commit dialog.
-    let workflows = LocalResource::new(move || {
+    // Debounced mirror of `valid_target`: the fetch keys on this so it fires
+    // once per *settled* bucket name (~400ms after the last keystroke) instead
+    // of on every character, which would flash the "Unavailable" notice and hit
+    // S3 for each intermediate bucket name. A cleared target propagates
+    // immediately (nothing to fetch); a new target supersedes any pending timer.
+    let debounced_target = RwSignal::new(valid_target.get_untracked());
+    let debounce_timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    Effect::new(move |_| {
         let target = valid_target.get();
+        if let Some(handle) = debounce_timer.get_value() {
+            handle.clear();
+        }
+        if target.is_none() {
+            debounced_target.set(None);
+        } else if let Ok(handle) = set_timeout_with_handle(
+            move || debounced_target.set(target),
+            Duration::from_millis(400),
+        ) {
+            debounce_timer.set_value(Some(handle));
+        }
+    });
+    on_cleanup(move || {
+        if let Some(Some(handle)) = debounce_timer.try_get_value() {
+            handle.clear();
+        }
+    });
+
+    // Fetch the bucket's workflows for the (debounced) target. `None` (the
+    // resource is pending) renders the loading hint; a fetch error degrades to
+    // the `Unavailable` notice, matching the commit dialog.
+    let workflows = LocalResource::new(move || {
+        let target = debounced_target.get();
         async move {
             match target {
                 Some((host, bucket)) => Some(commands::get_bucket_workflows(host, bucket).await),
@@ -87,10 +116,24 @@ pub fn SetRemotePopup(
     // No previous revision on a first push, so the divergence note never shows.
     let workflow_note = Memo::new(|_| None::<String>);
 
+    // True while a valid target's workflow config isn't ready yet — either the
+    // debounce timer is still pending or the fetch is in flight. Mirrors the
+    // "Loading workflows…" display branch below, so the Save action can be
+    // blocked until the submitted intent matches the currently-shown config.
+    let workflow_loading =
+        Memo::new(move |_| valid_target.get().is_some() && wf_view.get().is_none());
+    // Disable Save while submitting or while the workflow config is loading, so
+    // the submitted intent always corresponds to the displayed bucket's config
+    // and never a stale one from an earlier keystroke.
+    let save_disabled = Memo::new(move |_| submitting.get() || workflow_loading.get());
+
     let ns = namespace.clone();
     let on_close_submit = on_close.clone();
     let on_submit = move || {
-        if submitting.get_untracked() {
+        // Ignore a submit fired while already submitting, or while the workflow
+        // config is still loading — otherwise a fast Save mid-refetch could send
+        // a stale intent from a previous bucket.
+        if submitting.get_untracked() || workflow_loading.get_untracked() {
             return;
         }
         let origin_val = origin.get_untracked().trim().to_string();
@@ -272,7 +315,7 @@ pub fn SetRemotePopup(
 
                     <div class="set-remote-actions">
                         {(!locked).then(|| view! {
-                            <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
+                            <buttons::FormPrimary on_click=on_submit_click disabled=save_disabled>
                                 "Save"
                             </buttons::FormPrimary>
                         })}

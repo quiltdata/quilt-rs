@@ -798,6 +798,145 @@ schemas:
     Ok(manifest.header)
 }
 
+/// Build a locally-committed package against a bucket whose config declares a
+/// `foo` workflow but no `default_workflow`, ready for a `set_remote` call. The
+/// returned temp-dir guards must be kept alive for the package's storage to
+/// remain valid.
+async fn package_with_foo_config(
+    slug: &str,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    tempfile::TempDir,
+    tempfile::TempDir,
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", slug).into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // The target bucket declares `foo` but no `default_workflow`.
+    let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
+    let config = r"
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+    let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
+    remote
+        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .await?;
+    remote
+        .put_object(&None, &schema_uri, b"{}".to_vec())
+        .await?;
+
+    let lineage_json = format!(
+        r#"{{
+        "packages": {{
+            "test/{slug}": {{
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {{}}
+            }}
+        }},
+        "home": "/tmp/working_dir"
+    }}"#
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let package_home = home.join(namespace.to_string());
+    storage.create_dir_all(&package_home).await?;
+    storage
+        .write_byte_stream(
+            package_home.join("data.txt"),
+            ByteStream::from_static(b"hello world"),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    package
+        .commit(
+            "Initial commit".to_string(),
+            UserMeta::Set(serde_json::json!({"key": "value"})),
+            None,
+            None,
+        )
+        .await?;
+
+    Ok((package, temp_dir1, temp_dir2))
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_propagates_named_workflow_error() -> Res {
+    // An explicit `Named` gesture whose id isn't in the bucket config must make
+    // `set_remote` fail loudly rather than silently swallowing the recommit
+    // error (the user's workflow choice would otherwise be dropped).
+    let (package, _t1, _t2) = package_with_foo_config("named-error").await?;
+
+    let result = package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::Named("nope".to_string()),
+        )
+        .await;
+
+    assert!(
+        result.is_err(),
+        "an explicit Named intent with an unknown id must surface the recommit error"
+    );
+    assert!(
+        result.unwrap_err().to_string().contains("Workflow nope"),
+        "error should name the unresolved workflow"
+    );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_swallows_bucket_default_recommit_error() -> Res {
+    // The no-gesture `BucketDefault` path stays best-effort: even against the
+    // same config (with no `default_workflow`), `set_remote` succeeds — the
+    // remote is saved and any recommit hiccup is only logged.
+    let (package, _t1, _t2) = package_with_foo_config("bucketdefault-ok").await?;
+
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
+        .await?;
+
+    let lineage = package.lineage().await?;
+    assert!(
+        lineage.remote_uri.is_some(),
+        "remote should be persisted on the BucketDefault path"
+    );
+
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_set_remote_stamps_named_workflow() -> Res {
     // `Named("foo")` must stamp `foo` even though the bucket declares no default.
