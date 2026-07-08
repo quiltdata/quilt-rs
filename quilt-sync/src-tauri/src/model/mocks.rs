@@ -59,6 +59,7 @@ pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
     model
         .expect_browse_remote_manifest()
         .returning(|_| Ok(create_remote_manifest()));
+    model.expect_get_workflows_config().returning(|_| Ok(None));
     model
 }
 

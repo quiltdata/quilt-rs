@@ -71,6 +71,7 @@ pub struct CommitData {
     pub user_meta: String,
     pub user_meta_error: Option<String>,
     pub workflow: Option<CommitWorkflowData>,
+    pub workflows: CommitWorkflows,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -82,6 +83,39 @@ pub struct CommitWorkflowData {
     pub id: Option<String>,
     pub url: Option<String>,
     pub config_url: Option<String>,
+}
+
+/// A workflow declared under `workflows:` in the bucket's config, surfaced to
+/// the commit dialog so the user can pick one. Distinct from
+/// [`CommitWorkflowData`], which is the previous revision's stamped selection.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitWorkflowInfo {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// The bucket's workflow-selection situation, as the commit dialog should
+/// present it. Splits the three cases the backend can distinguish so the UI
+/// never conflates "ungoverned bucket" with "couldn't load the config":
+/// - `Available` — the bucket has a workflows config; carry its choices.
+/// - `NotConfigured` — no config (or no remote); the bucket is ungoverned.
+/// - `Unavailable` — the config fetch/parse failed; fall back at commit time.
+#[derive(Serialize)]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum CommitWorkflows {
+    Available {
+        workflows: Vec<CommitWorkflowInfo>,
+        default_workflow: Option<String>,
+        is_workflow_required: bool,
+    },
+    NotConfigured,
+    Unavailable,
 }
 
 async fn get_commit_data_from_model(
@@ -227,6 +261,32 @@ async fn get_commit_data_from_model(
             None => (String::new(), None, None),
         };
 
+    // Fetch the bucket's declared workflows for the commit dialog. A fetch
+    // failure (or a package with no remote) must NOT fail the command — the
+    // dialog still opens, and the UI presents the honest fallback state.
+    let workflows = match m.get_workflows_config(&installed_package).await {
+        Ok(Some(config)) => CommitWorkflows::Available {
+            workflows: config
+                .workflows
+                .into_iter()
+                .map(|w| CommitWorkflowInfo {
+                    id: w.id,
+                    name: w.name,
+                    description: w.description,
+                })
+                .collect(),
+            default_workflow: config.default_workflow,
+            is_workflow_required: config.is_workflow_required,
+        },
+        Ok(None) => CommitWorkflows::NotConfigured,
+        Err(e) => {
+            tracing::warn!(
+                "Failed to fetch the bucket's workflows config; the commit dialog will fall back to the bucket default: {e}"
+            );
+            CommitWorkflows::Unavailable
+        }
+    };
+
     Ok(CommitData {
         namespace: namespace.to_string(),
         uri: typed_uri,
@@ -235,6 +295,7 @@ async fn get_commit_data_from_model(
         user_meta,
         user_meta_error,
         workflow,
+        workflows,
         entries: entries_list,
         ignored_count,
         unmodified_count,
@@ -353,6 +414,7 @@ mod tests {
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
         // Return a manifest with workflow data
         model.expect_browse_remote_manifest().returning(|_| {
             let config_uri = quilt_uri::S3Uri {
@@ -421,6 +483,7 @@ mod tests {
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
         // Workflow exists but has no ID (null/checked state)
         model.expect_browse_remote_manifest().returning(|_| {
             let config_uri = quilt_uri::S3Uri {
@@ -486,6 +549,7 @@ mod tests {
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
         // No workflow in manifest
         model.expect_browse_remote_manifest().returning(|_| {
             Ok(quilt::manifest::Manifest {
@@ -508,5 +572,175 @@ mod tests {
 
         assert!(data.workflow.is_none());
         Ok(())
+    }
+
+    // ── Bucket workflow list (the `workflows` / `default_workflow` /
+    //    `is_workflow_required` fields) ──
+
+    /// Set up the model mocks shared by the workflow-list tests: an installed
+    /// package with a remote whose manifest carries no workflow stamp. The
+    /// caller wires up `expect_get_workflows_config`.
+    fn base_commit_model() -> crate::model::MockQuiltModel {
+        let mut model = mocks::create();
+
+        let remote_manifest = quilt_uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+            origin: Some("test.quilt.dev".parse().unwrap()),
+        };
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::default()));
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_browse_remote_manifest().returning(|_| {
+            Ok(quilt::manifest::Manifest {
+                header: quilt::manifest::ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: None,
+                },
+                rows: Vec::new(),
+            })
+        });
+        model
+    }
+
+    #[tokio::test]
+    async fn test_get_commit_data_workflows_available() -> Result<(), String> {
+        let mut model = base_commit_model();
+        // A sandbox-shaped config: multiple workflows, a declared default, and
+        // the required flag set true.
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+version: "1"
+is_workflow_required: true
+default_workflow: dummy
+workflows:
+  dummy:
+    name: Dummy workflow
+    description: Do nothing.
+  alpha:
+    name: Alpha
+    description: First workflow.
+"#,
+        )
+        .map_err(|e| e.to_string())?;
+        let config =
+            quilt::io::remote::WorkflowsConfig::from_yaml(&yaml).map_err(|e| e.to_string())?;
+        model
+            .expect_get_workflows_config()
+            .return_once(move |_| Ok(Some(config)));
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // `Ok(Some(cfg))` → Available, carrying the list/default/required flag.
+        let CommitWorkflows::Available {
+            workflows,
+            default_workflow,
+            is_workflow_required,
+        } = data.workflows
+        else {
+            return Err("expected Available".to_string());
+        };
+        assert_eq!(default_workflow, Some("dummy".to_string()));
+        assert!(is_workflow_required);
+        let ids: Vec<_> = workflows.iter().map(|w| w.id.as_str()).collect();
+        assert_eq!(ids, vec!["dummy", "alpha"]);
+        assert_eq!(workflows[0].name.as_deref(), Some("Dummy workflow"));
+        assert_eq!(workflows[0].description.as_deref(), Some("Do nothing."));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_commit_data_workflows_not_configured() -> Result<(), String> {
+        // `Ok(None)` (no config in the bucket) → NotConfigured: the bucket is
+        // ungoverned, distinct from a fetch failure.
+        let mut model = base_commit_model();
+        model.expect_get_workflows_config().returning(|_| Ok(None));
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(matches!(data.workflows, CommitWorkflows::NotConfigured));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_commit_data_workflows_unavailable() -> Result<(), String> {
+        // `Err(_)` must NOT fail get_commit_data: the dialog still opens, and
+        // the state is Unavailable so the UI falls back to the bucket default.
+        let mut model = base_commit_model();
+        model.expect_get_workflows_config().returning(|_| {
+            Err(Error::from(quilt::InstallPackageError::NotInstalled(
+                ("foo", "bar").into(),
+            )))
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(matches!(data.workflows, CommitWorkflows::Unavailable));
+        Ok(())
+    }
+
+    /// The tagged JSON `CommitWorkflows` serializes to is the wire contract the
+    /// UI mirror (`quilt_sync_ui::commands::CommitWorkflows`) deserializes. If
+    /// these strings drift, the commit dialog silently loses the workflow list.
+    #[test]
+    fn commit_workflows_wire_form_is_verbatim() {
+        let available = CommitWorkflows::Available {
+            workflows: vec![CommitWorkflowInfo {
+                id: "alpha".to_string(),
+                name: Some("Alpha".to_string()),
+                description: None,
+            }],
+            default_workflow: Some("alpha".to_string()),
+            is_workflow_required: true,
+        };
+        assert_eq!(
+            serde_json::to_value(&available).unwrap(),
+            serde_json::json!({
+                "state": "available",
+                "workflows": [{"id": "alpha", "name": "Alpha", "description": null}],
+                "defaultWorkflow": "alpha",
+                "isWorkflowRequired": true,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(CommitWorkflows::NotConfigured).unwrap(),
+            serde_json::json!({"state": "notConfigured"})
+        );
+        assert_eq!(
+            serde_json::to_value(CommitWorkflows::Unavailable).unwrap(),
+            serde_json::json!({"state": "unavailable"})
+        );
     }
 }

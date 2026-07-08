@@ -44,7 +44,10 @@ pub struct CommitData {
     pub message: String,
     pub user_meta: String,
     pub user_meta_error: Option<String>,
+    /// The previous revision's stamped workflow selection (its `id`), if any.
     pub workflow: Option<WorkflowData>,
+    /// The bucket's workflow-selection situation for the commit dialog.
+    pub workflows: CommitWorkflows,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -54,7 +57,42 @@ pub struct CommitData {
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowData {
     pub id: Option<String>,
-    pub url: Option<String>,
+}
+
+/// A workflow declared under `workflows:` in the bucket's config, surfaced to
+/// the commit dialog so the user can pick one. UI-side mirror of the backend
+/// `CommitWorkflowInfo`. Distinct from [`WorkflowData`], which is the previous
+/// revision's stamped selection.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowInfo {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// The bucket's workflow-selection situation, as sent by the backend
+/// (`quilt_sync::commands::commit_data::CommitWorkflows`). The serde
+/// attributes MUST stay identical to the backend so the tagged JSON crosses
+/// the Tauri boundary unchanged. Splits the three cases the commit dialog
+/// renders distinctly:
+/// - `Available` — the bucket has a config; offer its workflow choices.
+/// - `NotConfigured` — the bucket is ungoverned; no choice to make.
+/// - `Unavailable` — the config fetch/parse failed; fall back at commit time.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum CommitWorkflows {
+    Available {
+        workflows: Vec<WorkflowInfo>,
+        default_workflow: Option<String>,
+        is_workflow_required: bool,
+    },
+    NotConfigured,
+    Unavailable,
 }
 
 /// Caller intent for resolving a package's workflow, sent with a commit.
@@ -705,7 +743,39 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::WorkflowIntent;
+    use super::{CommitWorkflows, WorkflowInfo, WorkflowIntent};
+
+    /// The mirror enum must deserialize the exact tagged JSON the backend
+    /// (`quilt_sync::commands::commit_data::CommitWorkflows`) serializes. These
+    /// literals are anchored identically in the backend's
+    /// `commit_workflows_wire_form_is_verbatim`; if the two drift, the commit
+    /// dialog silently loses the workflow list.
+    #[test]
+    fn commit_workflows_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<CommitWorkflows>(
+                r#"{"state":"available","workflows":[{"id":"alpha","name":"Alpha","description":null}],"defaultWorkflow":"alpha","isWorkflowRequired":true}"#
+            )
+            .unwrap(),
+            CommitWorkflows::Available {
+                workflows: vec![WorkflowInfo {
+                    id: "alpha".to_string(),
+                    name: Some("Alpha".to_string()),
+                    description: None,
+                }],
+                default_workflow: Some("alpha".to_string()),
+                is_workflow_required: true,
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<CommitWorkflows>(r#"{"state":"notConfigured"}"#).unwrap(),
+            CommitWorkflows::NotConfigured
+        );
+        assert_eq!(
+            serde_json::from_str::<CommitWorkflows>(r#"{"state":"unavailable"}"#).unwrap(),
+            CommitWorkflows::Unavailable
+        );
+    }
 
     /// The mirror enum must serialize to the exact tagged JSON the backend
     /// (`quilt_rs::io::remote::WorkflowIntent`) deserializes, and round-trip

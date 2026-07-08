@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha3] - 2026-07-08
+
+### Added
+
+- `WorkflowsConfig` and `WorkflowInfo`: a typed view of `.quilt/workflows/config.yml` exposing the workflow list (with names and descriptions), the default workflow, and the required flag (<https://github.com/quiltdata/quilt-rs/pull/746>)
+
 ## [v0.33.0-alpha2] - 2026-07-07
 
 ### Changed

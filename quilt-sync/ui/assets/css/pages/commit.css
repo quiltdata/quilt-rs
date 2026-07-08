@@ -169,20 +169,19 @@
   }
 
   .workflow {
-    align-items: center;
-    display: grid;
-    column-gap: 16px;
-    grid-template-columns: 1fr 120px;
+    position: relative;
   }
 
-  .workflow-null {
+  .workflow .input {
+    appearance: auto;
     cursor: pointer;
-    text-align: right;
   }
 
-  .workflow-null-label {
-    cursor: pointer;
-    margin-left: 8px;
+  .workflow .hint {
+    color: var(--q-ui-palette-text-secondary);
+    display: block;
+    font-size: var(--q-ui-font-size-small);
+    margin-top: var(--q-ui-size-0-5);
   }
 
   .field-description {

@@ -3,7 +3,9 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, CommitData, EntryData, WorkflowData, WorkflowIntent};
+use crate::commands::{
+    self, CommitData, CommitWorkflows, EntryData, WorkflowData, WorkflowInfo, WorkflowIntent,
+};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
@@ -96,19 +98,42 @@ fn CommitContent(
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
 
-    // Workflow state
-    let workflow = data.workflow.clone();
-    let workflow_id = RwSignal::new(
-        workflow
-            .as_ref()
-            .and_then(|w| w.id.clone())
-            .unwrap_or_default(),
-    );
-    // Pre-check "No workflow" ONLY when the previous revision explicitly
-    // recorded a null-id workflow. A never-pushed package (`None`) seeds
-    // unchecked → submits `BucketDefault`, letting it pick up the bucket
-    // default from the dialog.
-    let workflow_null = RwSignal::new(workflow.as_ref().is_some_and(|w| w.id.is_none()));
+    // Workflow state: the backend's `CommitWorkflows` state maps to a render
+    // model whose option list carries, per entry, the `WorkflowIntent` it
+    // submits. The selected index into that list is the whole client-side
+    // state.
+    let previous_workflow = PreviousWorkflow::from_stamp(data.workflow.as_ref());
+    let wf_view = build_workflow_view(&data.workflows, previous_workflow.preselect_id());
+    // `wf_view.initial` is the single source of truth for the starting
+    // selection: it both seeds this signal (which submit reads) and is passed
+    // to `WorkflowSection` to render the `selected` attribute, so display and
+    // submit start from the same index into the same option list.
+    let initial_workflow = wf_view.initial;
+    let selected_workflow = RwSignal::new(initial_workflow);
+    // Intents mirrored for the submit path — the selected option's intent is
+    // passed straight through, so `Named("")` can never be constructed. On the
+    // NotConfigured/Unavailable states this is a single `BucketDefault` entry.
+    let workflow_intents: Vec<WorkflowIntent> =
+        wf_view.options.iter().map(|o| o.intent.clone()).collect();
+
+    // Neutral override note: recomputed as the selection changes, it surfaces
+    // when the current pick diverges from what the previous revision stamped
+    // (the bucket default winning over the previous pick in `preselected_index`
+    // can silently override the user's earlier choice). Only the `Available`
+    // state declares workflows to name; the other states carry an empty list
+    // and never render the note.
+    let note_workflows: Vec<WorkflowInfo> = match &data.workflows {
+        CommitWorkflows::Available { workflows, .. } => workflows.clone(),
+        CommitWorkflows::NotConfigured | CommitWorkflows::Unavailable => Vec::new(),
+    };
+    let note_intents = workflow_intents.clone();
+    let workflow_note = Memo::new(move |_| {
+        let current = note_intents
+            .get(selected_workflow.get())
+            .cloned()
+            .unwrap_or(WorkflowIntent::BucketDefault);
+        previous_workflow_note(&previous_workflow, &current, &note_workflows)
+    });
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -153,7 +178,10 @@ fn CommitContent(
         ui_locked.set(true);
         let ns = ns_for_action.clone();
         let meta = get_json_editor_value("metadata-editor");
-        let wf = workflow_intent(workflow_null.get_untracked(), &workflow_id.get_untracked());
+        let wf = workflow_intents
+            .get(selected_workflow.get_untracked())
+            .cloned()
+            .unwrap_or(WorkflowIntent::BucketDefault);
         leptos::task::spawn_local(async move {
             let result = if push {
                 commands::package_commit_and_push(ns.clone(), msg, meta, wf).await
@@ -193,9 +221,9 @@ fn CommitContent(
                 <div class="form">
                     // ── Workflow ──
                     <WorkflowSection
-                        workflow=data.workflow.clone()
-                        workflow_id=workflow_id
-                        workflow_null=workflow_null
+                        view=wf_view
+                        selected=selected_workflow
+                        note=workflow_note
                     />
 
                     // ── Namespace (readonly) ──
@@ -350,26 +378,280 @@ fn CommitContent(
     }
 }
 
-// ── Workflow intent construction ──
+// ── Workflow dropdown model ──
 
-/// Map the dialog's two-signal workflow state onto a single [`WorkflowIntent`].
+/// One entry in the workflow dropdown. Carries its own display label and the
+/// [`WorkflowIntent`] it submits, so the commit handler passes the selected
+/// option's intent straight through — no re-derivation, never `Named("")`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkflowOption {
+    label: String,
+    intent: WorkflowIntent,
+    disabled: bool,
+}
+
+/// Display label for a single declared workflow: its name, or its id when the
+/// config gave no name.
+fn workflow_label(w: &WorkflowInfo) -> String {
+    w.name.clone().unwrap_or_else(|| w.id.clone())
+}
+
+/// The previous revision's workflow stamp, distinguishing the three cases the
+/// override note must tell apart.
 ///
-/// One uniform mapping — no `has_workflow` special case:
-/// - "No workflow" checked → [`WorkflowIntent::NoWorkflow`] (explicit opt-out);
-/// - unchecked, trimmed id non-empty → [`WorkflowIntent::Named`];
-/// - unchecked, id empty (or whitespace-only) → [`WorkflowIntent::BucketDefault`].
-///
-/// A [`WorkflowIntent::Named`] is NEVER constructed with an empty id — that
-/// used to submit `Workflow  not found` downstream.
-fn workflow_intent(workflow_null: bool, id: &str) -> WorkflowIntent {
-    if workflow_null {
-        return WorkflowIntent::NoWorkflow;
+/// `preselected_index` only needs the concrete `Named` id, but the note also
+/// cares whether the previous revision was never pushed versus explicitly
+/// stamped with no workflow — so this is the one place that distinction lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PreviousWorkflow {
+    NeverPushed,
+    ExplicitNone,
+    Named(String),
+}
+
+impl PreviousWorkflow {
+    /// Derive from the previous revision's stamp: absent → never pushed, present
+    /// with no id → an explicit no-workflow choice, present with an id → that
+    /// workflow.
+    fn from_stamp(workflow: Option<&WorkflowData>) -> Self {
+        match workflow {
+            None => Self::NeverPushed,
+            Some(WorkflowData { id: None }) => Self::ExplicitNone,
+            Some(WorkflowData { id: Some(id) }) => Self::Named(id.clone()),
+        }
     }
-    let id = id.trim();
-    if id.is_empty() {
-        WorkflowIntent::BucketDefault
+
+    /// The workflow id `preselected_index` treats as the previous pick: only a
+    /// concrete named workflow, collapsing never-pushed and explicit-none (the
+    /// same behavior preselection had before this note existed).
+    fn preselect_id(&self) -> Option<&str> {
+        match self {
+            Self::Named(id) => Some(id),
+            Self::NeverPushed | Self::ExplicitNone => None,
+        }
+    }
+}
+
+/// Neutral note shown under the dropdown when the currently-selected workflow
+/// diverges from what the previous revision stamped, so the override (the
+/// bucket default winning over the previous pick in `preselected_index`) is
+/// visible. `None` means no divergence to report.
+///
+/// Pure and signal-free: the render layer recomputes it whenever the selection
+/// changes.
+fn previous_workflow_note(
+    previous: &PreviousWorkflow,
+    current: &WorkflowIntent,
+    workflows: &[WorkflowInfo],
+) -> Option<String> {
+    match previous {
+        // Nothing was ever stamped, so nothing can be overridden.
+        PreviousWorkflow::NeverPushed => None,
+        PreviousWorkflow::ExplicitNone => match current {
+            WorkflowIntent::NoWorkflow => None,
+            WorkflowIntent::BucketDefault | WorkflowIntent::Named(_) => {
+                Some("The previous revision used no workflow.".to_string())
+            }
+        },
+        PreviousWorkflow::Named(prev) => {
+            if matches!(current, WorkflowIntent::Named(id) if id == prev) {
+                None
+            } else {
+                let label = workflows
+                    .iter()
+                    .find(|w| &w.id == prev)
+                    .map_or_else(|| prev.clone(), workflow_label);
+                Some(format!(
+                    "The previous revision used the \"{label}\" workflow."
+                ))
+            }
+        }
+    }
+}
+
+/// Build the dropdown's option list for the [`CommitWorkflows::Available`]
+/// state, matching the web catalog's order:
+/// - index 0: `None` → [`WorkflowIntent::NoWorkflow`], disabled when a workflow
+///   is required. Its label gains `" (default)"` when the config names no
+///   default and no workflow is required — then `None` is itself the bucket
+///   default (the resolver treats `BucketDefault` and `NoWorkflow` alike);
+/// - one entry per declared workflow (label = name or id, with `" (default)"`
+///   appended to the bucket default) → [`WorkflowIntent::Named`].
+///
+/// Exactly one option ever bears `" (default)"`: whichever is the bucket's
+/// actual default. A required-but-defaultless bucket has none.
+///
+/// There is deliberately no `Bucket default` item — the catalog offers only
+/// `None` plus the concrete workflows. An Available-but-empty workflow list
+/// therefore yields just `[None]`, which is fine.
+fn workflow_options(
+    workflows: &[WorkflowInfo],
+    default_workflow: Option<&str>,
+    is_workflow_required: bool,
+) -> Vec<WorkflowOption> {
+    // When the config names no default and doesn't require a workflow, `None`
+    // IS the bucket default (the resolver treats `BucketDefault` and
+    // `NoWorkflow` identically then), so it bears the `(default)` marker.
+    // A required-but-defaultless bucket leaves `None` disabled with the
+    // required error, so it must not be labeled default.
+    let none_is_default = default_workflow.is_none() && !is_workflow_required;
+    let none_label = if none_is_default {
+        "None (default)".to_string()
     } else {
-        WorkflowIntent::Named(id.to_string())
+        "None".to_string()
+    };
+    let mut options = vec![WorkflowOption {
+        label: none_label,
+        intent: WorkflowIntent::NoWorkflow,
+        disabled: is_workflow_required,
+    }];
+
+    options.extend(workflows.iter().map(|w| {
+        let is_default = default_workflow.is_some_and(|id| id == w.id);
+        let label = if is_default {
+            format!("{} (default)", workflow_label(w))
+        } else {
+            workflow_label(w)
+        };
+        WorkflowOption {
+            label,
+            intent: WorkflowIntent::Named(w.id.clone()),
+            disabled: false,
+        }
+    }));
+
+    options
+}
+
+/// Index (into [`workflow_options`]'s output) that should start selected in the
+/// [`CommitWorkflows::Available`] state.
+///
+/// The bucket default always wins over the previous revision's pick — that is
+/// what makes it the default. This intentionally diverges from the web catalog,
+/// which preselects the previous revision's workflow first. That rule dates to
+/// the 2020 package-update dialog (quilt#1856), which chose to reuse the
+/// previous revision's workflow even though `default_workflow` already existed —
+/// a deliberate but lightly-justified UX choice (a one-line "reuse previous"
+/// comment, no recorded rationale). We prefer the bucket default here instead —
+/// it also heals packages whose workflow was set through the earlier error-prone
+/// free-text field: the next commit adopts what the bucket intends rather than
+/// carrying a likely-wrong prior stamp forward. Options are laid out as
+/// `[None, workflows..]`, so
+/// a workflow at position `p` maps to option index `p + 1`. The rule mirrors the
+/// `(default)` marker that [`workflow_options`] applies:
+///
+/// 1. A named `default_workflow` present in the list → its index (ignoring the
+///    previous pick).
+/// 2. No named default and the bucket doesn't require a workflow → index 0, the
+///    `None` head, which is itself labeled `None (default)` and so is the
+///    effective default.
+/// 3. Required bucket with no usable default (genuinely no default): the
+///    previous revision's workflow if present, else index 0 (`None`, disabled).
+fn preselected_index(
+    workflows: &[WorkflowInfo],
+    previous_workflow_id: Option<&str>,
+    default_workflow: Option<&str>,
+    is_workflow_required: bool,
+) -> usize {
+    // 1. A named default in the list wins outright.
+    if let Some(def) = default_workflow
+        && let Some(pos) = workflows.iter().position(|w| w.id == def)
+    {
+        return pos + 1;
+    }
+    // 2. No named default and no requirement: `None` is itself the default
+    //    (labeled "None (default)"), so it wins too — keeping "the default
+    //    always wins" uniform.
+    if !is_workflow_required {
+        return 0;
+    }
+    // 3. Required with genuinely no default: fall back to the previous pick.
+    if let Some(prev) = previous_workflow_id
+        && let Some(pos) = workflows.iter().position(|w| w.id == prev)
+    {
+        return pos + 1;
+    }
+    // The `None` item sits at the head of the option list.
+    0
+}
+
+/// Which of the three [`CommitWorkflows`] states the section renders, plus the
+/// per-state chrome the render needs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WorkflowViewKind {
+    /// The bucket has a config: render the dropdown. Carries whether the bucket
+    /// requires a workflow (drives the "required" hint).
+    Available { is_workflow_required: bool },
+    /// The bucket is ungoverned: a single disabled `None`, no choice to make.
+    NotConfigured,
+    /// The config couldn't be loaded: an inline notice, no dropdown.
+    Unavailable,
+}
+
+/// The commit dialog's workflow section, resolved from the backend state.
+///
+/// `options` and `initial` drive both display and submit uniformly across all
+/// three states: submit reads `options[selected].intent`. On the non-`Available`
+/// states this is a single [`WorkflowIntent::BucketDefault`] entry at index 0,
+/// so a config-less bucket resolves to no-workflow while a transient failure
+/// re-resolves the real default at commit time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkflowView {
+    kind: WorkflowViewKind,
+    options: Vec<WorkflowOption>,
+    initial: usize,
+}
+
+/// Map the backend [`CommitWorkflows`] state to the section's render model.
+fn build_workflow_view(
+    workflows: &CommitWorkflows,
+    previous_workflow_id: Option<&str>,
+) -> WorkflowView {
+    match workflows {
+        CommitWorkflows::Available {
+            workflows,
+            default_workflow,
+            is_workflow_required,
+        } => WorkflowView {
+            kind: WorkflowViewKind::Available {
+                is_workflow_required: *is_workflow_required,
+            },
+            options: workflow_options(
+                workflows,
+                default_workflow.as_deref(),
+                *is_workflow_required,
+            ),
+            initial: preselected_index(
+                workflows,
+                previous_workflow_id,
+                default_workflow.as_deref(),
+                *is_workflow_required,
+            ),
+        },
+        // Ungoverned bucket: a single disabled `None`. Submit sends
+        // `BucketDefault`, which on a config-less bucket resolves to
+        // no-workflow — the honest "let the bucket decide".
+        CommitWorkflows::NotConfigured => WorkflowView {
+            kind: WorkflowViewKind::NotConfigured,
+            options: vec![WorkflowOption {
+                label: "None".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: true,
+            }],
+            initial: 0,
+        },
+        // Config load failed: no dropdown, just a notice. Submit sends
+        // `BucketDefault` so the real default re-resolves at commit time
+        // (the network may have recovered) rather than forcing no-workflow.
+        CommitWorkflows::Unavailable => WorkflowView {
+            kind: WorkflowViewKind::Unavailable,
+            options: vec![WorkflowOption {
+                label: "Bucket default".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: true,
+            }],
+            initial: 0,
+        },
     }
 }
 
@@ -377,93 +659,116 @@ fn workflow_intent(workflow_null: bool, id: &str) -> WorkflowIntent {
 
 #[component]
 fn WorkflowSection(
-    workflow: Option<WorkflowData>,
-    workflow_id: RwSignal<String>,
-    workflow_null: RwSignal<bool>,
+    view: WorkflowView,
+    selected: RwSignal<usize>,
+    /// Neutral divergence note, live over `selected`. Rendered only in the
+    /// `Available` state; the other states have no dropdown to override.
+    note: Memo<Option<String>>,
 ) -> impl IntoView {
-    match workflow {
-        Some(w) => {
-            let has_id = w.id.is_some();
-            let url = w.url.clone();
+    let WorkflowView {
+        kind,
+        options,
+        initial,
+    } = view;
 
-            view! {
-                <div class="workflow">
-                    <p class="field">
-                        <label class="label" for="workflow">"Workflow ID"</label>
-                        <input
-                            class="input"
-                            id="workflow"
-                            name="workflow"
-                            prop:value=move || workflow_id.get()
-                            prop:disabled=move || workflow_null.get()
-                            on:input=move |ev| workflow_id.set(event_target_value(&ev))
-                        />
-                    </p>
-                    <p class="field-description">
-                        "Leave empty to use the bucket's default workflow (if configured)."
-                    </p>
-                    <div class="workflow-null">
-                        <input
-                            id="workflow-null"
-                            type="checkbox"
-                            prop:checked=move || workflow_null.get()
-                            on:change=move |_| {
-                                workflow_null.set(!workflow_null.get_untracked());
-                            }
-                        />
-                        <label class="workflow-null-label" for="workflow-null">
-                            "No workflow"
-                        </label>
-                    </div>
-                    {url.map(|url_str| {
-                        let url_for_click = url_str.clone();
-                        view! {
-                            <p class="field-description">
-                                {if has_id { "Use the workflow ID from " } else { "" }}
-                                <a
-                                    class="link"
-                                    on:click=move |_| {
-                                        let url = url_for_click.clone();
-                                        leptos::task::spawn_local(async move {
-                                            let _ = commands::open_in_web_browser(url).await;
-                                        });
-                                    }
-                                >
-                                    ".quilt/workflows/config.yaml"
-                                </a>
-                            </p>
-                        }
-                    })}
-                </div>
-            }
-            .into_any()
-        }
-        None => view! {
+    match kind {
+        WorkflowViewKind::Available {
+            is_workflow_required,
+        } => workflow_dropdown(options, selected, initial, is_workflow_required, note).into_any(),
+        // Ungoverned bucket: a single disabled `None`, plus a hint explaining
+        // why there is no choice to make. Submit already carries `BucketDefault`
+        // via `options[0]`.
+        WorkflowViewKind::NotConfigured => view! {
             <div class="workflow">
                 <p class="field">
-                    <label class="label" for="workflow">"Workflow ID"</label>
-                    <input
-                        class="input"
-                        disabled
-                        prop:value="Bucket's default workflow (if configured)"
-                    />
+                    <label class="label" for="workflow">"Workflow"</label>
+                    <select class="input" id="workflow" name="workflow" disabled>
+                        <option selected>"None"</option>
+                    </select>
                 </p>
-                <div class="workflow-null">
-                    <input
-                        id="workflow-null"
-                        type="checkbox"
-                        prop:checked=move || workflow_null.get()
-                        on:change=move |_| {
-                            workflow_null.set(!workflow_null.get_untracked());
-                        }
-                    />
-                    <label class="workflow-null-label" for="workflow-null">
-                        "No workflow"
-                    </label>
-                </div>
+                <span class="hint">"This bucket has no workflow configuration."</span>
             </div>
         }
         .into_any(),
+        // Config load failed: no dropdown, just an inline notice. Submit does
+        // not block; it re-resolves the bucket default at commit time.
+        WorkflowViewKind::Unavailable => view! {
+            <div class="workflow">
+                <p class="field">
+                    <label class="label" for="workflow">"Workflow"</label>
+                    <span class="hint">
+                        "⚠ Couldn't load this bucket's workflows. Commit will use the bucket default."
+                    </span>
+                </p>
+            </div>
+        }
+        .into_any(),
+    }
+}
+
+/// The [`CommitWorkflows::Available`] dropdown.
+fn workflow_dropdown(
+    options: Vec<WorkflowOption>,
+    selected: RwSignal<usize>,
+    initial: usize,
+    is_workflow_required: bool,
+    note: Memo<Option<String>>,
+) -> impl IntoView {
+    // Intents indexed by option position — used to decide whether the current
+    // selection is the (disabled) `None` item, which drives the required hint.
+    let intents: Vec<WorkflowIntent> = options.iter().map(|o| o.intent.clone()).collect();
+    let show_required_hint = move || {
+        is_workflow_required
+            && intents
+                .get(selected.get())
+                .is_some_and(|i| *i == WorkflowIntent::NoWorkflow)
+    };
+
+    // The initial selection is rendered as the HTML boolean `selected`
+    // attribute on the matching option. Unlike a `<select prop:value=…>`
+    // (which tachys applies before the options mount, making it a no-op), the
+    // attribute survives mount order and works even on the disabled `None`
+    // option. `initial` is the same index that seeds `selected` in the parent,
+    // so what the browser shows and what submit sends cannot diverge. The
+    // `on:change` handler keeps the `selected` signal in step thereafter.
+    let option_views = options
+        .into_iter()
+        .enumerate()
+        .map(|(i, o)| {
+            view! {
+                <option value=i.to_string() selected=i == initial disabled=o.disabled>
+                    {o.label}
+                </option>
+            }
+        })
+        .collect::<Vec<_>>();
+
+    view! {
+        <div class="workflow">
+            <p class="field">
+                <label class="label" for="workflow">"Workflow"</label>
+                <select
+                    class="input"
+                    id="workflow"
+                    name="workflow"
+                    on:change=move |ev| {
+                        if let Ok(i) = event_target_value(&ev).parse::<usize>() {
+                            selected.set(i);
+                        }
+                    }
+                >
+                    {option_views}
+                </select>
+            </p>
+            <Show when=show_required_hint>
+                <span class="error">"Workflow is required for this bucket."</span>
+            </Show>
+            // Neutral note: appears when the current pick diverges from the
+            // previous revision's stamp, and disappears when they match again.
+            {move || {
+                note.get().map(|text| view! { <p class="hint">{text}</p> })
+            }}
+        </div>
     }
 }
 
@@ -769,37 +1074,438 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::workflow_intent;
-    use crate::commands::WorkflowIntent;
+    use super::{
+        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, preselected_index,
+        previous_workflow_note, workflow_options,
+    };
+    use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
-    #[test]
-    fn checked_is_no_workflow() {
-        assert_eq!(workflow_intent(true, ""), WorkflowIntent::NoWorkflow);
-        // The id in the box is irrelevant while "No workflow" is checked.
-        assert_eq!(workflow_intent(true, "foo"), WorkflowIntent::NoWorkflow);
+    fn wf(id: &str, name: Option<&str>) -> WorkflowInfo {
+        WorkflowInfo {
+            id: id.to_string(),
+            name: name.map(str::to_string),
+            description: None,
+        }
     }
 
+    // ── Normal path (workflows non-empty) ──
+
     #[test]
-    fn unchecked_with_id_is_named() {
+    fn options_normal_none_head_default_labeled_no_bucket_default() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("alpha"), false);
         assert_eq!(
-            workflow_intent(false, "my-wf"),
-            WorkflowIntent::Named("my-wf".to_string())
+            opts,
+            vec![
+                WorkflowOption {
+                    label: "None".to_string(),
+                    intent: WorkflowIntent::NoWorkflow,
+                    disabled: false,
+                },
+                WorkflowOption {
+                    // The bucket default gets the " (default)" suffix.
+                    label: "Alpha WF (default)".to_string(),
+                    intent: WorkflowIntent::Named("alpha".to_string()),
+                    disabled: false,
+                },
+                WorkflowOption {
+                    // No name → fall back to the id as the label; not the default.
+                    label: "beta".to_string(),
+                    intent: WorkflowIntent::Named("beta".to_string()),
+                    disabled: false,
+                },
+            ]
+        );
+        // The normal path never offers a `Bucket default` item.
+        assert!(
+            opts.iter()
+                .all(|o| o.intent != WorkflowIntent::BucketDefault)
         );
     }
 
     #[test]
-    fn unchecked_empty_is_bucket_default() {
-        assert_eq!(workflow_intent(false, ""), WorkflowIntent::BucketDefault);
+    fn options_default_suffix_uses_label_or_id() {
+        // Unnamed default → suffix appended to the id.
+        let wfs = vec![wf("beta", None)];
+        assert_eq!(
+            workflow_options(&wfs, Some("beta"), false)[1].label,
+            "beta (default)"
+        );
+        // Default id not present in the list → no option carries the suffix.
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        let opts = workflow_options(&wfs, Some("ghost"), false);
+        assert_eq!(opts[1].label, "Alpha WF");
+        assert!(opts.iter().all(|o| !o.label.contains("(default)")));
     }
 
     #[test]
-    fn unchecked_whitespace_only_is_bucket_default_never_named_empty() {
-        // Whitespace-only must collapse to BucketDefault, not Named("") — the
-        // latter errors downstream as `Workflow  not found`.
-        assert_eq!(workflow_intent(false, "   "), WorkflowIntent::BucketDefault);
+    fn options_no_default_not_required_labels_none_as_default() {
+        // No named default and not required → `None` IS the bucket default, so
+        // it carries the suffix; the concrete workflow does not.
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        let opts = workflow_options(&wfs, None, false);
+        assert_eq!(opts[0].label, "None (default)");
+        assert_eq!(opts[1].label, "Alpha WF");
+    }
+
+    /// Number of labels ending in the `(default)` marker across the option list.
+    fn default_marker_count(opts: &[WorkflowOption]) -> usize {
+        opts.iter()
+            .filter(|o| o.label.ends_with("(default)"))
+            .count()
+    }
+
+    #[test]
+    fn options_exactly_one_default_marker_when_named_default_present() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("alpha"), false);
+        // The named default is the real workflow; `None` stays plain.
+        assert_eq!(opts[0].label, "None");
+        assert_eq!(default_marker_count(&opts), 1);
+        assert_eq!(opts[1].label, "Alpha WF (default)");
+    }
+
+    #[test]
+    fn options_exactly_one_default_marker_when_no_default_not_required() {
+        // No named default and not required → `None` is the only default.
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, None, false);
+        assert_eq!(default_marker_count(&opts), 1);
+        assert_eq!(opts[0].label, "None (default)");
+    }
+
+    #[test]
+    fn options_no_default_marker_when_no_default_but_required() {
+        // Required with no named default → `None` is disabled with the required
+        // error, so it must NOT be labeled default; there genuinely is none.
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, None, true);
+        assert_eq!(default_marker_count(&opts), 0);
+        assert_eq!(opts[0].label, "None");
+        assert!(opts[0].disabled);
+    }
+
+    #[test]
+    fn options_no_default_marker_when_named_default_absent_from_list() {
+        // Stale/misconfigured default id not in the list → the real-workflow
+        // branch adds no marker, and `None` gets none either (default is Some).
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("ghost"), false);
+        assert_eq!(default_marker_count(&opts), 0);
+        assert_eq!(opts[0].label, "None");
+    }
+
+    #[test]
+    fn options_none_disabled_iff_required() {
+        let wfs = vec![wf("alpha", None)];
+        let required = workflow_options(&wfs, None, true);
+        assert_eq!(required[0].intent, WorkflowIntent::NoWorkflow);
+        assert!(required[0].disabled);
+        assert!(!workflow_options(&wfs, None, false)[0].disabled);
+    }
+
+    #[test]
+    fn options_available_empty_list_is_just_none() {
+        // An Available-but-empty workflow list yields just `[None]` (labeled the
+        // default, since nothing is required and no default is named).
+        let opts = workflow_options(&[], None, false);
         assert_eq!(
-            workflow_intent(false, "\t\n"),
-            WorkflowIntent::BucketDefault
+            opts,
+            vec![WorkflowOption {
+                label: "None (default)".to_string(),
+                intent: WorkflowIntent::NoWorkflow,
+                disabled: false,
+            }]
         );
+    }
+
+    // ── State → render model (`build_workflow_view`) ──
+
+    #[test]
+    fn view_available_builds_dropdown_options() {
+        let workflows = CommitWorkflows::Available {
+            workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
+            default_workflow: Some("alpha".to_string()),
+            is_workflow_required: false,
+        };
+        let view = build_workflow_view(&workflows, Some("beta"));
+        assert_eq!(
+            view.kind,
+            WorkflowViewKind::Available {
+                is_workflow_required: false
+            }
+        );
+        // Options + preselection match the pure builders for the Available case.
+        // Previous picked "beta", but the named default "alpha" wins.
+        assert_eq!(view.options.len(), 3);
+        assert_eq!(view.initial, 1);
+        assert_eq!(
+            view.options[view.initial].intent,
+            WorkflowIntent::Named("alpha".to_string())
+        );
+    }
+
+    #[test]
+    fn view_not_configured_is_single_disabled_none_submitting_bucket_default() {
+        let view = build_workflow_view(&CommitWorkflows::NotConfigured, None);
+        assert_eq!(view.kind, WorkflowViewKind::NotConfigured);
+        assert_eq!(view.initial, 0);
+        assert_eq!(
+            view.options,
+            vec![WorkflowOption {
+                label: "None".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn view_unavailable_submits_bucket_default() {
+        let view = build_workflow_view(&CommitWorkflows::Unavailable, Some("ignored"));
+        assert_eq!(view.kind, WorkflowViewKind::Unavailable);
+        assert_eq!(view.initial, 0);
+        // Both non-Available states submit `BucketDefault`, but they are
+        // distinct render inputs (NotConfigured vs Unavailable).
+        assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
+    }
+
+    // ── Preselection: the bucket default always wins over the previous pick ──
+
+    #[test]
+    fn preselect_named_default_wins_over_previous() {
+        let wfs = vec![wf("alpha", None), wf("beta", None)];
+        // Options: [None=0, alpha=1, beta=2]. Previous picked beta, but the
+        // named default alpha wins — that's why it is the default.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("alpha"), false),
+            1
+        );
+        // Requiredness doesn't change it: a named default still wins.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("alpha"), true),
+            1
+        );
+    }
+
+    #[test]
+    fn preselect_none_default_wins_when_not_required() {
+        let wfs = vec![wf("alpha", None), wf("beta", None)];
+        // No named default, not required → `None` is the effective default
+        // ("None (default)") and wins over the previous pick.
+        assert_eq!(preselected_index(&wfs, Some("beta"), None, false), 0);
+        // A named default absent from the list is no usable default; not
+        // required → `None` still wins.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("ghost"), false),
+            0
+        );
+    }
+
+    #[test]
+    fn preselect_required_no_default_falls_back_to_previous() {
+        let wfs = vec![wf("alpha", None), wf("beta", None)];
+        // Required with genuinely no default: the previous revision's workflow.
+        assert_eq!(preselected_index(&wfs, Some("beta"), None, true), 2);
+        // A named default absent from the list is still no default.
+        assert_eq!(
+            preselected_index(&wfs, Some("beta"), Some("ghost"), true),
+            2
+        );
+        // Required, no default, no previous → the `None` head (disabled).
+        assert_eq!(preselected_index(&wfs, None, None, true), 0);
+        // Required, no default, previous absent from the list → `None` head.
+        assert_eq!(preselected_index(&wfs, Some("ghost"), None, true), 0);
+    }
+
+    // ── Consistency invariant: preselection lands on the "(default)" option ──
+
+    #[test]
+    fn preselect_agrees_with_default_label() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+
+        // Case 1: named default present → selected option bears "(default)".
+        let opts = workflow_options(&wfs, Some("alpha"), false);
+        let idx = preselected_index(&wfs, Some("beta"), Some("alpha"), false);
+        assert!(opts[idx].label.ends_with("(default)"));
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
+
+        // Case 2: no named default, not required → the `None` head is
+        // "None (default)" and is the selection.
+        let opts = workflow_options(&wfs, None, false);
+        let idx = preselected_index(&wfs, Some("beta"), None, false);
+        assert_eq!(idx, 0);
+        assert_eq!(opts[0].label, "None (default)");
+
+        // Case 3: required, no default → no option bears "(default)"; the
+        // selection is the previous pick (or `None`).
+        let opts = workflow_options(&wfs, None, true);
+        assert!(opts.iter().all(|o| !o.label.ends_with("(default)")));
+        let idx = preselected_index(&wfs, Some("beta"), None, true);
+        assert_eq!(idx, 2);
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("beta".to_string()));
+    }
+
+    // ── Display == submit invariant, guarded at the pure-fn level ──
+
+    #[test]
+    fn preselected_index_maps_to_submitted_intent_normal() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("alpha"), false);
+        // Previous revision picked "beta", but the named default "alpha" wins:
+        // the rendered+submitted option is the labeled default.
+        let idx = preselected_index(&wfs, Some("beta"), Some("alpha"), false);
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
+        assert_eq!(opts[idx].label, "Alpha WF (default)");
+        // No previous id: preselection still lands on the labeled default.
+        let idx = preselected_index(&wfs, None, Some("alpha"), false);
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
+        assert_eq!(opts[idx].label, "Alpha WF (default)");
+    }
+
+    // ── Previous-workflow override note (pure) ──
+
+    #[test]
+    fn note_never_pushed_is_silent() {
+        // No prior stamp → nothing can be overridden, regardless of selection.
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        for current in [
+            WorkflowIntent::BucketDefault,
+            WorkflowIntent::NoWorkflow,
+            WorkflowIntent::Named("alpha".to_string()),
+        ] {
+            assert_eq!(
+                previous_workflow_note(&PreviousWorkflow::NeverPushed, &current, &wfs),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn note_explicit_none_silent_when_current_is_no_workflow() {
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::ExplicitNone,
+                &WorkflowIntent::NoWorkflow,
+                &wfs
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn note_explicit_none_flags_divergence_to_a_workflow() {
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        // Current selection is a named workflow → the previous no-workflow is
+        // being overridden.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::ExplicitNone,
+                &WorkflowIntent::Named("alpha".to_string()),
+                &wfs
+            ),
+            Some("The previous revision used no workflow.".to_string())
+        );
+        // BucketDefault likewise diverges from an explicit no-workflow.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::ExplicitNone,
+                &WorkflowIntent::BucketDefault,
+                &wfs
+            ),
+            Some("The previous revision used no workflow.".to_string())
+        );
+    }
+
+    #[test]
+    fn note_named_silent_when_current_matches_previous() {
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("alpha".to_string()),
+                &WorkflowIntent::Named("alpha".to_string()),
+                &wfs
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn note_named_uses_workflow_name_when_in_list() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        // Current selection differs (another named workflow) → show the
+        // previous workflow's display name.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("alpha".to_string()),
+                &WorkflowIntent::Named("beta".to_string()),
+                &wfs
+            ),
+            Some("The previous revision used the \"Alpha WF\" workflow.".to_string())
+        );
+        // BucketDefault also diverges from the previous named pick; unnamed
+        // workflow falls back to its id as the label.
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("beta".to_string()),
+                &WorkflowIntent::BucketDefault,
+                &wfs
+            ),
+            Some("The previous revision used the \"beta\" workflow.".to_string())
+        );
+    }
+
+    #[test]
+    fn note_named_falls_back_to_id_when_absent_from_list() {
+        // Previous workflow id no longer declared → use the raw id in the note.
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        assert_eq!(
+            previous_workflow_note(
+                &PreviousWorkflow::Named("ghost".to_string()),
+                &WorkflowIntent::Named("alpha".to_string()),
+                &wfs
+            ),
+            Some("The previous revision used the \"ghost\" workflow.".to_string())
+        );
+    }
+
+    #[test]
+    fn previous_workflow_from_stamp_and_preselect_id() {
+        // Never pushed / explicit-none collapse to no preselect id; a named
+        // stamp yields exactly that id (preselection behavior is unchanged).
+        assert_eq!(
+            PreviousWorkflow::from_stamp(None),
+            PreviousWorkflow::NeverPushed
+        );
+        assert_eq!(
+            PreviousWorkflow::from_stamp(Some(&WorkflowData { id: None })),
+            PreviousWorkflow::ExplicitNone
+        );
+        assert_eq!(
+            PreviousWorkflow::from_stamp(Some(&WorkflowData {
+                id: Some("alpha".to_string())
+            })),
+            PreviousWorkflow::Named("alpha".to_string())
+        );
+        assert_eq!(PreviousWorkflow::NeverPushed.preselect_id(), None);
+        assert_eq!(PreviousWorkflow::ExplicitNone.preselect_id(), None);
+        assert_eq!(
+            PreviousWorkflow::Named("alpha".to_string()).preselect_id(),
+            Some("alpha")
+        );
+    }
+
+    #[test]
+    fn view_non_available_states_submit_bucket_default() {
+        // The submit path reads `options[selected].intent`; both non-Available
+        // states must send `BucketDefault` from their single option at index 0.
+        for state in [CommitWorkflows::NotConfigured, CommitWorkflows::Unavailable] {
+            let view = build_workflow_view(&state, None);
+            assert_eq!(
+                view.options[view.initial].intent,
+                WorkflowIntent::BucketDefault
+            );
+        }
     }
 }

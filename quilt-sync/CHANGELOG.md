@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha3] - 2026-07-08
+
+### Changed
+
+- The commit dialog now offers the bucket's configured workflows in a dropdown (by name), matching the web catalog, instead of a free-text workflow-id field (<https://github.com/quiltdata/quilt-rs/pull/746>)
+
 ## [v0.18.3-alpha2] - 2026-07-07
 
 ### Changed
