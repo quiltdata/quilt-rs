@@ -433,9 +433,11 @@ fn workflow_options(
 ///
 /// The bucket default always wins over the previous revision's pick — that is
 /// what makes it the default. This intentionally diverges from the web catalog,
-/// which preselects the previous revision's workflow first; that rule was an
-/// unexamined default carried since the 2020 package-update dialog (quilt#1856),
-/// not a considered decision, so we prefer the bucket default here instead.
+/// which preselects the previous revision's workflow first. That rule dates to
+/// the 2020 package-update dialog (quilt#1856), which chose to reuse the
+/// previous revision's workflow even though `default_workflow` already existed —
+/// a deliberate but lightly-justified UX choice (a one-line "reuse previous"
+/// comment, no recorded rationale). We prefer the bucket default here instead.
 /// Options are laid out as `[None, workflows..]`, so
 /// a workflow at position `p` maps to option index `p + 1`. The rule mirrors the
 /// `(default)` marker that [`workflow_options`] applies:
