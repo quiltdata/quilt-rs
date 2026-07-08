@@ -134,6 +134,42 @@ fn classify_push_error_is_paused() {
     }
 }
 
+/// A workflow-rejection error as it arrives from the quilt-rs commit/push
+/// flow: `crate::Error::Quilt(quilt::Error::WorkflowValidation(Rejected(..)))`.
+/// The single `MessageRequired` violation gives a deterministic Display we
+/// can assert on without pinning a whole schema payload.
+pub(super) fn workflow_rejection() -> Error {
+    Error::from(quilt::Error::from(
+        quilt::workflow::WorkflowValidationError::Rejected(vec![
+            quilt::workflow::RuleViolation::MessageRequired,
+        ]),
+    ))
+}
+
+#[test]
+fn classify_workflow_validation_is_conflict_with_clean_message() {
+    match classify_sync_err(workflow_rejection()) {
+        Err(WatchError::Conflict(PausedReason::Other(msg))) => {
+            // The tray/tooltip should show the validator's own message that
+            // names the failed rule, not the outer `Quilt error:` wrapper
+            // prefix that `Error::Quilt`'s Display adds.
+            assert!(
+                !msg.starts_with("Quilt error:"),
+                "reason text should drop the wrapper prefix, got: {msg}"
+            );
+            assert!(
+                msg.starts_with("package does not satisfy the workflow"),
+                "reason text should lead with the validator message, got: {msg}"
+            );
+            assert!(
+                msg.contains("a commit message is required"),
+                "reason text should name the failed rule, got: {msg}"
+            );
+        }
+        other => panic!("expected Conflict(Other(_)), got {other:?}"),
+    }
+}
+
 #[test]
 fn classify_io_is_transient() {
     let err = Error::from(quilt::Error::Io(std::io::Error::new(

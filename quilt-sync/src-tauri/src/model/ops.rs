@@ -357,6 +357,17 @@ mod tests {
 
     use crate::model::MockQuiltModel;
 
+    /// A workflow-rejection error as `quilt-rs` surfaces it from the
+    /// commit/push flow. The single `MessageRequired` violation gives a
+    /// deterministic Display we can assert names the failed rule.
+    fn workflow_rejection() -> Error {
+        Error::from(quilt::Error::from(
+            quilt::workflow::WorkflowValidationError::Rejected(vec![
+                quilt::workflow::RuleViolation::MessageRequired,
+            ]),
+        ))
+    }
+
     fn fake_publish_outcome(namespace: &quilt_uri::Namespace) -> quilt::PublishOutcome {
         quilt::PublishOutcome::PushedOnly(quilt::PushOutcome {
             manifest_uri: quilt_uri::ManifestUri {
@@ -425,6 +436,53 @@ mod tests {
         };
         let status = quilt::lineage::InstalledPackageStatus::default();
         publish_with_settings(&model, &namespace, &settings, status).await?;
+        Ok(())
+    }
+
+    /// A workflow-rejection error from `quilt-rs` must propagate through the
+    /// ops layer un-swallowed, carrying the validator's message that names the
+    /// failed rule. The commit dialog's "Commit and Push" primary routes
+    /// through `package_publish`, and the command wrapper embeds this error via
+    /// `{err}` into the dialog's error notification, so a generic "operation
+    /// failed" would hide what the user must fix. (The plain-commit path shares
+    /// the same `?`-propagation of the trait `package_commit` error; it is not
+    /// unit-tested here because its concrete `resolve_workflow` call runs before
+    /// the mock and needs real storage.)
+    #[tokio::test]
+    async fn package_publish_surfaces_workflow_rejection() -> Result<(), Error> {
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let mut model = MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into())
+                    .unwrap(),
+            ))
+        });
+        model.expect_resolve_workflow().returning(|_, _| Ok(None));
+        model
+            .expect_package_publish()
+            .times(1)
+            .returning(|_, _, _, _, _, _| Err(workflow_rejection()));
+
+        // `PublishOutcome` is not `Debug`, so match rather than `expect_err`.
+        let Err(err) = package_publish(
+            &model,
+            namespace,
+            "msg",
+            "",
+            WorkflowIntent::BucketDefault,
+            None,
+            None,
+        )
+        .await
+        else {
+            panic!("publish should fail on workflow rejection");
+        };
+        assert!(
+            err.to_string().contains("a commit message is required"),
+            "surfaced error must name the failed rule, got: {err}"
+        );
         Ok(())
     }
 
