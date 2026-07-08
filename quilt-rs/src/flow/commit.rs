@@ -15,6 +15,7 @@ use crate::error::PackageOpError;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
+use crate::io::remote::entry_view;
 use crate::io::remote::validate_workflow;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
@@ -305,11 +306,7 @@ pub async fn commit_package(
     let entries: Vec<EntryView> = all_rows
         .iter()
         .filter_map(|row| row.as_ref().ok())
-        .map(|row| EntryView {
-            logical_key: row.logical_key.to_str().unwrap_or_default(),
-            size: row.size,
-            meta: row.meta.as_ref(),
-        })
+        .map(entry_view)
         .collect();
     validate_workflow(
         remote,

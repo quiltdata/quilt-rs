@@ -8,6 +8,7 @@ use crate::Error;
 use crate::Res;
 use crate::error::RemoteCatalogError;
 use crate::io::remote::Remote;
+use crate::manifest::ManifestRow;
 use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
@@ -364,6 +365,24 @@ async fn fetch_schema_for_key<R: Remote>(
             Ok(Some(fetch_schema_doc(remote, host, &uri).await?))
         }
         None => Ok(None),
+    }
+}
+
+/// Project a manifest row to the [`EntryView`] the workflow gate inspects.
+///
+/// `meta` is the row's **unwrapped** user metadata — the value under the row's
+/// `user_meta` key — matching quilt3, whose entry projection uses
+/// `PackageEntry.meta` (`self._meta.get('user_meta', {})`). The row's own
+/// `meta` wire value is the wrapped form `{"user_meta": {...}}`, so we peel one
+/// level here; an absent `user_meta` maps to `None` and the `{}`-default is
+/// applied by `project_entries` in the pure gate (matching quilt3's default).
+///
+/// Shared by the commit and push flows so both project rows identically.
+pub(crate) fn entry_view(row: &ManifestRow) -> EntryView<'_> {
+    EntryView {
+        logical_key: row.logical_key.to_str().unwrap_or_default(),
+        size: row.size,
+        meta: row.meta.as_ref().and_then(|meta| meta.get("user_meta")),
     }
 }
 

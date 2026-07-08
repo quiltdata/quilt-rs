@@ -19,6 +19,7 @@
 
 use std::fmt;
 
+use jsonschema::Validator;
 use regex::Regex;
 use serde_json::Value;
 use serde_json::json;
@@ -219,10 +220,7 @@ fn project_entries(entries: &[EntryView<'_>]) -> Value {
 
 /// Compile a schema document as Draft-7, rejecting any use of `$ref` first
 /// (quilt3 forbids it; each schema must be self-contained).
-fn compile_schema(
-    schema: &Value,
-    kind: SchemaKind,
-) -> Result<jsonschema::Validator, WorkflowValidationError> {
+fn compile_schema(schema: &Value, kind: SchemaKind) -> Result<Validator, WorkflowValidationError> {
     if contains_ref(schema) {
         return Err(WorkflowValidationError::UnsupportedRef { kind });
     }
@@ -233,6 +231,10 @@ fn compile_schema(
 }
 
 /// Whether the schema uses `$ref` anywhere (as an object key at any depth).
+///
+/// Mirrors quilt3's `_schema_load_object_hook`, which rejects `$ref` as an
+/// object key at any depth — so rejecting a data property literally named
+/// `$ref` is exact parity, not a bug.
 fn contains_ref(value: &Value) -> bool {
     match value {
         Value::Object(map) => map.contains_key("$ref") || map.values().any(contains_ref),
@@ -243,7 +245,7 @@ fn contains_ref(value: &Value) -> bool {
 
 /// Validate `instance` against `validator`, returning `None` when valid or a
 /// single joined string of all failures when not.
-fn collect_errors(validator: &jsonschema::Validator, instance: &Value) -> Option<String> {
+fn collect_errors(validator: &Validator, instance: &Value) -> Option<String> {
     let messages: Vec<String> = validator
         .iter_errors(instance)
         .map(|err| format!("{err} (at {})", err.instance_path()))

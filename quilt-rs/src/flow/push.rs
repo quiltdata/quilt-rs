@@ -16,6 +16,7 @@ use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
+use crate::io::remote::entry_view;
 use crate::io::remote::validate_workflow;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
@@ -144,15 +145,7 @@ pub async fn push_package(
     // so re-check here before any bytes reach the remote. Runs after the
     // no-commit early return above, so a no-op push stays a no-op. Vacuously
     // passes for an ungoverned bucket (the header carries no workflow).
-    let entries: Vec<EntryView> = local_manifest
-        .rows
-        .iter()
-        .map(|row| EntryView {
-            logical_key: row.logical_key.to_str().unwrap_or_default(),
-            size: row.size,
-            meta: row.meta.as_ref(),
-        })
-        .collect();
+    let entries: Vec<EntryView> = local_manifest.rows.iter().map(entry_view).collect();
     validate_workflow(
         remote,
         &host_config.host,
@@ -274,8 +267,11 @@ mod tests {
     use crate::manifest::ManifestHeader;
     use crate::manifest::Workflow;
     use crate::manifest::WorkflowId;
+    use crate::workflow::RuleViolation;
     use crate::workflow::WorkflowValidationError;
     use quilt_uri::S3Uri;
+    use serde_json::Value;
+    use serde_json::json;
 
     #[test(tokio::test)]
     async fn test_no_push_if_no_commit() -> Res {
@@ -414,6 +410,141 @@ mod tests {
         let err = push_package(
             first_push_governed_lineage(),
             governed_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "expected the gate to pass and the push to reach the hash check, got: {err:?}"
+        );
+        assert!(
+            storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a passing gate must let the push build the manifest"
+        );
+        Ok(())
+    }
+
+    /// Seed the mock remote with a `gate` workflow whose `entries_schema`
+    /// requires each entry's metadata to carry an `approved` key. Shared by
+    /// the two wrapped-meta gate tests below.
+    async fn seed_entries_schema_gate(remote: &MockRemote) -> Res {
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"workflows:\n  gate:\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/schemas/entries.json")?,
+                br#"{"type": "array", "items": {"type": "object", "properties": {"meta": {"type": "object", "required": ["approved"]}}}}"#.to_vec(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// A row whose wire `meta` carries the wrapped `{"user_meta": {...}}`
+    /// form, as manifest rows do on the wire.
+    fn wrapped_meta_row(user_meta: &Value) -> ManifestRow {
+        ManifestRow {
+            logical_key: PathBuf::from("a.txt"),
+            physical_key: "file:///b/a/r0".to_string(),
+            meta: Some(json!({ "user_meta": user_meta })),
+            ..ManifestRow::default()
+        }
+    }
+
+    /// The entries gate validates each entry's *unwrapped* user metadata,
+    /// matching quilt3 (`PackageEntry.meta` returns
+    /// `self._meta.get('user_meta', {})`): a row whose wrapped metadata lacks
+    /// the required `approved` key is rejected before any bytes reach the
+    /// remote.
+    #[test(tokio::test)]
+    async fn test_push_entries_schema_rejects_wrapped_meta_violating_unwrapped() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        seed_entries_schema_gate(&remote).await?;
+
+        let mut manifest = governed_manifest();
+        manifest
+            .insert_record(wrapped_meta_row(&json!({ "note": "x" })))
+            .await?;
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
+                    if matches!(violations.as_slice(), [RuleViolation::EntriesInvalid(_)])
+            ),
+            "expected an entries_schema rejection, got: {err:?}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a rejected push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
+    /// The happy-path companion: the same wrapped shape whose *unwrapped*
+    /// content satisfies the schema passes the gate. Had the gate validated
+    /// the wrapped wire value instead, this entry would be rejected (the
+    /// wrapper object's only key is `user_meta`, not `approved`) — so this
+    /// test pins the unwrapping.
+    #[test(tokio::test)]
+    async fn test_push_entries_schema_passes_wrapped_meta_satisfying_unwrapped() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        seed_entries_schema_gate(&remote).await?;
+
+        let file_content = b"approved bytes\n";
+        remote
+            .storage
+            .write_byte_stream(
+                &PathBuf::from("/b/a/r0"),
+                ByteStream::from_static(file_content),
+            )
+            .await?;
+
+        let mut manifest = governed_manifest();
+        manifest
+            .insert_record(ManifestRow {
+                size: file_content.len() as u64,
+                ..wrapped_meta_row(&json!({ "approved": true }))
+            })
+            .await?;
+
+        // The fixture's commit hash is a placeholder, so a push that clears
+        // the gate proceeds all the way to the post-upload hash check — which
+        // proves the gate let it through.
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
             &paths,
             &storage,
             &remote,
