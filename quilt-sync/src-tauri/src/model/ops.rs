@@ -218,10 +218,7 @@ pub async fn publish_with_settings(
     // A missing, empty, or whitespace-only `default_workflow` means "no opinion"
     // — honour the bucket's default workflow; a non-empty id (after trimming)
     // enforces that named workflow.
-    let workflow = match settings.default_workflow.as_deref().map(str::trim) {
-        Some(id) if !id.is_empty() => WorkflowIntent::Named(id.to_string()),
-        _ => WorkflowIntent::BucketDefault,
-    };
+    let workflow = WorkflowIntent::from_optional_id(settings.default_workflow.as_deref());
     let outcome = package_publish(
         model,
         namespace.clone(),

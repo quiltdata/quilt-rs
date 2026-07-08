@@ -13,7 +13,7 @@
 
 ### Changed
 
-- `quilt commit` gains a `--no-workflow` flag, and omitting `--workflow` now applies the bucket's default workflow instead of committing without one (<https://github.com/quiltdata/quilt-rs/pull/747>)
+- `quilt commit` gains a `--no-workflow` flag, omitting `--workflow` now applies the bucket's default workflow instead of committing without one, and an explicitly-empty `--workflow` value is rejected (omit it to use the bucket default) (<https://github.com/quiltdata/quilt-rs/pull/747>)
 
 ## [v0.27.1-alpha1] - 2026-07-02
 

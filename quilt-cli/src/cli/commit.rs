@@ -13,8 +13,7 @@ pub struct Input {
     pub message: String,
     pub namespace: Namespace,
     pub user_meta: UserMeta,
-    pub workflow: Option<String>,
-    pub no_workflow: bool,
+    pub workflow: WorkflowIntent,
     pub host_config: Option<HostConfig>,
 }
 
@@ -33,41 +32,17 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.commit(args).await)
 }
 
-/// Map the CLI's `(--workflow, --no-workflow)` flag pair to a [`WorkflowIntent`].
-///
-/// * `(_, true)` → `NoWorkflow` (explicit opt-out)
-/// * `(Some(id), false)` with a non-blank `id` → `Named(id)`
-/// * `(Some(id), false)` with an empty-or-whitespace `id` → `BucketDefault`
-/// * `(None, false)` → `BucketDefault`
-///
-/// The id is trimmed, matching the GUI: a blank value is treated as "no id
-/// given" (so we never construct `Named("")`, which would resolve downstream to
-/// a confusing "Workflow  not found" error), and surrounding whitespace on a
-/// real id is stripped. `--no-workflow` remains the real opt-out.
-///
-/// clap's `conflicts_with` makes `(Some, true)` unreachable; the arm order
-/// handles it safely regardless.
-fn workflow_intent(workflow_id: Option<String>, no_workflow: bool) -> WorkflowIntent {
-    match (workflow_id, no_workflow) {
-        (_, true) => WorkflowIntent::NoWorkflow,
-        (Some(id), false) if !id.trim().is_empty() => WorkflowIntent::Named(id.trim().to_string()),
-        (_, false) => WorkflowIntent::BucketDefault,
-    }
-}
-
 async fn commit_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     message: String,
     user_meta: UserMeta,
-    workflow_id: Option<String>,
-    no_workflow: bool,
+    workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            let intent = workflow_intent(workflow_id, no_workflow);
-            let workflow = installed_package.resolve_workflow(intent).await?;
+            let workflow = installed_package.resolve_workflow(workflow).await?;
             Ok(installed_package
                 .commit(message, user_meta, workflow, host_config)
                 .await?)
@@ -83,7 +58,6 @@ pub async fn model(
         namespace,
         user_meta,
         workflow,
-        no_workflow,
         host_config,
     }: Input,
 ) -> Result<Output, Error> {
@@ -93,63 +67,10 @@ pub async fn model(
         message,
         user_meta,
         workflow,
-        no_workflow,
         host_config,
     )
     .await?;
     Ok(Output { commit })
-}
-
-#[cfg(test)]
-mod intent_tests {
-    use super::workflow_intent;
-    use quilt_rs::io::remote::WorkflowIntent;
-
-    #[test]
-    fn omit_maps_to_bucket_default() {
-        assert_eq!(workflow_intent(None, false), WorkflowIntent::BucketDefault);
-    }
-
-    #[test]
-    fn named_id_maps_to_named() {
-        assert_eq!(
-            workflow_intent(Some("x".to_string()), false),
-            WorkflowIntent::Named("x".to_string())
-        );
-    }
-
-    #[test]
-    fn padded_id_is_trimmed() {
-        assert_eq!(
-            workflow_intent(Some("  x  ".to_string()), false),
-            WorkflowIntent::Named("x".to_string())
-        );
-    }
-
-    #[test]
-    fn empty_id_trims_to_bucket_default() {
-        assert_eq!(
-            workflow_intent(Some(String::new()), false),
-            WorkflowIntent::BucketDefault
-        );
-    }
-
-    #[test]
-    fn whitespace_id_trims_to_bucket_default() {
-        assert_eq!(
-            workflow_intent(Some("  ".to_string()), false),
-            WorkflowIntent::BucketDefault
-        );
-    }
-
-    #[test]
-    fn no_workflow_flag_maps_to_no_workflow_regardless_of_id() {
-        assert_eq!(workflow_intent(None, true), WorkflowIntent::NoWorkflow);
-        assert_eq!(
-            workflow_intent(Some("x".to_string()), true),
-            WorkflowIntent::NoWorkflow
-        );
-    }
 }
 
 #[cfg(test)]
@@ -186,8 +107,7 @@ mod tests {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
-                    workflow: None,
-                    no_workflow: true,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -223,8 +143,7 @@ mod tests {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
-                    workflow: None,
-                    no_workflow: false,
+                    workflow: WorkflowIntent::BucketDefault,
                     host_config: None,
                 },
             )
@@ -258,8 +177,7 @@ mod tests {
                         "Owner": "Kevin",
                         "Type": "NGS"
                     })),
-                    workflow: Some("my-workflow".to_string()),
-                    no_workflow: false,
+                    workflow: WorkflowIntent::Named("my-workflow".to_string()),
                     host_config: None,
                 },
             )
@@ -290,8 +208,7 @@ mod tests {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
-                    workflow: None,
-                    no_workflow: true,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -318,8 +235,7 @@ mod tests {
                     message: pkg::MESSAGE.to_string(),
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
-                    workflow: Some("Anything".to_string()),
-                    no_workflow: false,
+                    workflow: WorkflowIntent::Named("Anything".to_string()),
                     host_config: None,
                 },
             )
@@ -357,8 +273,7 @@ mod tests {
                         "e": 123,
                         "f": null
                     })),
-                    workflow: None,
-                    no_workflow: true,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -385,8 +300,7 @@ mod tests {
             message: "Test message".to_string(),
             namespace: ("spec", "quilt-rs").into(),
             user_meta: UserMeta::Clear,
-            workflow: None,
-            no_workflow: true,
+            workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         };
         let hash_for_initial_test_commit =
@@ -426,8 +340,7 @@ mod tests {
                     message: "New commit message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: UserMeta::Set(serde_json::json!({"key": "value"})),
-                    workflow: None,
-                    no_workflow: true,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -452,8 +365,7 @@ mod tests {
                     message: "Anything".to_string(),
                     namespace: ("a", "b").into(),
                     user_meta: UserMeta::Keep,
-                    workflow: None,
-                    no_workflow: true,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -479,8 +391,7 @@ mod tests {
                     message: "Test message".to_string(),
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: UserMeta::Clear,
-                    workflow: None,
-                    no_workflow: true,
+                    workflow: WorkflowIntent::NoWorkflow,
                     host_config: None,
                 },
             )
@@ -509,8 +420,7 @@ mod tests {
                 message: "Test message".to_string(),
                 namespace: ("spec", "quilt-rs").into(),
                 user_meta: UserMeta::Keep,
-                workflow: None,
-                no_workflow: true,
+                workflow: WorkflowIntent::NoWorkflow,
                 host_config: None,
             },
         )

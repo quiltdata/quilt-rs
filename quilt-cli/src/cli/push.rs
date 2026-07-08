@@ -84,6 +84,7 @@ mod tests {
     use test_log::test;
 
     use quilt_rs::flow::UserMeta;
+    use quilt_rs::io::remote::WorkflowIntent;
     use quilt_rs::io::storage::ByteStream;
 
     use quilt_rs::io::storage::LocalStorage;
@@ -189,8 +190,7 @@ mod tests {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
             user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
-            workflow: None,
-            no_workflow: true,
+            workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
         .await?;
@@ -223,8 +223,7 @@ mod tests {
             message: "Equate 1 Fragment Grimace".to_string(),
             namespace: namespace.clone(),
             user_meta: UserMeta::Set(serde_json::json!({"Antitoxic": "Mankind"})),
-            workflow: None,
-            no_workflow: true,
+            workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
         .await?;
@@ -287,8 +286,7 @@ mod tests {
             message: "Add data".to_string(),
             namespace: namespace.clone(),
             user_meta: UserMeta::Keep,
-            workflow: None,
-            no_workflow: true,
+            workflow: WorkflowIntent::NoWorkflow,
             host_config: None,
         })
         .await?;
@@ -386,8 +384,7 @@ mod tests {
             message: "Unbounded Defy 2 Landmine".to_string(),
             namespace: namespace.clone(),
             user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
-            workflow: None,
-            no_workflow: true,
+            workflow: WorkflowIntent::NoWorkflow,
             host_config: host_config.clone(),
         })
         .await?;
@@ -423,8 +420,7 @@ mod tests {
             // revert must clear step 3's — `Keep` would inherit it and the
             // final top hash would no longer match the original.
             user_meta: UserMeta::Clear,
-            workflow: None,
-            no_workflow: true,
+            workflow: WorkflowIntent::NoWorkflow,
             host_config: host_config.clone(),
         })
         .await?;
