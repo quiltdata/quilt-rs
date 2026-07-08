@@ -88,7 +88,10 @@ impl WorkflowsConfig {
                     .filter_map(|(id, entry)| {
                         Some(WorkflowInfo {
                             id: id.as_str()?.to_string(),
-                            name: entry.get("name").and_then(YamlValue::as_str).map(String::from),
+                            name: entry
+                                .get("name")
+                                .and_then(YamlValue::as_str)
+                                .map(String::from),
                             description: entry
                                 .get("description")
                                 .and_then(YamlValue::as_str)

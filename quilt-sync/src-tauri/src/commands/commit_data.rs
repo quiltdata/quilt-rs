@@ -392,9 +392,7 @@ mod tests {
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
-        model
-            .expect_get_workflows_config()
-            .returning(|_| Ok(None));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
         // Return a manifest with workflow data
         model.expect_browse_remote_manifest().returning(|_| {
             let config_uri = quilt_uri::S3Uri {
@@ -463,9 +461,7 @@ mod tests {
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
-        model
-            .expect_get_workflows_config()
-            .returning(|_| Ok(None));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
         // Workflow exists but has no ID (null/checked state)
         model.expect_browse_remote_manifest().returning(|_| {
             let config_uri = quilt_uri::S3Uri {
@@ -531,9 +527,7 @@ mod tests {
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
-        model
-            .expect_get_workflows_config()
-            .returning(|_| Ok(None));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
         // No workflow in manifest
         model.expect_browse_remote_manifest().returning(|_| {
             Ok(quilt::manifest::Manifest {
@@ -642,7 +636,10 @@ workflows:
         let ids: Vec<_> = data.workflows.iter().map(|w| w.id.as_str()).collect();
         assert_eq!(ids, vec!["dummy", "alpha"]);
         assert_eq!(data.workflows[0].name.as_deref(), Some("Dummy workflow"));
-        assert_eq!(data.workflows[0].description.as_deref(), Some("Do nothing."));
+        assert_eq!(
+            data.workflows[0].description.as_deref(),
+            Some("Do nothing.")
+        );
         Ok(())
     }
 
@@ -650,9 +647,7 @@ workflows:
     async fn test_get_commit_data_no_workflows_config() -> Result<(), String> {
         // No config in the bucket → degraded/permissive default.
         let mut model = base_commit_model();
-        model
-            .expect_get_workflows_config()
-            .returning(|_| Ok(None));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
 
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
