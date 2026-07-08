@@ -82,6 +82,7 @@ pub use client::HttpClient;
 pub use host::{HostChecksums, HostConfig, fetch_host_config};
 pub use s3::RemoteS3;
 pub use workflow::{WorkflowInfo, WorkflowIntent, WorkflowsConfig, resolve_workflow};
+pub(crate) use workflow::fetch_workflows_config;
 
 #[cfg(test)]
 pub mod mocks;

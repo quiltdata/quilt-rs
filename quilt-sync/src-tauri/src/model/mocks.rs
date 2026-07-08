@@ -60,6 +60,9 @@ pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
         .expect_browse_remote_manifest()
         .returning(|_| Ok(create_remote_manifest()));
     model
+        .expect_get_workflows_config()
+        .returning(|_| Ok(None));
+    model
 }
 
 /// Mock for the case where the package is already installed with a different hash.

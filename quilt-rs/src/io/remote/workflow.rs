@@ -204,7 +204,7 @@ impl WorkflowsConfig {
     }
 }
 
-async fn fetch_workflows_config<R: Remote>(
+pub(crate) async fn fetch_workflows_config<R: Remote>(
     remote: &R,
     host: &Option<Host>,
     uri: &S3Uri,

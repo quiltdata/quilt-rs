@@ -15,6 +15,7 @@ use crate::telemetry::prelude::*;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::io::remote::WorkflowsConfig;
 
 /// Result of checking whether a package is already installed.
 #[derive(Debug)]
@@ -220,6 +221,16 @@ pub trait QuiltModel {
         workflow: WorkflowIntent,
     ) -> Result<Option<quilt::manifest::Workflow>, Error> {
         Ok(package.resolve_workflow(workflow).await?)
+    }
+
+    /// Fetch and parse the bucket's declared workflows for this package's remote.
+    /// Returns `Ok(None)` for a package with no remote or a bucket with no
+    /// config, letting the commit dialog degrade to today's control.
+    async fn get_workflows_config(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<Option<WorkflowsConfig>, Error> {
+        Ok(package.workflows_config().await?)
     }
 
     async fn package_revision_certify_latest(

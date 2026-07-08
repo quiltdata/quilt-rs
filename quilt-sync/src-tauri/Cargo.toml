@@ -55,6 +55,7 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
+serde_yaml.workspace = true
 serial_test = "3"
 tokio-test.workspace = true
 
