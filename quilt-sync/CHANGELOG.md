@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha5] - 2026-07-08
+
+### Changed
+
+- Committing or publishing a package that fails its bucket's workflow is now refused with the reason, shown in the commit dialog and notifications, and autosync pauses as a conflict instead of retrying (<https://github.com/quiltdata/quilt-rs/pull/749>)
+
 ## [v0.18.3-alpha4] - 2026-07-08
 
 ### Changed

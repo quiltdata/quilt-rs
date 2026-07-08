@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha5] - 2026-07-08
+
+### Added
+
+- A candidate package is now validated against its resolved workflow (metadata and entries schemas, handle pattern, message-required, workflow-required) at both commit and push, and an invalid package is refused with the failing rule (<https://github.com/quiltdata/quilt-rs/pull/749>)
+
 ## [v0.33.0-alpha4] - 2026-07-08
 
 ### Changed
