@@ -14,6 +14,7 @@ pub struct Input {
     pub namespace: Namespace,
     pub user_meta: UserMeta,
     pub workflow: Option<String>,
+    pub no_workflow: bool,
     pub host_config: Option<HostConfig>,
 }
 
@@ -32,20 +33,34 @@ pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.commit(args).await)
 }
 
+/// Map the CLI's `(--workflow, --no-workflow)` flag pair to a [`WorkflowIntent`].
+///
+/// * `(_, true)` → `NoWorkflow` (explicit opt-out)
+/// * `(Some(id), false)` → `Named(id)`
+/// * `(None, false)` → `BucketDefault`
+///
+/// clap's `conflicts_with` makes `(Some, true)` unreachable; the arm order
+/// handles it safely regardless.
+fn workflow_intent(workflow_id: Option<String>, no_workflow: bool) -> WorkflowIntent {
+    match (workflow_id, no_workflow) {
+        (_, true) => WorkflowIntent::NoWorkflow,
+        (Some(id), false) => WorkflowIntent::Named(id),
+        (None, false) => WorkflowIntent::BucketDefault,
+    }
+}
+
 async fn commit_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     message: String,
     user_meta: UserMeta,
     workflow_id: Option<String>,
+    no_workflow: bool,
     host_config: Option<HostConfig>,
 ) -> Result<CommitState, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            let intent = match workflow_id {
-                Some(id) => WorkflowIntent::Named(id),
-                None => WorkflowIntent::NoWorkflow,
-            };
+            let intent = workflow_intent(workflow_id, no_workflow);
             let workflow = installed_package.resolve_workflow(intent).await?;
             Ok(installed_package
                 .commit(message, user_meta, workflow, host_config)
@@ -62,6 +77,7 @@ pub async fn model(
         namespace,
         user_meta,
         workflow,
+        no_workflow,
         host_config,
     }: Input,
 ) -> Result<Output, Error> {
@@ -71,6 +87,7 @@ pub async fn model(
         message,
         user_meta,
         workflow,
+        no_workflow,
         host_config,
     )
     .await?;
@@ -112,6 +129,7 @@ mod tests {
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
                     workflow: None,
+                    no_workflow: true,
                     host_config: None,
                 },
             )
@@ -144,6 +162,7 @@ mod tests {
                         "Type": "NGS"
                     })),
                     workflow: Some("my-workflow".to_string()),
+                    no_workflow: false,
                     host_config: None,
                 },
             )
@@ -175,6 +194,7 @@ mod tests {
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
                     workflow: None,
+                    no_workflow: true,
                     host_config: None,
                 },
             )
@@ -202,6 +222,7 @@ mod tests {
                     namespace: pkg::NAMESPACE.into(),
                     user_meta: UserMeta::Keep,
                     workflow: Some("Anything".to_string()),
+                    no_workflow: false,
                     host_config: None,
                 },
             )
@@ -240,6 +261,7 @@ mod tests {
                         "f": null
                     })),
                     workflow: None,
+                    no_workflow: true,
                     host_config: None,
                 },
             )
@@ -267,6 +289,7 @@ mod tests {
             namespace: ("spec", "quilt-rs").into(),
             user_meta: UserMeta::Clear,
             workflow: None,
+            no_workflow: true,
             host_config: None,
         };
         let hash_for_initial_test_commit =
@@ -307,6 +330,7 @@ mod tests {
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: UserMeta::Set(serde_json::json!({"key": "value"})),
                     workflow: None,
+                    no_workflow: true,
                     host_config: None,
                 },
             )
@@ -332,6 +356,7 @@ mod tests {
                     namespace: ("a", "b").into(),
                     user_meta: UserMeta::Keep,
                     workflow: None,
+                    no_workflow: true,
                     host_config: None,
                 },
             )
@@ -358,6 +383,7 @@ mod tests {
                     namespace: ("spec", "quilt-rs").into(),
                     user_meta: UserMeta::Clear,
                     workflow: None,
+                    no_workflow: true,
                     host_config: None,
                 },
             )
@@ -387,6 +413,7 @@ mod tests {
                 namespace: ("spec", "quilt-rs").into(),
                 user_meta: UserMeta::Keep,
                 workflow: None,
+                no_workflow: true,
                 host_config: None,
             },
         )

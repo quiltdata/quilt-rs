@@ -99,8 +99,12 @@ enum Commands {
         namespace: String,
         /// Workflow ID
         /// Ex. `"my_workflow"`
+        /// Omit to use the bucket's default workflow.
         #[arg(short, long)]
         workflow: Option<String>,
+        /// Commit with no workflow (explicit opt-out)
+        #[arg(long, conflicts_with = "workflow")]
+        no_workflow: bool,
     },
     /// Install package locally
     Install {
@@ -216,6 +220,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             message,
             user_meta,
             workflow,
+            no_workflow,
         } => {
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
@@ -233,6 +238,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: namespace.try_into()?,
                 user_meta,
                 workflow,
+                no_workflow,
                 host_config: None,
             };
 
@@ -449,6 +455,7 @@ mod tests {
                 namespace: pkg::NAMESPACE_STR.to_string(),
                 user_meta: None,
                 workflow: None,
+                no_workflow: true,
             },
         };
 
@@ -479,6 +486,7 @@ mod tests {
                 namespace: "in/valid".to_string(),
                 user_meta: None,
                 workflow: None,
+                no_workflow: true,
             },
         };
 

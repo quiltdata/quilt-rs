@@ -190,6 +190,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: None,
+            no_workflow: true,
             host_config: None,
         })
         .await?;
@@ -223,6 +224,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: UserMeta::Set(serde_json::json!({"Antitoxic": "Mankind"})),
             workflow: None,
+            no_workflow: true,
             host_config: None,
         })
         .await?;
@@ -286,6 +288,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: UserMeta::Keep,
             workflow: None,
+            no_workflow: true,
             host_config: None,
         })
         .await?;
@@ -384,6 +387,7 @@ mod tests {
             namespace: namespace.clone(),
             user_meta: UserMeta::Set(serde_json::json!({"Naturist": "Conjure"})),
             workflow: None,
+            no_workflow: true,
             host_config: host_config.clone(),
         })
         .await?;
@@ -420,6 +424,7 @@ mod tests {
             // final top hash would no longer match the original.
             user_meta: UserMeta::Clear,
             workflow: None,
+            no_workflow: true,
             host_config: host_config.clone(),
         })
         .await?;
