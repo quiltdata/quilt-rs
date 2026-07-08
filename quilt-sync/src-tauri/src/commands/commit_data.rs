@@ -245,23 +245,31 @@ async fn get_commit_data_from_model(
     // failure (or a package with no remote) must NOT fail the command — the
     // dialog still opens with the permissive/degraded default and the UI falls
     // back to today's control.
-    let (workflows, default_workflow, is_workflow_required) =
-        match m.get_workflows_config(&installed_package).await {
-            Ok(Some(config)) => (
-                config
-                    .workflows
-                    .into_iter()
-                    .map(|w| CommitWorkflowInfo {
-                        id: w.id,
-                        name: w.name,
-                        description: w.description,
-                    })
-                    .collect(),
-                config.default_workflow,
-                config.is_workflow_required,
-            ),
-            Ok(None) | Err(_) => (Vec::new(), None, false),
-        };
+    let (workflows, default_workflow, is_workflow_required) = match m
+        .get_workflows_config(&installed_package)
+        .await
+    {
+        Ok(Some(config)) => (
+            config
+                .workflows
+                .into_iter()
+                .map(|w| CommitWorkflowInfo {
+                    id: w.id,
+                    name: w.name,
+                    description: w.description,
+                })
+                .collect(),
+            config.default_workflow,
+            config.is_workflow_required,
+        ),
+        Ok(None) => (Vec::new(), None, false),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to fetch the bucket's workflows config; degrading the commit dialog to the permissive default: {e}"
+            );
+            (Vec::new(), None, false)
+        }
+    };
 
     Ok(CommitData {
         namespace: namespace.to_string(),

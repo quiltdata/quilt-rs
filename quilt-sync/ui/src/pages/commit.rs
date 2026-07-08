@@ -110,6 +110,10 @@ fn CommitContent(
         data.workflow.as_ref().and_then(|w| w.id.as_deref()),
         default_workflow.as_deref(),
     );
+    // `initial_workflow` is the single source of truth for the starting
+    // selection: it both seeds this signal (which submit reads) and is passed
+    // to `WorkflowSection` to render the `selected` attribute, so display and
+    // submit start from the same index into the same option list.
     let selected_workflow = RwSignal::new(initial_workflow);
     // Intents mirrored for the submit path — the selected option's intent is
     // passed straight through, so `Named("")` can never be constructed.
@@ -204,6 +208,7 @@ fn CommitContent(
                     <WorkflowSection
                         options=wf_options
                         selected=selected_workflow
+                        initial=initial_workflow
                         is_workflow_required=is_workflow_required
                     />
 
@@ -377,72 +382,95 @@ fn workflow_label(w: &WorkflowInfo) -> String {
     w.name.clone().unwrap_or_else(|| w.id.clone())
 }
 
-/// Build the dropdown's option list, matching the web catalog's order:
-/// - head: `Bucket default (<name-or-id of the default>)` → [`WorkflowIntent::BucketDefault`];
-/// - one entry per declared workflow (label = name or id) → [`WorkflowIntent::Named`];
-/// - tail: `None` → [`WorkflowIntent::NoWorkflow`], disabled when a workflow is required.
+/// Build the dropdown's option list.
 ///
-/// An empty `workflows` list (config-less bucket or a fetch failure) degrades
-/// naturally to a two-item bucket-default-vs-None control.
+/// Normal path (workflows non-empty), matching the web catalog's order:
+/// - index 0: `None` → [`WorkflowIntent::NoWorkflow`], disabled when a workflow
+///   is required;
+/// - one entry per declared workflow (label = name or id, with `" (default)"`
+///   appended to the bucket default) → [`WorkflowIntent::Named`].
+///
+/// There is deliberately no `Bucket default` item on the normal path — the
+/// catalog offers only `None` plus the concrete workflows.
+///
+/// Degraded path (workflows empty — a config-less bucket or a config-fetch
+/// failure): a minimal two-item control
+/// `[Bucket default → BucketDefault, No workflow → NoWorkflow]`. Keeping
+/// `BucketDefault` here means a no-touch commit re-resolves the bucket's real
+/// default at commit time instead of forcing `NoWorkflow` on a transient
+/// failure.
 fn workflow_options(
     workflows: &[WorkflowInfo],
     default_workflow: Option<&str>,
     is_workflow_required: bool,
 ) -> Vec<WorkflowOption> {
-    let head_label = match default_workflow {
-        Some(id) => {
-            let display = workflows
-                .iter()
-                .find(|w| w.id == id)
-                .map_or_else(|| id.to_string(), workflow_label);
-            format!("Bucket default ({display})")
-        }
-        None => "Bucket default".to_string(),
-    };
+    if workflows.is_empty() {
+        return vec![
+            WorkflowOption {
+                label: "Bucket default".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: false,
+            },
+            WorkflowOption {
+                label: "No workflow".to_string(),
+                intent: WorkflowIntent::NoWorkflow,
+                disabled: false,
+            },
+        ];
+    }
 
     let mut options = vec![WorkflowOption {
-        label: head_label,
-        intent: WorkflowIntent::BucketDefault,
-        disabled: false,
-    }];
-
-    options.extend(workflows.iter().map(|w| WorkflowOption {
-        label: workflow_label(w),
-        intent: WorkflowIntent::Named(w.id.clone()),
-        disabled: false,
-    }));
-
-    options.push(WorkflowOption {
         label: "None".to_string(),
         intent: WorkflowIntent::NoWorkflow,
         disabled: is_workflow_required,
-    });
+    }];
+
+    options.extend(workflows.iter().map(|w| {
+        let is_default = default_workflow.is_some_and(|id| id == w.id);
+        let label = if is_default {
+            format!("{} (default)", workflow_label(w))
+        } else {
+            workflow_label(w)
+        };
+        WorkflowOption {
+            label,
+            intent: WorkflowIntent::Named(w.id.clone()),
+            disabled: false,
+        }
+    }));
 
     options
 }
 
 /// Index (into [`workflow_options`]'s output) that should start selected.
 ///
-/// Matches the catalog rule: the previous revision's `workflow.id` if it
-/// appears in the list, else the bucket-default head item (when a default
-/// exists), else `None`. Options are laid out as `[head, workflows.., None]`,
-/// so a workflow at position `p` maps to option index `p + 1`.
+/// Normal path: the previous revision's `workflow.id` if it appears in the
+/// list, else the bucket default's id if present, else index 0 (the `None`
+/// item). Options are laid out as `[None, workflows..]`, so a workflow at
+/// position `p` maps to option index `p + 1`.
+///
+/// Degraded path (empty `workflows`): index 0 — the `Bucket default` item, so
+/// a transient config-fetch failure never silently forces `No workflow`.
 fn preselected_index(
     workflows: &[WorkflowInfo],
     previous_workflow_id: Option<&str>,
     default_workflow: Option<&str>,
 ) -> usize {
+    if workflows.is_empty() {
+        return 0;
+    }
     if let Some(prev) = previous_workflow_id
         && let Some(pos) = workflows.iter().position(|w| w.id == prev)
     {
         return pos + 1;
     }
-    if default_workflow.is_some() {
-        0
-    } else {
-        // Tail `None` item sits after the head and every declared workflow.
-        workflows.len() + 1
+    if let Some(def) = default_workflow
+        && let Some(pos) = workflows.iter().position(|w| w.id == def)
+    {
+        return pos + 1;
     }
+    // The `None` item sits at the head of the normal-path list.
+    0
 }
 
 // ── Workflow section ──
@@ -451,6 +479,7 @@ fn preselected_index(
 fn WorkflowSection(
     options: Vec<WorkflowOption>,
     selected: RwSignal<usize>,
+    initial: usize,
     is_workflow_required: bool,
 ) -> impl IntoView {
     // Intents indexed by option position — used to decide whether the current
@@ -463,14 +492,19 @@ fn WorkflowSection(
                 .is_some_and(|i| *i == WorkflowIntent::NoWorkflow)
     };
 
-    // Selection is controlled by the `<select>`'s `prop:value` below, so the
-    // options only need their value and (for the required `None`) disabled flag.
+    // The initial selection is rendered as the HTML boolean `selected`
+    // attribute on the matching option. Unlike a `<select prop:value=…>`
+    // (which tachys applies before the options mount, making it a no-op), the
+    // attribute survives mount order and works even on the disabled `None`
+    // option. `initial` is the same index that seeds `selected` in the parent,
+    // so what the browser shows and what submit sends cannot diverge. The
+    // `on:change` handler keeps the `selected` signal in step thereafter.
     let option_views = options
         .into_iter()
         .enumerate()
         .map(|(i, o)| {
             view! {
-                <option value=i.to_string() disabled=o.disabled>
+                <option value=i.to_string() selected=i == initial disabled=o.disabled>
                     {o.label}
                 </option>
             }
@@ -485,7 +519,6 @@ fn WorkflowSection(
                     class="input"
                     id="workflow"
                     name="workflow"
-                    prop:value=move || selected.get().to_string()
                     on:change=move |ev| {
                         if let Ok(i) = event_target_value(&ev).parse::<usize>() {
                             selected.set(i);
@@ -815,31 +848,89 @@ mod tests {
         }
     }
 
+    // ── Normal path (workflows non-empty) ──
+
     #[test]
-    fn options_head_middle_tail() {
+    fn options_normal_none_head_default_labeled_no_bucket_default() {
         let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
         let opts = workflow_options(&wfs, Some("alpha"), false);
         assert_eq!(
             opts,
             vec![
                 WorkflowOption {
-                    label: "Bucket default (Alpha WF)".to_string(),
-                    intent: WorkflowIntent::BucketDefault,
+                    label: "None".to_string(),
+                    intent: WorkflowIntent::NoWorkflow,
                     disabled: false,
                 },
                 WorkflowOption {
-                    label: "Alpha WF".to_string(),
+                    // The bucket default gets the " (default)" suffix.
+                    label: "Alpha WF (default)".to_string(),
                     intent: WorkflowIntent::Named("alpha".to_string()),
                     disabled: false,
                 },
                 WorkflowOption {
-                    // No name → fall back to the id as the label.
+                    // No name → fall back to the id as the label; not the default.
                     label: "beta".to_string(),
                     intent: WorkflowIntent::Named("beta".to_string()),
                     disabled: false,
                 },
+            ]
+        );
+        // The normal path never offers a `Bucket default` item.
+        assert!(
+            opts.iter()
+                .all(|o| o.intent != WorkflowIntent::BucketDefault)
+        );
+    }
+
+    #[test]
+    fn options_default_suffix_uses_label_or_id() {
+        // Unnamed default → suffix appended to the id.
+        let wfs = vec![wf("beta", None)];
+        assert_eq!(
+            workflow_options(&wfs, Some("beta"), false)[1].label,
+            "beta (default)"
+        );
+        // Default id not present in the list → no option carries the suffix.
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        let opts = workflow_options(&wfs, Some("ghost"), false);
+        assert_eq!(opts[1].label, "Alpha WF");
+        assert!(opts.iter().all(|o| !o.label.contains("(default)")));
+    }
+
+    #[test]
+    fn options_no_default_has_no_suffix() {
+        let wfs = vec![wf("alpha", Some("Alpha WF"))];
+        let opts = workflow_options(&wfs, None, false);
+        assert_eq!(opts[0].label, "None");
+        assert_eq!(opts[1].label, "Alpha WF");
+    }
+
+    #[test]
+    fn options_none_disabled_iff_required() {
+        let wfs = vec![wf("alpha", None)];
+        let required = workflow_options(&wfs, None, true);
+        assert_eq!(required[0].intent, WorkflowIntent::NoWorkflow);
+        assert!(required[0].disabled);
+        assert!(!workflow_options(&wfs, None, false)[0].disabled);
+    }
+
+    // ── Degraded path (workflows empty) ──
+
+    #[test]
+    fn options_degraded_is_bucket_default_then_no_workflow() {
+        // Flags are irrelevant on the degraded path.
+        let opts = workflow_options(&[], Some("x"), true);
+        assert_eq!(
+            opts,
+            vec![
                 WorkflowOption {
-                    label: "None".to_string(),
+                    label: "Bucket default".to_string(),
+                    intent: WorkflowIntent::BucketDefault,
+                    disabled: false,
+                },
+                WorkflowOption {
+                    label: "No workflow".to_string(),
                     intent: WorkflowIntent::NoWorkflow,
                     disabled: false,
                 },
@@ -847,59 +938,60 @@ mod tests {
         );
     }
 
-    #[test]
-    fn options_default_label_falls_back_to_id() {
-        // Default id present but unnamed → head label uses the id.
-        let wfs = vec![wf("beta", None)];
-        assert_eq!(
-            workflow_options(&wfs, Some("beta"), false)[0].label,
-            "Bucket default (beta)"
-        );
-        // Default id not in the list → head label uses the raw id.
-        assert_eq!(
-            workflow_options(&wfs, Some("ghost"), false)[0].label,
-            "Bucket default (ghost)"
-        );
-    }
-
-    #[test]
-    fn options_no_default_is_plain_bucket_default() {
-        let opts = workflow_options(&[], None, false);
-        assert_eq!(opts.len(), 2);
-        assert_eq!(opts[0].label, "Bucket default");
-        assert_eq!(opts[0].intent, WorkflowIntent::BucketDefault);
-        assert_eq!(opts[1].intent, WorkflowIntent::NoWorkflow);
-    }
-
-    #[test]
-    fn options_none_disabled_when_required() {
-        let none = workflow_options(&[], None, true).pop().unwrap();
-        assert_eq!(none.intent, WorkflowIntent::NoWorkflow);
-        assert!(none.disabled);
-    }
+    // ── Preselection ──
 
     #[test]
     fn preselect_previous_id_when_in_list() {
         let wfs = vec![wf("alpha", None), wf("beta", None)];
-        // Options: [head=0, alpha=1, beta=2, none=3].
+        // Options: [None=0, alpha=1, beta=2].
         assert_eq!(preselected_index(&wfs, Some("beta"), Some("alpha")), 2);
     }
 
     #[test]
-    fn preselect_falls_back_to_bucket_default() {
-        let wfs = vec![wf("alpha", None)];
-        // Previous id not in the list, but a default exists → head (0).
-        assert_eq!(preselected_index(&wfs, Some("ghost"), Some("alpha")), 0);
-        // No previous id, default exists → head (0).
-        assert_eq!(preselected_index(&wfs, None, Some("alpha")), 0);
+    fn preselect_prev_not_in_list_uses_default() {
+        let wfs = vec![wf("alpha", None), wf("beta", None)];
+        // Previous id absent, default present → the default's index.
+        assert_eq!(preselected_index(&wfs, Some("ghost"), Some("beta")), 2);
+        // No previous id, default present → the default's index.
+        assert_eq!(preselected_index(&wfs, None, Some("alpha")), 1);
     }
 
     #[test]
-    fn preselect_falls_back_to_none_without_default() {
+    fn preselect_no_usable_default_is_none_head() {
         let wfs = vec![wf("alpha", None)];
-        // No previous id and no default → tail None at index len+1 = 2.
-        assert_eq!(preselected_index(&wfs, None, None), 2);
-        // Degraded empty-list, no default → tail None at index 1.
-        assert_eq!(preselected_index(&[], None, None), 1);
+        // No previous id and no default → the `None` head (0).
+        assert_eq!(preselected_index(&wfs, None, None), 0);
+        // Default set but absent from the list → the `None` head (0).
+        assert_eq!(preselected_index(&wfs, Some("ghost"), Some("ghost")), 0);
+    }
+
+    #[test]
+    fn preselect_degraded_is_bucket_default() {
+        // Empty list → the `Bucket default` item at index 0, regardless of flags.
+        assert_eq!(preselected_index(&[], None, None), 0);
+        assert_eq!(preselected_index(&[], Some("x"), Some("y")), 0);
+    }
+
+    // ── Display == submit invariant, guarded at the pure-fn level ──
+
+    #[test]
+    fn preselected_index_maps_to_submitted_intent_normal() {
+        let wfs = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let opts = workflow_options(&wfs, Some("alpha"), false);
+        // Previous revision picked "beta": the rendered+submitted option is beta.
+        let idx = preselected_index(&wfs, Some("beta"), Some("alpha"));
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("beta".to_string()));
+        assert_eq!(opts[idx].label, "beta");
+        // No previous id: preselection lands on the labeled default.
+        let idx = preselected_index(&wfs, None, Some("alpha"));
+        assert_eq!(opts[idx].intent, WorkflowIntent::Named("alpha".to_string()));
+        assert_eq!(opts[idx].label, "Alpha WF (default)");
+    }
+
+    #[test]
+    fn preselected_index_maps_to_submitted_intent_degraded() {
+        let opts = workflow_options(&[], None, false);
+        let idx = preselected_index(&[], None, None);
+        assert_eq!(opts[idx].intent, WorkflowIntent::BucketDefault);
     }
 }
