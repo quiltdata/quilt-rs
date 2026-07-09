@@ -13,7 +13,7 @@
 
 ### Changed
 
-- `quilt push` now warns on stderr when it attaches a remote but cannot resolve the bucket's default workflow, instead of pushing without a workflow silently (<https://github.com/quiltdata/quilt-rs/pull/754>)
+- `quilt push` now warns on stderr when it attaches a remote but cannot resolve the bucket's default workflow, instead of pushing without a workflow silently (<https://github.com/quiltdata/quilt-rs/pull/755>)
 
 ## [v0.27.1-alpha4] - 2026-07-08
 
