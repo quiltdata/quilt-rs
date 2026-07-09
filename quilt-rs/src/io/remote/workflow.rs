@@ -519,11 +519,13 @@ pub(crate) async fn validate_workflow<R: Remote>(
 ///
 /// - No config exists now:
 ///   - `workflow_id` is `None` → pass (ungoverned bucket).
-///   - `workflow_id` is `Some(id)` → hard error, mirroring quilt3's
-///     "`{id}` workflow is specified, but no workflows config exist".
+///   - `workflow_id` is `Some(id)` → hard error, matching quilt3's decision
+///     (its message reads "no workflows config exist"; ours fixes the
+///     grammar).
 /// - Config exists:
 ///   - `workflow_id` is `Some(id)` missing from the current config → hard
-///     error, mirroring quilt3's "There is no `{id}` workflow in config".
+///     error, matching quilt3's decision ("There is no `{id}` workflow in
+///     config"; ours adds the article).
 ///   - `workflow_id` is `None` → [`validate_package`] rejects with
 ///     `WorkflowRequired` when `is_workflow_required` (default true), else
 ///     passes.
@@ -553,7 +555,7 @@ pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
         return match workflow_id {
             None => Ok(()),
             Some(id) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                "\"{id}\" workflow is specified, but no workflows config exist"
+                "\"{id}\" workflow is specified, but no workflows config exists"
             )))),
         };
     };
@@ -561,7 +563,7 @@ pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
         Some(id) => {
             if config.workflow_entry(id).is_none() {
                 return Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                    "There is no \"{id}\" workflow in config"
+                    "There is no \"{id}\" workflow in the config"
                 ))));
             }
             Some(fetch_workflow_rules(remote, host, &config, id).await?)
