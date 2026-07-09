@@ -58,9 +58,19 @@ async fn push_package(
             // Note: clap enforces that bucket and origin are always provided
             // together via `requires` constraints.
             if let (Some(bucket), Some(origin)) = (bucket, origin) {
-                installed_package
+                let outcome = installed_package
                     .set_remote(bucket, Some(origin), workflow)
                     .await?;
+                // The remote's default workflow could not be resolved on the
+                // best-effort BucketDefault path: the push proceeds without a
+                // workflow stamp, but tell the user why rather than leaving it
+                // silent. Warnings go to stderr so the success output on stdout
+                // stays machine-parseable; the exit status is unchanged.
+                if let Some(reason) = outcome.resolution_warning {
+                    eprintln!(
+                        "warning: couldn't resolve the bucket's default workflow ({reason}); pushing without a workflow"
+                    );
+                }
             }
             Ok(installed_package.push(host_config).await?)
         }

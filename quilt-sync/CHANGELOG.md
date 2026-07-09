@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha6] - 2026-07-09
+
+### Changed
+
+- The Set-remote dialog now warns when the bucket's default workflow cannot be resolved, and the workflow selector distinguishes a malformed bucket config (commits will fail until it is fixed) from a transient load failure (<https://github.com/quiltdata/quilt-rs/pull/754>)
+
 ## [v0.18.3-alpha5] - 2026-07-08
 
 ### Changed

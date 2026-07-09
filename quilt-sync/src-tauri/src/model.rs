@@ -261,14 +261,20 @@ pub trait QuiltModel {
         Ok(package.reset_to_latest().await?)
     }
 
+    /// Set the package's remote, returning `Some(reason)` when the bucket's
+    /// default workflow could not be resolved on the best-effort path (the
+    /// remote is still set; the caller surfaces the reason), else `None`.
     async fn set_remote(
         &self,
         package: &quilt::InstalledPackage,
         origin: quilt_uri::Host,
         bucket: String,
         workflow: WorkflowIntent,
-    ) -> Result<(), Error> {
-        Ok(package.set_remote(bucket, Some(origin), workflow).await?)
+    ) -> Result<Option<String>, Error> {
+        Ok(package
+            .set_remote(bucket, Some(origin), workflow)
+            .await?
+            .resolution_warning)
     }
 
     async fn package_create(

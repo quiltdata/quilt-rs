@@ -48,6 +48,20 @@ pub struct PushOutcome {
 /// [`PushOutcome`], so external callers see a non-generic type name.
 pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
 
+/// Result of [`InstalledPackage::set_remote`].
+///
+/// The remote was set (and, on the first-push recommit path, a workflow may
+/// have been stamped). `resolution_warning` is `Some(reason)` only on the
+/// best-effort `BucketDefault` path where the remote was persisted but the
+/// bucket's default workflow could **not** be resolved — the operation still
+/// succeeds and no workflow is stamped, but the caller should surface the
+/// reason so the user is not silently left ungoverned until push time. Every
+/// other success path leaves it `None`.
+#[derive(Debug, Default)]
+pub struct SetRemoteOutcome {
+    pub resolution_warning: Option<String>,
+}
+
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
 /// traits.
 /// But it only manages one particular installed package.
@@ -537,7 +551,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         bucket: String,
         origin: Option<Host>,
         workflow: WorkflowIntent,
-    ) -> Res {
+    ) -> Res<SetRemoteOutcome> {
         if bucket.is_empty() {
             return Err(Error::PackageOp(PackageOpError::Push(
                 "Bucket cannot be empty".to_string(),
@@ -549,7 +563,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         {
             let same_remote = existing.bucket == bucket && existing.origin == origin;
             if same_remote {
-                return Ok(());
+                return Ok(SetRemoteOutcome::default());
             }
             return Err(Error::PackageOp(PackageOpError::Push(
                 "Cannot change remote on a package that has already been pushed".to_string(),
@@ -585,7 +599,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 .recommit_for_remote(lineage.clone(), origin, bucket, workflow)
                 .await
             {
-                Ok(()) => Ok(()),
+                Ok(()) => Ok(SetRemoteOutcome::default()),
                 // The workflow gate rejected the committed revision. The
                 // package's previous state must stay fully intact, so the
                 // remote is NOT saved either — set_remote fails as a whole
@@ -603,10 +617,18 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                         // instead of pushing with the wrong workflow.
                         return Err(err);
                     }
+                    // Best-effort BucketDefault path: the remote is saved but
+                    // the bucket's default workflow could not be resolved. The
+                    // operation succeeds without a workflow stamp; carry the
+                    // reason back so the caller can surface it rather than
+                    // leaving the user silently ungoverned until push time.
+                    let reason = err.to_string();
                     log::warn!(
-                        "Remote saved but recommit failed ({err}); re-run Set Remote (e.g. after logging in) to complete it before pushing."
+                        "Remote saved but recommit failed ({reason}); re-run Set Remote (e.g. after logging in) to complete it before pushing."
                     );
-                    Ok(())
+                    Ok(SetRemoteOutcome {
+                        resolution_warning: Some(reason),
+                    })
                 }
             };
         }
@@ -614,7 +636,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // No origin or no local commit — nothing to recommit or validate.
         self.lineage.write(&self.storage, lineage).await?;
 
-        Ok(())
+        Ok(SetRemoteOutcome::default())
     }
 
     async fn recommit_for_remote(

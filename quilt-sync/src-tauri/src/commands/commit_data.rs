@@ -101,11 +101,16 @@ pub struct CommitWorkflowInfo {
 }
 
 /// The bucket's workflow-selection situation, as the commit dialog should
-/// present it. Splits the three cases the backend can distinguish so the UI
-/// never conflates "ungoverned bucket" with "couldn't load the config":
+/// present it. Splits the cases the backend can distinguish so the UI never
+/// conflates "ungoverned bucket", "couldn't load the config", and "the config
+/// is broken":
 /// - `Available` — the bucket has a workflows config; carry its choices.
 /// - `NotConfigured` — no config (or no remote); the bucket is ungoverned.
-/// - `Unavailable` — the config fetch/parse failed; fall back at commit time.
+/// - `Unavailable` — a transient/network failure loading the config; a commit
+///   will retry resolving the bucket default.
+/// - `Invalid` — the config exists but is malformed (schema violation). Every
+///   commit to this bucket will FAIL until it is fixed, so the UI must not
+///   promise a fallback; `reason` names the violation succinctly.
 #[derive(Serialize)]
 #[serde(
     tag = "state",
@@ -120,12 +125,17 @@ pub enum CommitWorkflows {
     },
     NotConfigured,
     Unavailable,
+    Invalid {
+        reason: String,
+    },
 }
 
-/// Map a fetched workflows config to the UI's tri-state. Shared by the commit
+/// Map a fetched workflows config to the UI's state. Shared by the commit
 /// dialog and the pre-set-remote bucket preview so both present the same shape:
-/// `Ok(Some)` → `Available`, `Ok(None)` → `NotConfigured`, `Err` →
-/// `Unavailable` (logged; never fatal, so the caller degrades gracefully).
+/// `Ok(Some)` → `Available`, `Ok(None)` → `NotConfigured`; an `Err` splits by
+/// variant — a malformed config (`InvalidWorkflowsConfig`) → `Invalid` (commits
+/// will fail until fixed), any other error → `Unavailable` (transient; logged,
+/// never fatal, so the caller degrades gracefully).
 fn workflows_config_to_commit_workflows(
     config: Result<Option<WorkflowsConfig>, Error>,
 ) -> CommitWorkflows {
@@ -144,9 +154,17 @@ fn workflows_config_to_commit_workflows(
             is_workflow_required: config.is_workflow_required,
         },
         Ok(None) => CommitWorkflows::NotConfigured,
+        // A malformed config is not a load failure — the file is present and
+        // readable, it just violates the schema. Distinguish it by variant (not
+        // by message text) so the UI can tell the user commits will fail until
+        // the config is fixed, instead of promising a bucket-default fallback
+        // that would actually error.
+        Err(Error::Quilt(quilt::Error::RemoteCatalog(
+            quilt::RemoteCatalogError::InvalidWorkflowsConfig(reason),
+        ))) => CommitWorkflows::Invalid { reason },
         Err(e) => {
             tracing::warn!(
-                "Failed to fetch the bucket's workflows config; the caller will fall back to the bucket default: {e}"
+                "Failed to load the bucket's workflows config; the caller will fall back to the bucket default: {e}"
             );
             CommitWorkflows::Unavailable
         }
@@ -784,6 +802,90 @@ workflows:
             serde_json::to_value(CommitWorkflows::Unavailable).unwrap(),
             serde_json::json!({"state": "unavailable"})
         );
+        assert_eq!(
+            serde_json::to_value(CommitWorkflows::Invalid {
+                reason: "bad schema".to_string(),
+            })
+            .unwrap(),
+            serde_json::json!({"state": "invalid", "reason": "bad schema"})
+        );
+    }
+
+    /// A malformed workflows config (`InvalidWorkflowsConfig`) must map to the
+    /// distinct `Invalid` case carrying the reason — NOT `Unavailable` — so the
+    /// dialog can warn that commits will fail until the config is fixed.
+    #[tokio::test]
+    async fn test_get_commit_data_workflows_invalid() -> Result<(), String> {
+        let mut model = base_commit_model();
+        model.expect_get_workflows_config().returning(|_| {
+            Err(Error::from(quilt::Error::RemoteCatalog(
+                quilt::RemoteCatalogError::InvalidWorkflowsConfig(
+                    "workflows/config.yml does not satisfy the workflows config schema".to_string(),
+                ),
+            )))
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let CommitWorkflows::Invalid { reason } = data.workflows else {
+            return Err("expected Invalid".to_string());
+        };
+        assert!(
+            reason.contains("does not satisfy the workflows config schema"),
+            "reason must carry the violation, got: {reason}"
+        );
+        Ok(())
+    }
+
+    /// A transient/network failure (an S3 error) keeps mapping to `Unavailable`
+    /// — a soft "couldn't load", distinct from the malformed-config case.
+    #[tokio::test]
+    async fn test_get_commit_data_workflows_unavailable_on_s3_error() -> Result<(), String> {
+        let mut model = base_commit_model();
+        model.expect_get_workflows_config().returning(|_| {
+            Err(Error::from(quilt::Error::S3(quilt::S3Error::new(
+                quilt::S3ErrorKind::GetObject("timeout".to_string()),
+            ))))
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(matches!(data.workflows, CommitWorkflows::Unavailable));
+        Ok(())
+    }
+
+    /// The same malformed-config discrimination on the pre-set-remote preview
+    /// path (`get_bucket_workflows`): `Invalid`, not `Unavailable`.
+    #[tokio::test]
+    async fn test_get_bucket_workflows_invalid() -> Result<(), String> {
+        let mut model = mocks::create();
+        model
+            .expect_get_bucket_workflows_config()
+            .returning(|_, _| {
+                Err(Error::from(quilt::Error::RemoteCatalog(
+                    quilt::RemoteCatalogError::InvalidWorkflowsConfig(
+                        "workflows/config.yml does not satisfy the workflows config schema"
+                            .to_string(),
+                    ),
+                )))
+            });
+
+        let workflows = get_bucket_workflows_from_model(&model, None, "my-bucket").await;
+        let CommitWorkflows::Invalid { reason } = workflows else {
+            return Err("expected Invalid".to_string());
+        };
+        assert!(reason.contains("does not satisfy the workflows config schema"));
+        Ok(())
     }
 
     // ── Bucket workflows preview (set-remote popup) ──

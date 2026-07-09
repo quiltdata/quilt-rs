@@ -78,7 +78,9 @@ pub struct WorkflowInfo {
 /// renders distinctly:
 /// - `Available` — the bucket has a config; offer its workflow choices.
 /// - `NotConfigured` — the bucket is ungoverned; no choice to make.
-/// - `Unavailable` — the config fetch/parse failed; fall back at commit time.
+/// - `Unavailable` — a transient failure loading the config; commit will retry
+///   the bucket default.
+/// - `Invalid` — the config is malformed; commits will fail until it is fixed.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(
     tag = "state",
@@ -93,6 +95,9 @@ pub enum CommitWorkflows {
     },
     NotConfigured,
     Unavailable,
+    Invalid {
+        reason: String,
+    },
 }
 
 /// Caller intent for resolving a package's workflow, sent with a commit.
@@ -587,12 +592,25 @@ pub async fn reset_local(namespace: String) -> Result<String, String> {
 
 // ── Remote ──────────────────────────────────────────────────
 
+/// Response from the `set_remote` command. UI-side mirror of the backend
+/// `quilt_sync::commands::package_ops::SetRemoteResponse`; the serde attributes
+/// MUST match so the typed payload crosses the Tauri boundary unchanged.
+/// `resolution_warning` is `Some(reason)` when the remote was set but the
+/// bucket's default workflow could not be resolved — the popup raises a warning
+/// notice instead of a plain success.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRemoteResponse {
+    pub message: String,
+    pub resolution_warning: Option<String>,
+}
+
 pub async fn set_remote(
     namespace: String,
     origin: String,
     bucket: String,
     workflow: WorkflowIntent,
-) -> Result<String, String> {
+) -> Result<SetRemoteResponse, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
@@ -790,6 +808,13 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<CommitWorkflows>(r#"{"state":"unavailable"}"#).unwrap(),
             CommitWorkflows::Unavailable
+        );
+        assert_eq!(
+            serde_json::from_str::<CommitWorkflows>(r#"{"state":"invalid","reason":"bad schema"}"#)
+                .unwrap(),
+            CommitWorkflows::Invalid {
+                reason: "bad schema".to_string(),
+            }
         );
     }
 

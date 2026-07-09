@@ -34,6 +34,7 @@ pub use error::S3ErrorKind;
 pub use installed_package::InstalledPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;
+pub use installed_package::SetRemoteOutcome;
 pub use local_domain::LocalDomain;
 pub use workflow::WorkflowValidationError;
 

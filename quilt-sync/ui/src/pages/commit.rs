@@ -122,7 +122,9 @@ fn CommitContent(
     // and never render the note.
     let note_workflows: Vec<WorkflowInfo> = match &data.workflows {
         CommitWorkflows::Available { workflows, .. } => workflows.clone(),
-        CommitWorkflows::NotConfigured | CommitWorkflows::Unavailable => Vec::new(),
+        CommitWorkflows::NotConfigured
+        | CommitWorkflows::Unavailable
+        | CommitWorkflows::Invalid { .. } => Vec::new(),
     };
     let note_intents = workflow_intents.clone();
     let workflow_note = Memo::new(move |_| {

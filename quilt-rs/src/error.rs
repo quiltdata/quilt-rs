@@ -176,6 +176,15 @@ pub enum RemoteCatalogError {
     #[error("Workflow error: {0}")]
     Workflow(String),
 
+    /// The bucket's `.quilt/workflows/config.yml` is malformed — it violates the
+    /// vendored quilt3 config schema, or its YAML could not be converted for
+    /// validation. Distinct from [`RemoteCatalogError::Workflow`] (a workflow
+    /// that resolved against a *valid* config could not be found/applied): an
+    /// invalid config means every commit to the bucket will fail until it is
+    /// fixed, so callers can present that honestly instead of "couldn't load".
+    #[error("Invalid workflows config: {0}")]
+    InvalidWorkflowsConfig(String),
+
     #[error("Failed to fetch host config: {0}")]
     HostConfig(String),
 

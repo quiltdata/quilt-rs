@@ -41,15 +41,22 @@ static CONFIG_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
 
 /// Validate a decoded `config.yml` document against the vendored quilt3 config
 /// schema, exactly as quilt3 does at load. On any violation, fails with a
-/// [`RemoteCatalogError::Workflow`] (classified as a conflict, not a transient,
-/// by the sync watcher) naming every offending path — so a malformed config
-/// refuses everywhere rather than half-working.
+/// [`RemoteCatalogError::InvalidWorkflowsConfig`] (classified as a conflict, not
+/// a transient, by the sync watcher) naming every offending path — so a
+/// malformed config refuses everywhere rather than half-working.
 fn validate_config_document(yaml: &YamlValue) -> Res<()> {
     use std::fmt::Write;
 
     // `serde_yaml::Value` is `Serialize`, so this reuses serde's own YAML→JSON
-    // conversion rather than a hand-rolled walker.
-    let document: Value = serde_json::to_value(yaml)?;
+    // conversion rather than a hand-rolled walker. A YAML document JSON cannot
+    // represent (e.g. a non-string mapping key) is itself an invalid config, so
+    // route the conversion failure into the same variant rather than letting it
+    // escape as an opaque `Error::Json`.
+    let document: Value = serde_json::to_value(yaml).map_err(|err| {
+        RemoteCatalogError::InvalidWorkflowsConfig(format!(
+            "workflows/config.yml could not be converted for schema validation: {err}"
+        ))
+    })?;
     let mut message = String::new();
     for err in CONFIG_VALIDATOR.iter_errors(&document) {
         let _ = write!(message, "\n  - {err} (at {})", err.instance_path());
@@ -57,9 +64,10 @@ fn validate_config_document(yaml: &YamlValue) -> Res<()> {
     if message.is_empty() {
         Ok(())
     } else {
-        Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+        Err(RemoteCatalogError::InvalidWorkflowsConfig(format!(
             "workflows/config.yml does not satisfy the workflows config schema:{message}"
-        ))))
+        ))
+        .into())
     }
 }
 
@@ -972,7 +980,7 @@ workflows:
             .unwrap_err();
         assert!(matches!(
             err,
-            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+            Error::RemoteCatalog(RemoteCatalogError::InvalidWorkflowsConfig(_))
         ));
         let message = err.to_string();
         assert!(
@@ -1014,7 +1022,7 @@ workflows:
             .unwrap_err();
         assert!(matches!(
             err,
-            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+            Error::RemoteCatalog(RemoteCatalogError::InvalidWorkflowsConfig(_))
         ));
         let message = err.to_string();
         assert!(
@@ -1024,6 +1032,32 @@ workflows:
         assert!(
             message.contains("/default_workflow"),
             "violation must name the offending path, got: {message}"
+        );
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_non_string_mapping_key_is_invalid_config() -> Res<()> {
+        // A YAML mapping whose key is not a string cannot be represented as
+        // JSON, so the schema validator's serde YAML→JSON conversion fails.
+        // This used to escape as an opaque `Error::Json`; it now surfaces as
+        // the same `InvalidWorkflowsConfig` variant a schema violation does, so
+        // both malformed-config shapes classify identically everywhere.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r"
+1: not-a-string-key
+version: '1'
+",
+        )?;
+
+        let err = WorkflowsConfig::from_yaml(&yaml).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::RemoteCatalog(RemoteCatalogError::InvalidWorkflowsConfig(_))
+            ),
+            "expected InvalidWorkflowsConfig, got: {err:?}"
         );
 
         Ok(())
@@ -1287,7 +1321,7 @@ workflows:
 
         assert!(matches!(
             err,
-            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+            Error::RemoteCatalog(RemoteCatalogError::InvalidWorkflowsConfig(_))
         ));
         let message = err.to_string();
         assert!(
@@ -1390,7 +1424,7 @@ workflows:
         let err = WorkflowsConfig::from_yaml(&yaml).unwrap_err();
         assert!(matches!(
             err,
-            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+            Error::RemoteCatalog(RemoteCatalogError::InvalidWorkflowsConfig(_))
         ));
         let message = err.to_string();
         assert!(
@@ -1421,7 +1455,7 @@ workflows:
         let err = WorkflowsConfig::from_yaml(&yaml).unwrap_err();
         assert!(matches!(
             err,
-            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+            Error::RemoteCatalog(RemoteCatalogError::InvalidWorkflowsConfig(_))
         ));
         let message = err.to_string();
         assert!(

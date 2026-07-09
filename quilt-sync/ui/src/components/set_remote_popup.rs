@@ -192,8 +192,18 @@ pub fn SetRemotePopup(
         let on_close = on_close_submit.clone();
         leptos::task::spawn_local(async move {
             match commands::set_remote(ns, origin_val, bucket_val, workflow).await {
-                Ok(msg) => {
-                    notification.set(Some(Notification::Success(msg)));
+                Ok(resp) => {
+                    // The remote was set. If its default workflow could not be
+                    // resolved, raise a warning carrying the reason instead of a
+                    // plain success, so the user knows the package is pushing
+                    // ungoverned rather than discovering it only at push time.
+                    let notice = match resp.resolution_warning {
+                        Some(reason) => Notification::Warning(format!(
+                            "Remote set, but the bucket's default workflow couldn't be resolved ({reason}); it will push without a workflow."
+                        )),
+                        None => Notification::Success(resp.message),
+                    };
+                    notification.set(Some(notice));
                     on_close();
                     refetch.notify();
                 }

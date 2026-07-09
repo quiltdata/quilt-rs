@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha6] - 2026-07-09
+
+### Changed
+
+- `InstalledPackage::set_remote` now returns a typed outcome that reports when the bucket's default workflow could not be resolved, so callers can warn the user instead of silently attaching the remote without a workflow (<https://github.com/quiltdata/quilt-rs/pull/754>)
+
 ## [v0.33.0-alpha5] - 2026-07-08
 
 ### Added

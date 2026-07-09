@@ -124,11 +124,12 @@ fn classify_generic_is_paused() {
 #[test]
 fn classify_config_format_error_is_conflict() {
     // A malformed `.quilt/workflows/config.yml` surfaces as
-    // `RemoteCatalogError::Workflow` (config-schema rejection). It is a
-    // user-actionable misconfiguration, so it must pause the namespace
-    // (Conflict), not retry as a transient — it lands in the default arm.
+    // `RemoteCatalogError::InvalidWorkflowsConfig` (config-schema rejection). It
+    // is a user-actionable misconfiguration, so it must pause the namespace
+    // (Conflict), not retry as a transient. The dedicated arm binds the inner
+    // error so the reason text drops the outer "Quilt error:" wrapper.
     let err = Error::from(quilt::Error::RemoteCatalog(
-        quilt::RemoteCatalogError::Workflow(
+        quilt::RemoteCatalogError::InvalidWorkflowsConfig(
             "workflows/config.yml does not satisfy the workflows config schema".to_string(),
         ),
     ));
@@ -137,6 +138,10 @@ fn classify_config_format_error_is_conflict() {
             assert!(
                 msg.contains("does not satisfy the workflows config schema"),
                 "reason text should carry the config-schema message, got: {msg}"
+            );
+            assert!(
+                !msg.contains("Quilt error:"),
+                "the dedicated arm must strip the outer wrapper, got: {msg}"
             );
         }
         other => panic!("expected Conflict(Other(_)), got {other:?}"),

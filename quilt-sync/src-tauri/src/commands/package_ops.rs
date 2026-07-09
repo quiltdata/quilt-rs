@@ -329,17 +329,29 @@ pub async fn package_uninstall(
     )
 }
 
+/// Typed response for the `set_remote` command. `resolution_warning` is
+/// `Some(reason)` when the remote was set but the bucket's default workflow
+/// could not be resolved (best-effort path) — the UI raises a warning notice
+/// rather than a plain success. A typed struct keeps the Tauri boundary
+/// self-describing instead of overloading the success string.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRemoteResponse {
+    pub message: String,
+    pub resolution_warning: Option<String>,
+}
+
 async fn set_remote_command(
     m: &model::Model,
     namespace: &str,
     origin: &str,
     bucket: &str,
     workflow: WorkflowIntent,
-) -> Result<quilt_uri::Namespace, Error> {
+) -> Result<(quilt_uri::Namespace, Option<String>), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let origin = quilt_uri::Host::from_str(origin)?;
-    model::set_remote(m, &namespace, origin, bucket.to_string(), workflow).await?;
-    Ok(namespace)
+    let warning = model::set_remote(m, &namespace, origin, bucket.to_string(), workflow).await?;
+    Ok((namespace, warning))
 }
 
 #[tauri::command]
@@ -351,18 +363,28 @@ pub async fn set_remote(
     origin: String,
     bucket: String,
     workflow: WorkflowIntent,
-) -> Result<String, String> {
+) -> Result<SetRemoteResponse, String> {
     tracing.track(MixpanelEvent::RemoteSet).await;
 
-    let msg_init = format!("Setting remote for {namespace}");
-    let msg_ok = format!("Successfully set remote for {namespace}");
-    let msg_err = |err: &Error| format!("Failed to set remote: {err}");
-
-    let result = set_remote_command(&m, &namespace, &origin, &bucket, workflow).await;
-    if let Ok(ns) = &result {
-        watcher.clear_paused(ns).await;
+    // `Notify::new` logs the init line; on success/failure we log explicitly so
+    // the success payload can be the typed struct rather than a bare string.
+    Notify::new(format!("Setting remote for {namespace}"));
+    match set_remote_command(&m, &namespace, &origin, &bucket, workflow).await {
+        Ok((ns, resolution_warning)) => {
+            watcher.clear_paused(&ns).await;
+            let message = format!("Successfully set remote for {namespace}");
+            ::tracing::debug!("{message}");
+            Ok(SetRemoteResponse {
+                message,
+                resolution_warning,
+            })
+        }
+        Err(err) => {
+            let msg = format!("Failed to set remote: {err}");
+            ::tracing::error!("{msg}");
+            Err(msg)
+        }
     }
-    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_create_command(

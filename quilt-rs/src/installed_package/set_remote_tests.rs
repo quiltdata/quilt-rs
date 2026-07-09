@@ -676,13 +676,17 @@ schemas:
         .await?;
 
     // set_remote triggers recommit, which must stamp the bucket default.
-    package
+    let outcome = package
         .set_remote(
             "my-bucket".to_string(),
             Some("example.com".parse()?),
             WorkflowIntent::BucketDefault,
         )
         .await?;
+    assert!(
+        outcome.resolution_warning.is_none(),
+        "a clean bucket-default resolution must not produce a warning"
+    );
 
     let lineage = package.lineage().await?;
     let new_commit = lineage.commit.as_ref().expect("commit should exist");
@@ -1057,7 +1061,7 @@ schemas:
 ";
     let (package, _t1, _t2) = package_with_config("bucketdefault-ok", config, b"{}").await?;
 
-    package
+    let outcome = package
         .set_remote(
             "my-bucket".to_string(),
             Some("example.com".parse()?),
@@ -1065,10 +1069,30 @@ schemas:
         )
         .await?;
 
+    // The silent best-effort failure is now surfaced: the outcome carries a
+    // resolution warning naming the reason, so the caller (CLI/quilt-sync) can
+    // tell the user instead of leaving them ungoverned until push time.
+    let warning = outcome
+        .resolution_warning
+        .expect("a failed bucket-default resolution must surface a warning");
+    assert!(
+        warning.contains("ghost"),
+        "the warning must carry the underlying reason, got: {warning}"
+    );
+
     let lineage = package.lineage().await?;
     assert!(
         lineage.remote_uri.is_some(),
         "remote should be persisted on the BucketDefault path"
+    );
+    let commit = lineage.commit.as_ref().expect("commit should still exist");
+    let manifest_path = package
+        .paths
+        .installed_manifest(&package.namespace, &commit.hash);
+    let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
+    assert!(
+        manifest.header.workflow.is_none(),
+        "no workflow may be stamped when the bucket default fails to resolve"
     );
 
     Ok(())
