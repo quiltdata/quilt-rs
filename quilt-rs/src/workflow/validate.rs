@@ -13,7 +13,15 @@
 //!
 //! - metadata / entries schemas are **Draft-7** JSON Schema;
 //! - a schema may **not** use `$ref` (each schema must be self-contained);
-//! - `handle_pattern` is a **substring** match (the regex is not anchored);
+//! - `format` keywords are **annotation-only**: quilt3's `Draft7Validator`
+//!   carries no `FormatChecker`, so a value like `{"format": "date"}` never
+//!   asserts, matching this gate;
+//! - `handle_pattern` is a **substring** match (the regex is not anchored),
+//!   and is compiled with the Rust `regex` crate rather than Python's `re`:
+//!   patterns using Python-only features (look-arounds like `(?!...)`,
+//!   backreferences like `\1`) fail loudly here as `InvalidHandlePattern`
+//!   instead of matching — an accepted divergence, since such patterns are
+//!   rare and the failure is explicit rather than silent drift;
 //! - entry *bytes* are never validated — only the logical key, size, and
 //!   metadata of each entry.
 
@@ -163,6 +171,12 @@ pub fn validate_package(
     }
 
     if let Some(pattern) = &rules.handle_pattern {
+        // quilt3 compiles handle_pattern with Python's `re`, which supports
+        // look-around assertions (e.g. `(?!...)`) and backreferences (e.g.
+        // `\1`). The Rust `regex` crate rejects those by design, so such a
+        // pattern surfaces here as a loud `InvalidHandlePattern` rather than
+        // matching. This is an accepted divergence: such patterns are rare,
+        // and an explicit error is preferable to silent behavioral drift.
         let regex =
             Regex::new(pattern).map_err(|err| WorkflowValidationError::InvalidHandlePattern {
                 pattern: pattern.clone(),
@@ -224,10 +238,18 @@ fn compile_schema(schema: &Value, kind: SchemaKind) -> Result<Validator, Workflo
     if contains_ref(schema) {
         return Err(WorkflowValidationError::UnsupportedRef { kind });
     }
-    jsonschema::draft7::new(schema).map_err(|err| WorkflowValidationError::InvalidSchema {
-        kind,
-        reason: err.to_string(),
-    })
+    // quilt3's Draft7Validator is built without a FormatChecker, so `format`
+    // is annotation-only there. jsonschema 0.47 asserts `format` for Draft 7
+    // by default, so we disable it — otherwise we would falsely reject packages
+    // (e.g. a non-RFC-3339 `{"format": "date"}` value) that quilt3 accepts,
+    // which would pause autosync.
+    jsonschema::draft7::options()
+        .should_validate_formats(false)
+        .build(schema)
+        .map_err(|err| WorkflowValidationError::InvalidSchema {
+            kind,
+            reason: err.to_string(),
+        })
 }
 
 /// Whether the schema uses `$ref` anywhere (as an object key at any depth).
@@ -543,6 +565,42 @@ mod tests {
             WorkflowValidationError::UnsupportedRef {
                 kind: SchemaKind::Metadata
             }
+        ));
+    }
+
+    #[test]
+    fn format_keyword_is_annotation_only() {
+        // quilt3 builds its Draft7Validator without a FormatChecker, so
+        // `format` is annotation-only there — a value that violates the format
+        // (but satisfies the base type) must still PASS our gate. Asserting
+        // `format` would falsely reject packages quilt3 accepts and pause
+        // autosync.
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: Some(json!({
+                "type": "object",
+                "properties": { "Date": { "type": "string", "format": "date" } }
+            })),
+            entries_schema: None,
+        };
+        let entries = [];
+
+        // "July 8, 2026" is not an RFC 3339 date, but it is a string, so with
+        // format as annotation-only the package is admissible.
+        let meta = json!({ "Date": "July 8, 2026" });
+        let pkg = candidate("p", None, Some(&meta), &entries);
+        assert!(validate_package(Some(&rules), false, &pkg).is_ok());
+
+        // Guard against the test passing because validation was skipped: a
+        // genuine type violation on the same schema must still reject.
+        let bad = json!({ "Date": 7 });
+        let pkg = candidate("p", None, Some(&bad), &entries);
+        let err = validate_package(Some(&rules), false, &pkg).unwrap_err();
+        assert!(matches!(
+            err,
+            WorkflowValidationError::Rejected(v)
+                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
