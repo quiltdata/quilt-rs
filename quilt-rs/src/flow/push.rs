@@ -95,8 +95,8 @@ pub struct PushResult {
 /// Push the new package revision to the remote and tags it as "latest".
 ///
 /// Runs the push-side workflow gate against the destination bucket's current
-/// config (see [`push_package_impl`]). Used for a standalone push of a
-/// pre-existing commit; the publish flow calls [`push_package_impl`] directly
+/// config (see `push_package_impl`). Used for a standalone push of a
+/// pre-existing commit; the publish flow calls `push_package_impl` directly
 /// so it can skip the gate when the commit it just made already validated the
 /// identical manifest.
 pub async fn push_package(

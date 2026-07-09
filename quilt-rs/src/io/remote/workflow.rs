@@ -110,7 +110,7 @@ pub struct WorkflowInfo {
 ///
 /// Construction is strict: [`WorkflowsConfig::from_yaml`] first validates the
 /// whole document against quilt3's vendored config JSON Schema (see
-/// [`CONFIG_SCHEMA`]) and refuses a malformed config, so a `WorkflowsConfig`
+/// `CONFIG_SCHEMA`) and refuses a malformed config, so a `WorkflowsConfig`
 /// value can only exist for a config quilt3 would also accept. The typed fields
 /// (`default_workflow`, `is_workflow_required`, `workflows`) surface what the
 /// commit dialog needs; the resolution helpers dig into the retained raw YAML
@@ -432,6 +432,15 @@ async fn fetch_schema_for_key<R: Remote>(
 /// applied by `project_entries` in the pure gate (matching quilt3's default).
 ///
 /// Shared by the commit and push flows so both project rows identically.
+///
+/// TODO: the gates materialize every manifest row and project all entries into
+/// one JSON array for `entries_schema` validation, so memory scales with
+/// manifest size. When large manifests arrive (streamed formats such as
+/// Parquet/Iceberg over [`crate::io::manifest::RowsStream`]), validate lazily
+/// instead: classify the
+/// schema up front and stream-validate the dominant subset (a single per-item
+/// `items` schema, count/tuple/`contains` accumulators), materializing only
+/// for array-level combinators that genuinely need the whole entry set.
 pub(crate) fn entry_view(row: &ManifestRow) -> EntryView<'_> {
     EntryView {
         // Lossy: a non-UTF-8 logical key projects with U+FFFD replacement
