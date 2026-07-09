@@ -13,8 +13,8 @@
 
 ### Added
 
-- A candidate package is now validated against its workflow (metadata and entries schemas, handle pattern, message-required, workflow-required) — the resolved workflow at commit and `set_remote`, the destination bucket's current workflow configuration at push — and an invalid package is refused with the failing rule while its previous state is left untouched (<https://github.com/quiltdata/quilt-rs/pull/749>)
-- A `.quilt/workflows/config.yml` is now validated against quilt3's config schema when loaded, so a malformed config (e.g. a mistyped field) is refused everywhere instead of silently disabling the rule the bucket owner expected to enforce (<https://github.com/quiltdata/quilt-rs/pull/749>)
+- A candidate package is now validated against its workflow (metadata and entries schemas, handle pattern, message-required, workflow-required) — the resolved workflow at commit and `set_remote`, the destination bucket's current workflow configuration at push — and an invalid package is refused with the failing rule while its previous state is left untouched (<https://github.com/quiltdata/quilt-rs/pull/753>)
+- A `.quilt/workflows/config.yml` is now validated against quilt3's config schema when loaded, so a malformed config (e.g. a mistyped field) is refused everywhere instead of silently disabling the rule the bucket owner expected to enforce (<https://github.com/quiltdata/quilt-rs/pull/753>)
 
 ## [v0.33.0-alpha4] - 2026-07-08
 
