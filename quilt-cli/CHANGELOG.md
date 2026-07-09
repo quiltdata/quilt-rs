@@ -13,7 +13,7 @@
 
 ### Changed
 
-- Committing or publishing a package that fails its bucket's workflow is now refused, naming the rule it violated (<https://github.com/quiltdata/quilt-rs/pull/749>)
+- Committing or publishing a package that fails its bucket's workflow is now refused, naming the rule it violated, including when a first `quilt push` attaches the remote (<https://github.com/quiltdata/quilt-rs/pull/749>)
 
 ## [v0.27.1-alpha3] - 2026-07-08
 
