@@ -46,6 +46,10 @@
     color: var(--q-ui-palette-success);
   }
 
+  .warning {
+    color: var(--q-ui-palette-warning);
+  }
+
   .update-bar {
     align-items: center;
     display: flex;

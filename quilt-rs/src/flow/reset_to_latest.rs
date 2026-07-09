@@ -190,7 +190,7 @@ mod tests {
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from(format!("s3://b/.quilt/packages/{}", &test_hash).as_str())?,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{test_hash}").as_str())?,
                 dummy_manifest.as_bytes().to_vec(),
             )
             .await?;
@@ -263,7 +263,7 @@ mod tests {
         remote
             .put_object(
                 &None,
-                &S3Uri::try_from(format!("s3://b/.quilt/packages/{}", &test_hash).as_str())?,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{test_hash}").as_str())?,
                 dummy_manifest.as_bytes().to_vec(),
             )
             .await?;

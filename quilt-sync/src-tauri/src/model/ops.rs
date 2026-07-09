@@ -278,21 +278,23 @@ pub async fn package_pull(
     Ok(())
 }
 
+/// Set the package's remote. Returns `Some(reason)` when the remote was set but
+/// the bucket's default workflow could not be resolved (best-effort path), so
+/// the command layer can surface the warning to the user; `None` otherwise.
 pub async fn set_remote(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     origin: quilt_uri::Host,
     bucket: String,
     workflow: WorkflowIntent,
-) -> Result<(), Error> {
+) -> Result<Option<String>, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
         .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
     model
         .set_remote(&installed_package, origin, bucket, workflow)
-        .await?;
-    Ok(())
+        .await
 }
 
 pub async fn package_create(
@@ -510,7 +512,7 @@ mod tests {
                 eq("my-bucket".to_string()),
                 eq(intent.clone()),
             )
-            .returning(|_, _, _, _| Ok(()));
+            .returning(|_, _, _, _| Ok(None));
 
         let origin: quilt_uri::Host = "test.quilt.dev".parse().unwrap();
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;

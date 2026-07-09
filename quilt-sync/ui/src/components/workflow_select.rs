@@ -220,8 +220,13 @@ pub enum WorkflowViewKind {
     Available { is_workflow_required: bool },
     /// The bucket is ungoverned: a single disabled `None`, no choice to make.
     NotConfigured,
-    /// The config couldn't be loaded: an inline notice, no dropdown.
+    /// The config couldn't be loaded (transient/network): an inline soft notice,
+    /// no dropdown. Commit re-resolves the bucket default.
     Unavailable,
+    /// The config is malformed: an inline notice naming the reason. Commits to
+    /// this bucket will fail until it is fixed, so the notice must not promise a
+    /// fallback.
+    Invalid { reason: String },
 }
 
 /// The workflow section, resolved from the backend state.
@@ -276,11 +281,25 @@ pub fn build_workflow_view(
             }],
             initial: 0,
         },
-        // Config load failed: no dropdown, just a notice. Submit sends
-        // `BucketDefault` so the real default re-resolves at commit time
+        // Config load failed (transient): no dropdown, just a notice. Submit
+        // sends `BucketDefault` so the real default re-resolves at commit time
         // (the network may have recovered) rather than forcing no-workflow.
         CommitWorkflows::Unavailable => WorkflowView {
             kind: WorkflowViewKind::Unavailable,
+            options: vec![WorkflowOption {
+                label: "Bucket default".to_string(),
+                intent: WorkflowIntent::BucketDefault,
+                disabled: true,
+            }],
+            initial: 0,
+        },
+        // Config is malformed: no dropdown, a notice naming the reason. Submit
+        // still carries `BucketDefault`; the commit will fail loudly against the
+        // invalid config (semantics unchanged), but the user is told up front.
+        CommitWorkflows::Invalid { reason } => WorkflowView {
+            kind: WorkflowViewKind::Invalid {
+                reason: reason.clone(),
+            },
             options: vec![WorkflowOption {
                 label: "Bucket default".to_string(),
                 intent: WorkflowIntent::BucketDefault,
@@ -328,14 +347,30 @@ pub fn WorkflowSection(
             </div>
         }
         .into_any(),
-        // Config load failed: no dropdown, just an inline notice. Submit does
-        // not block; it re-resolves the bucket default at commit time.
+        // Config load failed (transient): no dropdown, just an inline soft
+        // notice. Submit does not block; it re-resolves the bucket default at
+        // commit time. The notice does NOT promise the default will apply —
+        // only that the commit will try it — since the load may keep failing.
         WorkflowViewKind::Unavailable => view! {
             <div class="qui-workflow">
                 <p class="qui-workflow-field">
                     <label class="qui-workflow-label" for="workflow">"Workflow"</label>
                     <span class="qui-workflow-hint">
-                        "⚠ Couldn't load this bucket's workflows. Commit will use the bucket default."
+                        "⚠ Couldn't load this bucket's workflows. Commit will try the bucket's default workflow."
+                    </span>
+                </p>
+            </div>
+        }
+        .into_any(),
+        // Config is malformed: an inline notice that names the reason and warns
+        // that commits will fail until the config is fixed — no false promise
+        // of a bucket-default fallback.
+        WorkflowViewKind::Invalid { reason } => view! {
+            <div class="qui-workflow">
+                <p class="qui-workflow-field">
+                    <label class="qui-workflow-label" for="workflow">"Workflow"</label>
+                    <span class="qui-workflow-error">
+                        {format!("⚠ This bucket's workflow configuration is invalid ({reason}). Commits to this bucket will fail until it's fixed.")}
                     </span>
                 </p>
             </div>
@@ -605,6 +640,26 @@ mod tests {
         assert_eq!(view.initial, 0);
         // Both non-Available states submit `BucketDefault`, but they are
         // distinct render inputs (NotConfigured vs Unavailable).
+        assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
+    }
+
+    #[test]
+    fn view_invalid_carries_reason_and_submits_bucket_default() {
+        // A malformed config maps to a distinct render kind carrying the
+        // reason, so the notice can name it; submit still sends `BucketDefault`.
+        let view = build_workflow_view(
+            &CommitWorkflows::Invalid {
+                reason: "bad schema".to_string(),
+            },
+            Some("ignored"),
+        );
+        assert_eq!(
+            view.kind,
+            WorkflowViewKind::Invalid {
+                reason: "bad schema".to_string(),
+            }
+        );
+        assert_eq!(view.initial, 0);
         assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
     }
 

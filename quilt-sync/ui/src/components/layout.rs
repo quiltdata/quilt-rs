@@ -6,6 +6,10 @@ use super::buttons;
 #[derive(Clone)]
 pub enum Notification {
     Success(String),
+    /// A soft warning: the operation succeeded but something needs the user's
+    /// attention (e.g. the remote was set but its default workflow could not be
+    /// resolved).
+    Warning(String),
     Error(String),
 }
 
@@ -99,6 +103,9 @@ pub fn Layout(
                     {move || notification.get().map(|n| match n {
                         Notification::Success(msg) => view! {
                             <div class="js-success success">{msg}</div>
+                        }.into_any(),
+                        Notification::Warning(msg) => view! {
+                            <div class="warning">{msg}</div>
                         }.into_any(),
                         Notification::Error(msg) => view! {
                             <div class="error">{msg}</div>

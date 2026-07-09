@@ -89,6 +89,14 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         Error::Quilt(quilt::Error::WorkflowValidation(inner)) => {
             Err(WatchError::Conflict(PausedReason::Other(inner.to_string())))
         }
+        // A malformed `.quilt/workflows/config.yml` is a user-actionable
+        // misconfiguration: pause (Conflict), never retry as a transient. Bind
+        // the inner error so the tray/tooltip reason is the focused
+        // "Invalid workflows config: …" message rather than the outer
+        // "Quilt error:" wrapper the default arm's `err.to_string()` would add.
+        Error::Quilt(quilt::Error::RemoteCatalog(
+            inner @ quilt::RemoteCatalogError::InvalidWorkflowsConfig(_),
+        )) => Err(WatchError::Conflict(PausedReason::Other(inner.to_string()))),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
