@@ -158,9 +158,12 @@ impl WorkflowsConfig {
             Some(YamlValue::Mapping(workflows)) => match workflows.get(workflow_id) {
                 Some(YamlValue::Mapping(workflow)) => match workflow.get(key) {
                     Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
+                    // Absent key: the workflow simply declares no such schema.
                     None => Ok(None),
-                    _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
-                        "`{key}` not found for workflow ID: {workflow_id}"
+                    // Present but not a string (explicit null, mapping, list):
+                    // a misconfiguration, reported as such — not as "not found".
+                    Some(_) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                        "`{key}` for workflow ID {workflow_id} must be a string"
                     )))),
                 },
                 _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
@@ -380,7 +383,10 @@ async fn fetch_schema_for_key<R: Remote>(
 /// Shared by the commit and push flows so both project rows identically.
 pub(crate) fn entry_view(row: &ManifestRow) -> EntryView<'_> {
     EntryView {
-        logical_key: row.logical_key.to_str().unwrap_or_default(),
+        // Lossy: a non-UTF-8 logical key projects with U+FFFD replacement
+        // characters, so the entries_schema validates an approximation of the
+        // real key instead of a fabricated empty string. A valid key borrows.
+        logical_key: row.logical_key.to_string_lossy(),
         size: row.size,
         meta: row.meta.as_ref().and_then(|meta| meta.get("user_meta")),
     }
@@ -1019,6 +1025,68 @@ workflows:
         );
 
         Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_present_non_string_schema_key_is_an_honest_error() -> Res<()> {
+        // `metadata_schema: ~` — the key IS present, just null. The error must
+        // say the value is not a string, not claim the key was "not found".
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        let config = r"
+workflows:
+  foo:
+    metadata_schema: ~
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+
+        let (_, parsed) = fetch_workflows_config(&remote, &host, &uri).await?;
+        let parsed = parsed.expect("config present");
+        let err = fetch_workflow_rules(&remote, &host, &parsed, "foo")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        let message = err.to_string();
+        assert!(
+            message.contains("`metadata_schema` for workflow ID foo must be a string"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            !message.contains("not found"),
+            "unexpected message: {message}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_entry_view_non_utf8_logical_key_is_lossy() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::PathBuf;
+
+        use crate::checksum::ObjectHash;
+
+        // A logical key with an invalid UTF-8 byte must project as the lossy
+        // form (U+FFFD replacement character), not as a fabricated empty key.
+        let row = ManifestRow {
+            logical_key: PathBuf::from(OsStr::from_bytes(b"bad-\xFF.txt")),
+            physical_key: "s3://bucket/bad".to_string(),
+            hash: ObjectHash::default(),
+            size: 1,
+            meta: None,
+        };
+        let view = entry_view(&row);
+        assert_eq!(view.logical_key, "bad-\u{FFFD}.txt");
     }
 
     #[test]

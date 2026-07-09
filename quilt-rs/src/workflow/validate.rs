@@ -13,6 +13,11 @@
 //!
 //! - metadata / entries schemas are **Draft-7** JSON Schema;
 //! - a schema may **not** use `$ref` (each schema must be self-contained);
+//! - a schema may declare `$schema` only as the Draft-7 meta-schema URI
+//!   (`http://json-schema.org/draft-07/schema#` — the sole entry in quilt3's
+//!   `SUPPORTED_META_SCHEMAS`); any other value, or a non-string one, is a
+//!   hard configuration error rather than a schema silently compiled as
+//!   Draft-7; an absent `$schema` defaults to Draft-7, as in quilt3;
 //! - `format` keywords are **annotation-only**: quilt3's `Draft7Validator`
 //!   carries no `FormatChecker`, so a value like `{"format": "date"}` never
 //!   asserts, matching this gate;
@@ -25,6 +30,7 @@
 //! - entry *bytes* are never validated — only the logical key, size, and
 //!   metadata of each entry.
 
+use std::borrow::Cow;
 use std::fmt;
 
 use jsonschema::Validator;
@@ -32,6 +38,10 @@ use regex::Regex;
 use serde_json::Value;
 use serde_json::json;
 use thiserror::Error;
+
+/// The only `$schema` meta-schema quilt3 accepts (its `SUPPORTED_META_SCHEMAS`
+/// maps exactly this URI to `Draft7Validator`).
+const SUPPORTED_META_SCHEMA: &str = "http://json-schema.org/draft-07/schema#";
 
 /// Which schema in a workflow a configuration problem refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +95,12 @@ pub enum WorkflowValidationError {
     #[error("workflow {kind} uses `$ref`, which is not supported")]
     UnsupportedRef { kind: SchemaKind },
 
+    #[error(
+        "workflow {kind} declares `$schema`: {value}, which is not supported \
+         (only the Draft-7 meta-schema {SUPPORTED_META_SCHEMA:?} is supported)"
+    )]
+    UnsupportedMetaSchema { kind: SchemaKind, value: String },
+
     #[error("workflow handle_pattern {pattern:?} is not a valid regular expression: {reason}")]
     InvalidHandlePattern { pattern: String, reason: String },
 
@@ -118,9 +134,13 @@ pub struct WorkflowRules {
 
 /// A single package entry projected to exactly what the gate inspects:
 /// logical key, size, and metadata. Entry *bytes* are never inspected.
+///
+/// `logical_key` is a [`Cow`] because manifest logical keys are paths that may
+/// not be valid UTF-8: a valid key borrows, a non-UTF-8 key is projected
+/// lossily into an owned string.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntryView<'a> {
-    pub logical_key: &'a str,
+    pub logical_key: Cow<'a, str>,
     pub size: u64,
     pub meta: Option<&'a Value>,
 }
@@ -223,7 +243,7 @@ fn project_entries(entries: &[EntryView<'_>]) -> Value {
             .iter()
             .map(|entry| {
                 json!({
-                    "logical_key": entry.logical_key,
+                    "logical_key": entry.logical_key.as_ref(),
                     "size": entry.size,
                     "meta": entry.meta.cloned().unwrap_or_else(|| json!({})),
                 })
@@ -233,10 +253,25 @@ fn project_entries(entries: &[EntryView<'_>]) -> Value {
 }
 
 /// Compile a schema document as Draft-7, rejecting any use of `$ref` first
-/// (quilt3 forbids it; each schema must be self-contained).
+/// (quilt3 forbids it; each schema must be self-contained), then any `$schema`
+/// declaration other than the Draft-7 meta-schema (quilt3's
+/// `SUPPORTED_META_SCHEMAS` accepts only that one URI; compiling e.g. a
+/// 2020-12 schema as Draft-7 would silently mis-validate it).
 fn compile_schema(schema: &Value, kind: SchemaKind) -> Result<Validator, WorkflowValidationError> {
     if contains_ref(schema) {
         return Err(WorkflowValidationError::UnsupportedRef { kind });
+    }
+    // Like quilt3, only an *object* schema is inspected for `$schema` (a bare
+    // boolean schema has no meta-schema to declare). Absent `$schema` means
+    // Draft-7, matching quilt3's default validator class.
+    if let Value::Object(map) = schema
+        && let Some(meta_schema) = map.get("$schema")
+        && meta_schema.as_str() != Some(SUPPORTED_META_SCHEMA)
+    {
+        return Err(WorkflowValidationError::UnsupportedMetaSchema {
+            kind,
+            value: meta_schema.to_string(),
+        });
     }
     // quilt3's Draft7Validator is built without a FormatChecker, so `format`
     // is annotation-only there. jsonschema 0.47 asserts `format` for Draft 7
@@ -353,7 +388,7 @@ mod tests {
         let meta = valid_meta();
         let entry_meta = json!({ "k": "v" });
         let entries = [EntryView {
-            logical_key: "data/a.csv",
+            logical_key: "data/a.csv".into(),
             size: 42,
             meta: Some(&entry_meta),
         }];
@@ -433,7 +468,7 @@ mod tests {
         };
 
         let small = [EntryView {
-            logical_key: "a.txt",
+            logical_key: "a.txt".into(),
             size: 10,
             meta: None,
         }];
@@ -441,7 +476,7 @@ mod tests {
         assert!(validate_package(Some(&rules), false, &pkg).is_ok());
 
         let big = [EntryView {
-            logical_key: "a.txt",
+            logical_key: "a.txt".into(),
             size: 999,
             meta: None,
         }];
@@ -602,6 +637,79 @@ mod tests {
             WorkflowValidationError::Rejected(v)
                 if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
         ));
+    }
+
+    #[test]
+    fn draft7_meta_schema_declaration_is_accepted() {
+        // The one URI in quilt3's SUPPORTED_META_SCHEMAS.
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: Some(json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "type": "object",
+                "required": ["owner"]
+            })),
+            entries_schema: None,
+        };
+        let entries = [];
+        let meta = valid_meta();
+        let pkg = candidate("p", None, Some(&meta), &entries);
+        assert!(validate_package(Some(&rules), false, &pkg).is_ok());
+    }
+
+    #[test]
+    fn unsupported_meta_schema_is_a_hard_error() {
+        // quilt3 refuses any meta-schema outside SUPPORTED_META_SCHEMAS
+        // ("Unsupported meta-schema: ..."). Compiling a 2020-12 schema as
+        // Draft-7 here would silently mis-validate it instead.
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: Some(json!({
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object"
+            })),
+            entries_schema: None,
+        };
+        let entries = [];
+        let meta = valid_meta();
+        let pkg = candidate("p", None, Some(&meta), &entries);
+        let err = validate_package(Some(&rules), false, &pkg).unwrap_err();
+        assert!(matches!(
+            err,
+            WorkflowValidationError::UnsupportedMetaSchema {
+                kind: SchemaKind::Metadata,
+                ..
+            }
+        ));
+        // The message must name the offending value.
+        assert!(err.to_string().contains("2020-12"));
+    }
+
+    #[test]
+    fn non_string_meta_schema_is_a_hard_error() {
+        // quilt3: "$schema must be a string." — also a hard config error here.
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: None,
+            entries_schema: Some(json!({
+                "$schema": 42,
+                "type": "array"
+            })),
+        };
+        let entries = [];
+        let pkg = candidate("p", None, None, &entries);
+        let err = validate_package(Some(&rules), false, &pkg).unwrap_err();
+        assert!(matches!(
+            err,
+            WorkflowValidationError::UnsupportedMetaSchema {
+                kind: SchemaKind::Entries,
+                ..
+            }
+        ));
+        assert!(err.to_string().contains("42"));
     }
 
     #[test]
