@@ -1079,6 +1079,10 @@ schemas:
         warning.contains("ghost"),
         "the warning must carry the underlying reason, got: {warning}"
     );
+    assert!(
+        !warning.contains("Remote catalog error"),
+        "the warning must be the unwrapped inner reason, not the error chain, got: {warning}"
+    );
 
     let lineage = package.lineage().await?;
     assert!(

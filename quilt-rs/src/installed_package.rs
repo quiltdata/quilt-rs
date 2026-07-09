@@ -622,7 +622,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                     // operation succeeds without a workflow stamp; carry the
                     // reason back so the caller can surface it rather than
                     // leaving the user silently ungoverned until push time.
-                    let reason = err.to_string();
+                    // Unwrap to the inner message so user-facing callers (the
+                    // CLI's stderr warning, the Set-remote popup) don't show
+                    // the "Remote catalog error: …" wrapper chain, matching
+                    // how the selector's Invalid notice surfaces these.
+                    let reason = match &err {
+                        Error::RemoteCatalog(inner) => inner.to_string(),
+                        _ => err.to_string(),
+                    };
                     log::warn!(
                         "Remote saved but recommit failed ({reason}); re-run Set Remote (e.g. after logging in) to complete it before pushing."
                     );
