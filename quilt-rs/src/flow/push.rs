@@ -145,7 +145,17 @@ pub async fn push_package(
     // so re-check here before any bytes reach the remote. Runs after the
     // no-commit early return above, so a no-op push stays a no-op. Vacuously
     // passes for an ungoverned bucket (the header carries no workflow).
-    let entries: Vec<EntryView> = local_manifest.rows.iter().map(entry_view).collect();
+    // Validate the entry order that `records_stream` will serialize and
+    // upload, not `local_manifest.rows`' storage order. `records_stream`
+    // yields rows sorted by logical key, while `.rows` preserves
+    // insertion/file order, so a manifest installed from another client can be
+    // unsorted. An order-sensitive entries_schema (a Draft-7 tuple-form
+    // `items`) must see the bytes we upload — and agree with the commit gate,
+    // which validates its own sorted view. This sort mirrors
+    // `Manifest::records_stream`'s ordering.
+    let mut sorted_rows: Vec<&ManifestRow> = local_manifest.rows.iter().collect();
+    sorted_rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+    let entries: Vec<EntryView> = sorted_rows.iter().copied().map(entry_view).collect();
     validate_workflow(
         remote,
         &host_config.host,
@@ -455,6 +465,28 @@ mod tests {
         Ok(())
     }
 
+    /// Seed a `gate` workflow whose `entries_schema` is an order-sensitive
+    /// Draft-7 tuple-form `items`: entry 0 must be `a.txt`, entry 1 `b.txt`.
+    /// It validates only when the entries are inspected in sorted (`a`, `b`)
+    /// order — the order `records_stream` serializes and uploads.
+    async fn seed_ordered_entries_schema_gate(remote: &MockRemote) -> Res {
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"workflows:\n  gate:\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/schemas/entries.json")?,
+                br#"{"type": "array", "items": [{"properties": {"logical_key": {"const": "a.txt"}}}, {"properties": {"logical_key": {"const": "b.txt"}}}]}"#.to_vec(),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// A row whose wire `meta` carries the wrapped `{"user_meta": {...}}`
     /// form, as manifest rows do on the wire.
     fn wrapped_meta_row(user_meta: &Value) -> ManifestRow {
@@ -561,6 +593,83 @@ mod tests {
                     if msg.contains("not equal to pushed manifest commit")
             ),
             "expected the gate to pass and the push to reach the hash check, got: {err:?}"
+        );
+        assert!(
+            storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a passing gate must let the push build the manifest"
+        );
+        Ok(())
+    }
+
+    /// The push gate must validate the entry order it *uploads*, not
+    /// `Manifest::rows`' storage order. `records_stream` serializes rows
+    /// sorted by logical key, but `.rows` preserves insertion/file order, so a
+    /// manifest installed from another client can be unsorted. With an
+    /// order-sensitive tuple-form `entries_schema`, validating storage order
+    /// would reject a package whose uploaded (sorted) order is valid — and
+    /// disagree with the commit gate. Here the rows are inserted unsorted
+    /// (`b.txt` then `a.txt`) and the schema passes only in sorted order.
+    #[test(tokio::test)]
+    async fn test_push_entries_schema_validates_uploaded_sorted_order() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        seed_ordered_entries_schema_gate(&remote).await?;
+
+        let file_content = b"bytes\n";
+        for name in ["ra", "rb"] {
+            remote
+                .storage
+                .write_byte_stream(
+                    &PathBuf::from(format!("/b/a/{name}")),
+                    ByteStream::from_static(file_content),
+                )
+                .await?;
+        }
+
+        // Insert in unsorted storage order: b.txt then a.txt. `records_stream`
+        // uploads them sorted (a.txt, b.txt), which is what the gate must see.
+        let mut manifest = governed_manifest();
+        manifest
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("b.txt"),
+                physical_key: "file:///b/a/rb".to_string(),
+                size: file_content.len() as u64,
+                ..ManifestRow::default()
+            })
+            .await?;
+        manifest
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("a.txt"),
+                physical_key: "file:///b/a/ra".to_string(),
+                size: file_content.len() as u64,
+                ..ManifestRow::default()
+            })
+            .await?;
+
+        // The fixture's commit hash is a placeholder, so a push that clears the
+        // gate proceeds all the way to the post-upload hash check — proving the
+        // gate accepted the sorted order it uploads. Before the fix the gate
+        // validated storage order (b, a) and rejected with EntriesInvalid.
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "expected the gate to accept the sorted upload order and reach the hash check, got: {err:?}"
         );
         assert!(
             storage.exists(&paths.cached_manifests_dir("b")).await,
