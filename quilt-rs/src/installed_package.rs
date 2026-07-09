@@ -17,6 +17,7 @@ use crate::io::remote::WorkflowIntent;
 use crate::io::remote::WorkflowsConfig;
 use crate::io::remote::fetch_workflows_config;
 use crate::io::remote::resolve_workflow;
+use crate::io::remote::resolve_workflow_from_config;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::Storage;
 use crate::lineage;
@@ -630,13 +631,25 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             bucket,
             version: None,
         };
+        // Fetch the bucket's workflows config exactly once, then reuse the
+        // parsed value for both resolution and the recommit gate below — the
+        // gate would otherwise re-download the same config via the header's
+        // pinned URI.
+        let (config_uri, workflows_config) =
+            fetch_workflows_config(&self.remote, &host, &workflows_config_uri).await?;
         // Publish later pushes this pending recommit *without* re-resolving the
         // workflow, so recommit must stamp the caller's chosen workflow now.
         // With `WorkflowIntent::BucketDefault` (the no-gesture path) this picks
         // up the bucket's `default_workflow`, so a locally-created package's
         // first publish is governed even when the user expresses no choice.
-        let workflow =
-            resolve_workflow(&self.remote, &host, workflow, &workflows_config_uri).await?;
+        let workflow = resolve_workflow_from_config(
+            &self.remote,
+            &host,
+            workflow,
+            config_uri,
+            workflows_config.as_ref(),
+        )
+        .await?;
         let manifest = self.manifest().await?;
         let lineage = flow::recommit(
             lineage,
@@ -648,6 +661,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             self.namespace.clone(),
             host_config,
             workflow,
+            workflows_config.as_ref(),
         )
         .await?;
         self.lineage.write(&self.storage, lineage).await?;

@@ -11,8 +11,10 @@ use crate::io::manifest::RowsStream;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
+use crate::io::remote::WorkflowsConfig;
 use crate::io::remote::entry_view;
 use crate::io::remote::validate_workflow;
+use crate::io::remote::validate_workflow_with_config;
 use crate::io::storage::Storage;
 use crate::lineage::CommitState;
 use crate::lineage::PackageLineage;
@@ -92,6 +94,7 @@ pub async fn recommit_for_remote(
     namespace: Namespace,
     host_config: HostConfig,
     workflow: Option<Workflow>,
+    workflows_config: Option<&WorkflowsConfig>,
 ) -> Res<PackageLineage> {
     let Some(old_commit) = lineage.commit.take() else {
         return Ok(lineage);
@@ -124,16 +127,39 @@ pub async fn recommit_for_remote(
         .filter_map(|row| row.as_ref().ok())
         .map(entry_view)
         .collect();
-    validate_workflow(
-        remote,
-        host,
-        &namespace.to_string(),
-        header.message.as_deref(),
-        header.user_meta.as_ref(),
-        header.workflow.as_ref(),
-        &entries,
-    )
-    .await?;
+    // `set_remote` passes the config it already fetched to resolve the workflow;
+    // reuse it here so the gate does not re-download the same config. At this
+    // moment the header's pinned config URI addresses exactly that object (the
+    // resolution just stamped it), so reusing the parsed config is semantically
+    // identical to re-fetching. Callers without a pre-fetched config pass
+    // `None`, and the gate fetches via the header's pinned URI as before.
+    match workflows_config {
+        Some(config) => {
+            validate_workflow_with_config(
+                remote,
+                host,
+                &namespace.to_string(),
+                header.message.as_deref(),
+                header.user_meta.as_ref(),
+                header.workflow.as_ref(),
+                Some(config),
+                &entries,
+            )
+            .await?;
+        }
+        None => {
+            validate_workflow(
+                remote,
+                host,
+                &namespace.to_string(),
+                header.message.as_deref(),
+                header.user_meta.as_ref(),
+                header.workflow.as_ref(),
+                &entries,
+            )
+            .await?;
+        }
+    }
 
     let stream = tokio_stream::iter(vec![Ok(rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
@@ -269,6 +295,7 @@ mod tests {
             namespace,
             crc64_config,
             None,
+            None,
         )
         .await?;
 
@@ -302,6 +329,7 @@ mod tests {
             namespace,
             HostConfig::default(),
             None,
+            None,
         )
         .await?;
 
@@ -327,6 +355,7 @@ mod tests {
             &None,
             namespace,
             sha256_config,
+            None,
             None,
         )
         .await?;
@@ -362,6 +391,7 @@ mod tests {
             &None,
             namespace.clone(),
             crc64_config,
+            None,
             None,
         )
         .await?;
@@ -410,6 +440,7 @@ mod tests {
             namespace.clone(),
             host_config,
             Some(workflow),
+            None,
         )
         .await?;
 
@@ -478,6 +509,7 @@ mod tests {
             &None,
             namespace,
             crc64_config,
+            None,
             None,
         )
         .await?;
@@ -568,6 +600,7 @@ mod tests {
             namespace.clone(),
             HostConfig::default(),
             Some(workflow.clone()),
+            None,
         )
         .await?;
         let would_be_hash = ok_lineage.commit.as_ref().unwrap().hash.clone();
@@ -603,6 +636,7 @@ mod tests {
             namespace.clone(),
             HostConfig::default(),
             Some(workflow),
+            None,
         )
         .await
         .unwrap_err();

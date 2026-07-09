@@ -704,6 +704,111 @@ schemas:
     Ok(())
 }
 
+/// `set_remote` against a governed bucket must fetch the workflows config
+/// exactly once: resolution and the recommit workflow gate share the single
+/// fetched/parsed config rather than each downloading it. The `gate` workflow
+/// declares a permissive metadata schema, so both the config and the schema
+/// document are fetched — and each exactly once.
+#[test(tokio::test)]
+async fn test_set_remote_fetches_config_and_schema_once() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "fetchonce").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    let config_uri_str = "s3://my-bucket/.quilt/workflows/config.yml";
+    let schema_uri_str = "s3://my-bucket/schemas/test.json";
+    let config_uri: S3Uri = config_uri_str.parse()?;
+    let config = r"
+version: '1'
+default_workflow: foo
+workflows:
+  foo:
+    name: Foo
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+    let schema_uri: S3Uri = schema_uri_str.parse()?;
+    remote
+        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .await?;
+    remote
+        .put_object(&None, &schema_uri, b"{}".to_vec())
+        .await?;
+
+    let lineage_json = r#"{
+        "packages": {
+            "test/fetchonce": {
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": "/tmp/working_dir"
+    }"#;
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let package_home = home.join(namespace.to_string());
+    storage.create_dir_all(&package_home).await?;
+    storage
+        .write_byte_stream(
+            package_home.join("data.txt"),
+            ByteStream::from_static(b"hello world"),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace: namespace.clone(),
+    };
+
+    package
+        .commit(
+            "Initial commit".to_string(),
+            UserMeta::Set(serde_json::json!({"key": "value"})),
+            None,
+            None,
+        )
+        .await?;
+
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
+        .await?;
+
+    assert_eq!(
+        package.remote.get_object_count(config_uri_str),
+        1,
+        "config.yml must be fetched exactly once across set_remote"
+    );
+    assert_eq!(
+        package.remote.get_object_count(schema_uri_str),
+        1,
+        "the schema document must be fetched exactly once across set_remote"
+    );
+
+    Ok(())
+}
+
 /// Set up a locally-committed package against a bucket whose config declares a
 /// `foo` workflow but no `default_workflow`, run `set_remote` with `intent`, and
 /// return the recommitted manifest's header. The absence of `default_workflow`

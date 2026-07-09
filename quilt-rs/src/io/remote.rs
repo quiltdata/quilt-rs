@@ -86,7 +86,8 @@ pub use workflow::{
     fetch_workflows_config_for_bucket, resolve_workflow,
 };
 pub(crate) use workflow::{
-    entry_view, fetch_workflows_config, validate_workflow, validate_workflow_against_current_config,
+    entry_view, fetch_workflows_config, resolve_workflow_from_config, validate_workflow,
+    validate_workflow_against_current_config, validate_workflow_with_config,
 };
 
 // Mock remote is available during testing, or to downstream crates via the

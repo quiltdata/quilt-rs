@@ -479,16 +479,57 @@ pub(crate) async fn validate_workflow<R: Remote>(
     workflow: Option<&Workflow>,
     entries: &[EntryView<'_>],
 ) -> Res<()> {
+    let config = match workflow {
+        Some(workflow) => {
+            fetch_workflows_config(remote, host, &workflow.config)
+                .await?
+                .1
+        }
+        None => None,
+    };
+    validate_workflow_with_config(
+        remote,
+        host,
+        name,
+        message,
+        user_meta,
+        workflow,
+        config.as_ref(),
+        entries,
+    )
+    .await
+}
+
+/// The workflow gate given a config the caller has already fetched and parsed,
+/// skipping the `.quilt/workflows/config.yml` fetch [`validate_workflow`] would
+/// otherwise perform via the header's pinned config URI.
+///
+/// `config` must be the parsed config that produced `workflow` — the same
+/// object the pinned URI in `workflow.config` addresses — so reusing it is
+/// semantically identical to re-fetching. Pass `None` for a bucket with no
+/// config (a vacuously-valid revision, left untouched); a `None` `workflow` is
+/// likewise vacuously valid. Otherwise identical to [`validate_workflow`]: same
+/// rules, same [`validate_package`] decision.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn validate_workflow_with_config<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    name: &str,
+    message: Option<&str>,
+    user_meta: Option<&Value>,
+    workflow: Option<&Workflow>,
+    config: Option<&WorkflowsConfig>,
+    entries: &[EntryView<'_>],
+) -> Res<()> {
     let Some(workflow) = workflow else {
         return Ok(());
     };
-    let (_, config) = fetch_workflows_config(remote, host, &workflow.config).await?;
     let Some(config) = config else {
         return Ok(());
     };
     let rules = match &workflow.id {
         Some(workflow_id) => {
-            Some(fetch_workflow_rules(remote, host, &config, &workflow_id.id).await?)
+            Some(fetch_workflow_rules(remote, host, config, &workflow_id.id).await?)
         }
         None => None,
     };
@@ -599,6 +640,25 @@ pub async fn resolve_workflow<R: Remote>(
     uri: &S3Uri,
 ) -> Res<Option<Workflow>> {
     let (config, parsed) = fetch_workflows_config(remote, host, uri).await?;
+    resolve_workflow_from_config(remote, host, intent, config, parsed.as_ref()).await
+}
+
+/// Resolve a workflow from a config the caller has already fetched and parsed,
+/// so a caller that must also enforce the workflow (e.g. `set_remote`, which
+/// resolves then recommits) fetches `.quilt/workflows/config.yml` exactly once.
+///
+/// `config` is the (possibly version-pinned) config URI returned by
+/// [`fetch_workflows_config`] and `parsed` its parsed value; the resulting
+/// [`Workflow`] stamps `config`, so the pinned URI it carries and `parsed`
+/// describe the same object. Same resolution as [`resolve_workflow`], which
+/// delegates here after fetching.
+pub(crate) async fn resolve_workflow_from_config<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    intent: WorkflowIntent,
+    config: S3Uri,
+    parsed: Option<&WorkflowsConfig>,
+) -> Res<Option<Workflow>> {
     match (parsed, intent) {
         (Some(parsed), WorkflowIntent::Named(id)) => {
             parsed.resolve_named(remote, host, config, id).await
