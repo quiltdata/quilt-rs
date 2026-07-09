@@ -273,18 +273,43 @@ fn compile_schema(schema: &Value, kind: SchemaKind) -> Result<Validator, Workflo
             value: meta_schema.to_string(),
         });
     }
-    // quilt3's Draft7Validator is built without a FormatChecker, so `format`
-    // is annotation-only there. jsonschema 0.47 asserts `format` for Draft 7
-    // by default, so we disable it — otherwise we would falsely reject packages
-    // (e.g. a non-RFC-3339 `{"format": "date"}` value) that quilt3 accepts,
-    // which would pause autosync.
+    build_annotation_only_draft7(schema).map_err(|err| WorkflowValidationError::InvalidSchema {
+        kind,
+        reason: err.to_string(),
+    })
+}
+
+/// Compile the vendored workflows-config JSON Schema itself into a validator.
+///
+/// Uses the same annotation-only Draft-7 compile as [`compile_schema`], but
+/// *without* its `$ref` / `$schema` guards: those guard **untrusted user**
+/// metadata/entries schemas, whereas the config schema is quilt3's own trusted
+/// document, which legitimately declares `$ref` (`#/definitions/Version`) and
+/// `$schema`. This mirrors quilt3, whose config validator is a plain
+/// `Draft7Validator(config-1.schema.json)` with no `FormatChecker` — so its
+/// `format: regex` / `format: uri` annotations never assert, exactly as here.
+///
+/// Panics if the schema does not compile: the only caller feeds it the vendored
+/// constant, so a failure is a build-time defect, not a runtime input error.
+pub(crate) fn compile_config_schema(schema: &Value) -> Validator {
+    build_annotation_only_draft7(schema)
+        .expect("vendored workflows-config schema must compile as Draft-7")
+}
+
+/// Build a Draft-7 validator with `format` assertions disabled.
+///
+/// quilt3's `Draft7Validator` is built without a `FormatChecker`, so `format`
+/// is annotation-only there. jsonschema 0.47 asserts `format` for Draft 7 by
+/// default, so we disable it — otherwise we would falsely reject inputs (e.g. a
+/// non-RFC-3339 `{"format": "date"}` value) that quilt3 accepts, which would
+/// pause autosync. Shared by the user-schema gate and config-format validation
+/// so there is a single quilt3-parity compile path.
+fn build_annotation_only_draft7(
+    schema: &Value,
+) -> Result<Validator, jsonschema::ValidationError<'static>> {
     jsonschema::draft7::options()
         .should_validate_formats(false)
         .build(schema)
-        .map_err(|err| WorkflowValidationError::InvalidSchema {
-            kind,
-            reason: err.to_string(),
-        })
 }
 
 /// Whether the schema uses `$ref` anywhere (as an object key at any depth).

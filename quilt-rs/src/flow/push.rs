@@ -407,7 +407,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
-                b"workflows:\n  gate:\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote
@@ -459,7 +459,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
-                b"workflows:\n  gate: {}\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
             .await?;
 
@@ -498,7 +498,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
-                b"workflows:\n  gate:\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
             )
             .await?;
         remote
@@ -520,7 +520,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
-                b"workflows:\n  gate:\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
             )
             .await?;
         remote
@@ -754,7 +754,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
-                b"workflows:\n  gate: {}\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
             .await?;
 
@@ -801,7 +801,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/stale-config.yml")?,
-                b"workflows:\n  gate: {}\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
             .await?;
         // ...but the bucket's *current* config no longer declares it.
@@ -809,7 +809,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
-                b"is_workflow_required: false\nworkflows:\n  other: {}\n".to_vec(),
+                b"version: \"1\"\nis_workflow_required: false\nworkflows:\n  other:\n    name: Other\n".to_vec(),
             )
             .await?;
 
@@ -864,7 +864,11 @@ mod tests {
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         remote
-            .put_object(&None, &config_uri, b"workflows:\n  gate: {}\n".to_vec())
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
             .await?;
         let err = push_package(
             first_push_governed_lineage(),
@@ -894,7 +898,7 @@ mod tests {
             .put_object(
                 &None,
                 &config_uri,
-                b"workflows:\n  gate:\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote

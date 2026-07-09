@@ -611,9 +611,11 @@ async fn test_set_remote_recommit_picks_up_bucket_default() -> Res {
     // The target bucket declares a `default_workflow`.
     let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
     let config = r"
+version: '1'
 default_workflow: foo
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 schemas:
   bar:
@@ -726,9 +728,11 @@ async fn recommit_manifest_for_intent(slug: &str, intent: WorkflowIntent) -> Res
     // no-gesture (BucketDefault) path would stamp an id-less record.
     let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
     let config = r"
+version: '1'
 is_workflow_required: false
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 schemas:
   bar:
@@ -808,8 +812,10 @@ schemas:
 /// need another one: a `foo` workflow, no `default_workflow`, and (since
 /// `is_workflow_required` is omitted) a workflow required by default.
 const FOO_CONFIG: &str = r"
+version: '1'
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 schemas:
   bar:
@@ -934,9 +940,11 @@ async fn test_set_remote_swallows_bucket_default_recommit_error() -> Res {
     // is never best-effort: a workflow *rejection* propagates — see
     // `test_set_remote_bucket_default_validation_error_propagates`.)
     let config = r"
+version: '1'
 default_workflow: ghost
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 schemas:
   bar:
@@ -1046,9 +1054,11 @@ async fn test_set_remote_bucket_default_validation_error_propagates() -> Res {
     // resolution failure, a validation rejection is NOT best-effort on the
     // BucketDefault path: set_remote fails and persists nothing.
     let config = r"
+version: '1'
 default_workflow: foo
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 schemas:
   bar:

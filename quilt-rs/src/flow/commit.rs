@@ -401,7 +401,11 @@ mod tests {
         // absent from storage after a rejection.
         let ok_remote = MockRemote::default();
         ok_remote
-            .put_object(&None, &config_uri, b"workflows:\n  gate: {}\n".to_vec())
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
             .await?;
         let ok_storage = MockStorage::default();
         let (_lineage, ok_commit) = commit_package(
@@ -428,7 +432,7 @@ mod tests {
             .put_object(
                 &None,
                 &config_uri,
-                b"workflows:\n  gate:\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote

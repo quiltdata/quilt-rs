@@ -1,3 +1,6 @@
+use std::sync::LazyLock;
+
+use jsonschema::Validator;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -15,9 +18,50 @@ use crate::manifest::WorkflowId;
 use crate::workflow::EntryView;
 use crate::workflow::PackageCandidate;
 use crate::workflow::WorkflowRules;
+use crate::workflow::compile_config_schema;
 use crate::workflow::validate_package;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
+
+/// The workflows-config JSON Schema, vendored byte-identical from quilt3
+/// (`quilt3/workflows/config-1.schema.json`). quilt3 validates every loaded
+/// `.quilt/workflows/config.yml` against this with a plain `Draft7Validator`
+/// (`quilt3.workflows._get_conf_validator`) and refuses a malformed config, so
+/// we do the same — otherwise a YAML typo (e.g. a quoted `is_message_required`)
+/// would silently disable a rule the bucket owner believes is enforced.
+const CONFIG_SCHEMA: &str = include_str!("config-1.schema.json");
+
+/// The compiled config-schema validator. Built once: the schema is a
+/// compile-time constant, so compilation cannot fail on user input.
+static CONFIG_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
+    let schema: Value = serde_json::from_str(CONFIG_SCHEMA)
+        .expect("vendored workflows-config schema is valid JSON");
+    compile_config_schema(&schema)
+});
+
+/// Validate a decoded `config.yml` document against the vendored quilt3 config
+/// schema, exactly as quilt3 does at load. On any violation, fails with a
+/// [`RemoteCatalogError::Workflow`] (classified as a conflict, not a transient,
+/// by the sync watcher) naming every offending path — so a malformed config
+/// refuses everywhere rather than half-working.
+fn validate_config_document(yaml: &YamlValue) -> Res<()> {
+    use std::fmt::Write;
+
+    // `serde_yaml::Value` is `Serialize`, so this reuses serde's own YAML→JSON
+    // conversion rather than a hand-rolled walker.
+    let document: Value = serde_json::to_value(yaml)?;
+    let mut message = String::new();
+    for err in CONFIG_VALIDATOR.iter_errors(&document) {
+        let _ = write!(message, "\n  - {err} (at {})", err.instance_path());
+    }
+    if message.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+            "workflows/config.yml does not satisfy the workflows config schema:{message}"
+        ))))
+    }
+}
 
 /// Caller intent for resolving a package's workflow (the per-bucket quality-gate
 /// reference stored in the manifest header).
@@ -64,12 +108,13 @@ pub struct WorkflowInfo {
 
 /// Typed view of `.quilt/workflows/config.yml`.
 ///
-/// Parsing is deliberately lenient: [`WorkflowsConfig::from_yaml`] never rejects
-/// a malformed config (config-format validation is a separate slice). The typed
-/// fields (`default_workflow`, `is_workflow_required`, `workflows`) surface what
-/// the commit dialog needs, while the resolution helpers reproduce today's lazy,
-/// ad-hoc digging by consulting the retained raw YAML — so a misconfiguration
-/// only surfaces (and only as loudly as before) when a workflow is resolved.
+/// Construction is strict: [`WorkflowsConfig::from_yaml`] first validates the
+/// whole document against quilt3's vendored config JSON Schema (see
+/// [`CONFIG_SCHEMA`]) and refuses a malformed config, so a `WorkflowsConfig`
+/// value can only exist for a config quilt3 would also accept. The typed fields
+/// (`default_workflow`, `is_workflow_required`, `workflows`) surface what the
+/// commit dialog needs; the resolution helpers dig into the retained raw YAML
+/// for the remaining fields, now guaranteed well-typed by the schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorkflowsConfig {
     /// Top-level `default_workflow`, when declared as a string.
@@ -85,10 +130,16 @@ pub struct WorkflowsConfig {
 impl WorkflowsConfig {
     /// Parse an already-decoded `config.yml` value into the typed view.
     ///
-    /// Never fails for well-formed YAML: unexpected shapes degrade to defaults
-    /// rather than errors, preserving today's behaviour where malformed configs
-    /// only bite at resolution time.
+    /// Validates the whole document against quilt3's config schema first
+    /// (mirroring quilt3's load-time `Draft7Validator`), so a malformed config
+    /// — a typo'd type, a missing required key — is rejected here rather than
+    /// silently degrading a rule to a default. This is the single construction
+    /// point every consumer (commit/push enforcement, `resolve_workflow`, the
+    /// bucket-workflows selector) reaches, so the check runs exactly once per
+    /// loaded config on every path.
     pub fn from_yaml(yaml: &YamlValue) -> Res<WorkflowsConfig> {
+        validate_config_document(yaml)?;
+
         let default_workflow = yaml
             .get("default_workflow")
             .and_then(YamlValue::as_str)
@@ -570,8 +621,10 @@ mod tests {
 
         // Put test config.yaml with workflow but no schemas section
         let config = r"
+version: '1'
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 ";
         remote
@@ -633,8 +686,10 @@ workflows:
 
         // Put test config.yaml into mock remote storage
         let config = r"
+version: '1'
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 schemas:
   bar:
@@ -726,8 +781,10 @@ schemas:
 
         // Config present but no `default_workflow` key → today's null-id record.
         let config = r"
+version: '1'
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 ";
         remote
@@ -751,9 +808,11 @@ workflows:
 
         // Config declares a `default_workflow` pointing at a valid workflow.
         let config = r"
+version: '1'
 default_workflow: foo
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 schemas:
   bar:
@@ -793,9 +852,11 @@ schemas:
 
         // `default_workflow` names a workflow that is not declared → loud error.
         let config = r"
+version: '1'
 default_workflow: ghost
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 ";
         remote
@@ -820,11 +881,15 @@ workflows:
         let host = None;
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
-        // `default_workflow` present but not a string → loud error.
+        // `default_workflow` present but not a string → the config-schema
+        // validation at load rejects it (quilt3 types `default_workflow` as a
+        // string), so it never reaches resolution.
         let config = r"
+version: '1'
 default_workflow: [not, a, string]
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 ";
         remote
@@ -838,7 +903,15 @@ workflows:
             err,
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
         ));
-        assert!(err.to_string().contains("must be a string"));
+        let message = err.to_string();
+        assert!(
+            message.contains("does not satisfy the workflows config schema"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("/default_workflow"),
+            "violation must name the offending path, got: {message}"
+        );
 
         Ok(())
     }
@@ -849,17 +922,16 @@ workflows:
         let host = None;
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
-        // `default_workflow:` with no value is a YAML explicit null — not a string,
-        // so the bucket-default intent errors loudly rather than governing silently.
-        //
-        // quilt3 agrees in direction: its config JSON schema types `default_workflow`
-        // as a string and quilt3 schema-validates the whole config on load, so this
-        // config fails every push there. quilt-rs rejecting only the bucket-default
-        // intent is the narrower behavior.
+        // `default_workflow:` with no value is a YAML explicit null — not a
+        // string, so the config-schema validation at load rejects it (quilt3
+        // types `default_workflow` as a string and schema-validates the whole
+        // config on load, so this config fails every push there too).
         let config = r"
+version: '1'
 default_workflow:
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 ";
         remote
@@ -873,7 +945,15 @@ workflows:
             err,
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
         ));
-        assert!(err.to_string().contains("must be a string"));
+        let message = err.to_string();
+        assert!(
+            message.contains("does not satisfy the workflows config schema"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("/default_workflow"),
+            "violation must name the offending path, got: {message}"
+        );
 
         Ok(())
     }
@@ -929,8 +1009,10 @@ schemas:
         // `is_workflow_required` absent → defaults to true (matches quilt3).
         let yaml: YamlValue = serde_yaml::from_str(
             r"
+version: '1'
 workflows:
   foo:
+    name: Foo
     metadata_schema: bar
 ",
         )?;
@@ -948,6 +1030,7 @@ workflows:
         // Explicit `is_workflow_required: false` → false.
         let yaml: YamlValue = serde_yaml::from_str(
             r"
+version: '1'
 is_workflow_required: false
 workflows:
   foo:
@@ -977,6 +1060,7 @@ workflows:
 
         let uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
         let config = r"
+version: '1'
 default_workflow: foo
 workflows:
   foo:
@@ -1021,6 +1105,7 @@ workflows:
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         let config = r#"
+version: "1"
 workflows:
   foo:
     name: Foo
@@ -1078,6 +1163,7 @@ schemas:
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         let config = r"
+version: '1'
 workflows:
   bare:
     name: Bare
@@ -1104,25 +1190,27 @@ workflows:
     }
 
     #[test(tokio::test)]
-    async fn test_present_non_string_schema_key_is_an_honest_error() -> Res<()> {
-        // `metadata_schema: ~` — the key IS present, just null. The error must
-        // say the value is not a string, not claim the key was "not found".
+    async fn test_non_string_schema_key_rejected_by_config_schema() -> Res<()> {
+        // `metadata_schema: ~` — the key IS present, just null. The config
+        // schema types it as a string, so the whole config is now rejected at
+        // load (before any resolution), with a violation naming the exact path
+        // — a typo can no longer silently disable schema validation.
         let remote = MockRemote::default();
         let host = None;
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         let config = r"
+version: '1'
 workflows:
   foo:
+    name: Foo
     metadata_schema: ~
 ";
         remote
             .put_object(&None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let (_, parsed) = fetch_workflows_config(&remote, &host, &uri).await?;
-        let parsed = parsed.expect("config present");
-        let err = fetch_workflow_rules(&remote, &host, &parsed, "foo")
+        let err = fetch_workflows_config(&remote, &host, &uri)
             .await
             .unwrap_err();
 
@@ -1132,12 +1220,12 @@ workflows:
         ));
         let message = err.to_string();
         assert!(
-            message.contains("`metadata_schema` for workflow ID foo must be a string"),
+            message.contains("does not satisfy the workflows config schema"),
             "unexpected message: {message}"
         );
         assert!(
-            !message.contains("not found"),
-            "unexpected message: {message}"
+            message.contains("/workflows/foo/metadata_schema"),
+            "violation must name the offending path, got: {message}"
         );
 
         Ok(())
@@ -1208,6 +1296,95 @@ workflows:
             assert_eq!(serde_json::to_value(&intent)?, wire);
             assert_eq!(serde_json::from_value::<WorkflowIntent>(wire)?, intent);
         }
+
+        Ok(())
+    }
+
+    /// (a) A quoted `is_message_required: "true"` is a YAML string, not a bool.
+    /// The lenient parser used to read it as `false` (rule silently off); the
+    /// config schema now rejects it, naming the exact path.
+    #[test]
+    fn test_quoted_is_message_required_rejected_by_config_schema() {
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+workflows:
+  foo:
+    name: Foo
+    is_message_required: "true"
+"#,
+        )
+        .expect("valid YAML");
+
+        let err = WorkflowsConfig::from_yaml(&yaml).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        let message = err.to_string();
+        assert!(
+            message.contains("does not satisfy the workflows config schema"),
+            "unexpected message: {message}"
+        );
+        assert!(
+            message.contains("/workflows/foo/is_message_required"),
+            "violation must name the offending path, got: {message}"
+        );
+    }
+
+    /// (b) A list `handle_pattern` is not the string the schema requires: the
+    /// config is rejected at load with a violation naming the path.
+    #[test]
+    fn test_list_handle_pattern_rejected_by_config_schema() {
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+workflows:
+  foo:
+    name: Foo
+    handle_pattern: ["^team/"]
+"#,
+        )
+        .expect("valid YAML");
+
+        let err = WorkflowsConfig::from_yaml(&yaml).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        let message = err.to_string();
+        assert!(
+            message.contains("/workflows/foo/handle_pattern"),
+            "violation must name the offending path, got: {message}"
+        );
+    }
+
+    /// (c) A fully-valid config — including `format: regex` / `format: uri`
+    /// annotations the schema declares but quilt3 never asserts — still parses.
+    #[test]
+    fn test_valid_config_with_format_annotations_parses() -> Res<()> {
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+is_workflow_required: true
+default_workflow: foo
+workflows:
+  foo:
+    name: Foo
+    handle_pattern: "^team/"
+    is_message_required: true
+    metadata_schema: meta
+schemas:
+  meta:
+    url: s3://bucket/schemas/meta.json
+"#,
+        )?;
+
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+        assert_eq!(config.default_workflow, Some("foo".to_string()));
+        assert!(config.is_workflow_required);
+        assert!(config.is_message_required("foo"));
+        assert_eq!(config.handle_pattern("foo"), Some("^team/".to_string()));
 
         Ok(())
     }

@@ -566,7 +566,7 @@ mod tests {
             .put_object(
                 &None,
                 &S3Uri::try_from(config_uri)?,
-                b"workflows:\n  gate:\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote

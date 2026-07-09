@@ -122,6 +122,28 @@ fn classify_generic_is_paused() {
 }
 
 #[test]
+fn classify_config_format_error_is_conflict() {
+    // A malformed `.quilt/workflows/config.yml` surfaces as
+    // `RemoteCatalogError::Workflow` (config-schema rejection). It is a
+    // user-actionable misconfiguration, so it must pause the namespace
+    // (Conflict), not retry as a transient — it lands in the default arm.
+    let err = Error::from(quilt::Error::RemoteCatalog(
+        quilt::RemoteCatalogError::Workflow(
+            "workflows/config.yml does not satisfy the workflows config schema".to_string(),
+        ),
+    ));
+    match classify_sync_err(err) {
+        Err(WatchError::Conflict(PausedReason::Other(msg))) => {
+            assert!(
+                msg.contains("does not satisfy the workflows config schema"),
+                "reason text should carry the config-schema message, got: {msg}"
+            );
+        }
+        other => panic!("expected Conflict(Other(_)), got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_push_error_is_paused() {
     let err = Error::from(quilt::Error::PackageOp(quilt::PackageOpError::Push(
         "workflow rejected metadata".to_string(),
