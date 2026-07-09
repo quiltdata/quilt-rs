@@ -19,8 +19,9 @@ mod local;
 
 pub use local::LocalStorage;
 
-// Mock storage is only available during testing.
-#[cfg(test)]
+// Mock storage is available during testing, or to downstream crates via the
+// `testing` feature.
+#[cfg(any(test, feature = "testing"))]
 pub mod mocks;
 
 /// Storage operations for the underlying filesystem.

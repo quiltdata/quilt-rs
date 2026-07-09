@@ -137,6 +137,157 @@ mod tests {
         Ok(())
     }
 
+    /// A push re-validates the revision against the destination bucket's
+    /// **current** workflow config, not the version-pinned config the commit
+    /// resolved against. A package committed valid under a permissive config is
+    /// rejected once the bucket owner tightens that config — and the rejection
+    /// surfaces at the CLI boundary with the validator's own wording, naming the
+    /// failing rule (`metadata_schema`) and the missing field (`owner`).
+    ///
+    /// This drives `InstalledPackage::push` (the call `push::model` makes)
+    /// against an in-memory mock bucket, exposed by quilt-rs's `testing`
+    /// feature — the only way to script the "config mutates between commit and
+    /// push" scenario a live bucket cannot reproduce. It mirrors the commit-side
+    /// `test_commit_rejected_by_workflow_surfaces_clear_error`.
+    #[test(tokio::test)]
+    async fn test_push_rejected_by_mutated_workflow_surfaces_clear_error() -> Result<(), Error> {
+        use quilt_rs::InstalledPackage;
+        use quilt_rs::io::remote::Remote;
+        use quilt_rs::io::remote::mocks::MockRemote;
+        use quilt_rs::lineage::DomainLineageIo;
+        use quilt_rs::lineage::Home;
+        use quilt_rs::lineage::PackageLineageIo;
+        use quilt_rs::manifest::Workflow;
+        use quilt_rs::manifest::WorkflowId;
+        use quilt_rs::paths::DomainPaths;
+        use quilt_uri::S3Uri;
+        use tempfile::TempDir;
+
+        let home_dir = TempDir::new()?;
+        let paths_dir = TempDir::new()?;
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("reference", "push-gate").into();
+        let home = Home::new(home_dir.path().to_path_buf());
+        let paths = DomainPaths::new(paths_dir.path().to_path_buf());
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        // A brand-new local package: a commit will be stamped below, and only
+        // then is the remote attached, mirroring `create → commit → set-remote`.
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "reference/push-gate": {{
+                        "commit": null,
+                        "remote": null,
+                        "base_hash": "",
+                        "latest_hash": "",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": "{}"
+            }}"#,
+            home_dir.path().display()
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        let config_uri = S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?;
+        // Config v1: a permissive `gate` workflow with no metadata_schema.
+        remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
+            paths,
+            remote,
+            storage,
+            namespace: namespace.clone(),
+        };
+
+        // Commit valid under v1: the `gate` workflow (which declares no
+        // metadata_schema) is stamped into the header, so clearing the
+        // package metadata passes the commit-time gate.
+        let workflow = Workflow {
+            config: config_uri.to_string().parse()?,
+            id: Some(WorkflowId {
+                id: "gate".to_string(),
+                metadata: None,
+            }),
+        };
+        package
+            .commit(
+                "governed commit".to_string(),
+                UserMeta::Clear,
+                Some(workflow),
+                None,
+            )
+            .await?;
+
+        // Attach the governed bucket `b` now, first-push (no remote hash yet),
+        // so push skips the remote-manifest browse and reaches the gate.
+        package
+            .set_remote("b".to_string(), None, WorkflowIntent::BucketDefault)
+            .await?;
+
+        // The bucket owner tightens the *current* config: `gate` now requires an
+        // `owner` key the committed (cleared) metadata lacks. Removing this
+        // mutation is the discriminating (RED-equivalent) run: the push then
+        // clears the gate and succeeds, and the rejection assertions fail.
+        package
+            .remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        package
+            .remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/schemas/meta.json")?,
+                br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
+            )
+            .await?;
+
+        // Push re-resolves the current config and rejects the identical
+        // manifest. The CLI wraps the quilt-rs error transparently, so the
+        // validator's own wording reaches the user verbatim.
+        let Err(err) = package.push(None).await else {
+            return Err(Error::Test(
+                "push must be rejected by the tightened workflow config".to_string(),
+            ));
+        };
+        let message = Error::from(err).to_string();
+        assert!(
+            message.starts_with("quilt_rs error: package does not satisfy the workflow"),
+            "message must announce a workflow rejection, got: {message}"
+        );
+        assert!(
+            message.contains("metadata_schema"),
+            "message must name the failing rule, got: {message}"
+        );
+        assert!(
+            message.contains("owner"),
+            "message must name the missing field, got: {message}"
+        );
+
+        Ok(())
+    }
+
     /// Verifies that push command returns error when there are no commits:
     ///   * installs a package but makes no commits
     ///   * attempts to push without commits

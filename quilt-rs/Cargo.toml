@@ -3,12 +3,17 @@ name = "quilt-rs"
 description = "Rust library for accessing Quilt data packages."
 
 # Inherit from workspace
-version = "0.33.0-alpha4"
+version = "0.33.0-alpha5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+
+[features]
+# Exposes the in-memory mock `Remote`/`Storage` implementations so downstream
+# crates can drive quilt-rs flows against a fake bucket in their own tests.
+testing = []
 
 [dependencies]
 async-trait.workspace = true
@@ -24,9 +29,11 @@ getrandom.workspace = true
 gitignores.workspace = true
 hex.workspace = true
 ignore.workspace = true
+jsonschema.workspace = true
 multibase.workspace = true
 multihash.workspace = true
 percent-encoding.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 reqwest-middleware.workspace = true
 reqwest-retry.workspace = true

@@ -81,13 +81,18 @@ where
 pub use client::HttpClient;
 pub use host::{HostChecksums, HostConfig, fetch_host_config};
 pub use s3::RemoteS3;
-pub(crate) use workflow::fetch_workflows_config;
 pub use workflow::{
-    WorkflowInfo, WorkflowIntent, WorkflowsConfig, fetch_workflows_config_for_bucket,
-    resolve_workflow,
+    WorkflowInfo, WorkflowIntent, WorkflowsConfig, fetch_workflow_rules,
+    fetch_workflows_config_for_bucket, resolve_workflow,
+};
+pub(crate) use workflow::{
+    entry_view, fetch_workflows_config, resolve_workflow_from_config, validate_workflow,
+    validate_workflow_against_current_config, validate_workflow_with_config,
 };
 
-#[cfg(test)]
+// Mock remote is available during testing, or to downstream crates via the
+// `testing` feature.
+#[cfg(any(test, feature = "testing"))]
 pub mod mocks;
 
 pub struct RemoteObjectStream {

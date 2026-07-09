@@ -12,9 +12,11 @@ use crate::Error;
 use crate::Res;
 use crate::error::ManifestError;
 use crate::error::PackageOpError;
-use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::manifest::build_manifest_from_rows_stream;
+use crate::io::remote::Remote;
+use crate::io::remote::entry_view;
+use crate::io::remote::validate_workflow;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::CommitState;
@@ -26,14 +28,22 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
+use crate::workflow::EntryView;
+use quilt_uri::Host;
 use quilt_uri::Namespace;
 
-async fn stream_local_with_changes(
+/// Merge the stored manifest with this revision's changes into the sorted
+/// row set the new manifest is built from.
+///
+/// Returns the rows materialized (the caller runs the workflow gate over them
+/// before writing), then wraps them back into a single-chunk stream for
+/// [`build_manifest_from_rows_stream`].
+async fn collect_local_with_changes(
     local_manifest: &Manifest,
     removed: HashSet<PathBuf>,
     modified: BTreeMap<PathBuf, ManifestRow>,
     new_files: StreamRowsChunk,
-) -> impl RowsStream {
+) -> StreamRowsChunk {
     // Collect all rows from the local manifest stream
     let mut all_rows: Vec<Res<ManifestRow>> = Vec::new();
 
@@ -75,8 +85,7 @@ async fn stream_local_with_changes(
         (Err(_), Err(_)) => std::cmp::Ordering::Equal,
     });
 
-    // Convert back to a stream
-    tokio_stream::iter(vec![Ok(all_rows)])
+    all_rows
 }
 
 async fn create_immutable_object_copy(
@@ -170,6 +179,8 @@ pub async fn commit_package(
     manifest: &mut Manifest,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    host: &Option<Host>,
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: Namespace,
@@ -286,7 +297,29 @@ pub async fn commit_package(
         modified_keys.len(),
         new_files.len()
     );
-    let stream = stream_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
+    let all_rows =
+        collect_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
+
+    // The workflow quality gate: reject before any manifest is written, so a
+    // rejected revision is never committed. Vacuously passes for an ungoverned
+    // bucket (the header carries no workflow).
+    let entries: Vec<EntryView> = all_rows
+        .iter()
+        .filter_map(|row| row.as_ref().ok())
+        .map(entry_view)
+        .collect();
+    validate_workflow(
+        remote,
+        host,
+        &namespace.to_string(),
+        header.message.as_deref(),
+        header.user_meta.as_ref(),
+        header.workflow.as_ref(),
+        &entries,
+    )
+    .await?;
+
+    let stream = tokio_stream::iter(vec![Ok(all_rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
     let (manifest_path, new_top_hash) =
         build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
@@ -324,8 +357,12 @@ mod tests {
     use aws_sdk_s3::primitives::ByteStream;
 
     use crate::fixtures;
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
+    use crate::manifest::WorkflowId;
+    use crate::workflow::WorkflowValidationError;
+    use quilt_uri::S3Uri;
 
     // NOTE: Tests use "/" path for working directory, because it then parsed with Url and have to be absolute path
 
@@ -341,6 +378,105 @@ mod tests {
         }
     }
 
+    /// The commit-side workflow gate: a governed bucket whose workflow requires
+    /// an `owner` in the package metadata must reject a commit that lacks it,
+    /// and must reject *before* any manifest is written — nothing is committed.
+    #[test(tokio::test)]
+    async fn test_commit_rejected_by_workflow_writes_nothing() -> Res {
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let namespace: Namespace = ("foo", "bar").into();
+        let config_uri: S3Uri = "s3://b/.quilt/workflows/config.yml".parse()?;
+        let workflow = Workflow {
+            config: config_uri.clone(),
+            id: Some(WorkflowId {
+                id: "gate".to_string(),
+                metadata: None,
+            }),
+        };
+
+        // The top hash this revision *would* carry: the header records only the
+        // workflow's config URI + id, not the config's contents, so a commit
+        // selecting the same workflow against an unconstrained config produces
+        // byte-identical manifest bytes — and thus the exact hash that must be
+        // absent from storage after a rejection.
+        let ok_remote = MockRemote::default();
+        ok_remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+        let ok_storage = MockStorage::default();
+        let (_lineage, ok_commit) = commit_package(
+            PackageLineage::default(),
+            &mut Manifest::default(),
+            &paths,
+            &ok_storage,
+            &ok_remote,
+            &None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            namespace.clone(),
+            String::from("msg"),
+            UserMeta::Clear,
+            Some(workflow.clone()),
+        )
+        .await?;
+        let would_be_hash = ok_commit.hash;
+
+        // The governed config: the `gate` workflow's metadata_schema requires
+        // an `owner`, which the committed metadata does not provide.
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &"s3://b/schemas/meta.json".parse()?,
+                br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
+            )
+            .await?;
+
+        let storage = MockStorage::default();
+        let err = commit_package(
+            PackageLineage::default(),
+            &mut Manifest::default(),
+            &paths,
+            &storage,
+            &remote,
+            &None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            namespace.clone(),
+            String::from("msg"),
+            UserMeta::Clear,
+            Some(workflow),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                Error::WorkflowValidation(WorkflowValidationError::Rejected(_))
+            ),
+            "expected a workflow rejection, got: {err:?}"
+        );
+        assert!(
+            !storage
+                .exists(&paths.installed_manifest(&namespace, &would_be_hash))
+                .await,
+            "a rejected commit must not write a manifest"
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_commit_empty() -> Res {
         let storage = MockStorage::default();
@@ -352,6 +488,8 @@ mod tests {
             &mut Manifest::default(),
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -383,6 +521,8 @@ mod tests {
             &mut manifest_with_meta(initial_meta),
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -444,6 +584,8 @@ mod tests {
             &mut Manifest::default(),
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -503,6 +645,8 @@ mod tests {
             &mut manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
@@ -570,6 +714,8 @@ mod tests {
             &mut manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             PathBuf::from("/working-dir"),
             status,
             ("foo", "bar").into(),
@@ -652,6 +798,8 @@ mod tests {
             &mut manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
@@ -724,6 +872,8 @@ mod tests {
             &mut manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             PathBuf::from("/working-dir"),
             status,
             ("foo", "bar").into(),

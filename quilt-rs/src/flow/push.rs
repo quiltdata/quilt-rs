@@ -16,11 +16,14 @@ use crate::io::manifest::upload_manifest;
 use crate::io::manifest::upload_row;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
+use crate::io::remote::entry_view;
+use crate::io::remote::validate_workflow_against_current_config;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::paths;
+use crate::workflow::EntryView;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageHandle;
@@ -90,7 +93,45 @@ pub struct PushResult {
 }
 
 /// Push the new package revision to the remote and tags it as "latest".
+///
+/// Runs the push-side workflow gate against the destination bucket's current
+/// config (see `push_package_impl`). Used for a standalone push of a
+/// pre-existing commit; the publish flow calls `push_package_impl` directly
+/// so it can skip the gate when the commit it just made already validated the
+/// identical manifest.
 pub async fn push_package(
+    lineage: PackageLineage,
+    local_manifest: Manifest,
+    paths: &paths::DomainPaths,
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    namespace: Option<Namespace>,
+    host_config: HostConfig,
+) -> Res<PushResult> {
+    push_package_impl(
+        lineage,
+        local_manifest,
+        paths,
+        storage,
+        remote,
+        namespace,
+        host_config,
+        true,
+    )
+    .await
+}
+
+/// Push the new package revision to the remote and tag it as "latest".
+///
+/// `enforce_workflow` runs the push-side workflow gate against the
+/// destination bucket's **current** config. The publish flow passes `false`
+/// on the commit-then-push path: the commit gate has already validated the
+/// byte-identical manifest against the freshly-resolved (hence current)
+/// workflow in the same operation, so a second fetch + validate is pure
+/// redundancy. Standalone push (and the publish push-only branch, where no
+/// commit ran this operation) passes `true`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn push_package_impl(
     mut lineage: PackageLineage,
     local_manifest: Manifest,
     paths: &paths::DomainPaths,
@@ -98,6 +139,7 @@ pub async fn push_package(
     remote: &impl Remote,
     namespace: Option<Namespace>,
     host_config: HostConfig,
+    enforce_workflow: bool,
 ) -> Res<PushResult> {
     // NB: `.take()` moves commit out of lineage before we validate remote.
     // Safe because the caller reads lineage from disk and discards this copy on error.
@@ -136,6 +178,40 @@ pub async fn push_package(
         ..remote_uri.clone()
     };
     debug!("✔️ Created manifest URI: {}", manifest_uri.display());
+
+    // The workflow quality gate, re-run at push against the destination
+    // bucket's *current* config: a revision committed by an older or
+    // different client may not satisfy the bucket's workflow as it stands
+    // now, and the header's version-pinned config URI may be stale or
+    // deleted, so we re-load `.quilt/workflows/config.yml` from the bucket
+    // rather than trusting the header. Runs after the no-commit early return
+    // above, so a no-op push stays a no-op. Skipped only when the caller
+    // (publish) just validated the byte-identical manifest at commit.
+    //
+    // Validate the entry order that `records_stream` will serialize and
+    // upload, not `local_manifest.rows`' storage order. `records_stream`
+    // yields rows sorted by logical key, while `.rows` preserves
+    // insertion/file order, so a manifest installed from another client can be
+    // unsorted. An order-sensitive entries_schema (a Draft-7 tuple-form
+    // `items`) must see the bytes we upload — and agree with the commit gate,
+    // which validates its own sorted view. This sort mirrors
+    // `Manifest::records_stream`'s ordering.
+    if enforce_workflow {
+        let mut sorted_rows: Vec<&ManifestRow> = local_manifest.rows.iter().collect();
+        sorted_rows.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+        let entries: Vec<EntryView> = sorted_rows.iter().copied().map(entry_view).collect();
+        validate_workflow_against_current_config(
+            remote,
+            &host_config.host,
+            &manifest_uri.bucket,
+            &manifest_uri.namespace.to_string(),
+            local_manifest.header.message.as_deref(),
+            local_manifest.header.user_meta.as_ref(),
+            local_manifest.header.workflow.as_ref(),
+            &entries,
+        )
+        .await?;
+    }
 
     debug!("⏳ Building and uploading manifest");
     let package_handle = S3PackageHandle::from(&manifest_uri);
@@ -244,7 +320,14 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PackageLineage;
+    use crate::manifest::ManifestHeader;
+    use crate::manifest::Workflow;
+    use crate::manifest::WorkflowId;
+    use crate::workflow::RuleViolation;
+    use crate::workflow::WorkflowValidationError;
     use quilt_uri::S3Uri;
+    use serde_json::Value;
+    use serde_json::json;
 
     #[test(tokio::test)]
     async fn test_no_push_if_no_commit() -> Res {
@@ -262,6 +345,628 @@ mod tests {
         .await?;
         assert_eq!(result.lineage, PackageLineage::default());
         assert!(result.certified_latest);
+        Ok(())
+    }
+
+    /// A manifest header carrying a workflow whose config requires an `owner`
+    /// in the package metadata. Shared by the two push-gate tests; the caller
+    /// seeds the matching config into the remote.
+    fn governed_gate_workflow() -> Workflow {
+        Workflow {
+            config: "s3://b/.quilt/workflows/config.yml"
+                .parse()
+                .expect("valid config uri"),
+            id: Some(WorkflowId {
+                id: "gate".to_string(),
+                metadata: None,
+            }),
+        }
+    }
+
+    fn first_push_governed_lineage() -> PackageLineage {
+        PackageLineage {
+            commit: Some(CommitState {
+                timestamp: chrono::Utc::now(),
+                // Deliberately not the built hash: the valid-path test relies on
+                // the push reaching the post-upload hash check, which proves the
+                // gate let it through.
+                hash: "deadbeef".to_string(),
+                prev_hashes: Vec::new(),
+            }),
+            remote_uri: Some(ManifestUri {
+                bucket: "b".to_string(),
+                namespace: ("foo", "bar").into(),
+                hash: String::new(),
+                origin: None,
+            }),
+            ..PackageLineage::default()
+        }
+    }
+
+    fn governed_manifest() -> Manifest {
+        Manifest {
+            header: ManifestHeader {
+                message: Some("msg".to_string()),
+                user_meta: None,
+                workflow: Some(governed_gate_workflow()),
+                ..ManifestHeader::default()
+            },
+            ..Manifest::default()
+        }
+    }
+
+    /// The push-side workflow gate: a revision whose workflow requires `owner`
+    /// (but whose metadata lacks it) is rejected before any bytes reach the
+    /// remote.
+    #[test(tokio::test)]
+    async fn test_push_rejected_by_workflow_uploads_nothing() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/schemas/meta.json")?,
+                br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
+            )
+            .await?;
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            governed_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                Error::WorkflowValidation(WorkflowValidationError::Rejected(_))
+            ),
+            "expected a workflow rejection, got: {err:?}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a rejected push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
+    /// A governed manifest that *satisfies* its workflow passes the gate: the
+    /// push proceeds to build and upload the manifest, reaching the post-upload
+    /// hash check (which trips only because this fixture's commit hash is a
+    /// placeholder). The point is that the gate did not reject it.
+    #[test(tokio::test)]
+    async fn test_push_governed_but_valid_passes_the_gate() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        // A permissive `gate`: no schema, no required message — the empty
+        // manifest satisfies it.
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            governed_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "expected the gate to pass and the push to reach the hash check, got: {err:?}"
+        );
+        assert!(
+            storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a passing gate must let the push build the manifest"
+        );
+        Ok(())
+    }
+
+    /// Seed the mock remote with a `gate` workflow whose `entries_schema`
+    /// requires each entry's metadata to carry an `approved` key. Shared by
+    /// the two wrapped-meta gate tests below.
+    async fn seed_entries_schema_gate(remote: &MockRemote) -> Res {
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/schemas/entries.json")?,
+                br#"{"type": "array", "items": {"type": "object", "properties": {"meta": {"type": "object", "required": ["approved"]}}}}"#.to_vec(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Seed a `gate` workflow whose `entries_schema` is an order-sensitive
+    /// Draft-7 tuple-form `items`: entry 0 must be `a.txt`, entry 1 `b.txt`.
+    /// It validates only when the entries are inspected in sorted (`a`, `b`)
+    /// order — the order `records_stream` serializes and uploads.
+    async fn seed_ordered_entries_schema_gate(remote: &MockRemote) -> Res {
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/schemas/entries.json")?,
+                br#"{"type": "array", "items": [{"properties": {"logical_key": {"const": "a.txt"}}}, {"properties": {"logical_key": {"const": "b.txt"}}}]}"#.to_vec(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// A row whose wire `meta` carries the wrapped `{"user_meta": {...}}`
+    /// form, as manifest rows do on the wire.
+    fn wrapped_meta_row(user_meta: &Value) -> ManifestRow {
+        ManifestRow {
+            logical_key: PathBuf::from("a.txt"),
+            physical_key: "file:///b/a/r0".to_string(),
+            meta: Some(json!({ "user_meta": user_meta })),
+            ..ManifestRow::default()
+        }
+    }
+
+    /// The entries gate validates each entry's *unwrapped* user metadata,
+    /// matching quilt3 (`PackageEntry.meta` returns
+    /// `self._meta.get('user_meta', {})`): a row whose wrapped metadata lacks
+    /// the required `approved` key is rejected before any bytes reach the
+    /// remote.
+    #[test(tokio::test)]
+    async fn test_push_entries_schema_rejects_wrapped_meta_violating_unwrapped() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        seed_entries_schema_gate(&remote).await?;
+
+        let mut manifest = governed_manifest();
+        manifest
+            .insert_record(wrapped_meta_row(&json!({ "note": "x" })))
+            .await?;
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
+                    if matches!(violations.as_slice(), [RuleViolation::EntriesInvalid(_)])
+            ),
+            "expected an entries_schema rejection, got: {err:?}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a rejected push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
+    /// The happy-path companion: the same wrapped shape whose *unwrapped*
+    /// content satisfies the schema passes the gate. Had the gate validated
+    /// the wrapped wire value instead, this entry would be rejected (the
+    /// wrapper object's only key is `user_meta`, not `approved`) — so this
+    /// test pins the unwrapping.
+    #[test(tokio::test)]
+    async fn test_push_entries_schema_passes_wrapped_meta_satisfying_unwrapped() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        seed_entries_schema_gate(&remote).await?;
+
+        let file_content = b"approved bytes\n";
+        remote
+            .storage
+            .write_byte_stream(
+                &PathBuf::from("/b/a/r0"),
+                ByteStream::from_static(file_content),
+            )
+            .await?;
+
+        let mut manifest = governed_manifest();
+        manifest
+            .insert_record(ManifestRow {
+                size: file_content.len() as u64,
+                ..wrapped_meta_row(&json!({ "approved": true }))
+            })
+            .await?;
+
+        // The fixture's commit hash is a placeholder, so a push that clears
+        // the gate proceeds all the way to the post-upload hash check — which
+        // proves the gate let it through.
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "expected the gate to pass and the push to reach the hash check, got: {err:?}"
+        );
+        assert!(
+            storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a passing gate must let the push build the manifest"
+        );
+        Ok(())
+    }
+
+    /// The push gate must validate the entry order it *uploads*, not
+    /// `Manifest::rows`' storage order. `records_stream` serializes rows
+    /// sorted by logical key, but `.rows` preserves insertion/file order, so a
+    /// manifest installed from another client can be unsorted. With an
+    /// order-sensitive tuple-form `entries_schema`, validating storage order
+    /// would reject a package whose uploaded (sorted) order is valid — and
+    /// disagree with the commit gate. Here the rows are inserted unsorted
+    /// (`b.txt` then `a.txt`) and the schema passes only in sorted order.
+    #[test(tokio::test)]
+    async fn test_push_entries_schema_validates_uploaded_sorted_order() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        seed_ordered_entries_schema_gate(&remote).await?;
+
+        let file_content = b"bytes\n";
+        for name in ["ra", "rb"] {
+            remote
+                .storage
+                .write_byte_stream(
+                    &PathBuf::from(format!("/b/a/{name}")),
+                    ByteStream::from_static(file_content),
+                )
+                .await?;
+        }
+
+        // Insert in unsorted storage order: b.txt then a.txt. `records_stream`
+        // uploads them sorted (a.txt, b.txt), which is what the gate must see.
+        let mut manifest = governed_manifest();
+        manifest
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("b.txt"),
+                physical_key: "file:///b/a/rb".to_string(),
+                size: file_content.len() as u64,
+                ..ManifestRow::default()
+            })
+            .await?;
+        manifest
+            .insert_record(ManifestRow {
+                logical_key: PathBuf::from("a.txt"),
+                physical_key: "file:///b/a/ra".to_string(),
+                size: file_content.len() as u64,
+                ..ManifestRow::default()
+            })
+            .await?;
+
+        // The fixture's commit hash is a placeholder, so a push that clears the
+        // gate proceeds all the way to the post-upload hash check — proving the
+        // gate accepted the sorted order it uploads. Before the fix the gate
+        // validated storage order (b, a) and rejected with EntriesInvalid.
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "expected the gate to accept the sorted upload order and reach the hash check, got: {err:?}"
+        );
+        assert!(
+            storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a passing gate must let the push build the manifest"
+        );
+        Ok(())
+    }
+
+    /// A manifest whose header carries a message but **no** workflow record —
+    /// the shape an ungoverned commit (or a commit made against a bucket that
+    /// had no config at the time) produces.
+    fn header_none_manifest() -> Manifest {
+        Manifest {
+            header: ManifestHeader {
+                message: Some("msg".to_string()),
+                user_meta: None,
+                workflow: None,
+                ..ManifestHeader::default()
+            },
+            ..Manifest::default()
+        }
+    }
+
+    /// (a) A header carrying **no** workflow, pushed to a bucket whose current
+    /// config requires one, is rejected before any bytes reach the remote —
+    /// the destination's `is_workflow_required` is enforced against the live
+    /// config, not bypassed by the header's self-declared (absent) workflow.
+    #[test(tokio::test)]
+    async fn test_push_header_none_to_required_bucket_is_rejected() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        // `is_workflow_required` defaults to true; a `gate` workflow is
+        // declared but the header selected none.
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            header_none_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
+                    if matches!(violations.as_slice(), [RuleViolation::WorkflowRequired])
+            ),
+            "expected a WorkflowRequired rejection, got: {err:?}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a rejected push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
+    /// (b) The push gate consults the destination bucket's **current** config,
+    /// not the header's version-pinned `workflow.config`. Here the header's
+    /// pinned config (a stale object) still declares `gate`, but the current
+    /// `.quilt/workflows/config.yml` does not — so the stamped id is unknown
+    /// and push hard-errors, uploading nothing.
+    #[test(tokio::test)]
+    async fn test_push_stamped_id_missing_from_current_config_errors() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        // The header's pinned config still knows `gate` (would vacuously pass
+        // the old header-trust gate)...
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/stale-config.yml")?,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+        // ...but the bucket's *current* config no longer declares it.
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nis_workflow_required: false\nworkflows:\n  other:\n    name: Other\n".to_vec(),
+            )
+            .await?;
+
+        let mut manifest = governed_manifest();
+        manifest.header.workflow = Some(Workflow {
+            config: "s3://b/.quilt/stale-config.yml"
+                .parse()
+                .expect("valid config uri"),
+            id: Some(WorkflowId {
+                id: "gate".to_string(),
+                metadata: None,
+            }),
+        });
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            manifest,
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::RemoteCatalog(_)),
+            "expected a RemoteCatalog error naming the missing workflow, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("gate"),
+            "error should name the missing workflow id, got: {err}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a rejected push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
+    /// (c) The push gate re-validates against the bucket's config **as it is
+    /// now**: the same manifest that passes under a permissive config is
+    /// rejected once the config is tightened, with no other change.
+    #[test(tokio::test)]
+    async fn test_push_revalidates_against_mutated_current_config() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let config_uri = S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?;
+
+        // Under a permissive config, the governed manifest clears the gate and
+        // reaches the post-upload hash check (proving the gate let it through).
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+        let err = push_package(
+            first_push_governed_lineage(),
+            governed_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "expected the permissive config to pass the gate, got: {err:?}"
+        );
+
+        // Tighten the *current* config to require an `owner` the manifest lacks.
+        // The identical manifest is now rejected.
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from("s3://b/schemas/meta.json")?,
+                br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
+            )
+            .await?;
+        let err = push_package(
+            first_push_governed_lineage(),
+            governed_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                Error::WorkflowValidation(WorkflowValidationError::Rejected(_))
+            ),
+            "expected the tightened current config to reject the same manifest, got: {err:?}"
+        );
+        assert!(
+            !storage.exists(&paths.cached_manifests_dir("b")).await,
+            "a rejected push must not build or upload a manifest"
+        );
+        Ok(())
+    }
+
+    /// (e) An ungoverned bucket (no config, header carries no workflow) is
+    /// untouched by the gate: the push proceeds to build and upload the
+    /// manifest, reaching the post-upload hash check.
+    #[test(tokio::test)]
+    async fn test_push_ungoverned_bucket_passes_the_gate() -> Res {
+        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        // No config seeded for bucket `b`.
+
+        let err = push_package(
+            first_push_governed_lineage(),
+            header_none_manifest(),
+            &paths,
+            &storage,
+            &remote,
+            None,
+            HostConfig::default(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::PackageOp(PackageOpError::Push(msg))
+                    if msg.contains("not equal to pushed manifest commit")
+            ),
+            "expected the ungoverned push to pass the gate and reach the hash check, got: {err:?}"
+        );
+        assert!(
+            storage.exists(&paths.cached_manifests_dir("b")).await,
+            "an ungoverned push must build the manifest"
+        );
         Ok(())
     }
 

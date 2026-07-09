@@ -122,6 +122,28 @@ fn classify_generic_is_paused() {
 }
 
 #[test]
+fn classify_config_format_error_is_conflict() {
+    // A malformed `.quilt/workflows/config.yml` surfaces as
+    // `RemoteCatalogError::Workflow` (config-schema rejection). It is a
+    // user-actionable misconfiguration, so it must pause the namespace
+    // (Conflict), not retry as a transient — it lands in the default arm.
+    let err = Error::from(quilt::Error::RemoteCatalog(
+        quilt::RemoteCatalogError::Workflow(
+            "workflows/config.yml does not satisfy the workflows config schema".to_string(),
+        ),
+    ));
+    match classify_sync_err(err) {
+        Err(WatchError::Conflict(PausedReason::Other(msg))) => {
+            assert!(
+                msg.contains("does not satisfy the workflows config schema"),
+                "reason text should carry the config-schema message, got: {msg}"
+            );
+        }
+        other => panic!("expected Conflict(Other(_)), got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_push_error_is_paused() {
     let err = Error::from(quilt::Error::PackageOp(quilt::PackageOpError::Push(
         "workflow rejected metadata".to_string(),
@@ -129,6 +151,42 @@ fn classify_push_error_is_paused() {
     match classify_sync_err(err) {
         Err(WatchError::Conflict(PausedReason::Other(msg))) => {
             assert_eq!(msg, "workflow rejected metadata");
+        }
+        other => panic!("expected Conflict(Other(_)), got {other:?}"),
+    }
+}
+
+/// A workflow-rejection error as it arrives from the quilt-rs commit/push
+/// flow: `crate::Error::Quilt(quilt::Error::WorkflowValidation(Rejected(..)))`.
+/// The single `MessageRequired` violation gives a deterministic Display we
+/// can assert on without pinning a whole schema payload.
+pub(super) fn workflow_rejection() -> Error {
+    Error::from(quilt::Error::from(
+        quilt::workflow::WorkflowValidationError::Rejected(vec![
+            quilt::workflow::RuleViolation::MessageRequired,
+        ]),
+    ))
+}
+
+#[test]
+fn classify_workflow_validation_is_conflict_with_clean_message() {
+    match classify_sync_err(workflow_rejection()) {
+        Err(WatchError::Conflict(PausedReason::Other(msg))) => {
+            // The tray/tooltip should show the validator's own message that
+            // names the failed rule, not the outer `Quilt error:` wrapper
+            // prefix that `Error::Quilt`'s Display adds.
+            assert!(
+                !msg.starts_with("Quilt error:"),
+                "reason text should drop the wrapper prefix, got: {msg}"
+            );
+            assert!(
+                msg.starts_with("package does not satisfy the workflow"),
+                "reason text should lead with the validator message, got: {msg}"
+            );
+            assert!(
+                msg.contains("a commit message is required"),
+                "reason text should name the failed rule, got: {msg}"
+            );
         }
         other => panic!("expected Conflict(Other(_)), got {other:?}"),
     }

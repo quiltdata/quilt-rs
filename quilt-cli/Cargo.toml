@@ -2,7 +2,7 @@
 name = "quilt-cli"
 description = "Command-line interface for Quilt data packages"
 
-version = "0.27.1-alpha3"
+version = "0.27.1-alpha4"
 
 # Inherit from workspace
 edition.workspace = true
@@ -32,6 +32,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# Pull quilt-rs with the `testing` feature so CLI tests can drive flows against
+# the in-memory mock remote. Kept out of the normal dependency above so the
+# mock never leaks into release builds.
+quilt-rs = { path = "../quilt-rs", version = "0.33.0-alpha1", features = ["testing"] }
 test-log.workspace = true
 
 # pkg-url overridden: workspace tags as `quilt-cli/v<version>`, not

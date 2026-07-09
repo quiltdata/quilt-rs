@@ -58,9 +58,11 @@ getrandom = "0.4"
 gitignores = "4.8"
 hex = "0.4.3"
 ignore = "0.4"
+jsonschema = { version = "0.47.0", default-features = false }
 multibase = "0.9.3"
 multihash = "0.19.5"
 percent-encoding = "2.3.2"
+regex = "1.12.4"
 reqwest = { version = "0.13.4", features = ["form", "json"] }
 reqwest-middleware = { version = "0.5.2", features = ["form", "json"] }
 reqwest-retry = "0.9.1"

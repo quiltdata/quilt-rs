@@ -421,6 +421,67 @@ async fn run_once_pauses_on_push_workflow_failure() -> Result<(), Error> {
     Ok(())
 }
 
+/// An autosync push that the workflow gate rejects (surfaced by quilt-rs as
+/// `Error::WorkflowValidation`) must pause the namespace as a `Conflict`, not
+/// back off and retry forever. The paused reason carries the validator's
+/// field/rule message so the tray/tooltip can show what to fix.
+#[tokio::test]
+async fn run_once_pauses_on_workflow_validation_rejection() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let status = quiet_status(UpstreamState::UpToDate, changes);
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+
+    let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+    model
+        .expect_package_publish()
+        .times(1)
+        .returning(|_, _, _, _, _, _| Err(workflow_rejection()));
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone());
+    run_once(&model, &inner).await?;
+
+    // Paused with the validator's own message (naming the rule), no wrapper
+    // prefix.
+    {
+        let paused_evts = reporter.paused.lock().unwrap();
+        assert_eq!(paused_evts.len(), 1);
+        match &paused_evts[0].1 {
+            PausedReason::Other(msg) => {
+                assert!(
+                    !msg.starts_with("Quilt error:"),
+                    "reason text should drop the wrapper prefix, got: {msg}"
+                );
+                assert!(
+                    msg.contains("a commit message is required"),
+                    "reason text should name the failed rule, got: {msg}"
+                );
+            }
+            other => panic!("expected Other(_), got {other:?}"),
+        }
+    }
+    // Neutral `"paused"` status, not `"error"` (which would trigger a Login
+    // affordance in the UI).
+    {
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].1.status, "paused");
+    }
+    // Paused → the next tick `continue`s past this namespace (no infinite
+    // retry), and no backoff entry was created (Conflict does not back off).
+    assert!(matches!(
+        inner.paused.read().await.get(&ns),
+        Some(PausedReason::Other(_))
+    ));
+    assert!(inner.backoff.read().await.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn run_once_backoffs_on_transient_publish_error() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();

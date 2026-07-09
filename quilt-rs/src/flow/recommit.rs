@@ -10,6 +10,11 @@ use crate::error::PackageOpError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::HostConfig;
+use crate::io::remote::Remote;
+use crate::io::remote::WorkflowsConfig;
+use crate::io::remote::entry_view;
+use crate::io::remote::validate_workflow;
+use crate::io::remote::validate_workflow_with_config;
 use crate::io::storage::Storage;
 use crate::lineage::CommitState;
 use crate::lineage::PackageLineage;
@@ -18,6 +23,8 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
+use crate::workflow::EntryView;
+use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 /// Re-hash all rows from the manifest stream, converting any rows whose
@@ -76,14 +83,18 @@ async fn rehash_rows<'a>(
 ///
 /// Called automatically by `set_remote` so the user can push immediately
 /// without a manual re-commit.
+#[allow(clippy::too_many_arguments)]
 pub async fn recommit_for_remote(
     mut lineage: PackageLineage,
     manifest: &Manifest,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    host: &Option<Host>,
     namespace: Namespace,
     host_config: HostConfig,
     workflow: Option<Workflow>,
+    workflows_config: Option<&WorkflowsConfig>,
 ) -> Res<PackageLineage> {
     let Some(old_commit) = lineage.commit.take() else {
         return Ok(lineage);
@@ -98,7 +109,59 @@ pub async fn recommit_for_remote(
         ..ManifestHeader::default()
     };
 
-    let stream = Box::pin(rehash_rows(storage, manifest, &host_config).await);
+    // Materialize the rehashed rows so the workflow gate can inspect them
+    // before anything is written. The manifest's rows are already sorted by
+    // logical key, and `rehash_rows` preserves that order.
+    let mut rows: Vec<Res<ManifestRow>> = Vec::new();
+    let mut stream = Box::pin(rehash_rows(storage, manifest, &host_config).await);
+    while let Some(chunk_result) = stream.next().await {
+        rows.extend(chunk_result?);
+    }
+
+    // The workflow quality gate: reject a revision the resolved workflow would
+    // refuse before the recommit writes any manifest, so `set_remote` cannot
+    // stamp a workflow that would only be rejected later at push. Vacuously
+    // passes for an ungoverned bucket (the header carries no workflow).
+    let entries: Vec<EntryView> = rows
+        .iter()
+        .filter_map(|row| row.as_ref().ok())
+        .map(entry_view)
+        .collect();
+    // `set_remote` passes the config it already fetched to resolve the workflow;
+    // reuse it here so the gate does not re-download the same config. At this
+    // moment the header's pinned config URI addresses exactly that object (the
+    // resolution just stamped it), so reusing the parsed config is semantically
+    // identical to re-fetching. Callers without a pre-fetched config pass
+    // `None`, and the gate fetches via the header's pinned URI as before.
+    match workflows_config {
+        Some(config) => {
+            validate_workflow_with_config(
+                remote,
+                host,
+                &namespace.to_string(),
+                header.message.as_deref(),
+                header.user_meta.as_ref(),
+                header.workflow.as_ref(),
+                Some(config),
+                &entries,
+            )
+            .await?;
+        }
+        None => {
+            validate_workflow(
+                remote,
+                host,
+                &namespace.to_string(),
+                header.message.as_deref(),
+                header.user_meta.as_ref(),
+                header.workflow.as_ref(),
+                &entries,
+            )
+            .await?;
+        }
+    }
+
+    let stream = tokio_stream::iter(vec![Ok(rows)]);
     let dest_dir = paths.installed_manifests_dir(&namespace);
     let (_manifest_path, new_top_hash) =
         build_manifest_from_rows_stream(storage, dest_dir, header, stream).await?;
@@ -130,6 +193,7 @@ mod tests {
 
     use aws_sdk_s3::primitives::ByteStream;
 
+    use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
 
@@ -226,8 +290,11 @@ mod tests {
             &manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             namespace,
             crc64_config,
+            None,
             None,
         )
         .await?;
@@ -257,8 +324,11 @@ mod tests {
             &Manifest::default(),
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             namespace,
             HostConfig::default(),
+            None,
             None,
         )
         .await?;
@@ -281,8 +351,11 @@ mod tests {
             &manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             namespace,
             sha256_config,
+            None,
             None,
         )
         .await?;
@@ -314,8 +387,11 @@ mod tests {
             &manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             namespace.clone(),
             crc64_config,
+            None,
             None,
         )
         .await?;
@@ -359,9 +435,12 @@ mod tests {
             &manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             namespace.clone(),
             host_config,
             Some(workflow),
+            None,
         )
         .await?;
 
@@ -426,14 +505,161 @@ mod tests {
             &manifest,
             &paths,
             &storage,
+            &MockRemote::default(),
+            &None,
             namespace,
             crc64_config,
+            None,
             None,
         )
         .await?;
 
         assert!(result.commit.is_some());
         assert_eq!(result.commit.as_ref().unwrap().prev_hashes, vec![top_hash]);
+
+        Ok(())
+    }
+
+    /// Build an empty committed package (message "msg", no `user_meta`) on the
+    /// given storage under `/foo`-rooted paths, returning its lineage and
+    /// manifest. Empty on purpose: with no rows there are no storage-specific
+    /// physical keys, so two builds on different storages produce byte-identical
+    /// manifests — which lets the rejection test predict the exact top hash a
+    /// successful recommit would have written.
+    async fn empty_committed_package(
+        storage: &MockStorage,
+        paths: &DomainPaths,
+        namespace: &Namespace,
+    ) -> Res<(PackageLineage, Manifest)> {
+        let installed_dir = paths.installed_manifests_dir(namespace);
+        storage.create_dir_all(&installed_dir).await?;
+
+        let header = ManifestHeader {
+            message: Some("msg".to_string()),
+            ..ManifestHeader::default()
+        };
+        let stream = tokio_stream::iter(vec![Ok(Vec::<Res<ManifestRow>>::new())]);
+        let (_path, top_hash) =
+            build_manifest_from_rows_stream(storage, installed_dir, header, stream).await?;
+
+        let lineage = PackageLineage {
+            commit: Some(CommitState {
+                hash: top_hash.clone(),
+                timestamp: chrono::Utc::now(),
+                prev_hashes: Vec::new(),
+            }),
+            ..PackageLineage::default()
+        };
+        let manifest_path = paths.installed_manifest(namespace, &top_hash);
+        let manifest = Manifest::from_path(storage, &manifest_path).await?;
+        Ok((lineage, manifest))
+    }
+
+    /// The recommit-side workflow gate: a workflow whose `metadata_schema`
+    /// requires an `owner` must reject a recommit of a package without it,
+    /// and must reject *before* any manifest is written — nothing is
+    /// recommitted (mirrors the commit gate's writes-nothing test).
+    #[test(tokio::test)]
+    async fn test_recommit_rejected_by_workflow_writes_nothing() -> Res {
+        use crate::manifest::WorkflowId;
+        use crate::workflow::WorkflowValidationError;
+        use quilt_uri::S3Uri;
+
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let namespace: Namespace = ("test", "rejected").into();
+        let config_uri: S3Uri = "s3://b/.quilt/workflows/config.yml".parse()?;
+        let workflow = Workflow {
+            config: config_uri.clone(),
+            id: Some(WorkflowId {
+                id: "gate".to_string(),
+                metadata: None,
+            }),
+        };
+
+        // Learn the top hash a successful recommit would write: same workflow
+        // reference against an unconstrained config produces byte-identical
+        // manifest bytes, so this is the exact hash that must be absent from
+        // storage after a rejection.
+        let ok_remote = MockRemote::default();
+        ok_remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+        let ok_storage = MockStorage::default();
+        let (lineage, manifest) = empty_committed_package(&ok_storage, &paths, &namespace).await?;
+        let ok_lineage = recommit_for_remote(
+            lineage,
+            &manifest,
+            &paths,
+            &ok_storage,
+            &ok_remote,
+            &None,
+            namespace.clone(),
+            HostConfig::default(),
+            Some(workflow.clone()),
+            None,
+        )
+        .await?;
+        let would_be_hash = ok_lineage.commit.as_ref().unwrap().hash.clone();
+
+        // The governed config: `gate`'s metadata_schema requires an `owner`,
+        // which the package's (absent) metadata does not provide.
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                &None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &"s3://b/schemas/meta.json".parse()?,
+                br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
+            )
+            .await?;
+
+        let storage = MockStorage::default();
+        let (lineage, manifest) = empty_committed_package(&storage, &paths, &namespace).await?;
+        let old_hash = lineage.commit.as_ref().unwrap().hash.clone();
+        let err = recommit_for_remote(
+            lineage,
+            &manifest,
+            &paths,
+            &storage,
+            &remote,
+            &None,
+            namespace.clone(),
+            HostConfig::default(),
+            Some(workflow),
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                Error::WorkflowValidation(WorkflowValidationError::Rejected(_))
+            ),
+            "expected a workflow rejection, got: {err:?}"
+        );
+        assert!(
+            !storage
+                .exists(&paths.installed_manifest(&namespace, &would_be_hash))
+                .await,
+            "a rejected recommit must not write a manifest"
+        );
+        assert!(
+            storage
+                .exists(&paths.installed_manifest(&namespace, &old_hash))
+                .await,
+            "the previous manifest must remain intact"
+        );
 
         Ok(())
     }

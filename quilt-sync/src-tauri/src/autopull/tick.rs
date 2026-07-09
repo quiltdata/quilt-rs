@@ -78,6 +78,17 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
             | quilt::PackageOpError::Commit(msg)
             | quilt::PackageOpError::Publish(msg),
         )) => Err(WatchError::Conflict(PausedReason::Other(msg.clone()))),
+        // Workflow rejection (commit- or push-side): user-actionable, so
+        // pause rather than retry. Bind the inner `WorkflowValidationError`
+        // so the reason text is the validator's own message (which names the
+        // failing rule and fields) without the `Quilt error:` wrapper prefix
+        // `Error::Quilt`'s Display would add — cleaner in the tray/tooltip.
+        // Kept as `PausedReason::Other` (not a dedicated variant): the UI
+        // already renders the free-form message for `Other`, so a new variant
+        // would add wire churn for no user-visible gain.
+        Error::Quilt(quilt::Error::WorkflowValidation(inner)) => {
+            Err(WatchError::Conflict(PausedReason::Other(inner.to_string())))
+        }
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
