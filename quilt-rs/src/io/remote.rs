@@ -89,7 +89,9 @@ pub(crate) use workflow::{
     entry_view, fetch_workflows_config, validate_workflow, validate_workflow_against_current_config,
 };
 
-#[cfg(test)]
+// Mock remote is available during testing, or to downstream crates via the
+// `testing` feature.
+#[cfg(any(test, feature = "testing"))]
 pub mod mocks;
 
 pub struct RemoteObjectStream {

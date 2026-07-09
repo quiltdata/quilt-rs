@@ -25,7 +25,7 @@ use super::Remote;
 
 /// A mock implementation of the `Remote` trait.
 #[derive(Default)]
-pub(crate) struct MockRemote {
+pub struct MockRemote {
     pub(crate) storage: MockStorage,
     /// Per-URI count of `get_object_stream` calls, so tests can assert that a
     /// config or schema document is fetched exactly once across an operation.
@@ -34,7 +34,7 @@ pub(crate) struct MockRemote {
 
 impl MockRemote {
     /// How many times `get_object_stream` was called for `uri`.
-    pub(crate) fn get_object_count(&self, uri: &str) -> usize {
+    pub fn get_object_count(&self, uri: &str) -> usize {
         self.get_object_calls
             .lock()
             .unwrap()
