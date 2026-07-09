@@ -113,7 +113,13 @@ pub async fn publish_package(
     };
 
     info!("⏳ Publish: pushing revision");
-    let push = flow::push(
+    // Skip the push-side workflow gate when we just committed in this same
+    // operation: the commit gate validated the byte-identical manifest
+    // against the freshly-resolved (hence current) workflow, so re-fetching
+    // the config and re-validating at push is pure redundancy. On the
+    // push-only branch (`!committed`), no commit ran this operation, so the
+    // full current-config gate must run.
+    let push = flow::push::push_package_impl(
         lineage,
         push_manifest,
         paths,
@@ -121,6 +127,7 @@ pub async fn publish_package(
         remote,
         Some(namespace),
         host_config,
+        !committed,
     )
     .await?;
     info!("✔️ Publish: push done");
@@ -529,6 +536,102 @@ mod tests {
             }
         };
         assert_first_push_of_foo_bar(push)
+    }
+
+    /// A single governed publish (commit-then-push) reads the bucket's config
+    /// and each referenced schema document exactly once: the commit gate
+    /// validates the manifest, and the push reuses that validation instead of
+    /// re-fetching and re-validating the byte-identical revision. Before this
+    /// change, commit and push each fetched the config (2×) and each schema
+    /// doc (2×), compiling identical validators twice.
+    #[test(tokio::test)]
+    async fn test_publish_fetches_config_and_schema_once() -> Res {
+        use crate::manifest::MetadataSchema;
+        use crate::manifest::Workflow;
+        use crate::manifest::WorkflowId;
+
+        let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let added = row_from_fixture(&manifest_src, "0mb.bin");
+
+        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let (storage, remote) =
+            setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
+
+        // A governed bucket: `gate` declares a permissive metadata schema, so
+        // the gate fetches both the config and the schema document but the
+        // package (empty metadata) still passes.
+        let config_uri = "s3://b/.quilt/workflows/config.yml";
+        let schema_uri = "s3://b/schemas/meta.json";
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from(config_uri)?,
+                b"workflows:\n  gate:\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
+            )
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &S3Uri::try_from(schema_uri)?,
+                br#"{"type": "object"}"#.to_vec(),
+            )
+            .await?;
+
+        let workflow = Workflow {
+            config: config_uri.parse()?,
+            id: Some(WorkflowId {
+                id: "gate".to_string(),
+                metadata: Some(MetadataSchema {
+                    id: "meta".to_string(),
+                    url: schema_uri.parse()?,
+                }),
+            }),
+        };
+
+        let status = InstalledPackageStatus {
+            changes: BTreeMap::from([(PathBuf::from("foo"), Change::Added(added))]),
+            ..InstalledPackageStatus::default()
+        };
+
+        let mut manifest = Manifest::default();
+
+        let outcome = publish_package(
+            first_push_lineage_with_foo(),
+            &mut manifest,
+            &paths,
+            &storage,
+            &remote,
+            PathBuf::from("/working-dir"),
+            status,
+            ("foo", "bar").into(),
+            HostConfig::default(),
+            CommitOptions {
+                message: "published".to_string(),
+                user_meta: UserMeta::Clear,
+                workflow: Some(workflow),
+            },
+        )
+        .await?;
+
+        let push = match &outcome {
+            PublishOutcome::CommittedAndPushed(p) => p,
+            PublishOutcome::PushedOnly(_) => {
+                panic!("expected CommittedAndPushed, got PushedOnly");
+            }
+        };
+        assert_first_push_of_foo_bar(push)?;
+
+        assert_eq!(
+            remote.get_object_count(config_uri),
+            1,
+            "config.yml must be fetched exactly once across the publish"
+        );
+        assert_eq!(
+            remote.get_object_count(schema_uri),
+            1,
+            "the schema document must be fetched exactly once across the publish"
+        );
+        Ok(())
     }
 
     #[test(tokio::test)]

@@ -442,6 +442,82 @@ pub(crate) async fn validate_workflow<R: Remote>(
     Ok(())
 }
 
+/// Run the workflow quality gate at push time against the destination
+/// bucket's **current** workflows config, ignoring the version-pinned config
+/// URI recorded in the manifest header.
+///
+/// This is the push-side counterpart to [`validate_workflow`] (which trusts
+/// the header's resolved, version-pinned workflow and is used by the commit
+/// and `set_remote` gates). A revision may have been committed by an older or
+/// different client, or against a config version that has since been deleted
+/// or lifecycle-expired, so push re-loads `.quilt/workflows/config.yml` from
+/// the destination bucket and decides against it — mirroring quilt3, which
+/// re-loads the registry's current config on every push
+/// (`quilt3/workflows/__init__.py::validate`).
+///
+/// Cases (with `workflow_id` = the id stamped in the header, if any):
+///
+/// - No config exists now:
+///   - `workflow_id` is `None` → pass (ungoverned bucket).
+///   - `workflow_id` is `Some(id)` → hard error, mirroring quilt3's
+///     "`{id}` workflow is specified, but no workflows config exist".
+/// - Config exists:
+///   - `workflow_id` is `Some(id)` missing from the current config → hard
+///     error, mirroring quilt3's "There is no `{id}` workflow in config".
+///   - `workflow_id` is `None` → [`validate_package`] rejects with
+///     `WorkflowRequired` when `is_workflow_required` (default true), else
+///     passes.
+///   - Otherwise the full gate (metadata/entries schemas, handle pattern,
+///     message-required) runs against the current config's rules for `id`.
+///
+/// A rule failure surfaces as [`crate::Error::WorkflowValidation`] and a
+/// missing/unknown workflow as [`crate::Error::RemoteCatalog`] — both
+/// classified as conflicts by the sync watcher — while a failed *fetch* stays
+/// an `Error::S3` and remains transient.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
+    remote: &R,
+    host: &Option<Host>,
+    bucket: &str,
+    name: &str,
+    message: Option<&str>,
+    user_meta: Option<&Value>,
+    header_workflow: Option<&Workflow>,
+    entries: &[EntryView<'_>],
+) -> Res<()> {
+    let workflow_id = header_workflow
+        .and_then(|workflow| workflow.id.as_ref())
+        .map(|id| id.id.as_str());
+    let config = fetch_workflows_config_for_bucket(remote, host, bucket).await?;
+    let Some(config) = config else {
+        return match workflow_id {
+            None => Ok(()),
+            Some(id) => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                "\"{id}\" workflow is specified, but no workflows config exist"
+            )))),
+        };
+    };
+    let rules = match workflow_id {
+        Some(id) => {
+            if config.workflow_entry(id).is_none() {
+                return Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
+                    "There is no \"{id}\" workflow in config"
+                ))));
+            }
+            Some(fetch_workflow_rules(remote, host, &config, id).await?)
+        }
+        None => None,
+    };
+    let candidate = PackageCandidate {
+        name,
+        message,
+        user_meta,
+        entries,
+    };
+    validate_package(rules.as_ref(), config.is_workflow_required, &candidate)?;
+    Ok(())
+}
+
 /// Resolve the workflow to attach to a manifest header, given the caller's
 /// [`WorkflowIntent`] and the presence/contents of `workflows/config.yaml`.
 ///

@@ -85,7 +85,9 @@ pub use workflow::{
     WorkflowInfo, WorkflowIntent, WorkflowsConfig, fetch_workflow_rules,
     fetch_workflows_config_for_bucket, resolve_workflow,
 };
-pub(crate) use workflow::{entry_view, fetch_workflows_config, validate_workflow};
+pub(crate) use workflow::{
+    entry_view, fetch_workflows_config, validate_workflow, validate_workflow_against_current_config,
+};
 
 #[cfg(test)]
 pub mod mocks;

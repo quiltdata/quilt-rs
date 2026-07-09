@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use aws_sdk_s3::primitives::ByteStream;
 use tracing::log;
@@ -24,6 +27,21 @@ use super::Remote;
 #[derive(Default)]
 pub(crate) struct MockRemote {
     pub(crate) storage: MockStorage,
+    /// Per-URI count of `get_object_stream` calls, so tests can assert that a
+    /// config or schema document is fetched exactly once across an operation.
+    get_object_calls: Arc<Mutex<HashMap<String, usize>>>,
+}
+
+impl MockRemote {
+    /// How many times `get_object_stream` was called for `uri`.
+    pub(crate) fn get_object_count(&self, uri: &str) -> usize {
+        self.get_object_calls
+            .lock()
+            .unwrap()
+            .get(uri)
+            .copied()
+            .unwrap_or(0)
+    }
 }
 
 impl Remote for MockRemote {
@@ -40,6 +58,12 @@ impl Remote for MockRemote {
     ) -> Res<RemoteObjectStream> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} get request");
+        *self
+            .get_object_calls
+            .lock()
+            .unwrap()
+            .entry(key.clone())
+            .or_insert(0) += 1;
 
         let body = self
             .storage
