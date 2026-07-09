@@ -114,6 +114,19 @@ pub struct WorkflowInfo {
     pub description: Option<String>,
 }
 
+/// The declared object URIs of the schemas a workflow references, for building
+/// "Open in catalog" links in the commit dialog. Each is `None` when the
+/// workflow declares no such schema.
+///
+/// These are the raw URIs declared in the config's `schemas` section — read
+/// from the retained YAML with no I/O and no version resolution, so a link
+/// points at the current object rather than a version pinned at fetch time.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkflowSchemaUris {
+    pub metadata_schema: Option<S3Uri>,
+    pub entries_schema: Option<S3Uri>,
+}
+
 /// Typed view of `.quilt/workflows/config.yml`.
 ///
 /// Construction is strict: [`WorkflowsConfig::from_yaml`] first validates the
@@ -235,21 +248,14 @@ impl WorkflowsConfig {
         }
     }
 
-    /// Resolve the URL of a schema by its id, looking it up in the `schemas`
-    /// section. `workflow_id` is used only for error context.
-    async fn resolve_schema_url<R: Remote>(
-        &self,
-        remote: &R,
-        host: &Option<Host>,
-        workflow_id: &str,
-        schema_id: &str,
-    ) -> Res<S3Uri> {
+    /// The declared (unresolved) URL of a schema by its id, read straight from
+    /// the `schemas` section — no I/O, no version resolution. `workflow_id` is
+    /// used only for error context.
+    fn declared_schema_url(&self, workflow_id: &str, schema_id: &str) -> Res<S3Uri> {
         match self.raw.get("schemas") {
             Some(YamlValue::Mapping(schemas)) => match schemas.get(schema_id) {
                 Some(YamlValue::Mapping(schema)) => match schema.get("url") {
-                    Some(YamlValue::String(url)) => {
-                        Ok(remote.resolve_url(host, &url.parse()?).await?)
-                    }
+                    Some(YamlValue::String(url)) => Ok(url.parse()?),
                     _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
                         "Schema {schema_id} doesn't have URL"
                     )))),
@@ -262,6 +268,42 @@ impl WorkflowsConfig {
                 "Schemas not found in workflows/config.yaml".to_string(),
             ))),
         }
+    }
+
+    /// Resolve the URL of a schema by its id, looking it up in the `schemas`
+    /// section and version-resolving it against the remote. `workflow_id` is
+    /// used only for error context.
+    async fn resolve_schema_url<R: Remote>(
+        &self,
+        remote: &R,
+        host: &Option<Host>,
+        workflow_id: &str,
+        schema_id: &str,
+    ) -> Res<S3Uri> {
+        let declared = self.declared_schema_url(workflow_id, schema_id)?;
+        remote.resolve_url(host, &declared).await
+    }
+
+    /// The declared object URI of the schema a workflow references under `key`
+    /// (`metadata_schema` / `entries_schema`), or `None` when the workflow
+    /// declares no such schema. Pure: resolved from the retained raw config.
+    fn declared_schema_uri(&self, workflow_id: &str, key: &str) -> Res<Option<S3Uri>> {
+        match self.schema_id(workflow_id, key)? {
+            Some(schema_id) => Ok(Some(self.declared_schema_url(workflow_id, &schema_id)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The declared object URIs of a workflow's `metadata_schema` and
+    /// `entries_schema`, for building "Open in catalog" links in the commit
+    /// dialog. Each is `None` when the workflow declares no such schema; an
+    /// unknown `workflow_id` (or a misconfigured `schemas` section) errors,
+    /// mirroring the resolution helpers.
+    pub fn schema_uris(&self, workflow_id: &str) -> Res<WorkflowSchemaUris> {
+        Ok(WorkflowSchemaUris {
+            metadata_schema: self.declared_schema_uri(workflow_id, "metadata_schema")?,
+            entries_schema: self.declared_schema_uri(workflow_id, "entries_schema")?,
+        })
     }
 
     /// Resolve the id and URL of the metadata schema referenced by a workflow.
@@ -1462,6 +1504,86 @@ workflows:
             message.contains("/workflows/foo/handle_pattern"),
             "violation must name the offending path, got: {message}"
         );
+    }
+
+    #[test]
+    fn test_schema_uris_both_one_none_and_unknown() -> Res<()> {
+        // A config with three workflows: one declaring both schemas, one
+        // declaring only the metadata schema, and one declaring neither.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+workflows:
+  both:
+    name: Both
+    metadata_schema: meta
+    entries_schema: entries
+  meta-only:
+    name: Meta only
+    metadata_schema: meta
+  none:
+    name: None
+schemas:
+  meta:
+    url: s3://schemas-bucket/meta.json
+  entries:
+    url: s3://schemas-bucket/entries.json
+"#,
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        // Both declared → both URIs resolved from the `schemas` section.
+        assert_eq!(
+            config.schema_uris("both")?,
+            WorkflowSchemaUris {
+                metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
+                entries_schema: Some("s3://schemas-bucket/entries.json".parse()?),
+            }
+        );
+        // Only the metadata schema declared → entries is `None`.
+        assert_eq!(
+            config.schema_uris("meta-only")?,
+            WorkflowSchemaUris {
+                metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
+                entries_schema: None,
+            }
+        );
+        // Neither declared → both `None`, the type's default.
+        assert_eq!(config.schema_uris("none")?, WorkflowSchemaUris::default());
+        // An unknown workflow id errors, mirroring the resolution helpers.
+        let err = config.schema_uris("ghost").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        assert!(err.to_string().contains("Workflow ghost not found"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_schema_uris_missing_schemas_section_errors() -> Res<()> {
+        // A workflow declaring a schema id, but no `schemas` section to resolve
+        // it against → the same error the async resolver raises.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r"
+version: '1'
+workflows:
+  foo:
+    name: Foo
+    metadata_schema: bar
+",
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        let err = config.schema_uris("foo").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
+        ));
+        assert!(err.to_string().contains("Schemas not found"));
+
+        Ok(())
     }
 
     /// (c) A fully-valid config — including `format: regex` / `format: uri`

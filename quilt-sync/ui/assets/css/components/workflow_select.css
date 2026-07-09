@@ -57,3 +57,20 @@
   left: 16px;
   position: absolute;
 }
+
+/* "Open in catalog:" hint row: modest secondary text with comma-separated
+ * links to the config object and the selected workflow's schemas. */
+.qui-workflow-links {
+  color: var(--q-ui-palette-text-secondary);
+  font-size: var(--q-ui-font-size-small);
+  margin: var(--q-ui-size-0-5) 0 0;
+}
+
+.qui-workflow-link {
+  color: var(--q-ui-palette-text-secondary);
+  text-decoration: underline;
+}
+
+.qui-workflow-link:hover {
+  color: var(--q-ui-palette-text-primary);
+}

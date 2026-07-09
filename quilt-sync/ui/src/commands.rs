@@ -69,6 +69,12 @@ pub struct WorkflowInfo {
     pub id: String,
     pub name: Option<String>,
     pub description: Option<String>,
+    /// Catalog HTTPS link to the workflow's declared metadata schema object,
+    /// pre-formatted by the backend. `None` when the workflow declares no
+    /// metadata schema (or there is no catalog host to link against).
+    pub metadata_schema_url: Option<String>,
+    /// Catalog HTTPS link to the workflow's declared entries schema object.
+    pub entries_schema_url: Option<String>,
 }
 
 /// The bucket's workflow-selection situation, as sent by the backend
@@ -92,6 +98,10 @@ pub enum CommitWorkflows {
         workflows: Vec<WorkflowInfo>,
         default_workflow: Option<String>,
         is_workflow_required: bool,
+        /// Catalog HTTPS link to the bucket's `.quilt/workflows/config.yml`
+        /// object, pre-formatted by the backend. `None` when there is no
+        /// catalog host to link against.
+        config_url: Option<String>,
     },
     NotConfigured,
     Unavailable,
@@ -788,7 +798,7 @@ mod tests {
     fn commit_workflows_wire_form_is_verbatim() {
         assert_eq!(
             serde_json::from_str::<CommitWorkflows>(
-                r#"{"state":"available","workflows":[{"id":"alpha","name":"Alpha","description":null}],"defaultWorkflow":"alpha","isWorkflowRequired":true}"#
+                r#"{"state":"available","workflows":[{"id":"alpha","name":"Alpha","description":null,"metadataSchemaUrl":"https://catalog/b/bucket/tree/meta.json","entriesSchemaUrl":null}],"defaultWorkflow":"alpha","isWorkflowRequired":true,"configUrl":"https://catalog/b/bucket/tree/.quilt/workflows/config.yml"}"#
             )
             .unwrap(),
             CommitWorkflows::Available {
@@ -796,9 +806,16 @@ mod tests {
                     id: "alpha".to_string(),
                     name: Some("Alpha".to_string()),
                     description: None,
+                    metadata_schema_url: Some(
+                        "https://catalog/b/bucket/tree/meta.json".to_string()
+                    ),
+                    entries_schema_url: None,
                 }],
                 default_workflow: Some("alpha".to_string()),
                 is_workflow_required: true,
+                config_url: Some(
+                    "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string()
+                ),
             }
         );
         assert_eq!(

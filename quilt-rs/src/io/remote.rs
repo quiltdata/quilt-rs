@@ -82,7 +82,7 @@ pub use client::HttpClient;
 pub use host::{HostChecksums, HostConfig, fetch_host_config};
 pub use s3::RemoteS3;
 pub use workflow::{
-    WorkflowInfo, WorkflowIntent, WorkflowsConfig, fetch_workflow_rules,
+    WorkflowInfo, WorkflowIntent, WorkflowSchemaUris, WorkflowsConfig, fetch_workflow_rules,
     fetch_workflows_config_for_bucket, resolve_workflow,
 };
 pub(crate) use workflow::{

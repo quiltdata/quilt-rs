@@ -8,7 +8,9 @@
 //! control.
 
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 
+use crate::commands;
 use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
 // ── Workflow dropdown model ──
@@ -21,6 +23,12 @@ pub struct WorkflowOption {
     pub label: String,
     pub intent: WorkflowIntent,
     pub disabled: bool,
+    /// Catalog HTTPS link to this workflow's declared metadata schema, or
+    /// `None` when it declares none. Surfaced in the hint row when this option
+    /// is selected. The `None` head carries no schema links.
+    pub metadata_schema_url: Option<String>,
+    /// Catalog HTTPS link to this workflow's declared entries schema.
+    pub entries_schema_url: Option<String>,
 }
 
 /// Display label for a single declared workflow: its name, or its id when the
@@ -137,6 +145,9 @@ pub fn workflow_options(
         label: none_label,
         intent: WorkflowIntent::NoWorkflow,
         disabled: is_workflow_required,
+        // The `None` head declares no workflow, so it carries no schema links.
+        metadata_schema_url: None,
+        entries_schema_url: None,
     }];
 
     options.extend(workflows.iter().map(|w| {
@@ -150,6 +161,8 @@ pub fn workflow_options(
             label,
             intent: WorkflowIntent::Named(w.id.clone()),
             disabled: false,
+            metadata_schema_url: w.metadata_schema_url.clone(),
+            entries_schema_url: w.entries_schema_url.clone(),
         }
     }));
 
@@ -241,6 +254,11 @@ pub struct WorkflowView {
     pub kind: WorkflowViewKind,
     pub options: Vec<WorkflowOption>,
     pub initial: usize,
+    /// Catalog HTTPS link to the bucket's `.quilt/workflows/config.yml`, shown
+    /// in the hint row whenever the bucket has a config. `None` on the
+    /// non-`Available` states (no config to link) and when there is no catalog
+    /// host to link against.
+    pub config_url: Option<String>,
 }
 
 /// Map the backend [`CommitWorkflows`] state to the section's render model.
@@ -253,6 +271,7 @@ pub fn build_workflow_view(
             workflows,
             default_workflow,
             is_workflow_required,
+            config_url,
         } => WorkflowView {
             kind: WorkflowViewKind::Available {
                 is_workflow_required: *is_workflow_required,
@@ -268,6 +287,7 @@ pub fn build_workflow_view(
                 default_workflow.as_deref(),
                 *is_workflow_required,
             ),
+            config_url: config_url.clone(),
         },
         // Ungoverned bucket: a single disabled `None`. Submit sends
         // `BucketDefault`, which on a config-less bucket resolves to
@@ -278,8 +298,11 @@ pub fn build_workflow_view(
                 label: "None".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
+                metadata_schema_url: None,
+                entries_schema_url: None,
             }],
             initial: 0,
+            config_url: None,
         },
         // Config load failed (transient): no dropdown, just a notice. Submit
         // sends `BucketDefault` so the real default re-resolves at commit time
@@ -290,8 +313,11 @@ pub fn build_workflow_view(
                 label: "Bucket default".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
+                metadata_schema_url: None,
+                entries_schema_url: None,
             }],
             initial: 0,
+            config_url: None,
         },
         // Config is malformed: no dropdown, a notice naming the reason. Submit
         // still carries `BucketDefault`; the commit will fail loudly against the
@@ -304,8 +330,11 @@ pub fn build_workflow_view(
                 label: "Bucket default".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
+                metadata_schema_url: None,
+                entries_schema_url: None,
             }],
             initial: 0,
+            config_url: None,
         },
     }
 }
@@ -326,12 +355,21 @@ pub fn WorkflowSection(
         kind,
         options,
         initial,
+        config_url,
     } = view;
 
     match kind {
         WorkflowViewKind::Available {
             is_workflow_required,
-        } => workflow_dropdown(options, selected, initial, is_workflow_required, note).into_any(),
+        } => workflow_dropdown(
+            options,
+            selected,
+            initial,
+            is_workflow_required,
+            note,
+            config_url,
+        )
+        .into_any(),
         // Ungoverned bucket: a single disabled `None`, plus a hint explaining
         // why there is no choice to make. Submit already carries `BucketDefault`
         // via `options[0]`.
@@ -379,6 +417,56 @@ pub fn WorkflowSection(
     }
 }
 
+/// One catalog "Open in catalog" link in the hint row: its display label and
+/// the URL it opens. Kept as a plain pair so the row is built from pure data.
+type CatalogLink = (&'static str, String);
+
+/// Build the "Open in catalog" links for the current selection: the bucket's
+/// `config.yml` (always, when the bucket has a config), plus the selected
+/// workflow's metadata / entries schemas when it declares them.
+fn catalog_links(
+    config_url: Option<&String>,
+    selected_option: Option<&WorkflowOption>,
+) -> Vec<CatalogLink> {
+    let mut links = Vec::new();
+    if let Some(url) = config_url {
+        links.push(("config.yml", url.clone()));
+    }
+    if let Some(option) = selected_option {
+        if let Some(url) = &option.metadata_schema_url {
+            links.push(("metadata schema", url.clone()));
+        }
+        if let Some(url) = &option.entries_schema_url {
+            links.push(("entries schema", url.clone()));
+        }
+    }
+    links
+}
+
+/// A single hint-row anchor: opens the catalog URL in the system browser via
+/// the same [`commands::open_in_web_browser`] mechanism the other catalog
+/// links use, rather than navigating the webview. The trailing ↗ glyph marks
+/// it as an external link (the app has no dedicated inline external-link icon).
+fn catalog_link_view(label: &'static str, url: String) -> impl IntoView {
+    let href = url.clone();
+    view! {
+        <a
+            class="qui-workflow-link"
+            href=href
+            on:click=move |ev| {
+                ev.prevent_default();
+                let url = url.clone();
+                spawn_local(async move {
+                    let _ = commands::open_in_web_browser(url).await;
+                });
+            }
+        >
+            {label}
+            " ↗"
+        </a>
+    }
+}
+
 /// The [`CommitWorkflows::Available`] dropdown.
 fn workflow_dropdown(
     options: Vec<WorkflowOption>,
@@ -386,6 +474,7 @@ fn workflow_dropdown(
     initial: usize,
     is_workflow_required: bool,
     note: Memo<Option<String>>,
+    config_url: Option<String>,
 ) -> impl IntoView {
     // Intents indexed by option position — used to decide whether the current
     // selection is the (disabled) `None` item, which drives the required hint.
@@ -395,6 +484,30 @@ fn workflow_dropdown(
             && intents
                 .get(selected.get())
                 .is_some_and(|i| *i == WorkflowIntent::NoWorkflow)
+    };
+
+    // The hint row recomputes over `selected`: the schema links follow the
+    // currently-selected workflow, while `config.yml` stays put.
+    let options_for_links = options.clone();
+    let links_row = move || {
+        let idx = selected.get();
+        let links = catalog_links(config_url.as_ref(), options_for_links.get(idx));
+        (!links.is_empty()).then(|| {
+            // Comma-separate the anchors: a plain text node between each pair.
+            let mut anchors: Vec<AnyView> = Vec::new();
+            for (i, (label, url)) in links.into_iter().enumerate() {
+                if i > 0 {
+                    anchors.push(", ".into_any());
+                }
+                anchors.push(catalog_link_view(label, url).into_any());
+            }
+            view! {
+                <p class="qui-workflow-links">
+                    <span class="qui-workflow-links-label">"Open in catalog: "</span>
+                    {anchors}
+                </p>
+            }
+        })
     };
 
     // The initial selection is rendered as the HTML boolean `selected`
@@ -441,6 +554,9 @@ fn workflow_dropdown(
             {move || {
                 note.get().map(|text| view! { <p class="qui-workflow-hint">{text}</p> })
             }}
+            // Catalog links for the current selection (config.yml + the
+            // selected workflow's schemas), recomputed as the selection changes.
+            {links_row}
         </div>
     }
 }
@@ -448,8 +564,8 @@ fn workflow_dropdown(
 #[cfg(test)]
 mod tests {
     use super::{
-        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, preselected_index,
-        previous_workflow_note, workflow_options,
+        PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, catalog_links,
+        preselected_index, previous_workflow_note, workflow_options,
     };
     use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
@@ -458,6 +574,23 @@ mod tests {
             id: id.to_string(),
             name: name.map(str::to_string),
             description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        }
+    }
+
+    /// A declared workflow carrying catalog schema links, for the hint-row tests.
+    fn wf_with_schemas(
+        id: &str,
+        metadata_schema_url: Option<&str>,
+        entries_schema_url: Option<&str>,
+    ) -> WorkflowInfo {
+        WorkflowInfo {
+            id: id.to_string(),
+            name: None,
+            description: None,
+            metadata_schema_url: metadata_schema_url.map(str::to_string),
+            entries_schema_url: entries_schema_url.map(str::to_string),
         }
     }
 
@@ -474,18 +607,24 @@ mod tests {
                     label: "None".to_string(),
                     intent: WorkflowIntent::NoWorkflow,
                     disabled: false,
+                    metadata_schema_url: None,
+                    entries_schema_url: None,
                 },
                 WorkflowOption {
                     // The bucket default gets the " (default)" suffix.
                     label: "Alpha WF (default)".to_string(),
                     intent: WorkflowIntent::Named("alpha".to_string()),
                     disabled: false,
+                    metadata_schema_url: None,
+                    entries_schema_url: None,
                 },
                 WorkflowOption {
                     // No name → fall back to the id as the label; not the default.
                     label: "beta".to_string(),
                     intent: WorkflowIntent::Named("beta".to_string()),
                     disabled: false,
+                    metadata_schema_url: None,
+                    entries_schema_url: None,
                 },
             ]
         );
@@ -588,6 +727,8 @@ mod tests {
                 label: "None (default)".to_string(),
                 intent: WorkflowIntent::NoWorkflow,
                 disabled: false,
+                metadata_schema_url: None,
+                entries_schema_url: None,
             }]
         );
     }
@@ -600,6 +741,7 @@ mod tests {
             workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
             default_workflow: Some("alpha".to_string()),
             is_workflow_required: false,
+            config_url: None,
         };
         let view = build_workflow_view(&workflows, Some("beta"));
         assert_eq!(
@@ -629,6 +771,8 @@ mod tests {
                 label: "None".to_string(),
                 intent: WorkflowIntent::BucketDefault,
                 disabled: true,
+                metadata_schema_url: None,
+                entries_schema_url: None,
             }]
         );
     }
@@ -737,6 +881,7 @@ mod tests {
             workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
             default_workflow: Some("beta".to_string()),
             is_workflow_required: true,
+            config_url: None,
         };
         let view = build_workflow_view(&workflows, None);
         assert_eq!(view.initial, 2);
@@ -935,5 +1080,81 @@ mod tests {
                 WorkflowIntent::BucketDefault
             );
         }
+    }
+
+    // ── Catalog links (config.yml + per-selection schema links) ──
+
+    #[test]
+    fn view_available_carries_config_and_schema_links() {
+        // The `Available` state threads the config link through and attaches
+        // each declared workflow's schema links to its option; the `None` head
+        // carries none.
+        let workflows = CommitWorkflows::Available {
+            workflows: vec![
+                wf_with_schemas(
+                    "alpha",
+                    Some("https://catalog/b/b/tree/meta.json"),
+                    Some("https://catalog/b/b/tree/entries.json"),
+                ),
+                wf_with_schemas("beta", None, None),
+            ],
+            default_workflow: None,
+            is_workflow_required: false,
+            config_url: Some("https://catalog/b/b/tree/.quilt/workflows/config.yml".to_string()),
+        };
+        let view = build_workflow_view(&workflows, None);
+        assert_eq!(
+            view.config_url.as_deref(),
+            Some("https://catalog/b/b/tree/.quilt/workflows/config.yml")
+        );
+        // options: [None, alpha, beta]. The `None` head has no schema links.
+        assert!(view.options[0].metadata_schema_url.is_none());
+        assert!(view.options[0].entries_schema_url.is_none());
+        assert_eq!(
+            view.options[1].metadata_schema_url.as_deref(),
+            Some("https://catalog/b/b/tree/meta.json")
+        );
+        assert_eq!(
+            view.options[1].entries_schema_url.as_deref(),
+            Some("https://catalog/b/b/tree/entries.json")
+        );
+        assert!(view.options[2].metadata_schema_url.is_none());
+    }
+
+    #[test]
+    fn catalog_links_follow_selection() {
+        let config = "https://cat/b/b/tree/.quilt/workflows/config.yml".to_string();
+        let none_head = WorkflowOption {
+            label: "None".to_string(),
+            intent: WorkflowIntent::NoWorkflow,
+            disabled: false,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        let both = WorkflowOption {
+            label: "alpha".to_string(),
+            intent: WorkflowIntent::Named("alpha".to_string()),
+            disabled: false,
+            metadata_schema_url: Some("https://cat/meta".to_string()),
+            entries_schema_url: Some("https://cat/entries".to_string()),
+        };
+
+        // `None` selected → only the config link shows.
+        assert_eq!(
+            catalog_links(Some(&config), Some(&none_head)),
+            vec![("config.yml", config.clone())]
+        );
+        // A workflow declaring both schemas → config + both schema links.
+        assert_eq!(
+            catalog_links(Some(&config), Some(&both)),
+            vec![
+                ("config.yml", config.clone()),
+                ("metadata schema", "https://cat/meta".to_string()),
+                ("entries schema", "https://cat/entries".to_string()),
+            ]
+        );
+        // No config link (no catalog host) and a workflow with no schemas →
+        // nothing to show, so the row is hidden.
+        assert!(catalog_links(None, Some(&none_head)).is_empty());
     }
 }
