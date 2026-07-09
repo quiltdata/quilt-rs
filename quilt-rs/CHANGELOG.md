@@ -13,7 +13,7 @@
 
 ### Added
 
-- A candidate package is now validated against its resolved workflow (metadata and entries schemas, handle pattern, message-required, workflow-required) at both commit and push, and an invalid package is refused with the failing rule (<https://github.com/quiltdata/quilt-rs/pull/749>)
+- A candidate package is now validated against its resolved workflow (metadata and entries schemas, handle pattern, message-required, workflow-required) at commit, push, and `set_remote`, and an invalid package is refused with the failing rule while its previous state is left untouched (<https://github.com/quiltdata/quilt-rs/pull/749>)
 
 ## [v0.33.0-alpha4] - 2026-07-08
 

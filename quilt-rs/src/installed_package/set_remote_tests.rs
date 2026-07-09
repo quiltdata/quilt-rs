@@ -13,6 +13,8 @@ use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
 use crate::manifest::ManifestHeader;
 use crate::paths::DomainPaths;
+use crate::workflow::RuleViolation;
+use crate::workflow::WorkflowValidationError;
 
 #[test(tokio::test)]
 async fn test_set_remote_on_local_package() -> Res {
@@ -704,7 +706,10 @@ schemas:
 /// `foo` workflow but no `default_workflow`, run `set_remote` with `intent`, and
 /// return the recommitted manifest's header. The absence of `default_workflow`
 /// is what lets the assertions distinguish the caller's chosen intent from the
-/// bucket-default fallback.
+/// bucket-default fallback. The config sets `is_workflow_required: false` so
+/// these tests exercise stamping mechanics only — an id-less record is
+/// admissible and the workflow gate never interferes (enforcement of a
+/// required workflow has its own tests below).
 async fn recommit_manifest_for_intent(slug: &str, intent: WorkflowIntent) -> Res<ManifestHeader> {
     let (home, _temp_dir1) = Home::from_temp_dir()?;
     let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
@@ -721,6 +726,7 @@ async fn recommit_manifest_for_intent(slug: &str, intent: WorkflowIntent) -> Res
     // no-gesture (BucketDefault) path would stamp an id-less record.
     let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
     let config = r"
+is_workflow_required: false
 workflows:
   foo:
     metadata_schema: bar
@@ -798,12 +804,27 @@ schemas:
     Ok(manifest.header)
 }
 
-/// Build a locally-committed package against a bucket whose config declares a
-/// `foo` workflow but no `default_workflow`, ready for a `set_remote` call. The
-/// returned temp-dir guards must be kept alive for the package's storage to
-/// remain valid.
-async fn package_with_foo_config(
+/// The workflows config used by the `package_with_config` tests unless they
+/// need another one: a `foo` workflow, no `default_workflow`, and (since
+/// `is_workflow_required` is omitted) a workflow required by default.
+const FOO_CONFIG: &str = r"
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+
+/// Build a locally-committed package (message "Initial commit", metadata
+/// `{"key": "value"}`) against a bucket serving the given workflows `config`,
+/// with `schema` stored at `s3://my-bucket/schemas/test.json`, ready for a
+/// `set_remote` call. The returned temp-dir guards must be kept alive for the
+/// package's storage to remain valid.
+async fn package_with_config(
     slug: &str,
+    config: &str,
+    schema: &[u8],
 ) -> Res<(
     InstalledPackage<LocalStorage, MockRemote>,
     tempfile::TempDir,
@@ -820,22 +841,13 @@ async fn package_with_foo_config(
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
 
-    // The target bucket declares `foo` but no `default_workflow`.
     let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
-    let config = r"
-workflows:
-  foo:
-    metadata_schema: bar
-schemas:
-  bar:
-    url: s3://my-bucket/schemas/test.json
-";
     let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
     remote
         .put_object(&None, &config_uri, config.as_bytes().to_vec())
         .await?;
     remote
-        .put_object(&None, &schema_uri, b"{}".to_vec())
+        .put_object(&None, &schema_uri, schema.to_vec())
         .await?;
 
     let lineage_json = format!(
@@ -891,7 +903,7 @@ async fn test_set_remote_propagates_named_workflow_error() -> Res {
     // An explicit `Named` gesture whose id isn't in the bucket config must make
     // `set_remote` fail loudly rather than silently swallowing the recommit
     // error (the user's workflow choice would otherwise be dropped).
-    let (package, _t1, _t2) = package_with_foo_config("named-error").await?;
+    let (package, _t1, _t2) = package_with_config("named-error", FOO_CONFIG, b"{}").await?;
 
     let result = package
         .set_remote(
@@ -915,10 +927,22 @@ async fn test_set_remote_propagates_named_workflow_error() -> Res {
 
 #[test(tokio::test)]
 async fn test_set_remote_swallows_bucket_default_recommit_error() -> Res {
-    // The no-gesture `BucketDefault` path stays best-effort: even against the
-    // same config (with no `default_workflow`), `set_remote` succeeds — the
-    // remote is saved and any recommit hiccup is only logged.
-    let (package, _t1, _t2) = package_with_foo_config("bucketdefault-ok").await?;
+    // The no-gesture `BucketDefault` path stays best-effort for *resolution*
+    // failures: the bucket's `default_workflow` names a workflow that is not
+    // declared, so the recommit cannot resolve it — `set_remote` still
+    // succeeds, the remote is saved, and the hiccup is only logged. (Validity
+    // is never best-effort: a workflow *rejection* propagates — see
+    // `test_set_remote_bucket_default_validation_error_propagates`.)
+    let config = r"
+default_workflow: ghost
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+    let (package, _t1, _t2) = package_with_config("bucketdefault-ok", config, b"{}").await?;
 
     package
         .set_remote(
@@ -933,6 +957,129 @@ async fn test_set_remote_swallows_bucket_default_recommit_error() -> Res {
         lineage.remote_uri.is_some(),
         "remote should be persisted on the BucketDefault path"
     );
+
+    Ok(())
+}
+
+/// Snapshot of a package's persistent state used to assert that a rejected
+/// `set_remote` leaves everything intact.
+async fn assert_nothing_persisted(
+    package: &InstalledPackage<LocalStorage, MockRemote>,
+    hash_before: &str,
+    manifests_before: usize,
+) -> Res {
+    let lineage = package.lineage().await?;
+    assert!(
+        lineage.remote_uri.is_none(),
+        "a rejected set_remote must not persist the remote"
+    );
+    let commit = lineage.commit.as_ref().expect("commit should still exist");
+    assert_eq!(
+        commit.hash, hash_before,
+        "a rejected set_remote must not change the commit"
+    );
+    assert!(
+        commit.prev_hashes.is_empty(),
+        "a rejected set_remote must not record a recommit in prev_hashes"
+    );
+
+    // The previous manifest must still be present and loadable, its header
+    // untouched (no workflow was ever stamped on it), and no new manifest
+    // file may have appeared.
+    let manifests_dir = package.paths.installed_manifests_dir(&package.namespace);
+    let manifest_path = package
+        .paths
+        .installed_manifest(&package.namespace, hash_before);
+    let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
+    assert!(
+        manifest.header.workflow.is_none(),
+        "the previous manifest's header must be unchanged"
+    );
+    let manifests_after = std::fs::read_dir(&manifests_dir)?.count();
+    assert_eq!(
+        manifests_after, manifests_before,
+        "a rejected set_remote must not write a new manifest"
+    );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_no_workflow_against_required_bucket_is_rejected() -> Res {
+    // FOO_CONFIG omits `is_workflow_required`, which defaults to true: the
+    // bucket requires a workflow. An explicit `NoWorkflow` gesture resolves to
+    // an id-less record, which the gate rejects — and a rejected set_remote
+    // persists NOTHING: no remote, no new commit, no new manifest.
+    let (package, _t1, _t2) = package_with_config("noworkflow-required", FOO_CONFIG, b"{}").await?;
+
+    let lineage = package.lineage().await?;
+    let hash_before = lineage.commit.as_ref().expect("committed").hash.clone();
+    let manifests_dir = package.paths.installed_manifests_dir(&package.namespace);
+    let manifests_before = std::fs::read_dir(&manifests_dir)?.count();
+
+    let err = package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::NoWorkflow,
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
+                if violations.contains(&RuleViolation::WorkflowRequired)
+        ),
+        "expected a WorkflowRequired rejection, got: {err:?}"
+    );
+    assert_nothing_persisted(&package, &hash_before, manifests_before).await?;
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_bucket_default_validation_error_propagates() -> Res {
+    // The bucket's `default_workflow` resolves fine, but its metadata_schema
+    // requires an `owner` the committed package does not carry. Unlike a
+    // resolution failure, a validation rejection is NOT best-effort on the
+    // BucketDefault path: set_remote fails and persists nothing.
+    let config = r"
+default_workflow: foo
+workflows:
+  foo:
+    metadata_schema: bar
+schemas:
+  bar:
+    url: s3://my-bucket/schemas/test.json
+";
+    let schema = br#"{"type": "object", "required": ["owner"]}"#;
+    let (package, _t1, _t2) = package_with_config("bucketdefault-invalid", config, schema).await?;
+
+    let lineage = package.lineage().await?;
+    let hash_before = lineage.commit.as_ref().expect("committed").hash.clone();
+    let manifests_dir = package.paths.installed_manifests_dir(&package.namespace);
+    let manifests_before = std::fs::read_dir(&manifests_dir)?.count();
+
+    let err = package
+        .set_remote(
+            "my-bucket".to_string(),
+            Some("example.com".parse()?),
+            WorkflowIntent::BucketDefault,
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
+                if matches!(violations.as_slice(), [RuleViolation::MetadataInvalid(_)])
+        ),
+        "expected a MetadataInvalid rejection, got: {err:?}"
+    );
+    assert_nothing_persisted(&package, &hash_before, manifests_before).await?;
 
     Ok(())
 }
