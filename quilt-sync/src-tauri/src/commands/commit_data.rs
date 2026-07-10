@@ -517,8 +517,13 @@ pub struct CommitViolation {
 /// concurrent callers.
 #[derive(Default)]
 pub struct WorkflowRulesCache {
-    rules: Mutex<HashMap<(String, String), Arc<OnceCell<Option<WorkflowRules>>>>>,
+    rules: Mutex<HashMap<(String, String), RulesCell>>,
 }
+
+/// One cache slot: an `Arc<OnceCell<..>>` so concurrent loads of a key share a
+/// single fetch. The inner `Option` is the fetched result — `Some(rules)` when
+/// the workflow has rules, `None` when the bucket is ungoverned.
+type RulesCell = Arc<OnceCell<Option<WorkflowRules>>>;
 
 impl WorkflowRulesCache {
     /// Ensure the rules for `(namespace, workflow_id)` are cached, fetching them
