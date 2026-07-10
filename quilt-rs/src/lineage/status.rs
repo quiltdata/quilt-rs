@@ -126,7 +126,7 @@ mod tests {
     fn working_tree_quiet_old_mtime_is_quiet() {
         let now = SystemTime::now();
         let status = InstalledPackageStatus {
-            most_recent_mtime: Some(now - Duration::from_secs(60)),
+            most_recent_mtime: Some(now - Duration::from_mins(1)),
             ..InstalledPackageStatus::default()
         };
         assert!(status.working_tree_quiet(now, Duration::from_secs(30)));
@@ -136,7 +136,7 @@ mod tests {
     fn working_tree_quiet_future_mtime_clamps_to_now() {
         let now = SystemTime::now();
         let status = InstalledPackageStatus {
-            most_recent_mtime: Some(now + Duration::from_secs(300)),
+            most_recent_mtime: Some(now + Duration::from_mins(5)),
             ..InstalledPackageStatus::default()
         };
         assert!(!status.working_tree_quiet(now, Duration::from_secs(30)));
