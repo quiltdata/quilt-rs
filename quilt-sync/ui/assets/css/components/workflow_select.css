@@ -78,9 +78,6 @@
   color: var(--q-ui-palette-text-primary);
 }
 
-/* The "Open in catalog:" prefix. Color and size inherit from the row; the
- * nowrap keeps the label from breaking mid-phrase on narrow dialogs. Also
- * the styling hook for the planned visual polish of this row. */
 .qui-workflow-links-label {
   white-space: nowrap;
 }
