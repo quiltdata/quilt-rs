@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha7] - 2026-07-09
+
+### Added
+
+- The workflow selector in the commit and Set-remote dialogs now shows "Open in catalog" links to the bucket's workflow config and the selected workflow's metadata and entries schemas (<https://github.com/quiltdata/quilt-rs/pull/756>)
+
 ## [v0.18.3-alpha6] - 2026-07-09
 
 ### Changed

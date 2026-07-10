@@ -4,7 +4,10 @@ use std::str::FromStr;
 
 use serde::Serialize;
 
+use quilt_rs::io::remote::WORKFLOWS_CONFIG_KEY;
 use quilt_rs::io::remote::WorkflowsConfig;
+use quilt_uri::Host;
+use quilt_uri::S3Uri;
 
 use crate::Error;
 use crate::model;
@@ -92,12 +95,19 @@ pub struct CommitWorkflowData {
 /// A workflow declared under `workflows:` in the bucket's config, surfaced to
 /// the commit dialog so the user can pick one. Distinct from
 /// [`CommitWorkflowData`], which is the previous revision's stamped selection.
+///
+/// `metadata_schema_url` / `entries_schema_url` are catalog HTTPS links to the
+/// schema objects the workflow declares, pre-formatted for the currently-known
+/// catalog host — `None` when the workflow declares no such schema, or when
+/// there is no catalog host to link against.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitWorkflowInfo {
     pub id: String,
     pub name: Option<String>,
     pub description: Option<String>,
+    pub metadata_schema_url: Option<String>,
+    pub entries_schema_url: Option<String>,
 }
 
 /// The bucket's workflow-selection situation, as the commit dialog should
@@ -122,12 +132,42 @@ pub enum CommitWorkflows {
         workflows: Vec<CommitWorkflowInfo>,
         default_workflow: Option<String>,
         is_workflow_required: bool,
+        /// Catalog HTTPS link to the bucket's `.quilt/workflows/config.yml`
+        /// object, or `None` when there is no catalog host to link against.
+        config_url: Option<String>,
     },
     NotConfigured,
     Unavailable,
     Invalid {
         reason: String,
+        /// Catalog HTTPS link to the bucket's `.quilt/workflows/config.yml`
+        /// object, so the user can open the broken config to fix it. `None`
+        /// when there is no catalog host (or bucket) to link against.
+        config_url: Option<String>,
     },
+}
+
+/// Format the catalog HTTPS link for an S3 object, or `None` when there is no
+/// catalog host to link against. Reuses [`S3Uri::display_for_host`] — the same
+/// on-demand catalog-link formatting the rest of the app uses.
+fn catalog_object_url(uri: &S3Uri, host: Option<&Host>) -> Option<String> {
+    let host = host?;
+    uri.display_for_host(host).ok().map(|u| u.to_string())
+}
+
+/// Catalog HTTPS link to a bucket's `.quilt/workflows/config.yml`, or `None`
+/// when there is no catalog host or bucket to link against. Shared by the
+/// `Available` and `Invalid` states so the config link is built one way.
+fn config_object_url(host: Option<&Host>, bucket: Option<&str>) -> Option<String> {
+    let bucket = bucket?;
+    catalog_object_url(
+        &S3Uri {
+            bucket: bucket.to_string(),
+            key: WORKFLOWS_CONFIG_KEY.to_string(),
+            version: None,
+        },
+        host,
+    )
 }
 
 /// Map a fetched workflows config to the UI's state. Shared by the commit
@@ -138,21 +178,52 @@ pub enum CommitWorkflows {
 /// never fatal, so the caller degrades gracefully).
 fn workflows_config_to_commit_workflows(
     config: Result<Option<WorkflowsConfig>, Error>,
+    host: Option<&Host>,
+    bucket: Option<&str>,
 ) -> CommitWorkflows {
     match config {
-        Ok(Some(config)) => CommitWorkflows::Available {
-            workflows: config
+        Ok(Some(config)) => {
+            let config_url = config_object_url(host, bucket);
+            // Resolve each workflow's schema links first — this borrow of
+            // `config` ends here — so the strings can then be *moved* out of
+            // `config.workflows` instead of cloned. A misconfigured `schemas`
+            // section degrades to no links rather than dropping the dialog.
+            let schema_urls: Vec<(Option<String>, Option<String>)> = config
+                .workflows
+                .iter()
+                .map(|w| {
+                    let schemas = config.schema_uris(&w.id);
+                    (
+                        schemas
+                            .metadata_schema
+                            .and_then(|uri| catalog_object_url(&uri, host)),
+                        schemas
+                            .entries_schema
+                            .and_then(|uri| catalog_object_url(&uri, host)),
+                    )
+                })
+                .collect();
+            let workflows = config
                 .workflows
                 .into_iter()
-                .map(|w| CommitWorkflowInfo {
-                    id: w.id,
-                    name: w.name,
-                    description: w.description,
-                })
-                .collect(),
-            default_workflow: config.default_workflow,
-            is_workflow_required: config.is_workflow_required,
-        },
+                .zip(schema_urls)
+                .map(
+                    |(w, (metadata_schema_url, entries_schema_url))| CommitWorkflowInfo {
+                        id: w.id,
+                        name: w.name,
+                        description: w.description,
+                        metadata_schema_url,
+                        entries_schema_url,
+                    },
+                )
+                .collect();
+            CommitWorkflows::Available {
+                workflows,
+                default_workflow: config.default_workflow,
+                is_workflow_required: config.is_workflow_required,
+                config_url,
+            }
+        }
         Ok(None) => CommitWorkflows::NotConfigured,
         // A malformed config is not a load failure — the file is present and
         // readable, it just violates the schema. Distinguish it by variant (not
@@ -161,7 +232,10 @@ fn workflows_config_to_commit_workflows(
         // that would actually error.
         Err(Error::Quilt(quilt::Error::RemoteCatalog(
             quilt::RemoteCatalogError::InvalidWorkflowsConfig(reason),
-        ))) => CommitWorkflows::Invalid { reason },
+        ))) => CommitWorkflows::Invalid {
+            reason,
+            config_url: config_object_url(host, bucket),
+        },
         Err(e) => {
             tracing::warn!(
                 "Failed to load the bucket's workflows config; the caller will fall back to the bucket default: {e}"
@@ -305,7 +379,7 @@ async fn get_commit_data_from_model(
                         .as_ref()
                         .map(|w| CommitWorkflowData {
                             id: w.id.as_ref().map(|id| id.id.clone()),
-                            url: w.config.display_for_host(host).ok().map(|u| u.to_string()),
+                            url: catalog_object_url(&w.config, Some(host)),
                             config_url: None,
                         })
                 });
@@ -317,8 +391,11 @@ async fn get_commit_data_from_model(
     // Fetch the bucket's declared workflows for the commit dialog. A fetch
     // failure (or a package with no remote) must NOT fail the command — the
     // dialog still opens, and the UI presents the honest fallback state.
-    let workflows =
-        workflows_config_to_commit_workflows(m.get_workflows_config(&installed_package).await);
+    let workflows = workflows_config_to_commit_workflows(
+        m.get_workflows_config(&installed_package).await,
+        origin_host,
+        typed_uri.as_ref().map(|u| u.bucket.as_str()),
+    );
 
     Ok(CommitData {
         namespace: namespace.to_string(),
@@ -354,10 +431,11 @@ pub async fn get_commit_data(
 
 async fn get_bucket_workflows_from_model(
     m: &impl model::QuiltModel,
-    host: Option<quilt_uri::Host>,
+    host: Option<Host>,
     bucket: &str,
 ) -> CommitWorkflows {
-    workflows_config_to_commit_workflows(m.get_bucket_workflows_config(host, bucket).await)
+    let config = m.get_bucket_workflows_config(host.clone(), bucket).await;
+    workflows_config_to_commit_workflows(config, host.as_ref(), Some(bucket))
 }
 
 /// Fetch a bucket's declared workflows before its remote is set, so the popup
@@ -718,6 +796,7 @@ workflows:
             workflows,
             default_workflow,
             is_workflow_required,
+            config_url,
         } = data.workflows
         else {
             return Err("expected Available".to_string());
@@ -728,6 +807,18 @@ workflows:
         assert_eq!(ids, vec!["dummy", "alpha"]);
         assert_eq!(workflows[0].name.as_deref(), Some("Dummy workflow"));
         assert_eq!(workflows[0].description.as_deref(), Some("Do nothing."));
+        // The package has a catalog host (test.quilt.dev) and remote bucket
+        // (quilt-example), so the config object gets a catalog link. These
+        // workflows declare no schemas, so their schema links stay None.
+        assert_eq!(
+            config_url.as_deref(),
+            Some("https://test.quilt.dev/b/quilt-example/tree/.quilt/workflows/config.yml")
+        );
+        assert!(
+            workflows
+                .iter()
+                .all(|w| w.metadata_schema_url.is_none() && w.entries_schema_url.is_none())
+        );
         Ok(())
     }
 
@@ -781,17 +872,29 @@ workflows:
                 id: "alpha".to_string(),
                 name: Some("Alpha".to_string()),
                 description: None,
+                metadata_schema_url: Some("https://catalog/b/bucket/tree/meta.json".to_string()),
+                entries_schema_url: None,
             }],
             default_workflow: Some("alpha".to_string()),
             is_workflow_required: true,
+            config_url: Some(
+                "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
+            ),
         };
         assert_eq!(
             serde_json::to_value(&available).unwrap(),
             serde_json::json!({
                 "state": "available",
-                "workflows": [{"id": "alpha", "name": "Alpha", "description": null}],
+                "workflows": [{
+                    "id": "alpha",
+                    "name": "Alpha",
+                    "description": null,
+                    "metadataSchemaUrl": "https://catalog/b/bucket/tree/meta.json",
+                    "entriesSchemaUrl": null,
+                }],
                 "defaultWorkflow": "alpha",
                 "isWorkflowRequired": true,
+                "configUrl": "https://catalog/b/bucket/tree/.quilt/workflows/config.yml",
             })
         );
         assert_eq!(
@@ -805,9 +908,16 @@ workflows:
         assert_eq!(
             serde_json::to_value(CommitWorkflows::Invalid {
                 reason: "bad schema".to_string(),
+                config_url: Some(
+                    "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
+                ),
             })
             .unwrap(),
-            serde_json::json!({"state": "invalid", "reason": "bad schema"})
+            serde_json::json!({
+                "state": "invalid",
+                "reason": "bad schema",
+                "configUrl": "https://catalog/b/bucket/tree/.quilt/workflows/config.yml",
+            })
         );
     }
 
@@ -832,12 +942,18 @@ workflows:
             .await
             .map_err(|e| e.to_string())?;
 
-        let CommitWorkflows::Invalid { reason } = data.workflows else {
+        let CommitWorkflows::Invalid { reason, config_url } = data.workflows else {
             return Err("expected Invalid".to_string());
         };
         assert!(
             reason.contains("does not satisfy the workflows config schema"),
             "reason must carry the violation, got: {reason}"
+        );
+        // The malformed-config notice carries a link to the config object so
+        // the user can open and fix it (catalog host + remote bucket in scope).
+        assert_eq!(
+            config_url.as_deref(),
+            Some("https://test.quilt.dev/b/quilt-example/tree/.quilt/workflows/config.yml")
         );
         Ok(())
     }
@@ -881,10 +997,13 @@ workflows:
             });
 
         let workflows = get_bucket_workflows_from_model(&model, None, "my-bucket").await;
-        let CommitWorkflows::Invalid { reason } = workflows else {
+        let CommitWorkflows::Invalid { reason, config_url } = workflows else {
             return Err("expected Invalid".to_string());
         };
         assert!(reason.contains("does not satisfy the workflows config schema"));
+        // No catalog host was passed for this preview, so there is nothing to
+        // link against and the config link is absent.
+        assert!(config_url.is_none());
         Ok(())
     }
 
@@ -921,6 +1040,7 @@ workflows:
             workflows,
             default_workflow,
             is_workflow_required,
+            config_url,
         } = workflows
         else {
             return Err("expected Available".to_string());
@@ -929,6 +1049,72 @@ workflows:
         assert!(is_workflow_required);
         let ids: Vec<_> = workflows.iter().map(|w| w.id.as_str()).collect();
         assert_eq!(ids, vec!["dummy", "alpha"]);
+        // No catalog host was passed for this preview, so there is nothing to
+        // link against and the config link is absent.
+        assert!(config_url.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_bucket_workflows_available_formats_catalog_links() -> Result<(), String> {
+        // A config declaring per-workflow schemas, previewed against a catalog
+        // host: the config object and each declared schema get a catalog HTTPS
+        // link. The schema objects live under their own bucket, taken from the
+        // `schemas` section's URLs.
+        let mut model = mocks::create();
+        let yaml: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+version: "1"
+default_workflow: alpha
+workflows:
+  alpha:
+    name: Alpha
+    metadata_schema: meta
+    entries_schema: entries
+  bare:
+    name: Bare
+schemas:
+  meta:
+    url: s3://schemas-bucket/meta.json
+  entries:
+    url: s3://schemas-bucket/entries.json
+"#,
+        )
+        .map_err(|e| e.to_string())?;
+        let config =
+            quilt::io::remote::WorkflowsConfig::from_yaml(&yaml).map_err(|e| e.to_string())?;
+        model
+            .expect_get_bucket_workflows_config()
+            .return_once(move |_, _| Ok(Some(config)));
+
+        let host: quilt_uri::Host = "test.quilt.dev".parse().map_err(|_| "bad host")?;
+        let workflows = get_bucket_workflows_from_model(&model, Some(host), "my-bucket").await;
+
+        let CommitWorkflows::Available {
+            workflows,
+            config_url,
+            ..
+        } = workflows
+        else {
+            return Err("expected Available".to_string());
+        };
+        assert_eq!(
+            config_url.as_deref(),
+            Some("https://test.quilt.dev/b/my-bucket/tree/.quilt/workflows/config.yml")
+        );
+        // `alpha` declares both schemas; each is linked against its own bucket.
+        let alpha = &workflows[0];
+        assert_eq!(
+            alpha.metadata_schema_url.as_deref(),
+            Some("https://test.quilt.dev/b/schemas-bucket/tree/meta.json")
+        );
+        assert_eq!(
+            alpha.entries_schema_url.as_deref(),
+            Some("https://test.quilt.dev/b/schemas-bucket/tree/entries.json")
+        );
+        // `bare` declares neither schema, so it has no schema links.
+        let bare = &workflows[1];
+        assert!(bare.metadata_schema_url.is_none() && bare.entries_schema_url.is_none());
         Ok(())
     }
 

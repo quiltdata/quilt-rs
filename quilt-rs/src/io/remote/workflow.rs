@@ -31,6 +31,12 @@ use quilt_uri::S3Uri;
 /// would silently disable a rule the bucket owner believes is enforced.
 const CONFIG_SCHEMA: &str = include_str!("config-1.schema.json");
 
+/// The bucket key of the workflows config object every governed bucket carries.
+/// The single source of truth for `.quilt/workflows/config.yml` across the
+/// workspace, so the address is built the same way everywhere (quilt-sync
+/// imports it too).
+pub const WORKFLOWS_CONFIG_KEY: &str = ".quilt/workflows/config.yml";
+
 /// The compiled config-schema validator. Built once: the schema is a
 /// compile-time constant, so compilation cannot fail on user input.
 static CONFIG_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
@@ -112,6 +118,19 @@ pub struct WorkflowInfo {
     pub id: String,
     pub name: Option<String>,
     pub description: Option<String>,
+}
+
+/// The declared object URIs of the schemas a workflow references, for building
+/// "Open in catalog" links in the commit dialog. Each is `None` when the
+/// workflow declares no such schema.
+///
+/// These are the raw URIs declared in the config's `schemas` section — read
+/// from the retained YAML with no I/O and no version resolution, so a link
+/// points at the current object rather than a version pinned at fetch time.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkflowSchemaUris {
+    pub metadata_schema: Option<S3Uri>,
+    pub entries_schema: Option<S3Uri>,
 }
 
 /// Typed view of `.quilt/workflows/config.yml`.
@@ -235,21 +254,14 @@ impl WorkflowsConfig {
         }
     }
 
-    /// Resolve the URL of a schema by its id, looking it up in the `schemas`
-    /// section. `workflow_id` is used only for error context.
-    async fn resolve_schema_url<R: Remote>(
-        &self,
-        remote: &R,
-        host: &Option<Host>,
-        workflow_id: &str,
-        schema_id: &str,
-    ) -> Res<S3Uri> {
+    /// The declared (unresolved) URL of a schema by its id, read straight from
+    /// the `schemas` section — no I/O, no version resolution. `workflow_id` is
+    /// used only for error context.
+    fn declared_schema_url(&self, workflow_id: &str, schema_id: &str) -> Res<S3Uri> {
         match self.raw.get("schemas") {
             Some(YamlValue::Mapping(schemas)) => match schemas.get(schema_id) {
                 Some(YamlValue::Mapping(schema)) => match schema.get("url") {
-                    Some(YamlValue::String(url)) => {
-                        Ok(remote.resolve_url(host, &url.parse()?).await?)
-                    }
+                    Some(YamlValue::String(url)) => Ok(url.parse()?),
                     _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(format!(
                         "Schema {schema_id} doesn't have URL"
                     )))),
@@ -261,6 +273,54 @@ impl WorkflowsConfig {
             _ => Err(Error::RemoteCatalog(RemoteCatalogError::Workflow(
                 "Schemas not found in workflows/config.yaml".to_string(),
             ))),
+        }
+    }
+
+    /// Resolve the URL of a schema by its id, looking it up in the `schemas`
+    /// section and version-resolving it against the remote. `workflow_id` is
+    /// used only for error context.
+    async fn resolve_schema_url<R: Remote>(
+        &self,
+        remote: &R,
+        host: &Option<Host>,
+        workflow_id: &str,
+        schema_id: &str,
+    ) -> Res<S3Uri> {
+        let declared = self.declared_schema_url(workflow_id, schema_id)?;
+        remote.resolve_url(host, &declared).await
+    }
+
+    /// The declared object URI of the schema a workflow references under `key`
+    /// (`metadata_schema` / `entries_schema`), or `None` when the workflow
+    /// declares no such schema. Pure: resolved from the retained raw config.
+    fn declared_schema_uri(&self, workflow_id: &str, key: &str) -> Res<Option<S3Uri>> {
+        match self.schema_id(workflow_id, key)? {
+            Some(schema_id) => Ok(Some(self.declared_schema_url(workflow_id, &schema_id)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The declared object URIs of a workflow's `metadata_schema` and
+    /// `entries_schema`, for building "Open in catalog" links in the commit
+    /// dialog.
+    ///
+    /// Each key resolves **independently**: a dangling reference (a declared
+    /// schema id with no matching `schemas` entry, a missing `schemas` section)
+    /// or an unknown `workflow_id` yields `None` for THAT key only, never
+    /// suppressing the other. This is a lenient, display-only accessor — a
+    /// broken link should drop that one link, not the whole dialog, so it never
+    /// errors. Gate paths must NOT use it: they need misconfiguration to surface
+    /// loudly (see [`Self::declared_schema_uri`] / [`fetch_workflow_rules`]).
+    pub fn schema_uris(&self, workflow_id: &str) -> WorkflowSchemaUris {
+        WorkflowSchemaUris {
+            metadata_schema: self
+                .declared_schema_uri(workflow_id, "metadata_schema")
+                .ok()
+                .flatten(),
+            entries_schema: self
+                .declared_schema_uri(workflow_id, "entries_schema")
+                .ok()
+                .flatten(),
         }
     }
 
@@ -363,7 +423,7 @@ pub async fn fetch_workflows_config_for_bucket<R: Remote>(
     bucket: &str,
 ) -> Res<Option<WorkflowsConfig>> {
     let uri = S3Uri {
-        key: ".quilt/workflows/config.yml".to_string(),
+        key: WORKFLOWS_CONFIG_KEY.to_string(),
         bucket: bucket.to_string(),
         version: None,
     };
@@ -1462,6 +1522,110 @@ workflows:
             message.contains("/workflows/foo/handle_pattern"),
             "violation must name the offending path, got: {message}"
         );
+    }
+
+    #[test]
+    fn test_schema_uris_both_one_none_and_unknown() -> Res<()> {
+        // A config with three workflows: one declaring both schemas, one
+        // declaring only the metadata schema, and one declaring neither.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+workflows:
+  both:
+    name: Both
+    metadata_schema: meta
+    entries_schema: entries
+  meta-only:
+    name: Meta only
+    metadata_schema: meta
+  none:
+    name: None
+schemas:
+  meta:
+    url: s3://schemas-bucket/meta.json
+  entries:
+    url: s3://schemas-bucket/entries.json
+"#,
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        // Both declared → both URIs resolved from the `schemas` section.
+        assert_eq!(
+            config.schema_uris("both"),
+            WorkflowSchemaUris {
+                metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
+                entries_schema: Some("s3://schemas-bucket/entries.json".parse()?),
+            }
+        );
+        // Only the metadata schema declared → entries is `None`.
+        assert_eq!(
+            config.schema_uris("meta-only"),
+            WorkflowSchemaUris {
+                metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
+                entries_schema: None,
+            }
+        );
+        // Neither declared → both `None`, the type's default.
+        assert_eq!(config.schema_uris("none"), WorkflowSchemaUris::default());
+        // An unknown workflow id is not a link we can build: the lenient,
+        // display-only accessor yields both `None` rather than erroring.
+        assert_eq!(config.schema_uris("ghost"), WorkflowSchemaUris::default());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_schema_uris_resolve_independently() -> Res<()> {
+        // A workflow with a resolvable `metadata_schema` but an `entries_schema`
+        // whose id dangles (no matching `schemas` entry): the metadata link
+        // still resolves, the dangling entries link degrades to `None` on its
+        // own — a broken reference must not suppress the sibling link.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+workflows:
+  partial:
+    name: Partial
+    metadata_schema: meta
+    entries_schema: ghost
+schemas:
+  meta:
+    url: s3://schemas-bucket/meta.json
+"#,
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        assert_eq!(
+            config.schema_uris("partial"),
+            WorkflowSchemaUris {
+                metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
+                entries_schema: None,
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_schema_uris_missing_schemas_section_degrades_to_none() -> Res<()> {
+        // A workflow declaring a schema id, but no `schemas` section to resolve
+        // it against → the dangling reference degrades to `None` (display-only
+        // leniency) rather than the hard error the async resolver raises.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r"
+version: '1'
+workflows:
+  foo:
+    name: Foo
+    metadata_schema: bar
+",
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        assert_eq!(config.schema_uris("foo"), WorkflowSchemaUris::default());
+
+        Ok(())
     }
 
     /// (c) A fully-valid config — including `format: regex` / `format: uri`

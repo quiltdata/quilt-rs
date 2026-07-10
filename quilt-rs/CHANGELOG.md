@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha7] - 2026-07-09
+
+### Added
+
+- `WorkflowsConfig::schema_uris` returns the declared metadata- and entries-schema object URIs for a workflow, so consumers can link to them (<https://github.com/quiltdata/quilt-rs/pull/756>)
+
 ## [v0.33.0-alpha6] - 2026-07-09
 
 ### Changed
