@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::Serialize;
 use tokio::sync::Mutex;
+use tokio::sync::OnceCell;
 
 use quilt_rs::io::remote::WORKFLOWS_CONFIG_KEY;
 use quilt_rs::io::remote::WorkflowsConfig;
@@ -506,16 +508,24 @@ pub struct CommitViolation {
 /// within the same session pass `refresh = false` and stay cache-friendly. The
 /// stored `Option` distinguishes "loaded, this workflow has rules" from "loaded,
 /// no rules" (ungoverned / no config), so both are cached and neither re-fetches.
+///
+/// Each key maps to an `Arc<OnceCell<..>>` rather than the value directly, so
+/// concurrent loads of the same key single-flight: the map lock is held only to
+/// get-or-insert the cell, and the fetch runs inside `OnceCell::get_or_try_init`
+/// with the map lock released — so a slow fetch never blocks the keystroke
+/// [`validate`] path, and the same key is fetched exactly once even under
+/// concurrent callers.
 #[derive(Default)]
 pub struct WorkflowRulesCache {
-    rules: Mutex<HashMap<(String, String), Option<WorkflowRules>>>,
+    rules: Mutex<HashMap<(String, String), Arc<OnceCell<Option<WorkflowRules>>>>>,
 }
 
 impl WorkflowRulesCache {
     /// Ensure the rules for `(namespace, workflow_id)` are cached, fetching them
     /// once on a miss. Returns whether the workflow has rules to validate
     /// against (`false` when the bucket is ungoverned). A cache hit performs no
-    /// model calls at all — the per-selection fetch runs exactly once.
+    /// model calls at all, and concurrent misses on the same key share one
+    /// fetch — the per-selection fetch runs exactly once.
     ///
     /// `refresh` (set on a dialog's first load) drops the namespace's cached
     /// entries first, so a config.yml change since the last dialog open is
@@ -528,29 +538,36 @@ impl WorkflowRulesCache {
         refresh: bool,
     ) -> Result<bool, Error> {
         let key = (namespace.to_string(), workflow_id.to_string());
-        {
+        // Brief map lock: on refresh drop the namespace's cells (replacing them
+        // with fresh, uninitialised ones on next access), then get-or-insert
+        // this key's cell. The fetch itself happens below with the lock
+        // released.
+        let cell = {
             let mut guard = self.rules.lock().await;
             if refresh {
                 guard.retain(|(ns, _), _| ns != namespace);
-            } else if let Some(cached) = guard.get(&key) {
-                return Ok(cached.is_some());
             }
-        }
-        let ns = quilt_uri::Namespace::try_from(namespace)?;
-        let package = m
-            .get_installed_package(&ns)
-            .await?
-            .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(ns)))?;
-        let rules = m.get_workflow_rules(&package, workflow_id).await?;
-        let has_rules = rules.is_some();
-        self.rules.lock().await.insert(key, rules);
-        Ok(has_rules)
+            Arc::clone(guard.entry(key).or_default())
+        };
+        let rules = cell
+            .get_or_try_init(|| async {
+                let ns = quilt_uri::Namespace::try_from(namespace)?;
+                let package = m
+                    .get_installed_package(&ns)
+                    .await?
+                    .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(ns)))?;
+                m.get_workflow_rules(&package, workflow_id).await
+            })
+            .await?;
+        Ok(rules.is_some())
     }
 
     /// Validate a candidate against the cached rules for
-    /// `(namespace, workflow_id)`. Reads the cache only — no I/O. When nothing
-    /// is cached (rules not loaded yet) or the workflow has no rules, there is
-    /// nothing to validate against, so no violations are returned.
+    /// `(namespace, workflow_id)`. Reads the cache only — no I/O, and never
+    /// waits on an in-flight fetch (the cell is read via `get`, not
+    /// `get_or_init`). When nothing is cached (rules not loaded yet, or the
+    /// fetch is still in flight) or the workflow has no rules, there is nothing
+    /// to validate against, so no violations are returned.
     async fn validate(
         &self,
         namespace: &str,
@@ -560,8 +577,14 @@ impl WorkflowRulesCache {
         name: &str,
     ) -> Vec<CommitViolation> {
         let key = (namespace.to_string(), workflow_id.to_string());
-        let guard = self.rules.lock().await;
-        let Some(Some(rules)) = guard.get(&key) else {
+        let cell = {
+            let guard = self.rules.lock().await;
+            guard.get(&key).map(Arc::clone)
+        };
+        let Some(cell) = cell else {
+            return Vec::new();
+        };
+        let Some(Some(rules)) = cell.get() else {
             return Vec::new();
         };
         validate_candidate(rules, message, user_meta, name)
@@ -1448,6 +1471,31 @@ schemas:
                 .await
                 .map_err(|e| e.to_string())?
         );
+        Ok(())
+    }
+
+    /// Two concurrent `ensure_loaded` calls for the same key must single-flight:
+    /// the cell's `get_or_try_init` runs the fetch once, so the `.times(1)`
+    /// expectations hold even though both callers miss the cache together.
+    #[tokio::test]
+    async fn workflow_rules_cache_single_flights_concurrent_loads() -> Result<(), String> {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .times(1)
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_workflow_rules()
+            .times(1)
+            .returning(|_, _| Ok(Some(strict_rules())));
+
+        let cache = WorkflowRulesCache::default();
+        let (a, b) = tokio::join!(
+            cache.ensure_loaded(&model, "foo/bar", "wf", false),
+            cache.ensure_loaded(&model, "foo/bar", "wf", false),
+        );
+        assert!(a.map_err(|e| e.to_string())?);
+        assert!(b.map_err(|e| e.to_string())?);
         Ok(())
     }
 
