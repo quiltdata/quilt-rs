@@ -175,6 +175,15 @@ fn CommitContent(
     let debounce_timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
     Effect::new(move |_| {
         let key = live_key.get();
+        // Skip arming the timer when the input already equals the debounced
+        // mirror. The Effect runs once on mount with `key` equal to the value
+        // `debounced_key` was seeded with; `RwSignal::set` notifies
+        // unconditionally (no `PartialEq` dedupe), so scheduling that set would
+        // re-run the validation resource with identical input — a redundant IPC
+        // round-trip. Only settled *edits* should (re)arm the timer.
+        if !should_debounce(&key, &debounced_key.get_untracked()) {
+            return;
+        }
         if let Some(handle) = debounce_timer.get_value() {
             handle.clear();
         }
@@ -713,6 +722,15 @@ fn CommitEntryRow(
 
 // ── Live-validation view model ──
 
+/// Whether a settled edit should (re)arm the debounce timer: only when the
+/// current input key differs from the value the debounced mirror already holds.
+/// Guards the mount-time Effect run, which observes the initial key equal to the
+/// seeded mirror — scheduling a `set` there would re-run the validation resource
+/// with identical input (`RwSignal::set` has no `PartialEq` dedupe).
+fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
+    key != debounced
+}
+
 /// The messages of the violations that belong under `field`, in order. Pure
 /// mapping from the backend's per-field violation list to the strings one field
 /// renders, so the routing is unit-testable without a DOM.
@@ -798,7 +816,7 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::field_violations;
+    use super::{field_violations, should_debounce};
     use crate::commands::{CommitViolation, ViolationField};
 
     fn violation(field: ViolationField, message: &str) -> CommitViolation {
@@ -806,6 +824,16 @@ mod tests {
             field,
             message: message.to_string(),
         }
+    }
+
+    #[test]
+    fn should_debounce_skips_equal_key() {
+        // Mount-time: the input equals the seeded debounced mirror, so no timer.
+        let key = ("msg".to_string(), "{}".to_string(), Some("wf".to_string()));
+        assert!(!should_debounce(&key, &key.clone()));
+        // A settled edit differs, so the timer arms.
+        let edited = ("msg2".to_string(), "{}".to_string(), Some("wf".to_string()));
+        assert!(should_debounce(&edited, &key));
     }
 
     #[test]
