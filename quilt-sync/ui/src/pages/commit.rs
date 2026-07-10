@@ -891,9 +891,7 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        displayed_violations, effective_metadata, field_violations, should_debounce,
-    };
+    use super::{displayed_violations, effective_metadata, field_violations, should_debounce};
     use crate::commands::{CommitViolation, ViolationField};
 
     fn violation(field: ViolationField, message: &str) -> CommitViolation {

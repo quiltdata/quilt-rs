@@ -1514,8 +1514,18 @@ schemas:
 
         let cache = WorkflowRulesCache::default();
         // No rules → `false`, and a second load still does not re-fetch.
-        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf", false).await.unwrap());
-        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf", false).await.unwrap());
+        assert!(
+            !cache
+                .ensure_loaded(&model, "foo/bar", "wf", false)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !cache
+                .ensure_loaded(&model, "foo/bar", "wf", false)
+                .await
+                .unwrap()
+        );
         // Validation against an ungoverned selection yields no violations.
         assert!(
             cache
@@ -1540,7 +1550,10 @@ schemas:
             .returning(|_, _| Ok(Some(strict_rules())));
 
         let cache = WorkflowRulesCache::default();
-        cache.ensure_loaded(&model, "foo/bar", "wf", false).await.unwrap();
+        cache
+            .ensure_loaded(&model, "foo/bar", "wf", false)
+            .await
+            .unwrap();
 
         // Missing message, non-matching name, metadata missing `owner`.
         let violations = cache.validate("foo/bar", "wf", "", "{}", "other/pkg").await;
