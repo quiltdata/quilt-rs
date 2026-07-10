@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha10] - 2026-07-10
+
+### Fixed
+
+- The commit dialog's JSON metadata editor no longer disappears after the first dialog of a session (<https://github.com/quiltdata/quilt-rs/pull/761>)
+
 ## [v0.18.3-alpha9] - 2026-07-10
 
 ### Changed
