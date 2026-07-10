@@ -50,6 +50,16 @@
     background: var(--q-ui-palette-warning);
   }
 
+  &.danger {
+    color: #fff;
+    background: var(--q-ui-palette-error);
+  }
+
+  &.danger[disabled]:hover {
+    color: #fff;
+    background: var(--q-ui-palette-error);
+  }
+
   &.link {
     background: transparent;
     border: 0;
@@ -105,7 +115,9 @@
   &.primary .qui-icon,
   &.primary .icon,
   &.warning .qui-icon,
-  &.warning .icon {
+  &.warning .icon,
+  &.danger .qui-icon,
+  &.danger .icon {
     filter: invert(1);
   }
 

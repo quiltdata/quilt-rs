@@ -80,8 +80,8 @@ fn SettingsContent(
                 changelog=data.changelog
                 notification=notification
             />
-            <PublishSection publish=data.publish notification=notification refetch=refetch />
             <AutosyncSection autosync=data.autosync notification=notification refetch=refetch />
+            <PublishSection publish=data.publish notification=notification refetch=refetch />
             <FsWatcherSection fswatcher=data.fswatcher notification=notification refetch=refetch />
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <DiagnosticsSection

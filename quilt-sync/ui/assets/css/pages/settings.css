@@ -199,6 +199,16 @@
     font-size: 0.875rem;
   }
 
+  .global-scope-warning {
+    background: color-mix(in srgb, var(--q-ui-palette-error) 12%, transparent);
+    border: 1px solid var(--q-ui-palette-error);
+    border-radius: 4px;
+    color: var(--q-ui-palette-error);
+    font-size: 0.875rem;
+    margin: 0;
+    padding: 8px 12px;
+  }
+
   .popup-actions {
     align-items: center;
     display: flex;

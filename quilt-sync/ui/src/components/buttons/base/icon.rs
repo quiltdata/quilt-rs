@@ -9,6 +9,7 @@ pub fn IconButton(
     #[prop(optional)] small: bool,
     #[prop(optional)] primary: bool,
     #[prop(optional)] warning: bool,
+    #[prop(optional, into)] danger: MaybeProp<bool>,
     #[prop(optional)] large: bool,
     #[prop(optional)] link: bool,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
@@ -17,8 +18,11 @@ pub fn IconButton(
     view! {
         <button
             class="qui-button"
-            class:primary=primary
+            // `danger` replaces `primary` rather than stacking on it, so the
+            // error color never depends on CSS rule order to win.
+            class:primary=move || primary && !danger.get().unwrap_or(false)
             class:warning=warning
+            class:danger=move || danger.get().unwrap_or(false)
             class:small=small
             class:large=large
             class:link=link

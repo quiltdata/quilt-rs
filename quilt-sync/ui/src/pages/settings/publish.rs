@@ -15,6 +15,21 @@ use crate::components::buttons;
 const PUBLISH_PLACEHOLDERS: &[&str] =
     &["{date}", "{time}", "{datetime}", "{namespace}", "{changes}"];
 
+/// Copy for the global-scope reminder shown in the "Edit commit defaults" popup.
+const GLOBAL_SCOPE_WARNING: &str = "These settings apply to every bucket. Workflow ids and \
+     metadata schemas are defined per bucket — a global override can make commits fail in \
+     buckets that don't define it.";
+
+/// Whether the global-scope warning should be shown for the current popup state.
+///
+/// The commit defaults are global (they apply to every bucket), so we warn
+/// whenever the user leans on a per-bucket-sensitive setting: the workflow is
+/// overridden (regardless of the id text), or default metadata is present.
+/// Reflects current state, not dirtiness — a pre-populated override warns too.
+fn show_global_scope_warning(override_selected: bool, metadata: &str) -> bool {
+    override_selected || !metadata.trim().is_empty()
+}
+
 fn apply_placeholders(template: &str, values: &[&str]) -> String {
     debug_assert_eq!(PUBLISH_PLACEHOLDERS.len(), values.len());
     let mut rendered = template.to_string();
@@ -144,6 +159,11 @@ fn PublishSettingsPopup(
     let metadata_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
 
+    // Reactive: warn while an override is selected or metadata is present.
+    let show_warning = Signal::derive(move || {
+        show_global_scope_warning(!use_bucket_default.get(), &metadata.get())
+    });
+
     let on_close_save = on_close.clone();
     let on_save = move |_: leptos::ev::MouseEvent| {
         if saving.get_untracked() {
@@ -268,8 +288,14 @@ fn PublishSettingsPopup(
                     </Show>
                 </div>
 
+                <Show when=move || show_warning.get()>
+                    <p class="global-scope-warning" role="alert">
+                        {GLOBAL_SCOPE_WARNING}
+                    </p>
+                </Show>
+
                 <div class="popup-actions">
-                    <buttons::FormPrimary on_click=on_save disabled=saving>
+                    <buttons::FormPrimary on_click=on_save disabled=saving danger=show_warning>
                         "Save"
                     </buttons::FormPrimary>
                     <buttons::FormSecondary on_click=on_cancel />
@@ -279,5 +305,33 @@ fn PublishSettingsPopup(
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::show_global_scope_warning;
+
+    #[test]
+    fn override_selected_warns() {
+        // Override selected warns regardless of the id text (even empty).
+        assert!(show_global_scope_warning(true, ""));
+        assert!(show_global_scope_warning(true, "my-workflow"));
+    }
+
+    #[test]
+    fn metadata_non_empty_warns() {
+        // Bucket default + present metadata still warns.
+        assert!(show_global_scope_warning(false, r#"{"source":"desktop"}"#));
+    }
+
+    #[test]
+    fn whitespace_only_metadata_does_not_warn() {
+        assert!(!show_global_scope_warning(false, "   \n\t "));
+    }
+
+    #[test]
+    fn neither_does_not_warn() {
+        assert!(!show_global_scope_warning(false, ""));
     }
 }
