@@ -18,7 +18,9 @@ pub fn IconButton(
     view! {
         <button
             class="qui-button"
-            class:primary=primary
+            // `danger` replaces `primary` rather than stacking on it, so the
+            // error color never depends on CSS rule order to win.
+            class:primary=move || primary && !danger.get().unwrap_or(false)
             class:warning=warning
             class:danger=move || danger.get().unwrap_or(false)
             class:small=small
