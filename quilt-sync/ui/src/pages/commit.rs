@@ -153,6 +153,10 @@ fn CommitContent(
     // `input` event (see json-editor-glue.js), so this tracks edits from either
     // the editor or the textarea fallback.
     let metadata_text = RwSignal::new(data.user_meta.clone());
+    // The previous revision's metadata, as seeded into the editor. Used as the
+    // effective candidate when the editor is left empty — see
+    // `effective_metadata` and the parity note at the validation send site.
+    let seeded_previous_meta = data.user_meta.clone();
     // Per-field dirtiness: validation runs eagerly (the Name check must fire on
     // rules load, since the name is read-only), but Message / Metadata
     // violations are advisory "as you type" feedback — they must stay hidden on
@@ -222,6 +226,7 @@ fn CommitContent(
         let (message, metadata, workflow_id) = debounced_key.get();
         let ns = validation_ns.clone();
         let name = validation_name.clone();
+        let seeded_previous_meta = seeded_previous_meta.clone();
         async move {
             let key = (message.clone(), metadata.clone(), workflow_id.clone());
             let Some(id) = workflow_id else {
@@ -230,9 +235,16 @@ fn CommitContent(
             let refresh = first_load.try_get_value().unwrap_or(false);
             first_load.set_value(false);
             let _ = commands::load_workflow_rules(ns.clone(), id.clone(), refresh).await;
-            let violations = commands::validate_commit_candidate(ns, id, message, metadata, name)
-                .await
-                .unwrap_or_default();
+            // Parity with the commit path's `UserMeta::Keep`: an empty/whitespace
+            // editor keeps the previous revision's metadata, so the commit gate
+            // validates that seeded value — not `{}`. Live validation must check
+            // the same thing, so substitute the seeded previous metadata here.
+            // (Both empty collapse to `{}` on both paths — consistent.)
+            let effective_meta = effective_metadata(&metadata, &seeded_previous_meta);
+            let violations =
+                commands::validate_commit_candidate(ns, id, message, effective_meta, name)
+                    .await
+                    .unwrap_or_default();
             (key, violations)
         }
     });
@@ -756,6 +768,20 @@ fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
     key != debounced
 }
 
+/// The metadata the live validation should check for a given editor state.
+/// Mirrors the commit path's `UserMeta::Keep` semantics: an empty/whitespace
+/// editor means "keep the previous revision's metadata", which the commit gate
+/// validates — so live validation substitutes that seeded previous value rather
+/// than validating `{}`. A non-empty editor is validated as typed. When both are
+/// empty they collapse to `{}` on both paths, keeping live and commit consistent.
+fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
+    if editor_text.trim().is_empty() {
+        seeded_previous.to_string()
+    } else {
+        editor_text.to_string()
+    }
+}
+
 /// Gate advisory violations for display against per-field dirtiness. Name
 /// violations always show: the Name field is read-only and validated once on
 /// rules load, so a legitimate `handle_pattern` mismatch (the fixed name not
@@ -865,7 +891,9 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{displayed_violations, field_violations, should_debounce};
+    use super::{
+        displayed_violations, effective_metadata, field_violations, should_debounce,
+    };
     use crate::commands::{CommitViolation, ViolationField};
 
     fn violation(field: ViolationField, message: &str) -> CommitViolation {
@@ -873,6 +901,20 @@ mod tests {
             field,
             message: message.to_string(),
         }
+    }
+
+    #[test]
+    fn effective_metadata_keeps_previous_when_editor_empty() {
+        // Empty/whitespace editor → validate the seeded previous metadata (the
+        // commit path's `UserMeta::Keep`), not `{}`.
+        assert_eq!(
+            effective_metadata("   ", r#"{"owner":"alice"}"#),
+            r#"{"owner":"alice"}"#
+        );
+        // A non-empty editor is validated as typed.
+        assert_eq!(effective_metadata(r#"{"x":1}"#, "prev"), r#"{"x":1}"#);
+        // Both empty collapse to the same empty string → `{}` on both paths.
+        assert_eq!(effective_metadata("", ""), "");
     }
 
     #[test]
