@@ -212,6 +212,12 @@ fn CommitContent(
     // so no network on later keystrokes); `validate_commit_candidate` then reads
     // the cache with no I/O. A `None` workflow id short-circuits to no
     // violations. The result carries the input key it was computed from.
+    // The rules cache is app-lifetime backend state; the first rules load of
+    // this dialog session forces a refresh so a config.yml change since the last
+    // open is picked up. The flag is consumed only when an actual load happens
+    // (a `None` workflow selection loads nothing), so the refresh still fires on
+    // the first real load even if the dialog opens on the bucket-default pick.
+    let first_load = StoredValue::new(true);
     let validation = LocalResource::new(move || {
         let (message, metadata, workflow_id) = debounced_key.get();
         let ns = validation_ns.clone();
@@ -221,7 +227,9 @@ fn CommitContent(
             let Some(id) = workflow_id else {
                 return (key, Vec::new());
             };
-            let _ = commands::load_workflow_rules(ns.clone(), id.clone()).await;
+            let refresh = first_load.try_get_value().unwrap_or(false);
+            first_load.set_value(false);
+            let _ = commands::load_workflow_rules(ns.clone(), id.clone(), refresh).await;
             let violations = commands::validate_commit_candidate(ns, id, message, metadata, name)
                 .await
                 .unwrap_or_default();

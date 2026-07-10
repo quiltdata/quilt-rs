@@ -497,11 +497,15 @@ pub struct CommitViolation {
 }
 
 /// Cache of compiled workflow rules, keyed by `(namespace, workflow_id)`, held
-/// in Tauri-managed state. A workflow selection change or dialog re-open keys a
-/// fresh entry naturally; a plain map with no TTL is enough (a config change
-/// mid-dialog is out of scope — the commit gate still catches it). The stored
-/// `Option` distinguishes "loaded, this workflow has rules" from "loaded, no
-/// rules" (ungoverned / no config), so both are cached and neither re-fetches.
+/// in Tauri-managed app-lifetime state (no eviction, no TTL). Because the cache
+/// outlives any single dialog, a config.yml edited between two opens of the same
+/// package's commit dialog would otherwise be served stale until app restart. To
+/// stay honest, each dialog session refreshes on mount: the first
+/// `ensure_loaded` of a session passes `refresh = true`, which drops every
+/// cached entry for that namespace and re-fetches; later selection-change loads
+/// within the same session pass `refresh = false` and stay cache-friendly. The
+/// stored `Option` distinguishes "loaded, this workflow has rules" from "loaded,
+/// no rules" (ungoverned / no config), so both are cached and neither re-fetches.
 #[derive(Default)]
 pub struct WorkflowRulesCache {
     rules: Mutex<HashMap<(String, String), Option<WorkflowRules>>>,
@@ -512,15 +516,25 @@ impl WorkflowRulesCache {
     /// once on a miss. Returns whether the workflow has rules to validate
     /// against (`false` when the bucket is ungoverned). A cache hit performs no
     /// model calls at all — the per-selection fetch runs exactly once.
+    ///
+    /// `refresh` (set on a dialog's first load) drops the namespace's cached
+    /// entries first, so a config.yml change since the last dialog open is
+    /// picked up rather than served stale from the app-lifetime cache.
     async fn ensure_loaded(
         &self,
         m: &impl QuiltModel,
         namespace: &str,
         workflow_id: &str,
+        refresh: bool,
     ) -> Result<bool, Error> {
         let key = (namespace.to_string(), workflow_id.to_string());
-        if let Some(cached) = self.rules.lock().await.get(&key) {
-            return Ok(cached.is_some());
+        {
+            let mut guard = self.rules.lock().await;
+            if refresh {
+                guard.retain(|(ns, _), _| ns != namespace);
+            } else if let Some(cached) = guard.get(&key) {
+                return Ok(cached.is_some());
+            }
         }
         let ns = quilt_uri::Namespace::try_from(namespace)?;
         let package = m
@@ -629,15 +643,20 @@ fn violations_from_error(err: &WorkflowValidationError) -> Vec<CommitViolation> 
 /// when the workflow selection changes; the fetch runs once per
 /// `(namespace, workflow)` and subsequent calls hit the cache. Returns whether
 /// the workflow has rules the dialog can validate against.
+///
+/// `refresh` is set on the dialog's first load of a session to drop the
+/// namespace's cached entries and re-fetch, so a config.yml change since the
+/// last open is picked up (the cache is app-lifetime state).
 #[tauri::command]
 pub async fn load_workflow_rules(
     m: tauri::State<'_, model::Model>,
     cache: tauri::State<'_, WorkflowRulesCache>,
     namespace: String,
     workflow_id: String,
+    refresh: bool,
 ) -> Result<bool, String> {
     cache
-        .ensure_loaded(&*m, &namespace, &workflow_id)
+        .ensure_loaded(&*m, &namespace, &workflow_id, refresh)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -1385,14 +1404,47 @@ schemas:
         let cache = WorkflowRulesCache::default();
         assert!(
             cache
-                .ensure_loaded(&model, "foo/bar", "wf")
+                .ensure_loaded(&model, "foo/bar", "wf", false)
                 .await
                 .map_err(|e| e.to_string())?
         );
         // Second load hits the cache — no further model calls (enforced above).
         assert!(
             cache
-                .ensure_loaded(&model, "foo/bar", "wf")
+                .ensure_loaded(&model, "foo/bar", "wf", false)
+                .await
+                .map_err(|e| e.to_string())?
+        );
+        Ok(())
+    }
+
+    /// A dialog re-open passes `refresh = true` on its first load, which must
+    /// drop the namespace's cached entry and re-fetch — so a config.yml change
+    /// since the last open is picked up. The `.times(2)` expectations fail if
+    /// the refresh silently serves the stale cache.
+    #[tokio::test]
+    async fn workflow_rules_cache_refresh_refetches() -> Result<(), String> {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .times(2)
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_workflow_rules()
+            .times(2)
+            .returning(|_, _| Ok(Some(strict_rules())));
+
+        let cache = WorkflowRulesCache::default();
+        assert!(
+            cache
+                .ensure_loaded(&model, "foo/bar", "wf", false)
+                .await
+                .map_err(|e| e.to_string())?
+        );
+        // Second dialog session: refresh drops the entry and re-fetches.
+        assert!(
+            cache
+                .ensure_loaded(&model, "foo/bar", "wf", true)
                 .await
                 .map_err(|e| e.to_string())?
         );
@@ -1414,8 +1466,8 @@ schemas:
 
         let cache = WorkflowRulesCache::default();
         // No rules → `false`, and a second load still does not re-fetch.
-        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf").await.unwrap());
-        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf").await.unwrap());
+        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf", false).await.unwrap());
+        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf", false).await.unwrap());
         // Validation against an ungoverned selection yields no violations.
         assert!(
             cache
@@ -1440,7 +1492,7 @@ schemas:
             .returning(|_, _| Ok(Some(strict_rules())));
 
         let cache = WorkflowRulesCache::default();
-        cache.ensure_loaded(&model, "foo/bar", "wf").await.unwrap();
+        cache.ensure_loaded(&model, "foo/bar", "wf", false).await.unwrap();
 
         // Missing message, non-matching name, metadata missing `owner`.
         let violations = cache.validate("foo/bar", "wf", "", "{}", "other/pkg").await;

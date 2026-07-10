@@ -304,18 +304,29 @@ pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
 /// validation. Call when the workflow selection changes; the fetch runs once per
 /// `(namespace, workflow)` and later calls hit the backend cache. Returns
 /// whether the workflow has rules to validate against.
-pub async fn load_workflow_rules(namespace: String, workflow_id: String) -> Result<bool, String> {
+///
+/// Pass `refresh = true` on the dialog's first load of a session so the backend
+/// drops the namespace's cached entries and re-fetches — the cache is
+/// app-lifetime state, so this is how a config.yml change since the last open is
+/// picked up. Later loads within the session pass `false`.
+pub async fn load_workflow_rules(
+    namespace: String,
+    workflow_id: String,
+    refresh: bool,
+) -> Result<bool, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
         workflow_id: String,
+        refresh: bool,
     }
     tauri::invoke(
         "load_workflow_rules",
         &Args {
             namespace,
             workflow_id,
+            refresh,
         },
     )
     .await
