@@ -16,4 +16,5 @@ pub use validate::SchemaKind;
 pub use validate::WorkflowRules;
 pub use validate::WorkflowValidationError;
 pub(crate) use validate::compile_config_schema;
+pub use validate::validate_candidate_fields;
 pub use validate::validate_package;

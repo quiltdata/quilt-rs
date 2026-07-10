@@ -1,16 +1,24 @@
 //! `get_merge_data` / `get_commit_data` — commit-workflow queries for the Leptos UI.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use serde::Serialize;
+use tokio::sync::Mutex;
 
 use quilt_rs::io::remote::WORKFLOWS_CONFIG_KEY;
 use quilt_rs::io::remote::WorkflowsConfig;
+use quilt_rs::workflow::PackageCandidate;
+use quilt_rs::workflow::RuleViolation;
+use quilt_rs::workflow::WorkflowRules;
+use quilt_rs::workflow::WorkflowValidationError;
+use quilt_rs::workflow::validate_candidate_fields;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 
 use crate::Error;
 use crate::model;
+use crate::model::QuiltModel;
 use crate::quilt;
 
 use super::package_data::InstalledPackageEntryData;
@@ -453,6 +461,204 @@ pub async fn get_bucket_workflows(
         None => None,
     };
     Ok(get_bucket_workflows_from_model(&*m, host, &bucket).await)
+}
+
+// ── Live commit-dialog validation ──
+//
+// The commit dialog validates the user's input against the selected workflow's
+// rules as they type (debounced), showing advisory inline errors before the
+// commit attempt. This is a convenience layer only — the commit-time gate in
+// quilt-rs remains the authority and is unchanged; the buttons stay enabled.
+//
+// Two commands split the work so the per-keystroke path never touches the
+// network: `load_workflow_rules` fetches + compiles a workflow's rules once and
+// caches them; `validate_commit_candidate` validates {message, user_meta, name}
+// against the CACHED rules with no I/O. The entries schema is deliberately NOT
+// validated live — projecting a candidate's entries needs the built manifest's
+// rows (the heavier flow machinery), so entries stay the commit gate's job.
+
+/// Which commit-dialog input a [`CommitViolation`] belongs under, so the UI can
+/// render each violation beneath the field the user must fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ViolationField {
+    Message,
+    Metadata,
+    Name,
+}
+
+/// A single advisory workflow violation for the commit dialog: the field it
+/// applies to plus a human-readable message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitViolation {
+    pub field: ViolationField,
+    pub message: String,
+}
+
+/// Cache of compiled workflow rules, keyed by `(namespace, workflow_id)`, held
+/// in Tauri-managed state. A workflow selection change or dialog re-open keys a
+/// fresh entry naturally; a plain map with no TTL is enough (a config change
+/// mid-dialog is out of scope — the commit gate still catches it). The stored
+/// `Option` distinguishes "loaded, this workflow has rules" from "loaded, no
+/// rules" (ungoverned / no config), so both are cached and neither re-fetches.
+#[derive(Default)]
+pub struct WorkflowRulesCache {
+    rules: Mutex<HashMap<(String, String), Option<WorkflowRules>>>,
+}
+
+impl WorkflowRulesCache {
+    /// Ensure the rules for `(namespace, workflow_id)` are cached, fetching them
+    /// once on a miss. Returns whether the workflow has rules to validate
+    /// against (`false` when the bucket is ungoverned). A cache hit performs no
+    /// model calls at all — the per-selection fetch runs exactly once.
+    async fn ensure_loaded(
+        &self,
+        m: &impl QuiltModel,
+        namespace: &str,
+        workflow_id: &str,
+    ) -> Result<bool, Error> {
+        let key = (namespace.to_string(), workflow_id.to_string());
+        if let Some(cached) = self.rules.lock().await.get(&key) {
+            return Ok(cached.is_some());
+        }
+        let ns = quilt_uri::Namespace::try_from(namespace)?;
+        let package = m
+            .get_installed_package(&ns)
+            .await?
+            .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(ns)))?;
+        let rules = m.get_workflow_rules(&package, workflow_id).await?;
+        let has_rules = rules.is_some();
+        self.rules.lock().await.insert(key, rules);
+        Ok(has_rules)
+    }
+
+    /// Validate a candidate against the cached rules for
+    /// `(namespace, workflow_id)`. Reads the cache only — no I/O. When nothing
+    /// is cached (rules not loaded yet) or the workflow has no rules, there is
+    /// nothing to validate against, so no violations are returned.
+    async fn validate(
+        &self,
+        namespace: &str,
+        workflow_id: &str,
+        message: &str,
+        user_meta: &str,
+        name: &str,
+    ) -> Vec<CommitViolation> {
+        let key = (namespace.to_string(), workflow_id.to_string());
+        let guard = self.rules.lock().await;
+        let Some(Some(rules)) = guard.get(&key) else {
+            return Vec::new();
+        };
+        validate_candidate(rules, message, user_meta, name)
+    }
+}
+
+/// Validate one candidate's fields against already-fetched rules, mapping the
+/// pure gate's outcome to per-field [`CommitViolation`]s. Unparseable user
+/// metadata is surfaced as the single metadata violation (mirroring the commit
+/// path, which parses the raw string server-side); the backend does no network
+/// I/O here, so parsing server-side is cheap and keeps one parse authority.
+fn validate_candidate(
+    rules: &WorkflowRules,
+    message: &str,
+    user_meta: &str,
+    name: &str,
+) -> Vec<CommitViolation> {
+    // Empty metadata validates as `{}` (the gate's default for absent metadata);
+    // a non-empty value must parse as JSON or it is itself the violation.
+    let meta_value = if user_meta.trim().is_empty() {
+        None
+    } else {
+        match serde_json::from_str::<serde_json::Value>(user_meta) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                return vec![CommitViolation {
+                    field: ViolationField::Metadata,
+                    message: format!("Metadata is not valid JSON: {err}"),
+                }];
+            }
+        }
+    };
+
+    let candidate = PackageCandidate {
+        name,
+        message: Some(message),
+        user_meta: meta_value.as_ref(),
+        entries: &[],
+    };
+    match validate_candidate_fields(rules, &candidate) {
+        Ok(()) => Vec::new(),
+        Err(err) => violations_from_error(&err),
+    }
+}
+
+/// Map a [`WorkflowValidationError`] to per-field advisory violations. Rule
+/// failures route by kind; a misconfigured `handle_pattern` lands under the name
+/// field, and any schema-compilation problem under metadata (the entries schema
+/// is never compiled on this path, so its hard errors cannot occur).
+fn violations_from_error(err: &WorkflowValidationError) -> Vec<CommitViolation> {
+    match err {
+        WorkflowValidationError::Rejected(violations) => violations
+            .iter()
+            .map(|violation| CommitViolation {
+                field: match violation {
+                    RuleViolation::MessageRequired | RuleViolation::WorkflowRequired => {
+                        ViolationField::Message
+                    }
+                    RuleViolation::HandleMismatch { .. } => ViolationField::Name,
+                    RuleViolation::MetadataInvalid(_) | RuleViolation::EntriesInvalid(_) => {
+                        ViolationField::Metadata
+                    }
+                },
+                message: violation.to_string(),
+            })
+            .collect(),
+        WorkflowValidationError::InvalidHandlePattern { .. } => vec![CommitViolation {
+            field: ViolationField::Name,
+            message: err.to_string(),
+        }],
+        _ => vec![CommitViolation {
+            field: ViolationField::Metadata,
+            message: err.to_string(),
+        }],
+    }
+}
+
+/// Fetch and cache the selected workflow's rules for live validation. Called
+/// when the workflow selection changes; the fetch runs once per
+/// `(namespace, workflow)` and subsequent calls hit the cache. Returns whether
+/// the workflow has rules the dialog can validate against.
+#[tauri::command]
+pub async fn load_workflow_rules(
+    m: tauri::State<'_, model::Model>,
+    cache: tauri::State<'_, WorkflowRulesCache>,
+    namespace: String,
+    workflow_id: String,
+) -> Result<bool, String> {
+    cache
+        .ensure_loaded(&*m, &namespace, &workflow_id)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
+/// Validate the current commit-dialog input against the cached rules for the
+/// selected workflow. Pure cache read — no network I/O — so it is safe on the
+/// per-keystroke (debounced) path. Returns the advisory violations, routed per
+/// field; an empty list means the input satisfies the workflow (or no rules are
+/// loaded yet).
+#[tauri::command]
+pub async fn validate_commit_candidate(
+    cache: tauri::State<'_, WorkflowRulesCache>,
+    namespace: String,
+    workflow_id: String,
+    message: String,
+    user_meta: String,
+    name: String,
+) -> Result<Vec<CommitViolation>, String> {
+    Ok(cache
+        .validate(&namespace, &workflow_id, &message, &user_meta, &name)
+        .await)
 }
 
 #[cfg(test)]
@@ -1145,5 +1351,169 @@ schemas:
 
         let workflows = get_bucket_workflows_from_model(&model, None, "my-bucket").await;
         assert!(matches!(workflows, CommitWorkflows::Unavailable));
+    }
+
+    // ── Live commit-dialog validation ──
+
+    fn strict_rules() -> WorkflowRules {
+        WorkflowRules {
+            handle_pattern: Some("^team/".to_string()),
+            is_message_required: true,
+            metadata_schema: Some(serde_json::json!({
+                "type": "object",
+                "required": ["owner"],
+            })),
+            entries_schema: None,
+        }
+    }
+
+    /// The rules cache fetches once per `(namespace, workflow)` and serves every
+    /// later load from memory: the `.times(1)` expectations on both model calls
+    /// fail if the second `ensure_loaded` re-fetches.
+    #[tokio::test]
+    async fn workflow_rules_cache_fetches_once_then_hits_cache() -> Result<(), String> {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .times(1)
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_workflow_rules()
+            .times(1)
+            .returning(|_, _| Ok(Some(strict_rules())));
+
+        let cache = WorkflowRulesCache::default();
+        assert!(
+            cache
+                .ensure_loaded(&model, "foo/bar", "wf")
+                .await
+                .map_err(|e| e.to_string())?
+        );
+        // Second load hits the cache — no further model calls (enforced above).
+        assert!(
+            cache
+                .ensure_loaded(&model, "foo/bar", "wf")
+                .await
+                .map_err(|e| e.to_string())?
+        );
+        Ok(())
+    }
+
+    /// An ungoverned package (no rules) caches the negative result and reports
+    /// no rules to validate against; validation is then a clean no-op.
+    #[tokio::test]
+    async fn workflow_rules_cache_ungoverned_is_clean_no_op() -> Result<(), String> {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_workflow_rules()
+            .times(1)
+            .returning(|_, _| Ok(None));
+
+        let cache = WorkflowRulesCache::default();
+        // No rules → `false`, and a second load still does not re-fetch.
+        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf").await.unwrap());
+        assert!(!cache.ensure_loaded(&model, "foo/bar", "wf").await.unwrap());
+        // Validation against an ungoverned selection yields no violations.
+        assert!(
+            cache
+                .validate("foo/bar", "wf", "", "", "foo/bar")
+                .await
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    /// Once rules are cached, validation reads them (no I/O) and returns typed
+    /// violations routed to the field the user must fix; a satisfying candidate
+    /// clears them.
+    #[tokio::test]
+    async fn validate_returns_typed_violations_from_cache() {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_workflow_rules()
+            .returning(|_, _| Ok(Some(strict_rules())));
+
+        let cache = WorkflowRulesCache::default();
+        cache.ensure_loaded(&model, "foo/bar", "wf").await.unwrap();
+
+        // Missing message, non-matching name, metadata missing `owner`.
+        let violations = cache.validate("foo/bar", "wf", "", "{}", "other/pkg").await;
+        let fields: Vec<_> = violations.iter().map(|v| v.field).collect();
+        assert!(fields.contains(&ViolationField::Message));
+        assert!(fields.contains(&ViolationField::Name));
+        assert!(fields.contains(&ViolationField::Metadata));
+
+        // A fully-satisfying candidate clears every violation.
+        let violations = cache
+            .validate(
+                "foo/bar",
+                "wf",
+                "a message",
+                r#"{"owner":"alice"}"#,
+                "team/x",
+            )
+            .await;
+        assert!(
+            violations.is_empty(),
+            "expected no violations: {violations:?}"
+        );
+    }
+
+    /// Validating before any rules are loaded is a clean no-op — the dialog just
+    /// hasn't fetched yet, so there is nothing to complain about.
+    #[tokio::test]
+    async fn validate_without_loaded_rules_is_clean() {
+        let cache = WorkflowRulesCache::default();
+        assert!(
+            cache
+                .validate("foo/bar", "wf", "", "", "foo/bar")
+                .await
+                .is_empty()
+        );
+    }
+
+    /// Unparseable user metadata surfaces as the single metadata violation,
+    /// mirroring the commit path (which parses the raw string server-side).
+    #[test]
+    fn validate_candidate_flags_unparseable_metadata() {
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: None,
+            entries_schema: None,
+        };
+        let violations = validate_candidate(&rules, "msg", "{ not json", "foo/bar");
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, ViolationField::Metadata);
+        assert!(violations[0].message.contains("not valid JSON"));
+    }
+
+    /// The tagged JSON `CommitViolation` / `ViolationField` serialize to is the
+    /// wire contract the UI mirror deserializes; if these strings drift, the
+    /// commit dialog routes violations to the wrong field (or drops them).
+    #[test]
+    fn commit_violation_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::to_value(CommitViolation {
+                field: ViolationField::Metadata,
+                message: "bad".to_string(),
+            })
+            .unwrap(),
+            serde_json::json!({ "field": "metadata", "message": "bad" })
+        );
+        assert_eq!(
+            serde_json::to_value(ViolationField::Message).unwrap(),
+            serde_json::json!("message")
+        );
+        assert_eq!(
+            serde_json::to_value(ViolationField::Name).unwrap(),
+            serde_json::json!("name")
+        );
     }
 }

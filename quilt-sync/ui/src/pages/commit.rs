@@ -1,9 +1,14 @@
+use std::time::Duration;
+
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, CommitData, CommitWorkflows, EntryData, WorkflowInfo, WorkflowIntent};
+use crate::commands::{
+    self, CommitData, CommitViolation, CommitWorkflows, EntryData, ViolationField, WorkflowInfo,
+    WorkflowIntent,
+};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
@@ -135,6 +140,86 @@ fn CommitContent(
         previous_workflow_note(&previous_workflow, &current, &note_workflows)
     });
 
+    // ── Live (advisory) workflow validation ──
+    // As the user edits the message / metadata, validate against the selected
+    // workflow's rules and show inline violations before the commit attempt.
+    // Advisory only: the buttons stay enabled and the commit-time gate remains
+    // the authority. The package name is read-only here, so `handle_pattern`
+    // is validated once the rules load (it can't change) rather than per keystroke.
+    let validation_ns = data.namespace.clone();
+    let validation_name = data.namespace.clone();
+    // Reactive mirror of the metadata editor's current text: the JSON editor
+    // writes edits into the hidden `#metadata` textarea and dispatches an
+    // `input` event (see json-editor-glue.js), so this tracks edits from either
+    // the editor or the textarea fallback.
+    let metadata_text = RwSignal::new(data.user_meta.clone());
+    // The concretely-selected workflow id, or `None` for the `None` /
+    // bucket-default selections — which the commit gate does not enforce a
+    // named workflow's rules against, so there is nothing to validate live.
+    let id_intents = workflow_intents.clone();
+    let selected_workflow_id = Memo::new(move |_| match id_intents.get(selected_workflow.get()) {
+        Some(WorkflowIntent::Named(id)) => Some(id.clone()),
+        _ => None,
+    });
+
+    // The current validation input; the debounced mirror keys the fetch so it
+    // fires once per settled edit (~400ms) instead of on every keystroke.
+    let live_key = Memo::new(move |_| {
+        (
+            message.get(),
+            metadata_text.get(),
+            selected_workflow_id.get(),
+        )
+    });
+    let debounced_key = RwSignal::new(live_key.get_untracked());
+    let debounce_timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    Effect::new(move |_| {
+        let key = live_key.get();
+        if let Some(handle) = debounce_timer.get_value() {
+            handle.clear();
+        }
+        if let Ok(handle) =
+            set_timeout_with_handle(move || debounced_key.set(key), Duration::from_millis(400))
+        {
+            debounce_timer.set_value(Some(handle));
+        }
+    });
+    on_cleanup(move || {
+        if let Some(Some(handle)) = debounce_timer.try_get_value() {
+            handle.clear();
+        }
+    });
+
+    // Validate the debounced input. `load_workflow_rules` fetches + caches the
+    // rules on the backend once per workflow id (a no-op after the first call,
+    // so no network on later keystrokes); `validate_commit_candidate` then reads
+    // the cache with no I/O. A `None` workflow id short-circuits to no
+    // violations. The result carries the input key it was computed from.
+    let validation = LocalResource::new(move || {
+        let (message, metadata, workflow_id) = debounced_key.get();
+        let ns = validation_ns.clone();
+        let name = validation_name.clone();
+        async move {
+            let key = (message.clone(), metadata.clone(), workflow_id.clone());
+            let Some(id) = workflow_id else {
+                return (key, Vec::new());
+            };
+            let _ = commands::load_workflow_rules(ns.clone(), id.clone()).await;
+            let violations = commands::validate_commit_candidate(ns, id, message, metadata, name)
+                .await
+                .unwrap_or_default();
+            (key, violations)
+        }
+    });
+
+    // Self-keyed: only surface a response matching the CURRENT input and
+    // workflow selection, so a slow in-flight response never paints over newer
+    // input (the stale-response discipline from the workflow selector).
+    let live_violations = Memo::new(move |_| match validation.get() {
+        Some((key, violations)) if key == live_key.get() => violations,
+        _ => Vec::new(),
+    });
+
     // Filtered entries
     let entries_for_view = entries.clone();
     let filtered_entries = Memo::new(move |_| {
@@ -237,6 +322,7 @@ fn CommitContent(
                             prop:value=namespace.clone()
                         />
                     </p>
+                    {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
 
                     // ── Message ──
                     <p class="field">
@@ -251,6 +337,7 @@ fn CommitContent(
                             on:input=move |ev| message.set(event_target_value(&ev))
                         />
                     </p>
+                    {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
 
                     // ── Metadata (textarea + JSON editor) ──
                     <p class="field">
@@ -260,6 +347,7 @@ fn CommitContent(
                             id="metadata"
                             name="metadata"
                             placeholder="{ \"key\": \"value\" }"
+                            on:input=move |ev| metadata_text.set(event_target_value(&ev))
                         >
                             {user_meta}
                         </textarea>
@@ -267,6 +355,7 @@ fn CommitContent(
                             <span class="error">{err}</span>
                         })}
                     </p>
+                    {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
                     <JsonEditor id="metadata-editor" initial_value=user_meta_for_editor />
                 </div>
             </div>
@@ -622,6 +711,35 @@ fn CommitEntryRow(
     }
 }
 
+// ── Live-validation view model ──
+
+/// The messages of the violations that belong under `field`, in order. Pure
+/// mapping from the backend's per-field violation list to the strings one field
+/// renders, so the routing is unit-testable without a DOM.
+fn field_violations(violations: &[CommitViolation], field: ViolationField) -> Vec<String> {
+    violations
+        .iter()
+        .filter(|violation| violation.field == field)
+        .map(|violation| violation.message.clone())
+        .collect()
+}
+
+/// Render a field's advisory violations as a modest error list, or nothing when
+/// the field is clean.
+fn field_violation_view(
+    violations: &[CommitViolation],
+    field: ViolationField,
+) -> Option<impl IntoView + use<>> {
+    let messages = field_violations(violations, field);
+    (!messages.is_empty()).then(|| {
+        let items = messages
+            .into_iter()
+            .map(|message| view! { <li>{message}</li> })
+            .collect::<Vec<_>>();
+        view! { <ul class="qui-field-violations">{items}</ul> }
+    })
+}
+
 // ── JSON editor integration ──
 
 use wasm_bindgen::JsCast;
@@ -675,5 +793,48 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
     view! {
         <div class="metadata" id=id></div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::field_violations;
+    use crate::commands::{CommitViolation, ViolationField};
+
+    fn violation(field: ViolationField, message: &str) -> CommitViolation {
+        CommitViolation {
+            field,
+            message: message.to_string(),
+        }
+    }
+
+    #[test]
+    fn field_violations_routes_messages_to_their_field() {
+        let violations = vec![
+            violation(ViolationField::Message, "message required"),
+            violation(ViolationField::Metadata, "missing owner"),
+            violation(ViolationField::Name, "handle mismatch"),
+            violation(ViolationField::Metadata, "bad json"),
+        ];
+        assert_eq!(
+            field_violations(&violations, ViolationField::Message),
+            vec!["message required".to_string()]
+        );
+        // Two metadata violations preserve their order.
+        assert_eq!(
+            field_violations(&violations, ViolationField::Metadata),
+            vec!["missing owner".to_string(), "bad json".to_string()]
+        );
+        assert_eq!(
+            field_violations(&violations, ViolationField::Name),
+            vec!["handle mismatch".to_string()]
+        );
+    }
+
+    #[test]
+    fn field_violations_empty_when_field_clean() {
+        let violations = vec![violation(ViolationField::Message, "x")];
+        assert!(field_violations(&violations, ViolationField::Name).is_empty());
+        assert!(field_violations(&[], ViolationField::Message).is_empty());
     }
 }

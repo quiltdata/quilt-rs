@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha8] - 2026-07-10
+
+### Added
+
+- `workflow::validate_candidate_fields` and `InstalledPackage::workflow_rules` expose field-level candidate validation (message, metadata schema, handle pattern; entries schema deferred to the commit gate) for live client-side feedback (<https://github.com/quiltdata/quilt-rs/pull/757>)
+
 ## [v0.33.0-alpha7] - 2026-07-09
 
 ### Added

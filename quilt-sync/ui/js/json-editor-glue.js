@@ -24,6 +24,11 @@ function mountEditor(targetId, initialValue) {
           if (updatedContent.json !== undefined)
             ta.value = JSON.stringify(updatedContent.json);
           else ta.value = updatedContent.text ?? "";
+          // Mirror the edit into the (hidden) textarea AND notify Leptos: a
+          // programmatic `value` assignment does not fire an `input` event, so
+          // dispatch one so the commit page's live-validation signal tracks
+          // metadata edits made through the JSON editor.
+          ta.dispatchEvent(new Event("input", { bubbles: true }));
         }
       },
       navigationBar: false,

@@ -185,7 +185,48 @@ pub fn validate_package(
     };
 
     let mut violations = Vec::new();
+    check_field_rules(rules, package, &mut violations)?;
+    check_entries_rule(rules, package, &mut violations)?;
+    finish(violations)
+}
 
+/// Validate a candidate against a workflow's **field-level** rules —
+/// message-required, `handle_pattern`, and `metadata_schema` — while
+/// deliberately skipping the `entries_schema`.
+///
+/// This is the live-validation counterpart to [`validate_package`], for the
+/// commit dialog's advisory feedback as the user types. A workflow is always
+/// selected on that path, so `rules` is passed by value (never the "no
+/// workflow / required" case [`validate_package`] handles with its
+/// `is_workflow_required` argument).
+///
+/// The `entries_schema` is intentionally not checked here: projecting a
+/// candidate's entries requires materialising the built manifest's rows (the
+/// heavier flow machinery), so entries validation stays the commit gate's
+/// responsibility — the authoritative check that still runs at commit time.
+/// Field checks run in the same order [`validate_package`] uses, and failures
+/// are collected together as [`WorkflowValidationError::Rejected`]; a
+/// misconfigured gate (bad `metadata_schema` or `handle_pattern`)
+/// short-circuits with the corresponding hard-error variant, exactly as the
+/// full gate does.
+pub fn validate_candidate_fields(
+    rules: &WorkflowRules,
+    package: &PackageCandidate<'_>,
+) -> Result<(), WorkflowValidationError> {
+    let mut violations = Vec::new();
+    check_field_rules(rules, package, &mut violations)?;
+    finish(violations)
+}
+
+/// The message / `handle_pattern` / `metadata_schema` checks shared by
+/// [`validate_package`] and [`validate_candidate_fields`]. Appends any rule
+/// failures to `violations`; a misconfigured schema or regex short-circuits
+/// with a hard error.
+fn check_field_rules(
+    rules: &WorkflowRules,
+    package: &PackageCandidate<'_>,
+    violations: &mut Vec<RuleViolation>,
+) -> Result<(), WorkflowValidationError> {
     if rules.is_message_required && package.message.is_none_or(str::is_empty) {
         violations.push(RuleViolation::MessageRequired);
     }
@@ -219,6 +260,15 @@ pub fn validate_package(
         }
     }
 
+    Ok(())
+}
+
+/// The `entries_schema` check, run only by the full [`validate_package`] gate.
+fn check_entries_rule(
+    rules: &WorkflowRules,
+    package: &PackageCandidate<'_>,
+    violations: &mut Vec<RuleViolation>,
+) -> Result<(), WorkflowValidationError> {
     if let Some(schema) = &rules.entries_schema {
         let validator = compile_schema(schema, SchemaKind::Entries)?;
         let entries = project_entries(package.entries);
@@ -226,7 +276,12 @@ pub fn validate_package(
             violations.push(RuleViolation::EntriesInvalid(reason));
         }
     }
+    Ok(())
+}
 
+/// Turn a collected violation list into the gate's result: `Ok` when empty,
+/// [`WorkflowValidationError::Rejected`] otherwise.
+fn finish(violations: Vec<RuleViolation>) -> Result<(), WorkflowValidationError> {
     if violations.is_empty() {
         Ok(())
     } else {
@@ -771,6 +826,130 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::InvalidHandlePattern { .. }
+        ));
+    }
+
+    // ── Field-level candidate validation (live commit-dialog path) ──
+
+    #[test]
+    fn candidate_fields_pass_when_message_meta_and_name_satisfy_rules() {
+        // message present, handle matches, metadata valid → no violations, and
+        // the entries_schema is NOT consulted (empty entries would violate a
+        // strict entries_schema under the full gate — see the next test).
+        let rules = strict_rules();
+        let meta = valid_meta();
+        let entries = [];
+        let pkg = candidate("team/dataset", Some("msg"), Some(&meta), &entries);
+        assert!(validate_candidate_fields(&rules, &pkg).is_ok());
+    }
+
+    #[test]
+    fn candidate_fields_skip_entries_schema() {
+        // An entries_schema requiring a non-empty array would reject empty
+        // entries under the full gate, but the field-level path never checks
+        // it — so the same empty-entries candidate passes here.
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: None,
+            entries_schema: Some(json!({ "type": "array", "minItems": 1 })),
+        };
+        let entries = [];
+        let pkg = candidate("p", None, None, &entries);
+        // Full gate rejects (empty array violates minItems)…
+        assert!(validate_package(Some(&rules), false, &pkg).is_err());
+        // …but the field-level path ignores the entries_schema entirely.
+        assert!(validate_candidate_fields(&rules, &pkg).is_ok());
+    }
+
+    #[test]
+    fn candidate_fields_flag_missing_message() {
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: true,
+            metadata_schema: None,
+            entries_schema: None,
+        };
+        let entries = [];
+        // Both an absent and an empty message are rejected.
+        for message in [None, Some("")] {
+            let pkg = candidate("p", message, None, &entries);
+            let err = validate_candidate_fields(&rules, &pkg).unwrap_err();
+            assert!(matches!(
+                err,
+                WorkflowValidationError::Rejected(v) if v == vec![RuleViolation::MessageRequired]
+            ));
+        }
+    }
+
+    #[test]
+    fn candidate_fields_flag_metadata_and_handle_together() {
+        // A name that misses the handle_pattern and metadata missing a required
+        // field are collected together, exactly as the full gate collects them.
+        let rules = strict_rules();
+        let bad_meta = json!({});
+        let entries = [];
+        let pkg = candidate("nope/data", Some("msg"), Some(&bad_meta), &entries);
+        let WorkflowValidationError::Rejected(violations) =
+            validate_candidate_fields(&rules, &pkg).unwrap_err()
+        else {
+            panic!("expected Rejected");
+        };
+        assert!(
+            violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::HandleMismatch { .. }))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| matches!(v, RuleViolation::MetadataInvalid(_)))
+        );
+    }
+
+    #[test]
+    fn candidate_fields_absent_metadata_validated_as_empty_object() {
+        // Mirrors the full gate: no user_meta validates as `{}`, so a schema
+        // requiring a field rejects.
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: Some(json!({ "type": "object", "required": ["owner"] })),
+            entries_schema: None,
+        };
+        let entries = [];
+        let pkg = candidate("p", None, None, &entries);
+        let err = validate_candidate_fields(&rules, &pkg).unwrap_err();
+        assert!(matches!(
+            err,
+            WorkflowValidationError::Rejected(v)
+                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
+        ));
+    }
+
+    #[test]
+    fn candidate_fields_surface_metadata_schema_misconfig_as_hard_error() {
+        // A metadata_schema using `$ref` is a gate misconfiguration; the
+        // field-level path short-circuits with the same hard error the full
+        // gate raises, so the dialog can still tell the user something is wrong.
+        let rules = WorkflowRules {
+            handle_pattern: None,
+            is_message_required: false,
+            metadata_schema: Some(json!({
+                "type": "object",
+                "properties": { "owner": { "$ref": "#/definitions/x" } }
+            })),
+            entries_schema: None,
+        };
+        let entries = [];
+        let meta = valid_meta();
+        let pkg = candidate("p", Some("m"), Some(&meta), &entries);
+        let err = validate_candidate_fields(&rules, &pkg).unwrap_err();
+        assert!(matches!(
+            err,
+            WorkflowValidationError::UnsupportedRef {
+                kind: SchemaKind::Metadata
+            }
         ));
     }
 }

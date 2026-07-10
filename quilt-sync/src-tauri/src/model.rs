@@ -17,6 +17,7 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::io::remote::WorkflowsConfig;
 use quilt_rs::io::remote::fetch_workflows_config_for_bucket;
+use quilt_rs::workflow::WorkflowRules;
 
 /// Result of checking whether a package is already installed.
 #[derive(Debug)]
@@ -232,6 +233,20 @@ pub trait QuiltModel {
         package: &quilt::InstalledPackage,
     ) -> Result<Option<WorkflowsConfig>, Error> {
         Ok(package.workflows_config().await?)
+    }
+
+    /// Fetch and compile the pure-validator [`WorkflowRules`] for a named
+    /// workflow in this package's bucket config, for live commit-dialog
+    /// validation. Wrapping the `InstalledPackage` method on the trait lets the
+    /// workflow-rules cache go through a `MockQuiltModel` in unit tests (so a
+    /// second, cache-hitting load can be asserted to skip the fetch) without
+    /// hitting real storage. Returns `Ok(None)` for an ungoverned package.
+    async fn get_workflow_rules(
+        &self,
+        package: &quilt::InstalledPackage,
+        workflow_id: &str,
+    ) -> Result<Option<WorkflowRules>, Error> {
+        Ok(package.workflow_rules(workflow_id).await?)
     }
 
     /// Fetch and parse a bucket's declared workflows directly from its

@@ -114,6 +114,28 @@ pub enum CommitWorkflows {
     },
 }
 
+/// Which commit-dialog input a [`CommitViolation`] belongs under, so the UI can
+/// render each advisory violation beneath the field the user must fix. UI-side
+/// mirror of the backend `quilt_sync::commands::commit_data::ViolationField`;
+/// the serde attributes MUST match so the tagged JSON crosses the Tauri boundary
+/// unchanged.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ViolationField {
+    Message,
+    Metadata,
+    Name,
+}
+
+/// A single advisory workflow violation for the commit dialog. UI-side mirror of
+/// the backend `CommitViolation`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitViolation {
+    pub field: ViolationField,
+    pub message: String,
+}
+
 /// Caller intent for resolving a package's workflow, sent with a commit.
 ///
 /// UI-side mirror of `quilt_rs::io::remote::WorkflowIntent`. The serde
@@ -276,6 +298,60 @@ pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
         namespace: String,
     }
     tauri::invoke("get_commit_data", &Args { namespace }).await
+}
+
+/// Fetch and cache the selected workflow's rules for live commit-dialog
+/// validation. Call when the workflow selection changes; the fetch runs once per
+/// `(namespace, workflow)` and later calls hit the backend cache. Returns
+/// whether the workflow has rules to validate against.
+pub async fn load_workflow_rules(namespace: String, workflow_id: String) -> Result<bool, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        workflow_id: String,
+    }
+    tauri::invoke(
+        "load_workflow_rules",
+        &Args {
+            namespace,
+            workflow_id,
+        },
+    )
+    .await
+}
+
+/// Validate the current commit-dialog input against the cached rules for the
+/// selected workflow. Pure cache read on the backend — no network I/O — so it is
+/// safe to call on every (debounced) keystroke. Returns advisory violations
+/// routed per field; empty means the input satisfies the workflow.
+pub async fn validate_commit_candidate(
+    namespace: String,
+    workflow_id: String,
+    message: String,
+    user_meta: String,
+    name: String,
+) -> Result<Vec<CommitViolation>, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        workflow_id: String,
+        message: String,
+        user_meta: String,
+        name: String,
+    }
+    tauri::invoke(
+        "validate_commit_candidate",
+        &Args {
+            namespace,
+            workflow_id,
+            message,
+            user_meta,
+            name,
+        },
+    )
+    .await
 }
 
 pub async fn get_merge_data(namespace: String) -> Result<MergeData, String> {
@@ -791,7 +867,32 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommitWorkflows, WorkflowInfo, WorkflowIntent};
+    use super::{CommitViolation, CommitWorkflows, ViolationField, WorkflowInfo, WorkflowIntent};
+
+    /// The mirror types must deserialize the exact tagged JSON the backend
+    /// (`quilt_sync::commands::commit_data::CommitViolation`) serializes. These
+    /// literals are anchored identically in the backend's
+    /// `commit_violation_wire_form_is_verbatim`; if they drift, the dialog routes
+    /// live violations to the wrong field or drops them.
+    #[test]
+    fn commit_violation_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<CommitViolation>(r#"{"field":"metadata","message":"bad"}"#)
+                .unwrap(),
+            CommitViolation {
+                field: ViolationField::Metadata,
+                message: "bad".to_string(),
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<ViolationField>(r#""message""#).unwrap(),
+            ViolationField::Message
+        );
+        assert_eq!(
+            serde_json::from_str::<ViolationField>(r#""name""#).unwrap(),
+            ViolationField::Name
+        );
+    }
 
     /// The mirror enum must deserialize the exact tagged JSON the backend
     /// (`quilt_sync::commands::commit_data::CommitWorkflows`) serializes. These
