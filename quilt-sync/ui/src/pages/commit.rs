@@ -1,9 +1,14 @@
+use std::time::Duration;
+
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
 
-use crate::commands::{self, CommitData, CommitWorkflows, EntryData, WorkflowInfo, WorkflowIntent};
+use crate::commands::{
+    self, CommitData, CommitViolation, CommitWorkflows, EntryData, ViolationField, WorkflowInfo,
+    WorkflowIntent,
+};
 use crate::components::buttons;
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
@@ -28,8 +33,19 @@ pub fn Commit() -> impl IntoView {
         async move { commands::get_commit_data(namespace).await }
     });
 
+    // A `Transition` (not `Suspense`) is deliberate: the live-validation
+    // `LocalResource` in `CommitContent` is read (via `live_violations`) inside
+    // this boundary's reactive scope, so reading it registers the resource with
+    // this boundary's `SuspenseContext` — and every debounced refetch re-arms
+    // that pending set. Under a plain `Suspense` the re-armed pending state flips
+    // the boundary back to its fallback, which unmounts the whole `CommitContent`
+    // subtree — including the JSON editor's container `<div>` — detaching it from
+    // the DOM and blurring the metadata editor on every keystroke. `Transition`
+    // keeps the already-rendered children mounted while later resource loads are
+    // pending (it only shows the fallback on the initial load), so the editor is
+    // mounted once per dialog open and validation round-trips never touch its DOM.
     view! {
-        <Suspense fallback=move || {
+        <Transition fallback=move || {
             view! {
                 <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                     <Spinner />
@@ -68,7 +84,7 @@ pub fn Commit() -> impl IntoView {
                     }
                 }
             })}
-        </Suspense>
+        </Transition>
     }
 }
 
@@ -133,6 +149,128 @@ fn CommitContent(
             .cloned()
             .unwrap_or(WorkflowIntent::BucketDefault);
         previous_workflow_note(&previous_workflow, &current, &note_workflows)
+    });
+
+    // ── Live (advisory) workflow validation ──
+    // As the user edits the message / metadata, validate against the selected
+    // workflow's rules and show inline violations before the commit attempt.
+    // Advisory only: the buttons stay enabled and the commit-time gate remains
+    // the authority. The package name is read-only here, so `handle_pattern`
+    // is validated once the rules load (it can't change) rather than per keystroke.
+    // Two clones of the same value on purpose: the namespace doubles as the
+    // full package handle (e.g. "team/dataset") that `handle_pattern` matches.
+    let validation_ns = data.namespace.clone();
+    let validation_handle = data.namespace.clone();
+    // Reactive mirror of the metadata editor's current text: the JSON editor
+    // writes edits into the hidden `#metadata` textarea and dispatches an
+    // `input` event (see json-editor-glue.js), so this tracks edits from either
+    // the editor or the textarea fallback.
+    let metadata_text = RwSignal::new(data.user_meta.clone());
+    // The previous revision's metadata, as seeded into the editor. Used as the
+    // effective candidate when the editor is left empty — see
+    // `effective_metadata` and the parity note at the validation send site.
+    let seeded_previous_meta = data.user_meta.clone();
+    // Per-field dirtiness: validation runs eagerly (the Name check must fire on
+    // rules load, since the name is read-only), but Message / Metadata
+    // violations are advisory "as you type" feedback — they must stay hidden on
+    // a pristine form so a preselected workflow never paints errors before the
+    // user has touched the field. A workflow-selection change does NOT reset
+    // these: the user's edits persist across selections.
+    let message_dirty = RwSignal::new(false);
+    let metadata_dirty = RwSignal::new(false);
+    // The concretely-selected workflow id, or `None` for the `None` /
+    // bucket-default selections — which the commit gate does not enforce a
+    // named workflow's rules against, so there is nothing to validate live.
+    let id_intents = workflow_intents.clone();
+    let selected_workflow_id = Memo::new(move |_| match id_intents.get(selected_workflow.get()) {
+        Some(WorkflowIntent::Named(id)) => Some(id.clone()),
+        _ => None,
+    });
+
+    // The current validation input; the debounced mirror keys the fetch so it
+    // fires once per settled edit (~400ms) instead of on every keystroke.
+    let live_key = Memo::new(move |_| {
+        (
+            message.get(),
+            metadata_text.get(),
+            selected_workflow_id.get(),
+        )
+    });
+    let debounced_key = RwSignal::new(live_key.get_untracked());
+    let debounce_timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    Effect::new(move |_| {
+        let key = live_key.get();
+        // Skip arming the timer when the input already equals the debounced
+        // mirror. The Effect runs once on mount with `key` equal to the value
+        // `debounced_key` was seeded with; `RwSignal::set` notifies
+        // unconditionally (no `PartialEq` dedupe), so scheduling that set would
+        // re-run the validation resource with identical input — a redundant IPC
+        // round-trip. Only settled *edits* should (re)arm the timer.
+        if !should_debounce(&key, &debounced_key.get_untracked()) {
+            return;
+        }
+        if let Some(handle) = debounce_timer.get_value() {
+            handle.clear();
+        }
+        if let Ok(handle) =
+            set_timeout_with_handle(move || debounced_key.set(key), Duration::from_millis(400))
+        {
+            debounce_timer.set_value(Some(handle));
+        }
+    });
+    on_cleanup(move || {
+        if let Some(Some(handle)) = debounce_timer.try_get_value() {
+            handle.clear();
+        }
+    });
+
+    // Validate the debounced input. `load_workflow_rules` fetches + caches the
+    // rules on the backend once per workflow id (a no-op after the first call,
+    // so no network on later keystrokes); `validate_commit_candidate` then reads
+    // the cache with no I/O. A `None` workflow id short-circuits to no
+    // violations. The result carries the input key it was computed from.
+    // The rules cache is app-lifetime backend state; the first rules load of
+    // this dialog session forces a refresh so a config.yml change since the last
+    // open is picked up. The flag is consumed only when an actual load happens
+    // (a `None` workflow selection loads nothing), so the refresh still fires on
+    // the first real load even if the dialog opens on the bucket-default pick.
+    let first_load = StoredValue::new(true);
+    let validation = LocalResource::new(move || {
+        let (message, metadata, workflow_id) = debounced_key.get();
+        let ns = validation_ns.clone();
+        let handle = validation_handle.clone();
+        let seeded_previous_meta = seeded_previous_meta.clone();
+        async move {
+            let key = (message.clone(), metadata.clone(), workflow_id.clone());
+            let Some(id) = workflow_id else {
+                return (key, Vec::new());
+            };
+            let refresh = first_load.try_get_value().unwrap_or(false);
+            first_load.set_value(false);
+            let _ = commands::load_workflow_rules(ns.clone(), id.clone(), refresh).await;
+            // Parity with the commit path's `UserMeta::Keep`: an empty/whitespace
+            // editor keeps the previous revision's metadata, so the commit gate
+            // validates that seeded value — not `{}`. Live validation must check
+            // the same thing, so substitute the seeded previous metadata here.
+            // (Both empty collapse to `{}` on both paths — consistent.)
+            let effective_meta = effective_metadata(&metadata, &seeded_previous_meta);
+            let violations =
+                commands::validate_commit_candidate(ns, id, message, effective_meta, handle)
+                    .await
+                    .unwrap_or_default();
+            (key, violations)
+        }
+    });
+
+    // Self-keyed: only surface a response matching the CURRENT input and
+    // workflow selection, so a slow in-flight response never paints over newer
+    // input (the stale-response discipline from the workflow selector).
+    let live_violations = Memo::new(move |_| {
+        let violations = match validation.get() {
+            Some((key, violations)) if key == live_key.get() => violations,
+            _ => Vec::new(),
+        };
+        displayed_violations(&violations, message_dirty.get(), metadata_dirty.get())
     });
 
     // Filtered entries
@@ -237,6 +375,7 @@ fn CommitContent(
                             prop:value=namespace.clone()
                         />
                     </p>
+                    {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
 
                     // ── Message ──
                     <p class="field">
@@ -248,9 +387,13 @@ fn CommitContent(
                             name="message"
                             required
                             prop:value=move || message.get()
-                            on:input=move |ev| message.set(event_target_value(&ev))
+                            on:input=move |ev| {
+                                message_dirty.set(true);
+                                message.set(event_target_value(&ev));
+                            }
                         />
                     </p>
+                    {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
 
                     // ── Metadata (textarea + JSON editor) ──
                     <p class="field">
@@ -260,6 +403,10 @@ fn CommitContent(
                             id="metadata"
                             name="metadata"
                             placeholder="{ \"key\": \"value\" }"
+                            on:input=move |ev| {
+                                metadata_dirty.set(true);
+                                metadata_text.set(event_target_value(&ev));
+                            }
                         >
                             {user_meta}
                         </textarea>
@@ -267,6 +414,7 @@ fn CommitContent(
                             <span class="error">{err}</span>
                         })}
                     </p>
+                    {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
                     <JsonEditor id="metadata-editor" initial_value=user_meta_for_editor />
                 </div>
             </div>
@@ -622,6 +770,82 @@ fn CommitEntryRow(
     }
 }
 
+// ── Live-validation view model ──
+
+/// Whether a settled edit should (re)arm the debounce timer: only when the
+/// current input key differs from the value the debounced mirror already holds.
+/// Guards the mount-time Effect run, which observes the initial key equal to the
+/// seeded mirror — scheduling a `set` there would re-run the validation resource
+/// with identical input (`RwSignal::set` has no `PartialEq` dedupe).
+fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
+    key != debounced
+}
+
+/// The metadata the live validation should check for a given editor state.
+/// Mirrors the commit path's `UserMeta::Keep` semantics: an empty/whitespace
+/// editor means "keep the previous revision's metadata", which the commit gate
+/// validates — so live validation substitutes that seeded previous value rather
+/// than validating `{}`. A non-empty editor is validated as typed. When both are
+/// empty they collapse to `{}` on both paths, keeping live and commit consistent.
+fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
+    if editor_text.trim().is_empty() {
+        seeded_previous.to_string()
+    } else {
+        editor_text.to_string()
+    }
+}
+
+/// Gate advisory violations for display against per-field dirtiness. Name
+/// violations always show: the Name field is read-only and validated once on
+/// rules load, so a legitimate `handle_pattern` mismatch (the fixed name not
+/// matching the picked workflow) must surface without any interaction. Message
+/// and Metadata violations show only once the user has edited that field, so a
+/// pristine form — e.g. empty seeded metadata live-validated against a schema
+/// with required fields — never paints "as you type" errors before the user
+/// types.
+fn displayed_violations(
+    violations: &[CommitViolation],
+    message_dirty: bool,
+    metadata_dirty: bool,
+) -> Vec<CommitViolation> {
+    violations
+        .iter()
+        .filter(|violation| match violation.field {
+            ViolationField::Name => true,
+            ViolationField::Message => message_dirty,
+            ViolationField::Metadata => metadata_dirty,
+        })
+        .cloned()
+        .collect()
+}
+
+/// The messages of the violations that belong under `field`, in order. Pure
+/// mapping from the backend's per-field violation list to the strings one field
+/// renders, so the routing is unit-testable without a DOM.
+fn field_violations(violations: &[CommitViolation], field: ViolationField) -> Vec<String> {
+    violations
+        .iter()
+        .filter(|violation| violation.field == field)
+        .map(|violation| violation.message.clone())
+        .collect()
+}
+
+/// Render a field's advisory violations as a modest error list, or nothing when
+/// the field is clean.
+fn field_violation_view(
+    violations: &[CommitViolation],
+    field: ViolationField,
+) -> Option<impl IntoView + use<>> {
+    let messages = field_violations(violations, field);
+    (!messages.is_empty()).then(|| {
+        let items = messages
+            .into_iter()
+            .map(|message| view! { <li>{message}</li> })
+            .collect::<Vec<_>>();
+        view! { <ul class="qui-field-violations">{items}</ul> }
+    })
+}
+
 // ── JSON editor integration ──
 
 use wasm_bindgen::JsCast;
@@ -675,5 +899,101 @@ fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
 
     view! {
         <div class="metadata" id=id></div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{displayed_violations, effective_metadata, field_violations, should_debounce};
+    use crate::commands::{CommitViolation, ViolationField};
+
+    fn violation(field: ViolationField, message: &str) -> CommitViolation {
+        CommitViolation {
+            field,
+            message: message.to_string(),
+        }
+    }
+
+    #[test]
+    fn effective_metadata_keeps_previous_when_editor_empty() {
+        // Empty/whitespace editor → validate the seeded previous metadata (the
+        // commit path's `UserMeta::Keep`), not `{}`.
+        assert_eq!(
+            effective_metadata("   ", r#"{"owner":"alice"}"#),
+            r#"{"owner":"alice"}"#
+        );
+        // A non-empty editor is validated as typed.
+        assert_eq!(effective_metadata(r#"{"x":1}"#, "prev"), r#"{"x":1}"#);
+        // Both empty collapse to the same empty string → `{}` on both paths.
+        assert_eq!(effective_metadata("", ""), "");
+    }
+
+    #[test]
+    fn should_debounce_skips_equal_key() {
+        // Mount-time: the input equals the seeded debounced mirror, so no timer.
+        let key = ("msg".to_string(), "{}".to_string(), Some("wf".to_string()));
+        assert!(!should_debounce(&key, &key.clone()));
+        // A settled edit differs, so the timer arms.
+        let edited = ("msg2".to_string(), "{}".to_string(), Some("wf".to_string()));
+        assert!(should_debounce(&edited, &key));
+    }
+
+    #[test]
+    fn pristine_form_hides_message_and_metadata_but_shows_name() {
+        let violations = vec![
+            violation(ViolationField::Name, "handle mismatch"),
+            violation(ViolationField::Message, "message required"),
+            violation(ViolationField::Metadata, "missing owner"),
+        ];
+        // Pristine: neither field edited → only the Name violation surfaces.
+        let shown = displayed_violations(&violations, false, false);
+        let fields: Vec<_> = shown.iter().map(|v| v.field).collect();
+        assert_eq!(fields, vec![ViolationField::Name]);
+    }
+
+    #[test]
+    fn editing_a_field_reveals_its_violations() {
+        let violations = vec![
+            violation(ViolationField::Name, "handle mismatch"),
+            violation(ViolationField::Message, "message required"),
+            violation(ViolationField::Metadata, "missing owner"),
+        ];
+        // Message edited only → Name + Message show, Metadata still hidden.
+        let shown = displayed_violations(&violations, true, false);
+        let fields: Vec<_> = shown.iter().map(|v| v.field).collect();
+        assert_eq!(fields, vec![ViolationField::Name, ViolationField::Message]);
+        // Both edited → every violation shows.
+        let shown = displayed_violations(&violations, true, true);
+        assert_eq!(shown.len(), 3);
+    }
+
+    #[test]
+    fn field_violations_routes_messages_to_their_field() {
+        let violations = vec![
+            violation(ViolationField::Message, "message required"),
+            violation(ViolationField::Metadata, "missing owner"),
+            violation(ViolationField::Name, "handle mismatch"),
+            violation(ViolationField::Metadata, "bad json"),
+        ];
+        assert_eq!(
+            field_violations(&violations, ViolationField::Message),
+            vec!["message required".to_string()]
+        );
+        // Two metadata violations preserve their order.
+        assert_eq!(
+            field_violations(&violations, ViolationField::Metadata),
+            vec!["missing owner".to_string(), "bad json".to_string()]
+        );
+        assert_eq!(
+            field_violations(&violations, ViolationField::Name),
+            vec!["handle mismatch".to_string()]
+        );
+    }
+
+    #[test]
+    fn field_violations_empty_when_field_clean() {
+        let violations = vec![violation(ViolationField::Message, "x")];
+        assert!(field_violations(&violations, ViolationField::Name).is_empty());
+        assert!(field_violations(&[], ViolationField::Message).is_empty());
     }
 }

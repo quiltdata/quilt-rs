@@ -114,6 +114,7 @@ fn main() {
             let window_mode = autopull::create_window_mode();
 
             app.manage(Model::create(data_dir));
+            app.manage(commands::WorkflowRulesCache::default());
             app.manage(sync::Mutex::new(app.handle().clone()));
             app.manage(App::new(package_info, logs_dir));
             app.manage(telemetry);
@@ -184,6 +185,8 @@ fn main() {
             commands::get_login_data,
             commands::get_login_error_data,
             commands::get_merge_data,
+            commands::load_workflow_rules,
+            commands::validate_commit_candidate,
             commands::get_settings_data,
             commands::get_setup_data,
             commands::debug_dot_quilt,

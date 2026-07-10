@@ -16,6 +16,7 @@ use crate::io::remote::RemoteS3;
 use crate::io::remote::WORKFLOWS_CONFIG_KEY;
 use crate::io::remote::WorkflowIntent;
 use crate::io::remote::WorkflowsConfig;
+use crate::io::remote::fetch_workflow_rules;
 use crate::io::remote::fetch_workflows_config;
 use crate::io::remote::resolve_workflow;
 use crate::io::remote::resolve_workflow_from_config;
@@ -29,6 +30,7 @@ use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
+use crate::workflow::WorkflowRules;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
@@ -736,6 +738,32 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         };
         let (_, config) = fetch_workflows_config(&self.remote, &origin, &config_uri).await?;
         Ok(config)
+    }
+
+    /// Fetch and compile the pure-validator [`WorkflowRules`] for a named
+    /// workflow declared in this package's bucket config, for live commit-dialog
+    /// validation.
+    ///
+    /// Returns `Ok(None)` when the package has no remote or the bucket has no
+    /// config — an ungoverned package has no rules to validate against. This is
+    /// the same config fetch [`Self::resolve_workflow`] and
+    /// [`Self::workflows_config`] perform, followed by [`fetch_workflow_rules`]
+    /// to load the workflow's schema documents; the resulting rules feed
+    /// [`crate::workflow::validate_candidate_fields`], mirroring how the commit
+    /// gate calls [`fetch_workflow_rules`] + `validate_package`. A schema fetch
+    /// failure or an unknown `workflow_id` surfaces as the underlying error, so
+    /// the advisory caller can decide to skip validation rather than block.
+    pub async fn workflow_rules(&self, workflow_id: &str) -> Res<Option<WorkflowRules>> {
+        let Some((origin, config_uri)) = self.workflows_config_location().await? else {
+            return Ok(None);
+        };
+        let (_, config) = fetch_workflows_config(&self.remote, &origin, &config_uri).await?;
+        let Some(config) = config else {
+            return Ok(None);
+        };
+        Ok(Some(
+            fetch_workflow_rules(&self.remote, &origin, &config, workflow_id).await?,
+        ))
     }
 }
 
