@@ -321,8 +321,9 @@ pub fn build_workflow_view(
         },
         // Config is malformed: no dropdown, a notice naming the reason. Submit
         // still carries `BucketDefault`; the commit will fail loudly against the
-        // invalid config (semantics unchanged), but the user is told up front.
-        CommitWorkflows::Invalid { reason } => WorkflowView {
+        // invalid config (semantics unchanged), but the user is told up front —
+        // and given a link to open the broken config and fix it.
+        CommitWorkflows::Invalid { reason, config_url } => WorkflowView {
             kind: WorkflowViewKind::Invalid {
                 reason: reason.clone(),
             },
@@ -334,7 +335,7 @@ pub fn build_workflow_view(
                 entries_schema_url: None,
             }],
             initial: 0,
-            config_url: None,
+            config_url: config_url.clone(),
         },
     }
 }
@@ -402,18 +403,24 @@ pub fn WorkflowSection(
         .into_any(),
         // Config is malformed: an inline notice that names the reason and warns
         // that commits will fail until the config is fixed — no false promise
-        // of a bucket-default fallback.
-        WorkflowViewKind::Invalid { reason } => view! {
-            <div class="qui-workflow">
-                <p class="qui-workflow-field">
-                    <label class="qui-workflow-label" for="workflow">"Workflow"</label>
-                    <span class="qui-workflow-error">
-                        {format!("⚠ This bucket's workflow configuration is invalid ({reason}). Commits to this bucket will fail until it's fixed.")}
-                    </span>
-                </p>
-            </div>
+        // of a bucket-default fallback. When a catalog host is known, the notice
+        // links the offending config object so the user can open and fix it.
+        WorkflowViewKind::Invalid { reason } => {
+            let config_link = config_url
+                .map(|url| view! { " " {catalog_link_view("open config.yml", url)} });
+            view! {
+                <div class="qui-workflow">
+                    <p class="qui-workflow-field">
+                        <label class="qui-workflow-label" for="workflow">"Workflow"</label>
+                        <span class="qui-workflow-error">
+                            {format!("⚠ This bucket's workflow configuration is invalid ({reason}). Commits to this bucket will fail until it's fixed.")}
+                            {config_link}
+                        </span>
+                    </p>
+                </div>
+            }
+            .into_any()
         }
-        .into_any(),
     }
 }
 
@@ -421,22 +428,27 @@ pub fn WorkflowSection(
 /// the URL it opens. Kept as a plain pair so the row is built from pure data.
 type CatalogLink = (&'static str, String);
 
+/// The selected workflow's two schema links `(metadata, entries)`, projected out
+/// of the option list so the reactive links row captures only these two strings
+/// per option rather than cloning every [`WorkflowOption`].
+type SchemaUrls = (Option<String>, Option<String>);
+
 /// Build the "Open in catalog" links for the current selection: the bucket's
 /// `config.yml` (always, when the bucket has a config), plus the selected
 /// workflow's metadata / entries schemas when it declares them.
 fn catalog_links(
     config_url: Option<&String>,
-    selected_option: Option<&WorkflowOption>,
+    selected_schemas: Option<&SchemaUrls>,
 ) -> Vec<CatalogLink> {
     let mut links = Vec::new();
     if let Some(url) = config_url {
         links.push(("config.yml", url.clone()));
     }
-    if let Some(option) = selected_option {
-        if let Some(url) = &option.metadata_schema_url {
+    if let Some((metadata_schema_url, entries_schema_url)) = selected_schemas {
+        if let Some(url) = metadata_schema_url {
             links.push(("metadata schema", url.clone()));
         }
-        if let Some(url) = &option.entries_schema_url {
+        if let Some(url) = entries_schema_url {
             links.push(("entries schema", url.clone()));
         }
     }
@@ -487,11 +499,16 @@ fn workflow_dropdown(
     };
 
     // The hint row recomputes over `selected`: the schema links follow the
-    // currently-selected workflow, while `config.yml` stays put.
-    let options_for_links = options.clone();
+    // currently-selected workflow, while `config.yml` stays put. Project the
+    // options down to just the two schema URLs the row reads, so the long-lived
+    // closure captures those rather than a clone of every `WorkflowOption`.
+    let schema_urls: Vec<SchemaUrls> = options
+        .iter()
+        .map(|o| (o.metadata_schema_url.clone(), o.entries_schema_url.clone()))
+        .collect();
     let links_row = move || {
         let idx = selected.get();
-        let links = catalog_links(config_url.as_ref(), options_for_links.get(idx));
+        let links = catalog_links(config_url.as_ref(), schema_urls.get(idx));
         (!links.is_empty()).then(|| {
             // Comma-separate the anchors: a plain text node between each pair.
             let mut anchors: Vec<AnyView> = Vec::new();
@@ -794,6 +811,7 @@ mod tests {
         let view = build_workflow_view(
             &CommitWorkflows::Invalid {
                 reason: "bad schema".to_string(),
+                config_url: Some("https://cat/b/b/tree/.quilt/workflows/config.yml".to_string()),
             },
             Some("ignored"),
         );
@@ -805,6 +823,12 @@ mod tests {
         );
         assert_eq!(view.initial, 0);
         assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
+        // The malformed-config view threads the config link through so the
+        // notice can offer an "open config.yml" anchor.
+        assert_eq!(
+            view.config_url.as_deref(),
+            Some("https://cat/b/b/tree/.quilt/workflows/config.yml")
+        );
     }
 
     // ── Preselection: the bucket default always wins over the previous pick ──
@@ -1124,20 +1148,13 @@ mod tests {
     #[test]
     fn catalog_links_follow_selection() {
         let config = "https://cat/b/b/tree/.quilt/workflows/config.yml".to_string();
-        let none_head = WorkflowOption {
-            label: "None".to_string(),
-            intent: WorkflowIntent::NoWorkflow,
-            disabled: false,
-            metadata_schema_url: None,
-            entries_schema_url: None,
-        };
-        let both = WorkflowOption {
-            label: "alpha".to_string(),
-            intent: WorkflowIntent::Named("alpha".to_string()),
-            disabled: false,
-            metadata_schema_url: Some("https://cat/meta".to_string()),
-            entries_schema_url: Some("https://cat/entries".to_string()),
-        };
+        // The row reads only the selected option's two schema URLs, projected
+        // out of the option list — so the inputs here are those pairs.
+        let none_head: (Option<String>, Option<String>) = (None, None);
+        let both: (Option<String>, Option<String>) = (
+            Some("https://cat/meta".to_string()),
+            Some("https://cat/entries".to_string()),
+        );
 
         // `None` selected → only the config link shows.
         assert_eq!(

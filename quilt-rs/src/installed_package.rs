@@ -13,6 +13,7 @@ use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::remote::RemoteS3;
+use crate::io::remote::WORKFLOWS_CONFIG_KEY;
 use crate::io::remote::WorkflowIntent;
 use crate::io::remote::WorkflowsConfig;
 use crate::io::remote::fetch_workflows_config;
@@ -656,7 +657,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let host = Some(origin);
         let host_config = self.remote.host_config(&host).await?;
         let workflows_config_uri = S3Uri {
-            key: ".quilt/workflows/config.yml".to_string(),
+            key: WORKFLOWS_CONFIG_KEY.to_string(),
             bucket,
             version: None,
         };
@@ -698,9 +699,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// The remote host and the `.quilt/workflows/config.yml` address for this
-    /// package's bucket, or `None` when there is no usable remote. One home for
-    /// the config-key path shared by [`Self::resolve_workflow`] and
-    /// [`Self::workflows_config`].
+    /// package's bucket, or `None` when there is no usable remote. Builds the
+    /// address from the package's own remote for the two read paths that need
+    /// it ([`Self::resolve_workflow`] and [`Self::workflows_config`]); the key
+    /// itself is the shared [`WORKFLOWS_CONFIG_KEY`].
     async fn workflows_config_location(&self) -> Res<Option<(Option<Host>, S3Uri)>> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
@@ -708,7 +710,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             _ => return Ok(None),
         };
         let config_uri = S3Uri {
-            key: ".quilt/workflows/config.yml".to_string(),
+            key: WORKFLOWS_CONFIG_KEY.to_string(),
             ..S3Uri::from(remote_uri.clone())
         };
         Ok(Some((remote_uri.origin, config_uri)))

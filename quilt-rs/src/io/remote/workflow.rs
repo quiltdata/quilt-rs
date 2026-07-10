@@ -31,6 +31,12 @@ use quilt_uri::S3Uri;
 /// would silently disable a rule the bucket owner believes is enforced.
 const CONFIG_SCHEMA: &str = include_str!("config-1.schema.json");
 
+/// The bucket key of the workflows config object every governed bucket carries.
+/// The single source of truth for `.quilt/workflows/config.yml` across the
+/// workspace, so the address is built the same way everywhere (quilt-sync
+/// imports it too).
+pub const WORKFLOWS_CONFIG_KEY: &str = ".quilt/workflows/config.yml";
+
 /// The compiled config-schema validator. Built once: the schema is a
 /// compile-time constant, so compilation cannot fail on user input.
 static CONFIG_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
@@ -296,14 +302,26 @@ impl WorkflowsConfig {
 
     /// The declared object URIs of a workflow's `metadata_schema` and
     /// `entries_schema`, for building "Open in catalog" links in the commit
-    /// dialog. Each is `None` when the workflow declares no such schema; an
-    /// unknown `workflow_id` (or a misconfigured `schemas` section) errors,
-    /// mirroring the resolution helpers.
-    pub fn schema_uris(&self, workflow_id: &str) -> Res<WorkflowSchemaUris> {
-        Ok(WorkflowSchemaUris {
-            metadata_schema: self.declared_schema_uri(workflow_id, "metadata_schema")?,
-            entries_schema: self.declared_schema_uri(workflow_id, "entries_schema")?,
-        })
+    /// dialog.
+    ///
+    /// Each key resolves **independently**: a dangling reference (a declared
+    /// schema id with no matching `schemas` entry, a missing `schemas` section)
+    /// or an unknown `workflow_id` yields `None` for THAT key only, never
+    /// suppressing the other. This is a lenient, display-only accessor — a
+    /// broken link should drop that one link, not the whole dialog, so it never
+    /// errors. Gate paths must NOT use it: they need misconfiguration to surface
+    /// loudly (see [`Self::declared_schema_uri`] / [`fetch_workflow_rules`]).
+    pub fn schema_uris(&self, workflow_id: &str) -> WorkflowSchemaUris {
+        WorkflowSchemaUris {
+            metadata_schema: self
+                .declared_schema_uri(workflow_id, "metadata_schema")
+                .ok()
+                .flatten(),
+            entries_schema: self
+                .declared_schema_uri(workflow_id, "entries_schema")
+                .ok()
+                .flatten(),
+        }
     }
 
     /// Resolve the id and URL of the metadata schema referenced by a workflow.
@@ -405,7 +423,7 @@ pub async fn fetch_workflows_config_for_bucket<R: Remote>(
     bucket: &str,
 ) -> Res<Option<WorkflowsConfig>> {
     let uri = S3Uri {
-        key: ".quilt/workflows/config.yml".to_string(),
+        key: WORKFLOWS_CONFIG_KEY.to_string(),
         bucket: bucket.to_string(),
         version: None,
     };
@@ -1534,7 +1552,7 @@ schemas:
 
         // Both declared → both URIs resolved from the `schemas` section.
         assert_eq!(
-            config.schema_uris("both")?,
+            config.schema_uris("both"),
             WorkflowSchemaUris {
                 metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
                 entries_schema: Some("s3://schemas-bucket/entries.json".parse()?),
@@ -1542,29 +1560,58 @@ schemas:
         );
         // Only the metadata schema declared → entries is `None`.
         assert_eq!(
-            config.schema_uris("meta-only")?,
+            config.schema_uris("meta-only"),
             WorkflowSchemaUris {
                 metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
                 entries_schema: None,
             }
         );
         // Neither declared → both `None`, the type's default.
-        assert_eq!(config.schema_uris("none")?, WorkflowSchemaUris::default());
-        // An unknown workflow id errors, mirroring the resolution helpers.
-        let err = config.schema_uris("ghost").unwrap_err();
-        assert!(matches!(
-            err,
-            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
-        ));
-        assert!(err.to_string().contains("Workflow ghost not found"));
+        assert_eq!(config.schema_uris("none"), WorkflowSchemaUris::default());
+        // An unknown workflow id is not a link we can build: the lenient,
+        // display-only accessor yields both `None` rather than erroring.
+        assert_eq!(config.schema_uris("ghost"), WorkflowSchemaUris::default());
 
         Ok(())
     }
 
     #[test]
-    fn test_schema_uris_missing_schemas_section_errors() -> Res<()> {
+    fn test_schema_uris_resolve_independently() -> Res<()> {
+        // A workflow with a resolvable `metadata_schema` but a `entries_schema`
+        // whose id dangles (no matching `schemas` entry): the metadata link
+        // still resolves, the dangling entries link degrades to `None` on its
+        // own — a broken reference must not suppress the sibling link.
+        let yaml: YamlValue = serde_yaml::from_str(
+            r#"
+version: "1"
+workflows:
+  partial:
+    name: Partial
+    metadata_schema: meta
+    entries_schema: ghost
+schemas:
+  meta:
+    url: s3://schemas-bucket/meta.json
+"#,
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+
+        assert_eq!(
+            config.schema_uris("partial"),
+            WorkflowSchemaUris {
+                metadata_schema: Some("s3://schemas-bucket/meta.json".parse()?),
+                entries_schema: None,
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_schema_uris_missing_schemas_section_degrades_to_none() -> Res<()> {
         // A workflow declaring a schema id, but no `schemas` section to resolve
-        // it against → the same error the async resolver raises.
+        // it against → the dangling reference degrades to `None` (display-only
+        // leniency) rather than the hard error the async resolver raises.
         let yaml: YamlValue = serde_yaml::from_str(
             r"
 version: '1'
@@ -1576,12 +1623,7 @@ workflows:
         )?;
         let config = WorkflowsConfig::from_yaml(&yaml)?;
 
-        let err = config.schema_uris("foo").unwrap_err();
-        assert!(matches!(
-            err,
-            Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
-        ));
-        assert!(err.to_string().contains("Schemas not found"));
+        assert_eq!(config.schema_uris("foo"), WorkflowSchemaUris::default());
 
         Ok(())
     }

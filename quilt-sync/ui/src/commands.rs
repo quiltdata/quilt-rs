@@ -107,6 +107,10 @@ pub enum CommitWorkflows {
     Unavailable,
     Invalid {
         reason: String,
+        /// Catalog HTTPS link to the bucket's `.quilt/workflows/config.yml`
+        /// object, pre-formatted by the backend. `None` when there is no
+        /// catalog host to link against.
+        config_url: Option<String>,
     },
 }
 
@@ -827,10 +831,15 @@ mod tests {
             CommitWorkflows::Unavailable
         );
         assert_eq!(
-            serde_json::from_str::<CommitWorkflows>(r#"{"state":"invalid","reason":"bad schema"}"#)
-                .unwrap(),
+            serde_json::from_str::<CommitWorkflows>(
+                r#"{"state":"invalid","reason":"bad schema","configUrl":"https://catalog/b/bucket/tree/.quilt/workflows/config.yml"}"#
+            )
+            .unwrap(),
             CommitWorkflows::Invalid {
                 reason: "bad schema".to_string(),
+                config_url: Some(
+                    "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string()
+                ),
             }
         );
     }
