@@ -33,8 +33,19 @@ pub fn Commit() -> impl IntoView {
         async move { commands::get_commit_data(namespace).await }
     });
 
+    // A `Transition` (not `Suspense`) is deliberate: the live-validation
+    // `LocalResource` in `CommitContent` is read (via `live_violations`) inside
+    // this boundary's reactive scope, so reading it registers the resource with
+    // this boundary's `SuspenseContext` — and every debounced refetch re-arms
+    // that pending set. Under a plain `Suspense` the re-armed pending state flips
+    // the boundary back to its fallback, which unmounts the whole `CommitContent`
+    // subtree — including the JSON editor's container `<div>` — detaching it from
+    // the DOM and blurring the metadata editor on every keystroke. `Transition`
+    // keeps the already-rendered children mounted while later resource loads are
+    // pending (it only shows the fallback on the initial load), so the editor is
+    // mounted once per dialog open and validation round-trips never touch its DOM.
     view! {
-        <Suspense fallback=move || {
+        <Transition fallback=move || {
             view! {
                 <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                     <Spinner />
@@ -73,7 +84,7 @@ pub fn Commit() -> impl IntoView {
                     }
                 }
             })}
-        </Suspense>
+        </Transition>
     }
 }
 
