@@ -157,8 +157,10 @@ fn CommitContent(
     // Advisory only: the buttons stay enabled and the commit-time gate remains
     // the authority. The package name is read-only here, so `handle_pattern`
     // is validated once the rules load (it can't change) rather than per keystroke.
+    // Two clones of the same value on purpose: the namespace doubles as the
+    // full package handle (e.g. "team/dataset") that `handle_pattern` matches.
     let validation_ns = data.namespace.clone();
-    let validation_name = data.namespace.clone();
+    let validation_handle = data.namespace.clone();
     // Reactive mirror of the metadata editor's current text: the JSON editor
     // writes edits into the hidden `#metadata` textarea and dispatches an
     // `input` event (see json-editor-glue.js), so this tracks edits from either
@@ -236,7 +238,7 @@ fn CommitContent(
     let validation = LocalResource::new(move || {
         let (message, metadata, workflow_id) = debounced_key.get();
         let ns = validation_ns.clone();
-        let name = validation_name.clone();
+        let handle = validation_handle.clone();
         let seeded_previous_meta = seeded_previous_meta.clone();
         async move {
             let key = (message.clone(), metadata.clone(), workflow_id.clone());
@@ -253,7 +255,7 @@ fn CommitContent(
             // (Both empty collapse to `{}` on both paths — consistent.)
             let effective_meta = effective_metadata(&metadata, &seeded_previous_meta);
             let violations =
-                commands::validate_commit_candidate(ns, id, message, effective_meta, name)
+                commands::validate_commit_candidate(ns, id, message, effective_meta, handle)
                     .await
                     .unwrap_or_default();
             (key, violations)
