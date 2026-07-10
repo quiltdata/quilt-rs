@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha9] - 2026-07-10
+
+### Changed
+
+- Settings now lists Autosync before Commit and Push, and the "Edit commit defaults" popup shows a warning that these settings apply to every bucket when a workflow override or default metadata is set (<https://github.com/quiltdata/quilt-rs/pull/759>)
+
 ## [v0.18.3-alpha8] - 2026-07-10
 
 ### Added

@@ -9,6 +9,7 @@ pub fn IconButton(
     #[prop(optional)] small: bool,
     #[prop(optional)] primary: bool,
     #[prop(optional)] warning: bool,
+    #[prop(optional, into)] danger: MaybeProp<bool>,
     #[prop(optional)] large: bool,
     #[prop(optional)] link: bool,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
@@ -19,6 +20,7 @@ pub fn IconButton(
             class="qui-button"
             class:primary=primary
             class:warning=warning
+            class:danger=move || danger.get().unwrap_or(false)
             class:small=small
             class:large=large
             class:link=link
