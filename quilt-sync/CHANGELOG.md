@@ -13,7 +13,7 @@
 
 ### Added
 
-- The commit dialog now validates the message, user metadata, and package name against the selected workflow's rules as you type, showing advisory inline errors before you commit (<https://github.com/quiltdata/quilt-rs/pull/757>)
+- The commit dialog now validates the message, user metadata, and package name against the selected workflow's rules as you type, showing advisory inline errors before you commit (<https://github.com/quiltdata/quilt-rs/pull/758>)
 
 ## [v0.18.3-alpha7] - 2026-07-09
 
