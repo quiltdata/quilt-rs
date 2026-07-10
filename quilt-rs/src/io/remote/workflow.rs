@@ -1577,7 +1577,7 @@ schemas:
 
     #[test]
     fn test_schema_uris_resolve_independently() -> Res<()> {
-        // A workflow with a resolvable `metadata_schema` but a `entries_schema`
+        // A workflow with a resolvable `metadata_schema` but an `entries_schema`
         // whose id dangles (no matching `schemas` entry): the metadata link
         // still resolves, the dangling entries link degrades to `None` on its
         // own — a broken reference must not suppress the sibling link.
