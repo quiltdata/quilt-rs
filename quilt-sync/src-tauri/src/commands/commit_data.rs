@@ -598,9 +598,10 @@ impl WorkflowRulesCache {
 
 /// Validate one candidate's fields against already-fetched rules, mapping the
 /// pure gate's outcome to per-field [`CommitViolation`]s. Unparseable user
-/// metadata is surfaced as the single metadata violation (mirroring the commit
-/// path, which parses the raw string server-side); the backend does no network
-/// I/O here, so parsing server-side is cheap and keeps one parse authority.
+/// metadata is surfaced as the metadata violation while the message and handle
+/// checks still run (the commit path validates every field regardless of
+/// whether the metadata parses); the backend does no network I/O here, so
+/// parsing server-side is cheap and keeps one parse authority.
 fn validate_candidate(
     rules: &WorkflowRules,
     message: &str,
@@ -609,17 +610,18 @@ fn validate_candidate(
 ) -> Vec<CommitViolation> {
     // Empty metadata validates as `{}` (the gate's default for absent metadata);
     // a non-empty value must parse as JSON or it is itself the violation.
-    let meta_value = if user_meta.trim().is_empty() {
-        None
+    let (meta_value, parse_violation) = if user_meta.trim().is_empty() {
+        (None, None)
     } else {
         match serde_json::from_str::<serde_json::Value>(user_meta) {
-            Ok(value) => Some(value),
-            Err(err) => {
-                return vec![CommitViolation {
+            Ok(value) => (Some(value), None),
+            Err(err) => (
+                None,
+                Some(CommitViolation {
                     field: ViolationField::Metadata,
                     message: format!("Metadata is not valid JSON: {err}"),
-                }];
-            }
+                }),
+            ),
         }
     };
 
@@ -629,10 +631,18 @@ fn validate_candidate(
         user_meta: meta_value.as_ref(),
         entries: &[],
     };
-    match validate_candidate_fields(rules, &candidate) {
+    let mut violations = match validate_candidate_fields(rules, &candidate) {
         Ok(()) => Vec::new(),
         Err(err) => violations_from_error(&err),
+    };
+    if let Some(parse_violation) = parse_violation {
+        // The schema check ran against `{}` in place of the unparseable text,
+        // so any metadata-schema violation it produced is misleading — the
+        // parse error is the only honest metadata feedback.
+        violations.retain(|violation| violation.field != ViolationField::Metadata);
+        violations.insert(0, parse_violation);
     }
+    violations
 }
 
 /// Map a [`WorkflowValidationError`] to per-field advisory violations. Rule
@@ -1610,6 +1620,26 @@ schemas:
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].field, ViolationField::Metadata);
         assert!(violations[0].message.contains("not valid JSON"));
+    }
+
+    /// A metadata parse error must not swallow violations on the other fields:
+    /// the commit path validates message and handle regardless of whether the
+    /// metadata parses, so the advisory path reports them together.
+    #[test]
+    fn validate_candidate_reports_other_fields_alongside_parse_error() {
+        let rules = WorkflowRules {
+            handle_pattern: Some("^prefix/".to_string()),
+            is_message_required: true,
+            metadata_schema: None,
+            entries_schema: None,
+        };
+        let violations = validate_candidate(&rules, "", "{ not json", "foo/bar");
+        let fields: Vec<ViolationField> = violations.iter().map(|v| v.field).collect();
+        assert_eq!(violations[0].field, ViolationField::Metadata);
+        assert!(violations[0].message.contains("not valid JSON"));
+        assert!(fields.contains(&ViolationField::Message));
+        assert!(fields.contains(&ViolationField::Name));
+        assert_eq!(violations.len(), 3);
     }
 
     /// The tagged JSON `CommitViolation` / `ViolationField` serialize to is the
