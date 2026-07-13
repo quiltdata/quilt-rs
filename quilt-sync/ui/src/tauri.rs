@@ -66,34 +66,15 @@ enum ListenerState {
 /// underlying WASM closure is intentionally leaked (`Closure::forget`)
 /// so Tauri can never dispatch into freed memory in the window between
 /// `Drop` and the JS side actually detaching.
+///
+/// `tauri_listen_raw` registers asynchronously (it returns a Promise);
+/// the internal task below awaits it to capture the `unlisten` function
+/// and reconciles with `Drop` through [`ListenerState`], so unmounting
+/// before registration completes still detaches the listener.
 pub fn listen<T: DeserializeOwned + 'static>(
     event: &str,
-    callback: impl FnMut(T) + 'static,
-) -> EventListener {
-    // Discarding the readiness future is safe: it is a plain async block
-    // (nothing is spawned) so dropping it unpolled runs no work and leaks
-    // nothing — callers that don't care when registration completes keep
-    // the old synchronous ergonomics.
-    listen_with_ready(event, callback).0
-}
-
-/// Like [`listen`], but also exposes when the backend listener is
-/// *active*. `tauri_listen_raw` registers asynchronously: it returns a
-/// Promise and events emitted before that Promise resolves are dropped
-/// (Tauri does not replay). Callers that must observe every event from a
-/// point in time onward can `.await` the returned future before doing the
-/// thing that triggers those events (e.g. fetching a snapshot), so no
-/// event falls into the registration gap.
-///
-/// The `EventListener` is returned synchronously — `on_cleanup` can drop
-/// it exactly as with [`listen`]. The future resolves once the same
-/// registration Promise has settled (resolved *or* rejected: a failed
-/// registration is logged by the internal task, and hanging the caller
-/// forever would be worse than proceeding).
-pub fn listen_with_ready<T: DeserializeOwned + 'static>(
-    event: &str,
     mut callback: impl FnMut(T) + 'static,
-) -> (EventListener, impl std::future::Future<Output = ()>) {
+) -> EventListener {
     let event_name = event.to_string();
     let event_name_for_closure = event_name.clone();
     let closure: Closure<dyn FnMut(JsValue)> = Closure::new(move |raw: JsValue| {
@@ -106,12 +87,6 @@ pub fn listen_with_ready<T: DeserializeOwned + 'static>(
     });
     let promise = tauri_listen_raw(&event_name, closure.as_ref().unchecked_ref());
     closure.forget();
-
-    // A JS Promise can be awaited by multiple consumers; a clone shares the
-    // same underlying settlement. The internal task below awaits `promise`
-    // to capture the `unlisten` function, while the readiness future awaits
-    // this clone — both fire when the backend listener becomes active.
-    let ready_promise = promise.clone();
 
     // `SendWrapper` lets the !Send JS handle satisfy `on_cleanup`'s
     // `Send + Sync` bound; WASM is single-threaded so the wrapper
@@ -146,15 +121,9 @@ pub fn listen_with_ready<T: DeserializeOwned + 'static>(
         }
     });
 
-    let listener = EventListener {
+    EventListener {
         state: SendWrapper::new(state),
-    };
-    let ready = async move {
-        // Settlement (resolve or reject) is the readiness signal; on reject
-        // the internal task already logged the failure.
-        let _ = JsFuture::from(ready_promise).await;
-    };
-    (listener, ready)
+    }
 }
 
 pub struct EventListener {

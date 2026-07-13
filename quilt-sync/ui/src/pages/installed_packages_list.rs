@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,18 +24,6 @@ use crate::util::make_action;
 /// matches its own. Stored in a `RwSignal<Option<...>>` — `None` is the
 /// initial "no event yet" state.
 type StatusEventSignal = RwSignal<Option<PackageStatusEvent>>;
-
-/// Page-scoped map of namespace → autosync pause reason.
-///
-/// Holds only `reason = "other"` pauses (workflow-gate refusals and
-/// similar), whose message the per-row status string cannot carry.
-/// A namespace present here means its row is autosync-paused and must
-/// render red with the reason as its third line. Seeded once from
-/// `get_autosync_snapshot` on mount (so pauses that happened before the
-/// page mounted are shown), then kept live by the `autosync-paused`
-/// listener (adds) and the `autosync-published` / status-changed
-/// listeners (remove when the package is resolved).
-type PausedMapSignal = RwSignal<HashMap<String, String>>;
 
 /// Derive the third-line hint for a package row from its current status,
 /// whether it has a catalog host configured, and any autosync pause
@@ -82,89 +70,55 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // matching namespace and updates its local signals in place.
     let status_event: StatusEventSignal = RwSignal::new(None);
 
-    // Page-scoped autosync-paused map. Seeded from the watcher snapshot
-    // below so pauses that predate this mount are still shown red.
-    let paused_map: PausedMapSignal = RwSignal::new(HashMap::new());
-    // Namespaces a live clear event (publish / non-paused status) resolved
-    // since mount. The snapshot fetch below is async and reflects a moment
-    // *before* those events, so it must not resurrect a pause the user has
-    // already resolved — the merge skips anything in this set.
-    let resolved_since_mount: RwSignal<HashSet<String>> = RwSignal::new(HashSet::new());
+    // Namespaces last seen in the paused-relevant status (`"paused"`).
+    // This drives *refetch decisions only* — never rendering — so the red
+    // state can never go stale from it. It lets us fire `refetch` exactly
+    // on transitions to/from paused (not on every routine status tick, of
+    // which the watcher emits many). The list's `paused_reason` is always
+    // re-read from the backend's authoritative paused map on that refetch.
+    let paused_seen: RwSignal<HashSet<String>> = RwSignal::new(HashSet::new());
 
-    // Subscribe-then-fetch. `tauri_bridge::listen` registers the backend
-    // listener asynchronously and Tauri does not replay events emitted
-    // before the registration Promise resolves. So a clear (publish /
-    // non-paused status) landing between the snapshot capture and the
-    // listener becoming active would be dropped, `resolved_since_mount`
-    // would never record it, and the merge below would resurrect the stale
-    // pause. To close that window we register the two clear-relevant
-    // listeners up front, then `.await` their readiness before fetching the
-    // snapshot: any clear after the snapshot is captured is delivered to an
-    // already-active listener, and any clear before capture is already
-    // reflected in the snapshot itself.
-    let (listener, status_ready) =
-        tauri_bridge::listen_with_ready::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
-            // Any non-paused status means the namespace is no longer
-            // autosync-paused — drop it so the row stops rendering red.
-            if ev.status != "paused" {
-                let ns = ev.namespace.clone();
-                paused_map.update(|map| {
-                    map.remove(&ns);
-                });
-                resolved_since_mount.update(|r| {
-                    r.insert(ns);
-                });
-            }
-            status_event.set(Some(ev));
-        });
+    // Status-changed listener. Updates the per-row status bus, and triggers
+    // a list refetch when a namespace transitions to/from the paused status
+    // so each row re-reads its `paused_reason` from the backend.
+    let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+        let is_paused = ev.status == "paused";
+        let was_paused = paused_seen.with_untracked(|seen| seen.contains(&ev.namespace));
+        if is_paused != was_paused {
+            let ns = ev.namespace.clone();
+            paused_seen.update(|seen| {
+                if is_paused {
+                    seen.insert(ns);
+                } else {
+                    seen.remove(&ns);
+                }
+            });
+            refetch.notify();
+        }
+        status_event.set(Some(ev));
+    });
     on_cleanup(move || drop(listener));
 
     // Autosync publish events — emit a toast mirroring the manual
-    // Commit & Push success notification, and clear any pause for the
-    // published namespace so its row is no longer red.
-    let (publish_listener, published_ready) =
-        tauri_bridge::listen_with_ready::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
-            let ns = ev.namespace.clone();
-            paused_map.update(|map| {
-                map.remove(&ns);
-            });
-            resolved_since_mount.update(|r| {
-                r.insert(ns);
-            });
+    // Commit & Push success notification, and refetch so the published
+    // namespace's now-cleared pause is re-read from the backend and its
+    // row stops rendering red.
+    let publish_listener =
+        tauri_bridge::listen::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
             notification.set(Some(Notification::Success(format!(
                 "Autosync published {} — {}",
                 ev.namespace, ev.message,
             ))));
+            refetch.notify();
         });
     on_cleanup(move || drop(publish_listener));
-
-    // Fetch the snapshot only after both clear-relevant listeners are active
-    // on the backend (see subscribe-then-fetch note above). The
-    // `resolved_since_mount` skip remains the belt for the residual
-    // capture→merge window, where a clear can arrive after the snapshot is
-    // captured but before this merge runs.
-    leptos::task::spawn_local(async move {
-        status_ready.await;
-        published_ready.await;
-        if let Ok(snapshot) = commands::get_autosync_snapshot().await {
-            let resolved = resolved_since_mount.get_untracked();
-            paused_map.update(|map| {
-                for entry in snapshot.paused {
-                    if resolved.contains(&entry.namespace) {
-                        continue;
-                    }
-                    if let Some(message) = entry.message {
-                        map.insert(entry.namespace, message);
-                    }
-                }
-            });
-        }
-    });
 
     // Autosync pause events — surface as a warning toast carrying the
     // reason. The detail page reads the same event to drive its
     // persistent banner, so the user sees both the immediate toast
-    // (here) and a stable indicator when they open the package.
+    // (here) and a stable indicator when they open the package. The
+    // refetch re-reads the backend paused map so the row's durable red
+    // state reflects authoritative data (the toast is transient feedback).
     let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
         // The classic refusal kinds (pendingChanges, pendingCommit,
         // diverged) are already legible from the per-row status
@@ -174,15 +128,11 @@ pub fn InstalledPackagesList() -> impl IntoView {
             return;
         }
         let msg = ev.message.unwrap_or_else(|| "Autosync paused".to_string());
-        // Persist the reason so the row stays red after the toast is
-        // dismissed — this is the lost-on-dismiss behaviour we're fixing.
-        paused_map.update(|map| {
-            map.insert(ev.namespace.clone(), msg.clone());
-        });
         notification.set(Some(Notification::Error(format!(
             "Autosync paused {} — {}",
             ev.namespace, msg,
         ))));
+        refetch.notify();
     });
     on_cleanup(move || drop(paused_listener));
 
@@ -226,7 +176,6 @@ pub fn InstalledPackagesList() -> impl IntoView {
                                     refetch=refetch
                                     show_create_popup=show_create_popup
                                     status_event=status_event
-                                    paused_map=paused_map
                                 />
                             </Layout>
                         }
@@ -251,7 +200,6 @@ fn PackagesListContent(
     refetch: Trigger,
     show_create_popup: RwSignal<bool>,
     status_event: StatusEventSignal,
-    paused_map: PausedMapSignal,
 ) -> impl IntoView {
     let show_set_remote_popup = RwSignal::new(None::<SetRemotePopupData>);
 
@@ -279,7 +227,6 @@ fn PackagesListContent(
                                     refetch=refetch
                                     show_set_remote_popup=show_set_remote_popup
                                     status_event=status_event
-                                    paused_map=paused_map
                                 />
                             }
                         }).collect_view()}
@@ -324,7 +271,6 @@ fn PackageItem(
     refetch: Trigger,
     show_set_remote_popup: RwSignal<Option<SetRemotePopupData>>,
     status_event: StatusEventSignal,
-    paused_map: PausedMapSignal,
 ) -> impl IntoView {
     let status = RwSignal::new(data.status.clone());
     let has_changes = RwSignal::new(data.has_changes);
@@ -374,12 +320,15 @@ fn PackageItem(
     // Attention hint lines under the URI. Red state and the lines are both
     // driven by `hint`: it is non-empty exactly when the row needs attention
     // (autosync-paused, or a remote error), empty for a healthy row.
+    //
+    // The pause reason comes straight from the fetched row data — the
+    // backend's authoritative paused map — so there is no frontend cache to
+    // go stale. A resume clears the reason at the source; the next refetch
+    // drops it here. `status` stays reactive for the in-place status update.
     let has_host = data.uri.as_ref().and_then(util::host_str).is_some();
-    let ns_for_hint = data.namespace.clone();
-    let hint = Signal::derive(move || {
-        let paused_message = paused_map.with(|map| map.get(&ns_for_hint).cloned());
-        status.with(|s| hint_lines(s, has_host, paused_message.as_deref()))
-    });
+    let paused_reason = data.paused_reason.clone();
+    let hint =
+        Signal::derive(move || status.with(|s| hint_lines(s, has_host, paused_reason.as_deref())));
 
     // Build menu buttons
     let menu = build_package_menu(
