@@ -1,23 +1,14 @@
-// Thin wrapper around vanilla-jsoneditor that exposes the three functions
-// consumed by the Leptos commit page via wasm-bindgen.
-//
 // Bundled by esbuild during `trunk build` (see Trunk.toml hook).
 import { createJSONEditor } from "vanilla-jsoneditor/standalone.js";
 
-// Registry keyed by the editor's DOM element, NOT an id string. During the
-// commit page's keep-alive subtree swap (the outer `Transition`), an old and a
-// new editor container are alive at once; keying by id — or resolving via
-// `document.getElementById` — would be ambiguous by construction and let a
-// replaced subtree's cleanup kill its successor's editor. Element identity never
-// is. A WeakMap needs no manual eviction to avoid leaks, and `destroy` still
-// deletes its entry so the same element is never destroyed twice.
+// Keyed by DOM element, never by id: the commit page's `Transition` keeps an
+// old and new editor container alive at once, so an id (or `getElementById`)
+// could resolve to the wrong one and let a stale cleanup destroy the live
+// editor. Element identity can't. WeakMap avoids manual eviction.
 const editors = new WeakMap();
 
 function mountEditor(target, textarea, initialValue) {
   if (!target || editors.has(target)) return;
-  // Hide the textarea fallback belonging to THIS dialog. The textarea element
-  // is passed in (not looked up by id) so we always hide the current dialog's
-  // fallback, never another dialog's during a swap.
   if (textarea && textarea.parentElement)
     textarea.parentElement.style.display = "none";
   const editor = createJSONEditor({
@@ -29,12 +20,8 @@ function mountEditor(target, textarea, initialValue) {
         if (updatedContent.json !== undefined)
           textarea.value = JSON.stringify(updatedContent.json);
         else textarea.value = updatedContent.text ?? "";
-        // Mirror the edit into the (hidden) textarea AND notify Leptos: a
-        // programmatic `value` assignment does not fire an `input` event, so
-        // dispatch one so the commit page's live-validation signal tracks
-        // metadata edits made through the JSON editor. The textarea is captured
-        // from this closure, so the write always targets the CURRENT dialog's
-        // textarea, never the first `#metadata` match in the document.
+        // Assigning `.value` does not fire `input`; dispatch one so the
+        // commit page's live-validation signal sees edits made in the editor.
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
       },
       navigationBar: false,

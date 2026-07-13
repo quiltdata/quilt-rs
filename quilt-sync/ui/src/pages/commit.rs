@@ -861,12 +861,8 @@ fn field_violation_view(
 
 // ── JSON editor integration ──
 
-// The wasm-bindgen boundary passes the editor's own DOM element (and, for
-// create, the dialog's textarea) rather than an id string. Keying the JS-side
-// registry by element identity is what makes the keep-alive `Transition` swap
-// safe: an old and a new container are alive at once, so an id key (and
-// `getElementById`) would be ambiguous and let an old subtree's cleanup destroy
-// the new subtree's editor. See json-editor-glue.js.
+// The boundary passes DOM elements, not id strings, so the JS registry can key
+// by element identity — see the `Transition`-safety note in json-editor-glue.js.
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window"], js_name = "__getJsonEditorValue")]
@@ -883,9 +879,8 @@ extern "C" {
     fn destroy_json_editor_js(target: &web_sys::HtmlElement);
 }
 
-/// Read the committed metadata at submit: prefer the JSON editor's live value,
-/// keyed by its own element; fall back to this dialog's textarea when the editor
-/// never mounted or is empty.
+/// Read the committed metadata at submit: the editor's live value, or this
+/// dialog's textarea when the editor never mounted or is empty.
 fn get_json_editor_value(
     editor_ref: NodeRef<html::Div>,
     textarea_ref: NodeRef<html::Textarea>,
@@ -908,15 +903,9 @@ fn JsonEditor(
     textarea_ref: NodeRef<html::Textarea>,
     initial_value: String,
 ) -> impl IntoView {
-    // Mount once BOTH the editor container and this dialog's textarea are in the
-    // DOM. The textarea appears earlier in the view than the editor `<div>`, so
-    // rather than assume a load order (and silently skip when the textarea's
-    // `NodeRef` is not yet set — the same silent-failure class as the old
-    // `getElementById` miss), the mount is driven off `on_load` for both nodes
-    // and fires on whichever loads last. `on_load` guarantees each node is
-    // connected, and mounting targets exactly those elements — never a global
-    // lookup — so a concurrent keep-alive swap can never resolve to the wrong
-    // dialog's nodes.
+    // Mount needs both the editor div and the textarea loaded, and their load
+    // order isn't guaranteed, so drive it off both `on_load`s and fire on
+    // whichever lands last (the guard makes the other a no-op).
     let mounted = StoredValue::new(false);
     let init = StoredValue::new(initial_value);
     let try_mount = move || {
@@ -934,9 +923,6 @@ fn JsonEditor(
     node_ref.on_load(move |_| try_mount());
     textarea_ref.on_load(move |_| try_mount());
 
-    // Destroy exactly this element's editor. Because the registry is keyed by
-    // element, a replaced subtree's cleanup can never kill its successor's
-    // instance regardless of mount/cleanup ordering.
     on_cleanup(move || {
         if let Some(editor) = node_ref.get_untracked() {
             destroy_json_editor_js(&editor);
