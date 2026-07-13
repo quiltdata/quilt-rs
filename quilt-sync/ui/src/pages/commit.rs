@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use leptos::html;
 use leptos::prelude::*;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
@@ -102,6 +103,13 @@ fn CommitContent(
     let filter_ignored = RwSignal::new(false);
     let show_ignore_popup = RwSignal::new(None::<IgnorePopupData>);
     let show_unignore_popup = RwSignal::new(None::<UnignorePopupData>);
+
+    // Element handles for the metadata editor and its textarea fallback. Passed
+    // to the JSON editor glue by element identity (not id) so the keep-alive
+    // `Transition` swap can never mount/destroy the wrong dialog's editor, and
+    // read at submit to pull the committed metadata from this dialog's editor.
+    let editor_ref = NodeRef::<html::Div>::new();
+    let textarea_ref = NodeRef::<html::Textarea>::new();
 
     let namespace = data.namespace.clone();
     let message = RwSignal::new(data.message.clone());
@@ -315,7 +323,7 @@ fn CommitContent(
         committing.set(true);
         ui_locked.set(true);
         let ns = ns_for_action.clone();
-        let meta = get_json_editor_value("metadata-editor");
+        let meta = get_json_editor_value(editor_ref, textarea_ref);
         let wf = workflow_intents
             .get(selected_workflow.get_untracked())
             .cloned()
@@ -365,57 +373,71 @@ fn CommitContent(
                     />
 
                     // ── Namespace (readonly) ──
-                    <p class="field">
-                        <label class="label" for="namespace">"Name"</label>
-                        <input
-                            class="input"
-                            id="namespace"
-                            name="namespace"
-                            readonly
-                            prop:value=namespace.clone()
-                        />
-                    </p>
-                    {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
+                    <div class="field-group">
+                        <p class="field">
+                            <label class="label" for="namespace">"Name"</label>
+                            <input
+                                class="input"
+                                id="namespace"
+                                name="namespace"
+                                readonly
+                                prop:value=namespace.clone()
+                            />
+                        </p>
+                        {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
+                    </div>
 
                     // ── Message ──
-                    <p class="field">
-                        <label class="label" for="message">"Message"</label>
-                        <input
-                            autofocus
-                            class="input"
-                            id="message"
-                            name="message"
-                            required
-                            prop:value=move || message.get()
-                            on:input=move |ev| {
-                                message_dirty.set(true);
-                                message.set(event_target_value(&ev));
-                            }
-                        />
-                    </p>
-                    {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
+                    <div class="field-group">
+                        <p class="field">
+                            <label class="label" for="message">"Message"</label>
+                            <input
+                                autofocus
+                                class="input"
+                                id="message"
+                                name="message"
+                                required
+                                prop:value=move || message.get()
+                                on:input=move |ev| {
+                                    message_dirty.set(true);
+                                    message.set(event_target_value(&ev));
+                                }
+                            />
+                        </p>
+                        {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
+                    </div>
 
                     // ── Metadata (textarea + JSON editor) ──
-                    <p class="field">
-                        <label class="label" for="metadata">"User metadata"</label>
-                        <textarea
-                            class="textarea"
-                            id="metadata"
-                            name="metadata"
-                            placeholder="{ \"key\": \"value\" }"
-                            on:input=move |ev| {
-                                metadata_dirty.set(true);
-                                metadata_text.set(event_target_value(&ev));
-                            }
-                        >
-                            {user_meta}
-                        </textarea>
-                        {user_meta_error.map(|err| view! {
-                            <span class="error">{err}</span>
-                        })}
-                    </p>
-                    {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
-                    <JsonEditor id="metadata-editor" initial_value=user_meta_for_editor />
+                    <div class="field-group">
+                        <p class="field">
+                            <label class="label" for="metadata">"User metadata"</label>
+                            <textarea
+                                node_ref=textarea_ref
+                                class="textarea"
+                                id="metadata"
+                                name="metadata"
+                                placeholder="{ \"key\": \"value\" }"
+                                on:input=move |ev| {
+                                    metadata_dirty.set(true);
+                                    metadata_text.set(event_target_value(&ev));
+                                }
+                            >
+                                {user_meta}
+                            </textarea>
+                            {user_meta_error.map(|err| view! {
+                                <span class="error">{err}</span>
+                            })}
+                        </p>
+                        <JsonEditor
+                            node_ref=editor_ref
+                            textarea_ref=textarea_ref
+                            initial_value=user_meta_for_editor
+                        />
+                        // After the editor so the error sits below it and its
+                        // toggling never shifts the editor; a separate reactive
+                        // node, so validation updates don't re-render the editor.
+                        {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
+                    </div>
                 </div>
             </div>
 
@@ -848,57 +870,78 @@ fn field_violation_view(
 
 // ── JSON editor integration ──
 
-use wasm_bindgen::JsCast;
-use wasm_bindgen::closure::Closure;
-
+// The boundary passes DOM elements, not id strings, so the JS registry can key
+// by element identity — see the `Transition`-safety note in json-editor-glue.js.
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window"], js_name = "__getJsonEditorValue")]
-    fn get_json_editor_value_js(target_id: &str) -> String;
+    fn get_json_editor_value_js(target: &web_sys::HtmlElement) -> String;
 
     #[wasm_bindgen(js_namespace = ["window"], js_name = "__createJsonEditor")]
-    fn create_json_editor_js(target_id: &str, initial_value: &str);
+    fn create_json_editor_js(
+        target: &web_sys::HtmlElement,
+        textarea: &web_sys::HtmlElement,
+        initial_value: &str,
+    );
 
     #[wasm_bindgen(js_namespace = ["window"], js_name = "__destroyJsonEditor")]
-    fn destroy_json_editor_js(target_id: &str);
+    fn destroy_json_editor_js(target: &web_sys::HtmlElement);
 }
 
-fn get_json_editor_value(target_id: &str) -> String {
-    // If the JS editor is available, use it; otherwise fall back to textarea
-    let value = get_json_editor_value_js(target_id);
-    if !value.is_empty() {
-        return value;
+/// Read the committed metadata at submit: the editor's live value, or this
+/// dialog's textarea when the editor never mounted or is empty.
+fn get_json_editor_value(
+    editor_ref: NodeRef<html::Div>,
+    textarea_ref: NodeRef<html::Textarea>,
+) -> String {
+    if let Some(editor) = editor_ref.get_untracked() {
+        let value = get_json_editor_value_js(&editor);
+        if !value.is_empty() {
+            return value;
+        }
     }
-    // Fall back to the textarea value
-    web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("metadata"))
-        .and_then(|el| {
-            el.dyn_ref::<web_sys::HtmlTextAreaElement>()
-                .map(web_sys::HtmlTextAreaElement::value)
-        })
+    textarea_ref
+        .get_untracked()
+        .map(|ta| ta.value())
         .unwrap_or_default()
 }
 
 #[component]
-fn JsonEditor(id: &'static str, initial_value: String) -> impl IntoView {
-    let init_value = initial_value.clone();
-    // once_into_js creates a JS function that frees the Rust closure after
-    // a single call, avoiding the permanent leak from Closure::forget().
-    let cb = Closure::once_into_js(move || {
-        create_json_editor_js(id, &init_value);
-    });
-    // Schedule after the current frame so Leptos has committed the DOM.
-    if let Some(window) = web_sys::window() {
-        let _ = window.request_animation_frame(cb.unchecked_ref());
-    }
+fn JsonEditor(
+    node_ref: NodeRef<html::Div>,
+    textarea_ref: NodeRef<html::Textarea>,
+    initial_value: String,
+) -> impl IntoView {
+    // Mount needs both the editor div and the textarea. The div is DOM-ordered
+    // after the textarea, so the div's `on_load` alone would suffice; both are
+    // wired so the mount fires on whichever ref lands last (`on_load` is
+    // effect-based and fires even for a ref already loaded when registered),
+    // and the guard makes the redundant call a no-op.
+    let mounted = StoredValue::new(false);
+    let init = StoredValue::new(initial_value);
+    let try_mount = move || {
+        if mounted.get_value() {
+            return;
+        }
+        let (Some(editor), Some(textarea)) =
+            (node_ref.get_untracked(), textarea_ref.get_untracked())
+        else {
+            return;
+        };
+        mounted.set_value(true);
+        init.with_value(|v| create_json_editor_js(&editor, &textarea, v));
+    };
+    node_ref.on_load(move |_| try_mount());
+    textarea_ref.on_load(move |_| try_mount());
 
     on_cleanup(move || {
-        destroy_json_editor_js(id);
+        if let Some(editor) = node_ref.get_untracked() {
+            destroy_json_editor_js(&editor);
+        }
     });
 
     view! {
-        <div class="metadata" id=id></div>
+        <div class="metadata" node_ref=node_ref></div>
     }
 }
 
