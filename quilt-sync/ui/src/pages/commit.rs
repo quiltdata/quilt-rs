@@ -428,12 +428,15 @@ fn CommitContent(
                                 <span class="error">{err}</span>
                             })}
                         </p>
-                        {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
                         <JsonEditor
                             node_ref=editor_ref
                             textarea_ref=textarea_ref
                             initial_value=user_meta_for_editor
                         />
+                        // After the editor so the error sits below it and its
+                        // toggling never shifts the editor; a separate reactive
+                        // node, so validation updates don't re-render the editor.
+                        {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
                     </div>
                 </div>
             </div>
