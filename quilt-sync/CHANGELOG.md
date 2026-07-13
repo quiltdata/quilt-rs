@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha12] - 2026-07-13
+
+### Fixed
+
+- The Set-remote popup and commit dialog no longer let a long invalid-workflow-config notice overlap the fields — the reason now wraps in normal flow (<https://github.com/quiltdata/quilt-rs/pull/765>)
+
 ## [v0.18.3-alpha11] - 2026-07-13
 
 ### Changed
