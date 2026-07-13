@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha14] - 2026-07-13
+
+### Changed
+
+- The Set-remote dialog now notes that saving will create a new revision of the package (<https://github.com/quiltdata/quilt-rs/pull/767>)
+
 ## [v0.18.3-alpha12] - 2026-07-13
 
 ### Fixed

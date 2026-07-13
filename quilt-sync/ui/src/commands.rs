@@ -16,6 +16,10 @@ pub struct InstalledPackageData {
     /// and can't be edited. The toolbar's remote button becomes a read-only
     /// "Show remote" view.
     pub remote_locked: bool,
+    /// Package has a local commit. Setting a remote only re-commits (creating
+    /// a new revision) when there is one, so the Set-remote notice is gated
+    /// on this.
+    pub has_local_commit: bool,
     pub entries: Vec<EntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
@@ -259,6 +263,10 @@ pub struct PackageItemData {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
+    /// Package has a local commit. Setting a remote only re-commits (creating
+    /// a new revision) when there is one, so the Set-remote notice is gated
+    /// on this.
+    pub has_local_commit: bool,
     pub uri: Option<S3PackageUri>,
     pub remote_display: Option<String>,
     /// The autosync watcher's `Other` pause message for this namespace,
@@ -900,12 +908,13 @@ mod tests {
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
         let item = serde_json::from_str::<PackageItemData>(
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata"}"#,
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata"}"#,
         )
         .unwrap();
         assert_eq!(item.namespace, "acme/data");
         assert_eq!(item.status, "paused");
         assert!(!item.has_changes);
+        assert!(!item.has_local_commit);
         assert!(item.uri.is_none());
         assert!(item.remote_display.is_none());
         assert_eq!(

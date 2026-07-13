@@ -251,6 +251,7 @@ fn PackagesListContent(
                         namespace=data.namespace
                         current_host=data.current_host
                         current_bucket=data.current_bucket
+                        has_local_commit=data.has_local_commit
                         notification=notification
                         refetch=refetch
                         on_close=move || show_set_remote_popup.set(None)
@@ -482,6 +483,7 @@ fn build_package_menu(
     let ns_for_set_remote = namespace.clone();
     let current_host_for_popup = current_host.clone();
     let current_bucket_for_popup = current_bucket.clone();
+    let has_local_commit_for_popup = data.has_local_commit;
     let login_href = origin_host.as_ref().map(|host| {
         let back_encoded = urlencoding::encode("/installed-packages-list");
         format!("/login?host={host}&back={back_encoded}")
@@ -559,6 +561,7 @@ fn build_package_menu(
                         namespace: ns_for_set_remote.clone(),
                         current_host: current_host_for_popup.clone(),
                         current_bucket: current_bucket_for_popup.clone(),
+                        has_local_commit: has_local_commit_for_popup,
                     }))
                     small=true
                     warning=true
