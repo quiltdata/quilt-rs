@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -85,12 +85,19 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // Page-scoped autosync-paused map. Seeded from the watcher snapshot
     // below so pauses that predate this mount are still shown red.
     let paused_map: PausedMapSignal = RwSignal::new(HashMap::new());
+    // Namespaces a live clear event (publish / non-paused status) resolved
+    // since mount. The snapshot fetch below is async and reflects a moment
+    // *before* those events, so it must not resurrect a pause the user has
+    // already resolved — the merge skips anything in this set.
+    let resolved_since_mount: RwSignal<HashSet<String>> = RwSignal::new(HashSet::new());
     leptos::task::spawn_local(async move {
         if let Ok(snapshot) = commands::get_autosync_snapshot().await {
-            // Merge (not replace): a live `autosync-paused` event may have
-            // already landed before this fetch resolves.
+            let resolved = resolved_since_mount.get_untracked();
             paused_map.update(|map| {
                 for entry in snapshot.paused {
+                    if resolved.contains(&entry.namespace) {
+                        continue;
+                    }
                     if let Some(message) = entry.message {
                         map.insert(entry.namespace, message);
                     }
@@ -107,6 +114,9 @@ pub fn InstalledPackagesList() -> impl IntoView {
             paused_map.update(|map| {
                 map.remove(&ns);
             });
+            resolved_since_mount.update(|r| {
+                r.insert(ns);
+            });
         }
         status_event.set(Some(ev));
     });
@@ -120,6 +130,9 @@ pub fn InstalledPackagesList() -> impl IntoView {
             let ns = ev.namespace.clone();
             paused_map.update(|map| {
                 map.remove(&ns);
+            });
+            resolved_since_mount.update(|r| {
+                r.insert(ns);
             });
             notification.set(Some(Notification::Success(format!(
                 "Autosync published {} — {}",
