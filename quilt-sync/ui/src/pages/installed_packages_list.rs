@@ -41,24 +41,32 @@ type PausedMapSignal = RwSignal<HashMap<String, String>>;
 /// whether it has a catalog host configured, and any autosync pause
 /// message. Returns `None` for a healthy row (no third line, not red).
 ///
-/// Pure so it can be unit-tested. Mirrors the detail-page status banner:
-/// a `paused` row shows the refusal reason; an `error` row shows a
-/// sign-in or no-remote hint depending on whether a remote host exists.
-fn error_hint(status: &str, has_host: bool, paused_message: Option<&str>) -> Option<String> {
+/// The guidance line shown above a paused row's reason: paused rows stay
+/// paused until the user acts, so it names the resume action rather than
+/// leaving them to wonder why autosync stopped.
+const PAUSED_GUIDANCE: &str = "Autosync paused. Resolve the issue, then push manually to resume.";
+
+/// The one or two hint lines shown under a row's URI, error-coloured; empty
+/// when the row is healthy (which is also the not-red condition).
+///
+/// Pure so it can be unit-tested. A `paused` row shows the guidance line
+/// followed by the raw refusal reason (when one is known); an `error` row
+/// shows a sign-in or no-remote hint depending on whether a remote host
+/// exists.
+fn hint_lines(status: &str, has_host: bool, paused_message: Option<&str>) -> Vec<String> {
     if status == "paused" || paused_message.is_some() {
-        return Some(match paused_message {
-            Some(msg) => format!("Autosync paused: {msg}"),
-            None => "Autosync paused".to_string(),
-        });
+        let mut lines = vec![PAUSED_GUIDANCE.to_string()];
+        lines.extend(paused_message.map(str::to_string));
+        return lines;
     }
     if status == "error" {
-        return Some(if has_host {
+        return vec![if has_host {
             "Unable to check remote status — sign in again".to_string()
         } else {
             "No remote configured".to_string()
-        });
+        }];
     }
-    None
+    Vec::new()
 }
 
 // ── Installed Packages List page ──
@@ -330,14 +338,14 @@ fn PackageItem(
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();
 
-    // Third-line attention hint. Red state and the reason line are both
-    // driven by `hint`: it is `Some` exactly when the row needs attention
-    // (autosync-paused, or a remote error), `None` for a healthy row.
+    // Attention hint lines under the URI. Red state and the lines are both
+    // driven by `hint`: it is non-empty exactly when the row needs attention
+    // (autosync-paused, or a remote error), empty for a healthy row.
     let has_host = data.uri.as_ref().and_then(util::host_str).is_some();
     let ns_for_hint = data.namespace.clone();
     let hint = Signal::derive(move || {
         let paused_message = paused_map.with(|map| map.get(&ns_for_hint).cloned());
-        status.with(|s| error_hint(s, has_host, paused_message.as_deref()))
+        status.with(|s| hint_lines(s, has_host, paused_message.as_deref()))
     });
 
     // Build menu buttons
@@ -353,10 +361,10 @@ fn PackageItem(
     );
 
     view! {
-        <li class=move || if hint.get().is_some() {
-            "qui-installed-package-item error"
-        } else {
+        <li class=move || if hint.with(Vec::is_empty) {
             "qui-installed-package-item"
+        } else {
+            "qui-installed-package-item error"
         }>
             <a class="link" href=pkg_href>
                 <span class="item-primary">{namespace_display}</span>
@@ -366,9 +374,9 @@ fn PackageItem(
                         {uri}
                     </span>
                 })}
-                {move || hint.get().map(|h| view! {
-                    <span class="item-error-hint">{h}</span>
-                })}
+                {move || hint.get().into_iter().map(|line| view! {
+                    <span class="item-error-hint">{line}</span>
+                }).collect::<Vec<_>>()}
             </a>
             <Show when=move || refreshing.get()>
                 <div class="q-spinner-inline" />
@@ -695,59 +703,65 @@ fn CreatePackagePopup(
 
 #[cfg(test)]
 mod tests {
-    use super::error_hint;
+    use super::{PAUSED_GUIDANCE, hint_lines};
 
     #[test]
-    fn paused_with_reason_shows_autosync_paused_hint() {
+    fn paused_with_reason_shows_guidance_then_reason() {
         assert_eq!(
-            error_hint("paused", true, Some("workflow rejected metadata")),
-            Some("Autosync paused: workflow rejected metadata".to_string())
+            hint_lines("paused", true, Some("workflow rejected metadata")),
+            vec![
+                PAUSED_GUIDANCE.to_string(),
+                "workflow rejected metadata".to_string(),
+            ]
         );
         // A snapshot-seeded pause carries its reason even when the row's
         // own status string was refreshed to something else on mount.
         assert_eq!(
-            error_hint("up_to_date", false, Some("hash mismatch")),
-            Some("Autosync paused: hash mismatch".to_string())
+            hint_lines("up_to_date", false, Some("hash mismatch")),
+            vec![PAUSED_GUIDANCE.to_string(), "hash mismatch".to_string()]
         );
     }
 
     #[test]
-    fn paused_without_reason_falls_back_to_generic() {
+    fn paused_without_reason_shows_guidance_only() {
         assert_eq!(
-            error_hint("paused", true, None),
-            Some("Autosync paused".to_string())
+            hint_lines("paused", true, None),
+            vec![PAUSED_GUIDANCE.to_string()]
         );
     }
 
     #[test]
-    fn paused_reason_takes_precedence_over_error_status() {
+    fn paused_takes_precedence_over_error_status() {
         // A row that is both `error` and has a pause reason shows the pause
-        // reason — the more specific, actionable message wins.
+        // guidance + reason — the more specific, actionable message wins.
         assert_eq!(
-            error_hint("error", true, Some("workflow rejected metadata")),
-            Some("Autosync paused: workflow rejected metadata".to_string())
+            hint_lines("error", true, Some("workflow rejected metadata")),
+            vec![
+                PAUSED_GUIDANCE.to_string(),
+                "workflow rejected metadata".to_string(),
+            ]
         );
     }
 
     #[test]
     fn error_with_host_prompts_sign_in() {
         assert_eq!(
-            error_hint("error", true, None),
-            Some("Unable to check remote status — sign in again".to_string())
+            hint_lines("error", true, None),
+            vec!["Unable to check remote status — sign in again".to_string()]
         );
     }
 
     #[test]
     fn error_without_host_reports_no_remote() {
         assert_eq!(
-            error_hint("error", false, None),
-            Some("No remote configured".to_string())
+            hint_lines("error", false, None),
+            vec!["No remote configured".to_string()]
         );
     }
 
     #[test]
     fn healthy_row_has_no_hint() {
-        assert_eq!(error_hint("up_to_date", true, None), None);
-        assert_eq!(error_hint("ahead", false, None), None);
+        assert!(hint_lines("up_to_date", true, None).is_empty());
+        assert!(hint_lines("ahead", false, None).is_empty());
     }
 }

@@ -146,17 +146,19 @@ pub(super) fn StatusBanner(
                 // `InstalledPackage` filters everything else out so we
                 // don't double-banner Diverged / Behind / Ahead, which
                 // are already covered by the status-driven `content`
-                // below. `Other(_)` always populates `message` with the
-                // raw error plus the `OTHER_PAUSED_HINT` suffix, so we
-                // render it verbatim. The `unwrap_or_else` is a
-                // belt-and-braces fallback for malformed events.
-                let description = ev
-                    .message
-                    .unwrap_or_else(|| "Autosync paused".to_string());
+                // below. `message` carries just the raw refusal reason;
+                // the guidance line ("resolve, then push manually to
+                // resume") is presentation, added here.
+                let reason = ev.message;
                 view! {
                     <div class="qui-status">
                         <div class="root">
-                            <h2 class="description">{description}</h2>
+                            <div class="text">
+                                <h2 class="description">
+                                    "Autosync paused. Resolve the issue, then push manually to resume."
+                                </h2>
+                                {reason.map(|r| view! { <p class="detail">{r}</p> })}
+                            </div>
                         </div>
                     </div>
                 }
