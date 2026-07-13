@@ -155,4 +155,13 @@ pub trait Remote {
     /// HEAD-bucket endpoint returns the region for any existing bucket
     /// regardless of permissions.
     fn verify_bucket(&self, bucket: &str) -> impl Future<Output = Res> + Send;
+
+    /// Drop any cached clients (and their in-memory credentials) for the
+    /// given `host`, or for all hosts when `None`. Lets callers invalidate
+    /// credentials immediately on logout instead of waiting for them to
+    /// expire. Default no-op: only stateful remotes such as [`RemoteS3`]
+    /// cache clients, so mocks and other impls need no change.
+    fn clear_client_cache(&self, host: Option<&Host>) {
+        let _ = host;
+    }
 }

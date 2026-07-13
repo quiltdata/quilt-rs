@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha9] - 2026-07-13
+
+### Added
+
+- `RemoteS3` now exposes clearing its cached S3 clients (per host or all) so callers can invalidate credentials on logout (<https://github.com/quiltdata/quilt-rs/pull/766>)
+
 ## [v0.33.0-alpha8] - 2026-07-10
 
 ### Added
