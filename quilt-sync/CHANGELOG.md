@@ -9,11 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.18.3-alpha10] - 2026-07-10
+## [v0.18.3-alpha10] - 2026-07-13
 
 ### Fixed
 
 - The commit dialog's JSON metadata editor no longer disappears after the first dialog of a session (<https://github.com/quiltdata/quilt-rs/pull/763>)
+- Commit dialog field validation errors now sit directly beneath their field instead of a full row below (<https://github.com/quiltdata/quilt-rs/pull/763>)
 
 ## [v0.18.3-alpha9] - 2026-07-10
 

@@ -373,62 +373,68 @@ fn CommitContent(
                     />
 
                     // ── Namespace (readonly) ──
-                    <p class="field">
-                        <label class="label" for="namespace">"Name"</label>
-                        <input
-                            class="input"
-                            id="namespace"
-                            name="namespace"
-                            readonly
-                            prop:value=namespace.clone()
-                        />
-                    </p>
-                    {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
+                    <div class="field-group">
+                        <p class="field">
+                            <label class="label" for="namespace">"Name"</label>
+                            <input
+                                class="input"
+                                id="namespace"
+                                name="namespace"
+                                readonly
+                                prop:value=namespace.clone()
+                            />
+                        </p>
+                        {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
+                    </div>
 
                     // ── Message ──
-                    <p class="field">
-                        <label class="label" for="message">"Message"</label>
-                        <input
-                            autofocus
-                            class="input"
-                            id="message"
-                            name="message"
-                            required
-                            prop:value=move || message.get()
-                            on:input=move |ev| {
-                                message_dirty.set(true);
-                                message.set(event_target_value(&ev));
-                            }
-                        />
-                    </p>
-                    {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
+                    <div class="field-group">
+                        <p class="field">
+                            <label class="label" for="message">"Message"</label>
+                            <input
+                                autofocus
+                                class="input"
+                                id="message"
+                                name="message"
+                                required
+                                prop:value=move || message.get()
+                                on:input=move |ev| {
+                                    message_dirty.set(true);
+                                    message.set(event_target_value(&ev));
+                                }
+                            />
+                        </p>
+                        {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
+                    </div>
 
                     // ── Metadata (textarea + JSON editor) ──
-                    <p class="field">
-                        <label class="label" for="metadata">"User metadata"</label>
-                        <textarea
-                            node_ref=textarea_ref
-                            class="textarea"
-                            id="metadata"
-                            name="metadata"
-                            placeholder="{ \"key\": \"value\" }"
-                            on:input=move |ev| {
-                                metadata_dirty.set(true);
-                                metadata_text.set(event_target_value(&ev));
-                            }
-                        >
-                            {user_meta}
-                        </textarea>
-                        {user_meta_error.map(|err| view! {
-                            <span class="error">{err}</span>
-                        })}
-                    </p>
-                    {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
-                    <JsonEditor
-                        node_ref=editor_ref
-                        textarea_ref=textarea_ref
-                        initial_value=user_meta_for_editor
-                    />
+                    <div class="field-group">
+                        <p class="field">
+                            <label class="label" for="metadata">"User metadata"</label>
+                            <textarea
+                                node_ref=textarea_ref
+                                class="textarea"
+                                id="metadata"
+                                name="metadata"
+                                placeholder="{ \"key\": \"value\" }"
+                                on:input=move |ev| {
+                                    metadata_dirty.set(true);
+                                    metadata_text.set(event_target_value(&ev));
+                                }
+                            >
+                                {user_meta}
+                            </textarea>
+                            {user_meta_error.map(|err| view! {
+                                <span class="error">{err}</span>
+                            })}
+                        </p>
+                        {move || field_violation_view(&live_violations.get(), ViolationField::Metadata)}
+                        <JsonEditor
+                            node_ref=editor_ref
+                            textarea_ref=textarea_ref
+                            initial_value=user_meta_for_editor
+                        />
+                    </div>
                 </div>
             </div>
 
