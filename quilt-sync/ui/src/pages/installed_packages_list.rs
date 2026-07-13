@@ -720,6 +720,16 @@ mod tests {
     }
 
     #[test]
+    fn paused_reason_takes_precedence_over_error_status() {
+        // A row that is both `error` and has a pause reason shows the pause
+        // reason — the more specific, actionable message wins.
+        assert_eq!(
+            error_hint("error", true, Some("workflow rejected metadata")),
+            Some("Autosync paused: workflow rejected metadata".to_string())
+        );
+    }
+
+    #[test]
     fn error_with_host_prompts_sign_in() {
         assert_eq!(
             error_hint("error", true, None),
