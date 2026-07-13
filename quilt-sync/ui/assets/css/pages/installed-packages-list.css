@@ -150,6 +150,12 @@
   display: block;
 }
 
+.set-remote-form .set-remote-notice {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin: var(--q-ui-size-3) 0 0;
+}
+
 .set-remote-form .set-remote-actions {
   display: flex;
   gap: var(--q-ui-size-2);

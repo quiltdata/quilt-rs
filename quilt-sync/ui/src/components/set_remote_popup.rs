@@ -353,6 +353,14 @@ pub fn SetRemotePopup(
                         }}
                     })}
 
+                    // Only the editable (first-push) path re-commits on save;
+                    // the locked "Show remote" view creates nothing.
+                    {(!locked).then(|| view! {
+                        <p class="set-remote-notice">
+                            "Setting a remote will create a new revision of the package."
+                        </p>
+                    })}
+
                     <div class="set-remote-actions">
                         {(!locked).then(|| view! {
                             <buttons::FormPrimary on_click=on_submit_click disabled=save_disabled>
