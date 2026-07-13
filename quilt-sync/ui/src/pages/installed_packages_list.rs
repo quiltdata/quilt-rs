@@ -90,7 +90,62 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // *before* those events, so it must not resurrect a pause the user has
     // already resolved — the merge skips anything in this set.
     let resolved_since_mount: RwSignal<HashSet<String>> = RwSignal::new(HashSet::new());
+
+    // Subscribe-then-fetch. `tauri_bridge::listen` registers the backend
+    // listener asynchronously and Tauri does not replay events emitted
+    // before the registration Promise resolves. So a clear (publish /
+    // non-paused status) landing between the snapshot capture and the
+    // listener becoming active would be dropped, `resolved_since_mount`
+    // would never record it, and the merge below would resurrect the stale
+    // pause. To close that window we register the two clear-relevant
+    // listeners up front, then `.await` their readiness before fetching the
+    // snapshot: any clear after the snapshot is captured is delivered to an
+    // already-active listener, and any clear before capture is already
+    // reflected in the snapshot itself.
+    let (listener, status_ready) =
+        tauri_bridge::listen_with_ready::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+            // Any non-paused status means the namespace is no longer
+            // autosync-paused — drop it so the row stops rendering red.
+            if ev.status != "paused" {
+                let ns = ev.namespace.clone();
+                paused_map.update(|map| {
+                    map.remove(&ns);
+                });
+                resolved_since_mount.update(|r| {
+                    r.insert(ns);
+                });
+            }
+            status_event.set(Some(ev));
+        });
+    on_cleanup(move || drop(listener));
+
+    // Autosync publish events — emit a toast mirroring the manual
+    // Commit & Push success notification, and clear any pause for the
+    // published namespace so its row is no longer red.
+    let (publish_listener, published_ready) =
+        tauri_bridge::listen_with_ready::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
+            let ns = ev.namespace.clone();
+            paused_map.update(|map| {
+                map.remove(&ns);
+            });
+            resolved_since_mount.update(|r| {
+                r.insert(ns);
+            });
+            notification.set(Some(Notification::Success(format!(
+                "Autosync published {} — {}",
+                ev.namespace, ev.message,
+            ))));
+        });
+    on_cleanup(move || drop(publish_listener));
+
+    // Fetch the snapshot only after both clear-relevant listeners are active
+    // on the backend (see subscribe-then-fetch note above). The
+    // `resolved_since_mount` skip remains the belt for the residual
+    // capture→merge window, where a clear can arrive after the snapshot is
+    // captured but before this merge runs.
     leptos::task::spawn_local(async move {
+        status_ready.await;
+        published_ready.await;
         if let Ok(snapshot) = commands::get_autosync_snapshot().await {
             let resolved = resolved_since_mount.get_untracked();
             paused_map.update(|map| {
@@ -105,41 +160,6 @@ pub fn InstalledPackagesList() -> impl IntoView {
             });
         }
     });
-
-    let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
-        // Any non-paused status means the namespace is no longer
-        // autosync-paused — drop it so the row stops rendering red.
-        if ev.status != "paused" {
-            let ns = ev.namespace.clone();
-            paused_map.update(|map| {
-                map.remove(&ns);
-            });
-            resolved_since_mount.update(|r| {
-                r.insert(ns);
-            });
-        }
-        status_event.set(Some(ev));
-    });
-    on_cleanup(move || drop(listener));
-
-    // Autosync publish events — emit a toast mirroring the manual
-    // Commit & Push success notification, and clear any pause for the
-    // published namespace so its row is no longer red.
-    let publish_listener =
-        tauri_bridge::listen::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
-            let ns = ev.namespace.clone();
-            paused_map.update(|map| {
-                map.remove(&ns);
-            });
-            resolved_since_mount.update(|r| {
-                r.insert(ns);
-            });
-            notification.set(Some(Notification::Success(format!(
-                "Autosync published {} — {}",
-                ev.namespace, ev.message,
-            ))));
-        });
-    on_cleanup(move || drop(publish_listener));
 
     // Autosync pause events — surface as a warning toast carrying the
     // reason. The detail page reads the same event to drive its
