@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.18.3-alpha11] - 2026-07-13
+
+### Changed
+
+- The installed packages list now marks packages that need attention — a remote error or an autosync-paused workflow conflict — in red with an inline reason (<https://github.com/quiltdata/quilt-rs/pull/764>)
+
 ## [v0.18.3-alpha10] - 2026-07-13
 
 ### Fixed

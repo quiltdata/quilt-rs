@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,6 +25,42 @@ use crate::util::make_action;
 /// initial "no event yet" state.
 type StatusEventSignal = RwSignal<Option<PackageStatusEvent>>;
 
+/// Page-scoped map of namespace → autosync pause reason.
+///
+/// Holds only `reason = "other"` pauses (workflow-gate refusals and
+/// similar), whose message the per-row status string cannot carry.
+/// A namespace present here means its row is autosync-paused and must
+/// render red with the reason as its third line. Seeded once from
+/// `get_autosync_snapshot` on mount (so pauses that happened before the
+/// page mounted are shown), then kept live by the `autosync-paused`
+/// listener (adds) and the `autosync-published` / status-changed
+/// listeners (remove when the package is resolved).
+type PausedMapSignal = RwSignal<HashMap<String, String>>;
+
+/// Derive the third-line hint for a package row from its current status,
+/// whether it has a catalog host configured, and any autosync pause
+/// message. Returns `None` for a healthy row (no third line, not red).
+///
+/// Pure so it can be unit-tested. Mirrors the detail-page status banner:
+/// a `paused` row shows the refusal reason; an `error` row shows a
+/// sign-in or no-remote hint depending on whether a remote host exists.
+fn error_hint(status: &str, has_host: bool, paused_message: Option<&str>) -> Option<String> {
+    if status == "paused" || paused_message.is_some() {
+        return Some(match paused_message {
+            Some(msg) => format!("Autosync paused: {msg}"),
+            None => "Autosync paused".to_string(),
+        });
+    }
+    if status == "error" {
+        return Some(if has_host {
+            "Unable to check remote status — sign in again".to_string()
+        } else {
+            "No remote configured".to_string()
+        });
+    }
+    None
+}
+
 // ── Installed Packages List page ──
 
 #[component]
@@ -36,15 +73,46 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // `package-status-changed` events; each row's Effect picks the
     // matching namespace and updates its local signals in place.
     let status_event: StatusEventSignal = RwSignal::new(None);
+
+    // Page-scoped autosync-paused map. Seeded from the watcher snapshot
+    // below so pauses that predate this mount are still shown red.
+    let paused_map: PausedMapSignal = RwSignal::new(HashMap::new());
+    leptos::task::spawn_local(async move {
+        if let Ok(snapshot) = commands::get_autosync_snapshot().await {
+            // Merge (not replace): a live `autosync-paused` event may have
+            // already landed before this fetch resolves.
+            paused_map.update(|map| {
+                for entry in snapshot.paused {
+                    if let Some(message) = entry.message {
+                        map.insert(entry.namespace, message);
+                    }
+                }
+            });
+        }
+    });
+
     let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+        // Any non-paused status means the namespace is no longer
+        // autosync-paused — drop it so the row stops rendering red.
+        if ev.status != "paused" {
+            let ns = ev.namespace.clone();
+            paused_map.update(|map| {
+                map.remove(&ns);
+            });
+        }
         status_event.set(Some(ev));
     });
     on_cleanup(move || drop(listener));
 
     // Autosync publish events — emit a toast mirroring the manual
-    // Commit & Push success notification.
+    // Commit & Push success notification, and clear any pause for the
+    // published namespace so its row is no longer red.
     let publish_listener =
         tauri_bridge::listen::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
+            let ns = ev.namespace.clone();
+            paused_map.update(|map| {
+                map.remove(&ns);
+            });
             notification.set(Some(Notification::Success(format!(
                 "Autosync published {} — {}",
                 ev.namespace, ev.message,
@@ -65,6 +133,11 @@ pub fn InstalledPackagesList() -> impl IntoView {
             return;
         }
         let msg = ev.message.unwrap_or_else(|| "Autosync paused".to_string());
+        // Persist the reason so the row stays red after the toast is
+        // dismissed — this is the lost-on-dismiss behaviour we're fixing.
+        paused_map.update(|map| {
+            map.insert(ev.namespace.clone(), msg.clone());
+        });
         notification.set(Some(Notification::Error(format!(
             "Autosync paused {} — {}",
             ev.namespace, msg,
@@ -112,6 +185,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
                                     refetch=refetch
                                     show_create_popup=show_create_popup
                                     status_event=status_event
+                                    paused_map=paused_map
                                 />
                             </Layout>
                         }
@@ -136,6 +210,7 @@ fn PackagesListContent(
     refetch: Trigger,
     show_create_popup: RwSignal<bool>,
     status_event: StatusEventSignal,
+    paused_map: PausedMapSignal,
 ) -> impl IntoView {
     let show_set_remote_popup = RwSignal::new(None::<SetRemotePopupData>);
 
@@ -163,6 +238,7 @@ fn PackagesListContent(
                                     refetch=refetch
                                     show_set_remote_popup=show_set_remote_popup
                                     status_event=status_event
+                                    paused_map=paused_map
                                 />
                             }
                         }).collect_view()}
@@ -207,6 +283,7 @@ fn PackageItem(
     refetch: Trigger,
     show_set_remote_popup: RwSignal<Option<SetRemotePopupData>>,
     status_event: StatusEventSignal,
+    paused_map: PausedMapSignal,
 ) -> impl IntoView {
     let status = RwSignal::new(data.status.clone());
     let has_changes = RwSignal::new(data.has_changes);
@@ -253,6 +330,16 @@ fn PackageItem(
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();
 
+    // Third-line attention hint. Red state and the reason line are both
+    // driven by `hint`: it is `Some` exactly when the row needs attention
+    // (autosync-paused, or a remote error), `None` for a healthy row.
+    let has_host = data.uri.as_ref().and_then(util::host_str).is_some();
+    let ns_for_hint = data.namespace.clone();
+    let hint = Signal::derive(move || {
+        let paused_message = paused_map.with(|map| map.get(&ns_for_hint).cloned());
+        status.with(|s| error_hint(s, has_host, paused_message.as_deref()))
+    });
+
     // Build menu buttons
     let menu = build_package_menu(
         &data,
@@ -266,7 +353,7 @@ fn PackageItem(
     );
 
     view! {
-        <li class=move || if status.get() == "error" {
+        <li class=move || if hint.get().is_some() {
             "qui-installed-package-item error"
         } else {
             "qui-installed-package-item"
@@ -278,6 +365,9 @@ fn PackageItem(
                         <strong>"URI: "</strong>
                         {uri}
                     </span>
+                })}
+                {move || hint.get().map(|h| view! {
+                    <span class="item-error-hint">{h}</span>
                 })}
             </a>
             <Show when=move || refreshing.get()>
@@ -600,5 +690,54 @@ fn CreatePackagePopup(
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::error_hint;
+
+    #[test]
+    fn paused_with_reason_shows_autosync_paused_hint() {
+        assert_eq!(
+            error_hint("paused", true, Some("workflow rejected metadata")),
+            Some("Autosync paused: workflow rejected metadata".to_string())
+        );
+        // A snapshot-seeded pause carries its reason even when the row's
+        // own status string was refreshed to something else on mount.
+        assert_eq!(
+            error_hint("up_to_date", false, Some("hash mismatch")),
+            Some("Autosync paused: hash mismatch".to_string())
+        );
+    }
+
+    #[test]
+    fn paused_without_reason_falls_back_to_generic() {
+        assert_eq!(
+            error_hint("paused", true, None),
+            Some("Autosync paused".to_string())
+        );
+    }
+
+    #[test]
+    fn error_with_host_prompts_sign_in() {
+        assert_eq!(
+            error_hint("error", true, None),
+            Some("Unable to check remote status — sign in again".to_string())
+        );
+    }
+
+    #[test]
+    fn error_without_host_reports_no_remote() {
+        assert_eq!(
+            error_hint("error", false, None),
+            Some("No remote configured".to_string())
+        );
+    }
+
+    #[test]
+    fn healthy_row_has_no_hint() {
+        assert_eq!(error_hint("up_to_date", true, None), None);
+        assert_eq!(error_hint("ahead", false, None), None);
     }
 }
