@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -24,6 +25,38 @@ use crate::util::make_action;
 /// initial "no event yet" state.
 type StatusEventSignal = RwSignal<Option<PackageStatusEvent>>;
 
+/// Derive the third-line hint for a package row from its current status,
+/// whether it has a catalog host configured, and any autosync pause
+/// message. Returns `None` for a healthy row (no third line, not red).
+///
+/// The guidance line shown above a paused row's reason: paused rows stay
+/// paused until the user acts, so it names the resume action rather than
+/// leaving them to wonder why autosync stopped.
+const PAUSED_GUIDANCE: &str = "Autosync paused. Resolve the issue, then push manually to resume.";
+
+/// The one or two hint lines shown under a row's URI, error-coloured; empty
+/// when the row is healthy (which is also the not-red condition).
+///
+/// Pure so it can be unit-tested. A `paused` row shows the guidance line
+/// followed by the raw refusal reason (when one is known); an `error` row
+/// shows a sign-in or no-remote hint depending on whether a remote host
+/// exists.
+fn hint_lines(status: &str, has_host: bool, paused_message: Option<&str>) -> Vec<String> {
+    if status == "paused" || paused_message.is_some() {
+        let mut lines = vec![PAUSED_GUIDANCE.to_string()];
+        lines.extend(paused_message.map(str::to_string));
+        return lines;
+    }
+    if status == "error" {
+        return vec![if has_host {
+            "Unable to check remote status — sign in again".to_string()
+        } else {
+            "No remote configured".to_string()
+        }];
+    }
+    Vec::new()
+}
+
 // ── Installed Packages List page ──
 
 #[component]
@@ -36,26 +69,56 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // `package-status-changed` events; each row's Effect picks the
     // matching namespace and updates its local signals in place.
     let status_event: StatusEventSignal = RwSignal::new(None);
+
+    // Namespaces last seen in the paused-relevant status (`"paused"`).
+    // This drives *refetch decisions only* — never rendering — so the red
+    // state can never go stale from it. It lets us fire `refetch` exactly
+    // on transitions to/from paused (not on every routine status tick, of
+    // which the watcher emits many). The list's `paused_reason` is always
+    // re-read from the backend's authoritative paused map on that refetch.
+    let paused_seen: RwSignal<HashSet<String>> = RwSignal::new(HashSet::new());
+
+    // Status-changed listener. Updates the per-row status bus, and triggers
+    // a list refetch when a namespace transitions to/from the paused status
+    // so each row re-reads its `paused_reason` from the backend.
     let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+        let is_paused = ev.status == "paused";
+        let was_paused = paused_seen.with_untracked(|seen| seen.contains(&ev.namespace));
+        if is_paused != was_paused {
+            let ns = ev.namespace.clone();
+            paused_seen.update(|seen| {
+                if is_paused {
+                    seen.insert(ns);
+                } else {
+                    seen.remove(&ns);
+                }
+            });
+            refetch.notify();
+        }
         status_event.set(Some(ev));
     });
     on_cleanup(move || drop(listener));
 
     // Autosync publish events — emit a toast mirroring the manual
-    // Commit & Push success notification.
+    // Commit & Push success notification, and refetch so the published
+    // namespace's now-cleared pause is re-read from the backend and its
+    // row stops rendering red.
     let publish_listener =
         tauri_bridge::listen::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
             notification.set(Some(Notification::Success(format!(
                 "Autosync published {} — {}",
                 ev.namespace, ev.message,
             ))));
+            refetch.notify();
         });
     on_cleanup(move || drop(publish_listener));
 
     // Autosync pause events — surface as a warning toast carrying the
     // reason. The detail page reads the same event to drive its
     // persistent banner, so the user sees both the immediate toast
-    // (here) and a stable indicator when they open the package.
+    // (here) and a stable indicator when they open the package. The
+    // refetch re-reads the backend paused map so the row's durable red
+    // state reflects authoritative data (the toast is transient feedback).
     let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
         // The classic refusal kinds (pendingChanges, pendingCommit,
         // diverged) are already legible from the per-row status
@@ -69,6 +132,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
             "Autosync paused {} — {}",
             ev.namespace, msg,
         ))));
+        refetch.notify();
     });
     on_cleanup(move || drop(paused_listener));
 
@@ -253,6 +317,19 @@ fn PackageItem(
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();
 
+    // Attention hint lines under the URI. Red state and the lines are both
+    // driven by `hint`: it is non-empty exactly when the row needs attention
+    // (autosync-paused, or a remote error), empty for a healthy row.
+    //
+    // The pause reason comes straight from the fetched row data — the
+    // backend's authoritative paused map — so there is no frontend cache to
+    // go stale. A resume clears the reason at the source; the next refetch
+    // drops it here. `status` stays reactive for the in-place status update.
+    let has_host = data.uri.as_ref().and_then(util::host_str).is_some();
+    let paused_reason = data.paused_reason.clone();
+    let hint =
+        Signal::derive(move || status.with(|s| hint_lines(s, has_host, paused_reason.as_deref())));
+
     // Build menu buttons
     let menu = build_package_menu(
         &data,
@@ -266,10 +343,10 @@ fn PackageItem(
     );
 
     view! {
-        <li class=move || if status.get() == "error" {
-            "qui-installed-package-item error"
-        } else {
+        <li class=move || if hint.with(Vec::is_empty) {
             "qui-installed-package-item"
+        } else {
+            "qui-installed-package-item error"
         }>
             <a class="link" href=pkg_href>
                 <span class="item-primary">{namespace_display}</span>
@@ -279,6 +356,9 @@ fn PackageItem(
                         {uri}
                     </span>
                 })}
+                {move || hint.get().into_iter().map(|line| view! {
+                    <span class="item-error-hint">{line}</span>
+                }).collect::<Vec<_>>()}
             </a>
             <Show when=move || refreshing.get()>
                 <div class="q-spinner-inline" />
@@ -600,5 +680,70 @@ fn CreatePackagePopup(
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PAUSED_GUIDANCE, hint_lines};
+
+    #[test]
+    fn paused_with_reason_shows_guidance_then_reason() {
+        assert_eq!(
+            hint_lines("paused", true, Some("workflow rejected metadata")),
+            vec![
+                PAUSED_GUIDANCE.to_string(),
+                "workflow rejected metadata".to_string(),
+            ]
+        );
+        // A snapshot-seeded pause carries its reason even when the row's
+        // own status string was refreshed to something else on mount.
+        assert_eq!(
+            hint_lines("up_to_date", false, Some("hash mismatch")),
+            vec![PAUSED_GUIDANCE.to_string(), "hash mismatch".to_string()]
+        );
+    }
+
+    #[test]
+    fn paused_without_reason_shows_guidance_only() {
+        assert_eq!(
+            hint_lines("paused", true, None),
+            vec![PAUSED_GUIDANCE.to_string()]
+        );
+    }
+
+    #[test]
+    fn paused_takes_precedence_over_error_status() {
+        // A row that is both `error` and has a pause reason shows the pause
+        // guidance + reason — the more specific, actionable message wins.
+        assert_eq!(
+            hint_lines("error", true, Some("workflow rejected metadata")),
+            vec![
+                PAUSED_GUIDANCE.to_string(),
+                "workflow rejected metadata".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn error_with_host_prompts_sign_in() {
+        assert_eq!(
+            hint_lines("error", true, None),
+            vec!["Unable to check remote status — sign in again".to_string()]
+        );
+    }
+
+    #[test]
+    fn error_without_host_reports_no_remote() {
+        assert_eq!(
+            hint_lines("error", false, None),
+            vec!["No remote configured".to_string()]
+        );
+    }
+
+    #[test]
+    fn healthy_row_has_no_hint() {
+        assert!(hint_lines("up_to_date", true, None).is_empty());
+        assert!(hint_lines("ahead", false, None).is_empty());
     }
 }

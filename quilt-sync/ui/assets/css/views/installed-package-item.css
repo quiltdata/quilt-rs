@@ -54,6 +54,16 @@
     white-space: nowrap;
   }
 
+  .item-error-hint {
+    color: var(--q-ui-palette-error);
+    display: block;
+    font-size: 0.875rem;
+    line-height: 1.43;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .menu {
     flex-shrink: 0;
   }

@@ -66,6 +66,11 @@ enum ListenerState {
 /// underlying WASM closure is intentionally leaked (`Closure::forget`)
 /// so Tauri can never dispatch into freed memory in the window between
 /// `Drop` and the JS side actually detaching.
+///
+/// `tauri_listen_raw` registers asynchronously (it returns a Promise);
+/// the internal task below awaits it to capture the `unlisten` function
+/// and reconciles with `Drop` through [`ListenerState`], so unmounting
+/// before registration completes still detaches the listener.
 pub fn listen<T: DeserializeOwned + 'static>(
     event: &str,
     mut callback: impl FnMut(T) + 'static,

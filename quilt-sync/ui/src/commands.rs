@@ -261,6 +261,13 @@ pub struct PackageItemData {
     pub has_changes: bool,
     pub uri: Option<S3PackageUri>,
     pub remote_display: Option<String>,
+    /// The autosync watcher's `Other` pause message for this namespace,
+    /// fetched with the list data. `Some` means the row is autosync-paused
+    /// for a reason the status string cannot carry, so it renders red with
+    /// this reason as its third line; `None` means no such pause. Sourced
+    /// directly from the backend's authoritative paused map — there is no
+    /// frontend cache to go stale.
+    pub paused_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -878,7 +885,34 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommitViolation, CommitWorkflows, ViolationField, WorkflowInfo, WorkflowIntent};
+    use super::{
+        CommitViolation, CommitWorkflows, PackageItemData, ViolationField, WorkflowInfo,
+        WorkflowIntent,
+    };
+
+    /// The mirror struct must deserialize the exact JSON the backend
+    /// (`quilt_sync::commands::package_list::InstalledPackageListItem`)
+    /// serializes. This literal is anchored identically in the backend's
+    /// `package_item_data_wire_form_is_verbatim`; if the two drift, the
+    /// list silently drops the pause reason (or a whole field) at the
+    /// Tauri boundary — the exact class of bug this data-driven design
+    /// exists to prevent.
+    #[test]
+    fn package_item_data_wire_form_is_verbatim() {
+        let item = serde_json::from_str::<PackageItemData>(
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata"}"#,
+        )
+        .unwrap();
+        assert_eq!(item.namespace, "acme/data");
+        assert_eq!(item.status, "paused");
+        assert!(!item.has_changes);
+        assert!(item.uri.is_none());
+        assert!(item.remote_display.is_none());
+        assert_eq!(
+            item.paused_reason.as_deref(),
+            Some("workflow rejected metadata")
+        );
+    }
 
     /// The mirror types must deserialize the exact tagged JSON the backend
     /// (`quilt_sync::commands::commit_data::CommitViolation`) serializes. These
