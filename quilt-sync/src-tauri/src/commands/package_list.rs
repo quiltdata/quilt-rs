@@ -24,6 +24,10 @@ pub struct InstalledPackageListItem {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
+    /// True when the package has a local commit. Setting a remote only
+    /// re-commits (creating a new revision) when there is a commit to
+    /// re-commit, so the UI gates the "creates a new revision" notice on this.
+    pub has_local_commit: bool,
     pub uri: Option<quilt_uri::S3PackageUri>,
     /// Raw `lineage.remote_uri` rendering, kept separate from `uri` so
     /// the UI can still surface a misconfigured remote when origin
@@ -69,12 +73,15 @@ async fn load_package_item(
     let namespace = installed_package.namespace.to_string();
     let paused_reason = paused_reasons.get(&namespace).cloned();
     let lineage = m.get_installed_package_lineage(installed_package).await?;
+    // Computed before `lineage` is moved by the `into()` below.
+    let has_local_commit = lineage.commit.is_some();
 
     let Some(remote_uri) = lineage.remote_uri.as_ref() else {
         return Ok(InstalledPackageListItem {
             namespace,
             status: "local".to_string(),
             has_changes: false,
+            has_local_commit,
             uri: None,
             remote_display: None,
             paused_reason,
@@ -88,6 +95,7 @@ async fn load_package_item(
             namespace,
             status: "error".to_string(),
             has_changes: false,
+            has_local_commit,
             uri: Some(typed_uri),
             remote_display: Some(remote_uri.to_string()),
             paused_reason,
@@ -105,6 +113,7 @@ async fn load_package_item(
         namespace,
         status: upstream_state.to_string(),
         has_changes,
+        has_local_commit,
         uri: Some(typed_uri),
         remote_display: Some(remote_display),
         paused_reason,
@@ -731,13 +740,14 @@ mod tests {
             namespace: "acme/data".to_string(),
             status: "paused".to_string(),
             has_changes: false,
+            has_local_commit: false,
             uri: None,
             remote_display: None,
             paused_reason: Some("workflow rejected metadata".to_string()),
         };
         assert_eq!(
             serde_json::to_string(&item).unwrap(),
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata"}"#
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata"}"#
         );
     }
 }

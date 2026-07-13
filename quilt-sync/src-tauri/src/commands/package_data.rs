@@ -32,6 +32,10 @@ pub struct InstalledPackageData {
     /// uses this to switch the remote button from "Change remote" to a
     /// read-only "Show remote" view.
     pub remote_locked: bool,
+    /// True when the package has a local commit. Setting a remote only
+    /// re-commits (creating a new revision) when there is a commit to
+    /// re-commit, so the UI gates the "creates a new revision" notice on this.
+    pub has_local_commit: bool,
     pub entries: Vec<InstalledPackageEntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
@@ -186,12 +190,14 @@ async fn get_installed_package_data_from_model(
         .remote_uri
         .as_ref()
         .is_some_and(|r| !r.hash.is_empty());
+    let has_local_commit = lineage.commit.is_some();
 
     Ok(InstalledPackageData {
         namespace: namespace.to_string(),
         uri: typed_uri,
         status: status_str.to_string(),
         remote_locked,
+        has_local_commit,
         entries: entries_list,
         has_remote_entries,
         ignored_count,

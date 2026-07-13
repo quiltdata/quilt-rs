@@ -9,11 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.18.3-alpha13] - 2026-07-13
+## [v0.18.3-alpha15] - 2026-07-13
 
 ### Fixed
 
 - Logging out now immediately drops the in-memory S3 credential cache, so reads and writes stop working right away instead of lingering until the cached credentials expire (<https://github.com/quiltdata/quilt-rs/pull/766>)
+
+## [v0.18.3-alpha14] - 2026-07-13
+
+### Changed
+
+- The Set-remote dialog now notes that saving will create a new revision of the package (<https://github.com/quiltdata/quilt-rs/pull/767>)
 
 ## [v0.18.3-alpha12] - 2026-07-13
 

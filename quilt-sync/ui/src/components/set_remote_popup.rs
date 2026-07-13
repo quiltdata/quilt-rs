@@ -17,6 +17,7 @@ pub struct SetRemotePopupData {
     pub namespace: String,
     pub current_host: Option<String>,
     pub current_bucket: Option<String>,
+    pub has_local_commit: bool,
 }
 
 #[component]
@@ -31,6 +32,11 @@ pub fn SetRemotePopup(
     /// (see `InstalledPackage::set_remote` in quilt-rs).
     #[prop(optional)]
     locked: bool,
+    /// True when the package has a local commit. Setting a remote only
+    /// re-commits (creating a new revision) when there is a commit to
+    /// re-commit, so the "creates a new revision" notice shows only then.
+    #[prop(optional)]
+    has_local_commit: bool,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
@@ -351,6 +357,15 @@ pub fn SetRemotePopup(
                                 .into_any()
                             }
                         }}
+                    })}
+
+                    // Only an editable package that already has a local commit
+                    // re-commits on save (creating a new revision); the locked
+                    // "Show remote" view and a commit-less package create nothing.
+                    {(!locked && has_local_commit).then(|| view! {
+                        <p class="set-remote-notice">
+                            "Setting a remote will create a new revision of the package."
+                        </p>
                     })}
 
                     <div class="set-remote-actions">
