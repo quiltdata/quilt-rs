@@ -912,9 +912,11 @@ fn JsonEditor(
     textarea_ref: NodeRef<html::Textarea>,
     initial_value: String,
 ) -> impl IntoView {
-    // Mount needs both the editor div and the textarea loaded, and their load
-    // order isn't guaranteed, so drive it off both `on_load`s and fire on
-    // whichever lands last (the guard makes the other a no-op).
+    // Mount needs both the editor div and the textarea. The div is DOM-ordered
+    // after the textarea, so the div's `on_load` alone would suffice; both are
+    // wired so the mount fires on whichever ref lands last (`on_load` is
+    // effect-based and fires even for a ref already loaded when registered),
+    // and the guard makes the redundant call a no-op.
     let mounted = StoredValue::new(false);
     let init = StoredValue::new(initial_value);
     let try_mount = move || {
