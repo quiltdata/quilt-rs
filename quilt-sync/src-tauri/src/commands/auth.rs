@@ -104,14 +104,16 @@ pub async fn erase_auth(
     // reads/writes until they expire.
     let result = erase_auth_command(&app_handle, &host).await;
     if result.is_ok() {
-        // Empty host → global logout. A non-empty host that fails to parse
-        // falls back to clearing everything, so no stale client survives.
-        let host_filter = if host.is_empty() {
-            None
-        } else {
-            Host::from_str(&host).ok()
-        };
-        m.clear_remote_client_cache(host_filter.as_ref()).await;
+        // Global logout (empty host) clears every cached client; a per-host
+        // logout clears only that host's. An unparseable non-empty host can
+        // have no client keyed under it (cache keys are valid `Host`s), so
+        // there is nothing to clear — and we must NOT fall back to clearing
+        // everything, which would drop unrelated hosts' clients.
+        if host.is_empty() {
+            m.clear_remote_client_cache(None).await;
+        } else if let Ok(host) = Host::from_str(&host) {
+            m.clear_remote_client_cache(Some(&host)).await;
+        }
     }
 
     Notify::new(msg_init).map(result, msg_ok, msg_err)
