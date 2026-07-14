@@ -546,7 +546,6 @@ mod tests {
     /// doc (2×), compiling identical validators twice.
     #[test(tokio::test)]
     async fn test_publish_fetches_config_and_schema_once() -> Res {
-        use crate::manifest::MetadataSchema;
         use crate::manifest::Workflow;
         use crate::manifest::WorkflowId;
 
@@ -581,10 +580,7 @@ mod tests {
             config: config_uri.parse()?,
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: Some(MetadataSchema {
-                    id: "meta".to_string(),
-                    url: schema_uri.parse()?,
-                }),
+                schemas: BTreeMap::from([("meta".to_string(), schema_uri.parse()?)]),
             }),
         };
 

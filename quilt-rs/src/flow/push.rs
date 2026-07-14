@@ -328,6 +328,7 @@ mod tests {
     use quilt_uri::S3Uri;
     use serde_json::Value;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test(tokio::test)]
     async fn test_no_push_if_no_commit() -> Res {
@@ -358,7 +359,7 @@ mod tests {
                 .expect("valid config uri"),
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         }
     }
@@ -820,7 +821,7 @@ mod tests {
                 .expect("valid config uri"),
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         });
 

@@ -426,7 +426,7 @@ mod tests {
             config: "s3://bucket/.quilt/workflows/config.yml".parse()?,
             id: Some(crate::manifest::WorkflowId {
                 id: "test-workflow".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         };
 
@@ -572,7 +572,7 @@ mod tests {
             config: config_uri.clone(),
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         };
 

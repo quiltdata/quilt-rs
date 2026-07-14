@@ -13,8 +13,6 @@ use crate::Res;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 #[cfg(test)]
-use crate::manifest::MetadataSchema;
-#[cfg(test)]
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
@@ -156,6 +154,7 @@ impl TopHasher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
     use test_log::test;
 
@@ -421,10 +420,10 @@ mod tests {
                 config: "s3://workflow/config".parse()?,
                 id: Some(WorkflowId {
                     id: "test-workflow".to_string(),
-                    metadata: Some(MetadataSchema {
-                        id: "test-schema".to_string(),
-                        url: "s3://bucket/workflows/test.json".parse()?,
-                    }),
+                    schemas: BTreeMap::from([(
+                        "test-schema".to_string(),
+                        "s3://bucket/workflows/test.json".parse()?,
+                    )]),
                 }),
             }),
             ..ManifestHeader::default()
@@ -438,6 +437,73 @@ mod tests {
         assert_eq!(
             calculated_hash,
             top_hash::EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_empty_empty_entries_workflow_no_rows() -> Res {
+        // An entries-schema-only stamp must hash identically to quilt3's — the
+        // constant is corroborated against quilt3, not copied from this output.
+        let header = ManifestHeader {
+            message: Some(String::new()),
+            user_meta: Some(serde_json::json!({})),
+            workflow: Some(Workflow {
+                config: "s3://workflow/config".parse()?,
+                id: Some(WorkflowId {
+                    id: "entries-wf".to_string(),
+                    schemas: BTreeMap::from([(
+                        "entries-schema".to_string(),
+                        "s3://bucket/workflows/entries.json".parse()?,
+                    )]),
+                }),
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        assert_eq!(
+            top_hasher.finalize(),
+            top_hash::EMPTY_EMPTY_ENTRIES_WORKFLOW_TOP_HASH
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_manifest_header_empty_empty_dual_workflow_no_rows() -> Res {
+        // Both schemas stamped; hash corroborated against quilt3.
+        let header = ManifestHeader {
+            message: Some(String::new()),
+            user_meta: Some(serde_json::json!({})),
+            workflow: Some(Workflow {
+                config: "s3://workflow/config".parse()?,
+                id: Some(WorkflowId {
+                    id: "dual-wf".to_string(),
+                    schemas: BTreeMap::from([
+                        (
+                            "meta-schema".to_string(),
+                            "s3://bucket/workflows/meta.json".parse()?,
+                        ),
+                        (
+                            "entries-schema".to_string(),
+                            "s3://bucket/workflows/entries.json".parse()?,
+                        ),
+                    ]),
+                }),
+            }),
+            ..ManifestHeader::default()
+        };
+
+        let mut top_hasher = TopHasher::new();
+        top_hasher.append_header(&header)?;
+
+        assert_eq!(
+            top_hasher.finalize(),
+            top_hash::EMPTY_EMPTY_DUAL_WORKFLOW_TOP_HASH
         );
 
         Ok(())
@@ -477,10 +543,10 @@ mod tests {
                 config: "s3://workflow/config".parse()?,
                 id: Some(WorkflowId {
                     id: "test-workflow".to_string(),
-                    metadata: Some(MetadataSchema {
-                        id: "test-schema".to_string(),
-                        url: "s3://bucket/workflows/test.json".parse()?,
-                    }),
+                    schemas: BTreeMap::from([(
+                        "test-schema".to_string(),
+                        "s3://bucket/workflows/test.json".parse()?,
+                    )]),
                 }),
             }),
             ..ManifestHeader::default()
@@ -583,10 +649,10 @@ mod tests {
                 config: "s3://workflow/config".parse()?,
                 id: Some(WorkflowId {
                     id: "test-workflow".to_string(),
-                    metadata: Some(MetadataSchema {
-                        id: "test-schema".to_string(),
-                        url: "s3://bucket/workflows/test.json".parse()?,
-                    }),
+                    schemas: BTreeMap::from([(
+                        "test-schema".to_string(),
+                        "s3://bucket/workflows/test.json".parse()?,
+                    )]),
                 }),
             }),
             ..ManifestHeader::default()

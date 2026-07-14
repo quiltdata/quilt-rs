@@ -390,7 +390,7 @@ mod tests {
             config: config_uri.clone(),
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         };
 

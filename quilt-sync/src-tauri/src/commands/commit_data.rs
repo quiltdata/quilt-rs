@@ -832,7 +832,7 @@ mod tests {
                         config: config_uri,
                         id: Some(quilt::manifest::WorkflowId {
                             id: "gamma".to_string(),
-                            metadata: None,
+                            schemas: std::collections::BTreeMap::new(),
                         }),
                     }),
                 },

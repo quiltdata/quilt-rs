@@ -84,6 +84,22 @@ pub const EMPTY_EMPTY_SIMPLE_WORKFLOW_TOP_HASH: &str =
 pub const EMPTY_EMPTY_COMPLEX_WORKFLOW_TOP_HASH: &str =
     "714b1c209a98a7b9239076b94305a7852dc60946c5ba0afac64246ea9958ba08";
 
+/// Manifest header: `{"message":"","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"entries-wf","schemas":{"entries-schema":"s3://bucket/workflows/entries.json"}}}`
+///
+/// A workflow that declares only an `entries_schema` — the stamp the old
+/// single-schema model dropped entirely. Corroborated against quilt3's
+/// `_calculate_top_hash` on the identical header.
+pub const EMPTY_EMPTY_ENTRIES_WORKFLOW_TOP_HASH: &str =
+    "30804452ca34818546a752710397e6d2102d2683e12b67b53cfa9eac3fc83439";
+
+/// Manifest header: `{"message":"","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"dual-wf","schemas":{"entries-schema":"s3://bucket/workflows/entries.json","meta-schema":"s3://bucket/workflows/meta.json"}}}`
+///
+/// A workflow declaring both a `metadata_schema` and an `entries_schema`: the
+/// stamp carries both content addresses. Corroborated against quilt3's
+/// `_calculate_top_hash` on the identical header.
+pub const EMPTY_EMPTY_DUAL_WORKFLOW_TOP_HASH: &str =
+    "93add62524fc06c6aa17c072f5370bfc96350257f253010c6bf688f890277178";
+
 /// Manifest header: `{"message":"Initial","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":null}}`
 pub const INITIAL_EMPTY_SIMPLE_WORKFLOW_TOP_HASH: &str =
     "c716c54535bd3c896d0813dafd672430456f68b2d407a6a65a558ccab53f4990";
@@ -156,3 +172,11 @@ pub const MIXED_HASH_TYPES_TOP_HASH: &str =
 /// ```
 pub const NORMALIZED_EQUIVALENCE_TOP_HASH: &str =
     "10c3b62176b4fbb25b4988181bb65e3861087403f36f13c8adb66bce52d6471b";
+
+/// Cross-client equivalence for the workflow stamp's `schemas` map: two manifests
+/// carrying a dual-schema stamp with the `schemas` keys (and header field order)
+/// written differently must address identically, because both clients sort keys
+/// before hashing. Variants: `workflow-schemas-canonical`, `workflow-schemas-key-order`.
+/// Corroborated against quilt3's `_calculate_top_hash` on the header + row.
+pub const WORKFLOW_SCHEMAS_EQUIVALENCE_TOP_HASH: &str =
+    "b5af547f5ea5f6d7c878cb39592ce1fe0582958f1096b60c1c6c76d19fb5f936";

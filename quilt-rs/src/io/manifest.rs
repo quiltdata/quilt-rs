@@ -19,8 +19,6 @@ use crate::io::storage::Storage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
-#[cfg(test)]
-use crate::manifest::MetadataSchema;
 use crate::manifest::TopHasher;
 #[cfg(test)]
 use crate::manifest::Workflow;

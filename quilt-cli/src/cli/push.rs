@@ -171,6 +171,7 @@ mod tests {
         use quilt_rs::manifest::WorkflowId;
         use quilt_rs::paths::DomainPaths;
         use quilt_uri::S3Uri;
+        use std::collections::BTreeMap;
         use tempfile::TempDir;
 
         let home_dir = TempDir::new()?;
@@ -234,7 +235,7 @@ mod tests {
             config: config_uri.to_string().parse()?,
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         };
         package
