@@ -19,6 +19,8 @@ use quilt_rs::io::remote::WorkflowsConfig;
 use quilt_rs::io::remote::fetch_workflows_config_for_bucket;
 use quilt_rs::workflow::WorkflowRules;
 
+use quilt_uri::Host;
+
 /// Result of checking whether a package is already installed.
 #[derive(Debug)]
 pub enum InstallCheck {
@@ -421,6 +423,18 @@ impl Model {
         directory: impl AsRef<Path>,
     ) -> Result<quilt::lineage::Home, Error> {
         Ok(self.get_quilt().lock().await.set_home(directory).await?)
+    }
+
+    /// Drop the remote's cached S3 clients (and their in-memory
+    /// credentials) for `host`, or for all hosts when `None`. Invoked on
+    /// logout so credentials stop working immediately rather than
+    /// lingering in a cached client until STS expiry.
+    pub async fn clear_remote_client_cache(&self, host: Option<&Host>) {
+        self.quilt
+            .lock()
+            .await
+            .get_remote()
+            .clear_client_cache(host);
     }
 }
 

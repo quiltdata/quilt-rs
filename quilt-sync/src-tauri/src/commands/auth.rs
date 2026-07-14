@@ -6,6 +6,8 @@ use serde::Serialize;
 use tauri::Manager;
 use tokio::sync;
 
+use quilt_uri::Host;
+
 use crate::Error;
 use crate::model;
 use crate::notify::Notify;
@@ -84,6 +86,7 @@ async fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result
 #[tauri::command]
 pub async fn erase_auth(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     host: String,
 ) -> Result<String, String> {
@@ -95,11 +98,25 @@ pub async fn erase_auth(
     let msg_ok = format!("Successfully erased auth for {host}");
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    Notify::new(msg_init).map(
-        erase_auth_command(&app_handle, &host).await,
-        msg_ok,
-        msg_err,
-    )
+    // Delete the on-disk token first, then invalidate the in-memory S3
+    // client cache. A cached client holds STS credentials minted before
+    // logout (valid ~1h), so without this the running app keeps serving
+    // reads/writes until they expire.
+    let result = erase_auth_command(&app_handle, &host).await;
+    if result.is_ok() {
+        // Global logout (empty host) clears every cached client; a per-host
+        // logout clears only that host's. An unparseable non-empty host can
+        // have no client keyed under it (cache keys are valid `Host`s), so
+        // there is nothing to clear — and we must NOT fall back to clearing
+        // everything, which would drop unrelated hosts' clients.
+        if host.is_empty() {
+            m.clear_remote_client_cache(None).await;
+        } else if let Ok(host) = Host::from_str(&host) {
+            m.clear_remote_client_cache(Some(&host)).await;
+        }
+    }
+
+    Notify::new(msg_init).map(result, msg_ok, msg_err)
 }
 
 /// Navigate to a page after successful login.

@@ -290,6 +290,32 @@ impl RemoteS3 {
         }
     }
 
+    /// Drop cached S3 clients so the next request rebuilds them with a
+    /// fresh credential provider. Called on logout: a cached client still
+    /// holds the STS credentials minted before logout (valid ~1h), so
+    /// without this the running app keeps serving reads/writes after the
+    /// on-disk auth token is erased.
+    ///
+    /// `Some(host)` clears only the clients for that catalog host;
+    /// `None` (global logout) clears every cached client.
+    ///
+    /// The `regions` cache is left intact: it is keyed by bucket name and
+    /// holds only public HEAD-bucket region lookups — no credentials — so
+    /// it never goes stale on logout.
+    pub fn clear_client_cache(&self, host: Option<&Host>) {
+        // On a poisoned lock, recover the guard and clear anyway: dropping
+        // stale clients on logout is the safe outcome, never leaving
+        // credentials cached.
+        let mut map = match self.s3.write() {
+            Ok(map) => map,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        match host {
+            Some(host) => map.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
+            None => map.clear(),
+        }
+    }
+
     async fn get_client_for_bucket(
         &self,
         host: &Option<Host>,
@@ -439,6 +465,10 @@ impl Remote for RemoteS3 {
         self.get_region_for_bucket(bucket).await?;
         Ok(())
     }
+
+    fn clear_client_cache(&self, host: Option<&Host>) {
+        RemoteS3::clear_client_cache(self, host);
+    }
 }
 
 #[cfg(test)]
@@ -587,6 +617,66 @@ mod tests {
         assert_eq!(object_hash.to_string(), "LZmmpqbBItw=");
 
         Ok(())
+    }
+
+    /// Building a real, offline `aws_sdk_s3::Client` for a region so the
+    /// cache-clearing test exercises the actual `s3` map, not a stand-in.
+    fn dummy_client(region: &str) -> aws_sdk_s3::Client {
+        let conf = aws_sdk_s3::Config::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new(region.to_string()))
+            .build();
+        aws_sdk_s3::Client::from_conf(conf)
+    }
+
+    /// `clear_client_cache(Some(host))` drops only that host's clients and
+    /// keeps the rest; `clear_client_cache(None)` empties the whole cache.
+    #[test]
+    fn test_clear_client_cache_filters_by_host() {
+        use std::str::FromStr;
+
+        let host_a = Host::from_str("a.example.com").unwrap();
+        let host_b = Host::from_str("b.example.com").unwrap();
+
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+
+        {
+            let mut map = remote.s3.write().unwrap();
+            map.insert(
+                CredsRef {
+                    region: Region::new("us-east-1"),
+                    host: Some(host_a.clone()),
+                },
+                dummy_client("us-east-1"),
+            );
+            map.insert(
+                CredsRef {
+                    region: Region::new("us-west-2"),
+                    host: Some(host_b.clone()),
+                },
+                dummy_client("us-west-2"),
+            );
+            map.insert(
+                CredsRef {
+                    region: Region::new("eu-west-1"),
+                    host: None,
+                },
+                dummy_client("eu-west-1"),
+            );
+        }
+
+        // Clearing host_a leaves host_b and the host-less entry.
+        remote.clear_client_cache(Some(&host_a));
+        {
+            let map = remote.s3.read().unwrap();
+            assert_eq!(map.len(), 2);
+            assert!(!map.keys().any(|k| k.host.as_ref() == Some(&host_a)));
+            assert!(map.keys().any(|k| k.host.as_ref() == Some(&host_b)));
+        }
+
+        // Clearing None empties everything.
+        remote.clear_client_cache(None);
+        assert!(remote.s3.read().unwrap().is_empty());
     }
 
     /// When storage holds valid credentials, the provider must surface them
