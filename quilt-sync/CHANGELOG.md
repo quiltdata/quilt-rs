@@ -13,7 +13,7 @@
 
 ### Changed
 
-- In the commit dialog, the note that the previous revision used a different workflow is now shown in a warning colour (so QuiltSync's default-wins preselection can't silently switch the workflow unnoticed), with a little more spacing below the selector (<https://github.com/quiltdata/quilt-rs/pull/768>)
+- In the commit dialog, the note that the previous revision used a different workflow is now shown in a warning colour (so QuiltSync's default-wins preselection can't silently switch the workflow unnoticed), with a little more spacing below the selector (<https://github.com/quiltdata/quilt-rs/pull/770>)
 
 ## [v0.18.3-alpha15] - 2026-07-13
 
