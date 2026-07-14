@@ -9,35 +9,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.27.1-alpha5] - 2026-07-09
+## [v0.28.0] - 2026-07-14
 
 ### Changed
 
-- `quilt push` now warns on stderr when it attaches a remote but cannot resolve the bucket's default workflow, instead of pushing without a workflow silently (<https://github.com/quiltdata/quilt-rs/pull/755>)
-
-## [v0.27.1-alpha4] - 2026-07-08
-
-### Changed
-
-- Committing or publishing a package that fails its bucket's workflow is now refused, naming the rule it violated, including when a first `quilt push` attaches the remote (<https://github.com/quiltdata/quilt-rs/pull/753>)
-
-## [v0.27.1-alpha3] - 2026-07-08
-
-### Changed
-
-- `quilt push` gains `--workflow`/`--no-workflow` to choose the workflow for a package's first push; `quilt commit --workflow` on a package with no remote now warns instead of silently ignoring the flag (<https://github.com/quiltdata/quilt-rs/pull/748>)
-
-## [v0.27.1-alpha2] - 2026-07-08
-
-### Changed
-
-- `quilt commit` gains a `--no-workflow` flag, omitting `--workflow` now applies the bucket's default workflow instead of committing without one, and an explicitly-empty `--workflow` value is rejected (omit it to use the bucket default) (<https://github.com/quiltdata/quilt-rs/pull/747>)
-
-## [v0.27.1-alpha1] - 2026-07-02
+- Workflow support: `quilt commit` gains `--workflow` / `--no-workflow` (omitting `--workflow` applies the bucket's default workflow; an explicitly-empty `--workflow` is rejected), `quilt push` gains the same flags to choose the workflow for a package's first push, committing / publishing / first-pushing a package that fails its bucket's workflow is refused with the rule it violated, and `quilt push` warns on stderr when it attaches a remote but cannot resolve the bucket's default workflow (<https://github.com/quiltdata/quilt-rs/pull/747>, <https://github.com/quiltdata/quilt-rs/pull/748>, <https://github.com/quiltdata/quilt-rs/pull/753>, <https://github.com/quiltdata/quilt-rs/pull/755>)
 
 ### Fixed
 
-- `quilt commit` without `--user-meta` now preserves the package's existing metadata instead of silently dropping it (<https://github.com/quiltdata/quilt-rs/pull/734>)
+- `quilt commit` without `--user-meta` preserves the package's existing metadata instead of silently dropping it (<https://github.com/quiltdata/quilt-rs/pull/734>)
+
+### quilt-rs
+
+- Updated [from v0.32.0 to v0.33.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.32.0...quilt-rs/v0.33.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.27.0] - 2026-05-25
 

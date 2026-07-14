@@ -9,66 +9,20 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.33.0-alpha10] - 2026-07-14
-
-### Fixed
-
-- The workflow provenance stamp now records every schema a workflow declares, not only its metadata schema, so a package committed under an entries-schema workflow gets the same top-hash as the Python client (<https://github.com/quiltdata/quilt-rs/pull/773>)
-
-## [v0.33.0-alpha9] - 2026-07-13
+## [v0.33.0] - 2026-07-14
 
 ### Added
 
-- `RemoteS3` now exposes clearing its cached S3 clients (per host or all) so callers can invalidate credentials on logout (<https://github.com/quiltdata/quilt-rs/pull/766>)
-
-## [v0.33.0-alpha8] - 2026-07-10
-
-### Added
-
-- `workflow::validate_candidate_fields` and `InstalledPackage::workflow_rules` expose field-level candidate validation (message, metadata schema, handle pattern; entries schema deferred to the commit gate) for live client-side feedback (<https://github.com/quiltdata/quilt-rs/pull/758>)
-
-## [v0.33.0-alpha7] - 2026-07-09
-
-### Added
-
-- `WorkflowsConfig::schema_uris` returns the declared metadata- and entries-schema object URIs for a workflow, so consumers can link to them (<https://github.com/quiltdata/quilt-rs/pull/756>)
-
-## [v0.33.0-alpha6] - 2026-07-09
+- Client-side workflow enforcement: a candidate package is validated against its bucket's workflow — metadata and entries schemas, handle pattern, message-required, and workflow-required — against the resolved workflow at commit and `set_remote`, and the destination bucket's current config at push, refusing an invalid package with the failing rule while leaving its previous state untouched; a `.quilt/workflows/config.yml` is validated against quilt3's config schema on load, so a malformed config is refused rather than silently disabling the gate (<https://github.com/quiltdata/quilt-rs/pull/753>)
+- The workflow provenance stamp records every schema a workflow declares (metadata and entries), so a governed package gets the same top-hash as the Python client (<https://github.com/quiltdata/quilt-rs/pull/773>)
+- `WorkflowsConfig` / `WorkflowInfo`: a typed view of `.quilt/workflows/config.yml` — the workflow list with names and descriptions, the default workflow, the required flag, and each workflow's declared metadata- and entries-schema URIs — plus `fetch_workflows_config_for_bucket` to resolve a bucket's workflows before its remote is bound (<https://github.com/quiltdata/quilt-rs/pull/746>, <https://github.com/quiltdata/quilt-rs/pull/748>, <https://github.com/quiltdata/quilt-rs/pull/756>)
+- `workflow::validate_candidate_fields` and `InstalledPackage::workflow_rules` expose field-level candidate validation (message, metadata schema, handle pattern) for live client-side feedback (<https://github.com/quiltdata/quilt-rs/pull/758>)
+- `RemoteS3` can clear its cached S3 clients (per host or all) so callers can invalidate credentials on logout (<https://github.com/quiltdata/quilt-rs/pull/766>)
 
 ### Changed
 
-- `InstalledPackage::set_remote` now returns a typed outcome that reports when the bucket's default workflow could not be resolved, so callers can warn the user instead of silently attaching the remote without a workflow (<https://github.com/quiltdata/quilt-rs/pull/755>)
-
-## [v0.33.0-alpha5] - 2026-07-08
-
-### Added
-
-- A candidate package is now validated against its workflow (metadata and entries schemas, handle pattern, message-required, workflow-required) — the resolved workflow at commit and `set_remote`, the destination bucket's current workflow configuration at push — and an invalid package is refused with the failing rule while its previous state is left untouched (<https://github.com/quiltdata/quilt-rs/pull/753>)
-- A `.quilt/workflows/config.yml` is now validated against quilt3's config schema when loaded, so a malformed config (e.g. a mistyped field) is refused everywhere instead of silently disabling the rule the bucket owner expected to enforce (<https://github.com/quiltdata/quilt-rs/pull/753>)
-
-## [v0.33.0-alpha4] - 2026-07-08
-
-### Changed
-
-- `InstalledPackage::set_remote` takes a `WorkflowIntent`, so a local package's first push can stamp a chosen workflow (or opt out) instead of always the bucket default; an explicit workflow that can't be applied now fails loudly rather than being silently dropped; added `fetch_workflows_config_for_bucket` for resolving a bucket's workflows before its remote is bound (<https://github.com/quiltdata/quilt-rs/pull/748>)
-
-## [v0.33.0-alpha3] - 2026-07-08
-
-### Added
-
-- `WorkflowsConfig` and `WorkflowInfo`: a typed view of `.quilt/workflows/config.yml` exposing the workflow list (with names and descriptions), the default workflow, and the required flag (<https://github.com/quiltdata/quilt-rs/pull/746>)
-
-## [v0.33.0-alpha2] - 2026-07-07
-
-### Changed
-
-- `resolve_workflow` and the commit/publish surface now take an explicit `WorkflowIntent` (`BucketDefault`/`NoWorkflow`/`Named`) instead of `Option<String>`, and the bucket-default intent honors the workflow config's top-level `default_workflow` (<https://github.com/quiltdata/quilt-rs/pull/743>)
-
-## [v0.33.0-alpha1] - 2026-07-02
-
-### Changed
-
-- `flow::commit`, `CommitOptions`, and `InstalledPackage::{commit, publish}` now take an explicit `UserMeta` (`Keep`/`Clear`/`Set`) instead of `Option<serde_json::Value>`, so package-level metadata is preserved unless deliberately cleared or replaced (<https://github.com/quiltdata/quilt-rs/pull/734>)
+- `resolve_workflow` and the commit / publish / `set_remote` surface take an explicit `WorkflowIntent` (`BucketDefault` / `NoWorkflow` / `Named`) instead of `Option<String>`: the bucket-default intent honors the config's top-level `default_workflow`, `set_remote` can stamp a chosen workflow (or opt out) on a first push instead of always the bucket default, and it returns a typed outcome reporting when the default could not be resolved so callers can warn rather than silently attach a remote without a workflow (<https://github.com/quiltdata/quilt-rs/pull/743>, <https://github.com/quiltdata/quilt-rs/pull/748>, <https://github.com/quiltdata/quilt-rs/pull/755>)
+- `flow::commit`, `CommitOptions`, and `InstalledPackage::{commit, publish}` take an explicit `UserMeta` (`Keep` / `Clear` / `Set`) instead of `Option<serde_json::Value>`, so package-level metadata is preserved unless deliberately cleared or replaced (<https://github.com/quiltdata/quilt-rs/pull/734>)
 
 ## [v0.32.0] - 2026-05-19
 
