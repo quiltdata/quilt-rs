@@ -13,7 +13,7 @@
 
 ### Fixed
 
-- The workflow provenance stamp now records every schema a workflow declares, not only its metadata schema, so a package committed under an entries-schema workflow gets the same top-hash as the Python client
+- The workflow provenance stamp now records every schema a workflow declares, not only its metadata schema, so a package committed under an entries-schema workflow gets the same top-hash as the Python client (<https://github.com/quiltdata/quilt-rs/pull/773>)
 
 ## [v0.33.0-alpha9] - 2026-07-13
 
