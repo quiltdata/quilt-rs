@@ -240,3 +240,52 @@ async fn test_hash_normalization_equivalence_manifest() -> Res {
 
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn test_workflow_schemas_equivalence_manifest() -> Res {
+    // Two manifests carrying a dual-schema workflow stamp, written with the
+    // `schemas` keys (and header fields) in different orders, must address
+    // identically — both clients sort object keys before hashing. Guards the
+    // schema-map path added for cross-client stamp parity.
+    let storage = MockStorage::default();
+    let dest_dir = storage.temp_dir.path();
+    let local_storage = LocalStorage::default();
+
+    let canonical = top_hash::load_equivalent_fixture(
+        top_hash::WORKFLOW_SCHEMAS_EQUIVALENCE_TOP_HASH,
+        "workflow-schemas-canonical",
+    )?;
+    let key_order = top_hash::load_equivalent_fixture(
+        top_hash::WORKFLOW_SCHEMAS_EQUIVALENCE_TOP_HASH,
+        "workflow-schemas-key-order",
+    )?;
+
+    let manifest1 = Manifest::from_path(&local_storage, &canonical).await?;
+    let manifest2 = Manifest::from_path(&local_storage, &key_order).await?;
+
+    let (_, calculated_hash1) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        manifest1.header.clone(),
+        manifest1.records_stream().await,
+    )
+    .await?;
+    let (_, calculated_hash2) = build_manifest_from_rows_stream(
+        &storage,
+        dest_dir.to_path_buf(),
+        manifest2.header.clone(),
+        manifest2.records_stream().await,
+    )
+    .await?;
+
+    assert_eq!(
+        calculated_hash1, calculated_hash2,
+        "schemas key order and header field order must not affect the address"
+    );
+    assert_eq!(
+        calculated_hash1,
+        top_hash::WORKFLOW_SCHEMAS_EQUIVALENCE_TOP_HASH
+    );
+
+    Ok(())
+}

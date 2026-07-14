@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.33.0-alpha10] - 2026-07-14
+
+### Fixed
+
+- The workflow provenance stamp now records every schema a workflow declares, not only its metadata schema, so a package committed under an entries-schema workflow gets the same top-hash as the Python client
+
 ## [v0.33.0-alpha9] - 2026-07-13
 
 ### Added

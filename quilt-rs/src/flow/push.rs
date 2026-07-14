@@ -324,6 +324,7 @@ mod tests {
     use crate::manifest::Workflow;
     use crate::manifest::WorkflowId;
     use crate::workflow::RuleViolation;
+    use std::collections::BTreeMap;
     use crate::workflow::WorkflowValidationError;
     use quilt_uri::S3Uri;
     use serde_json::Value;
@@ -358,7 +359,7 @@ mod tests {
                 .expect("valid config uri"),
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         }
     }
@@ -820,7 +821,7 @@ mod tests {
                 .expect("valid config uri"),
             id: Some(WorkflowId {
                 id: "gate".to_string(),
-                metadata: None,
+                schemas: BTreeMap::new(),
             }),
         });
 

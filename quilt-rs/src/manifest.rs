@@ -6,7 +6,6 @@ mod workflow;
 
 pub use top_hasher::TopHasher;
 
-pub use workflow::MetadataSchema;
 pub use workflow::Workflow;
 pub use workflow::WorkflowId;
 

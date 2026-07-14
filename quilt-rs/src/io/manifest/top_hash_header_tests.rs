@@ -4,6 +4,7 @@
 //! the Python client — these tests must never be updated to new hashes.
 
 use super::*;
+use std::collections::BTreeMap;
 
 use test_log::test;
 
@@ -514,10 +515,10 @@ async fn test_empty_manifest_header_empty_empty_complex_workflow() -> Res {
                 config: "s3://workflow/config".parse()?,
                 id: Some(WorkflowId {
                     id: "test-workflow".to_string(),
-                    metadata: Some(MetadataSchema {
-                        id: "test-schema".to_string(),
-                        url: "s3://bucket/workflows/test.json".parse()?,
-                    }),
+                    schemas: BTreeMap::from([(
+                        "test-schema".to_string(),
+                        "s3://bucket/workflows/test.json".parse()?,
+                    )]),
                 }),
             }),
             ..ManifestHeader::default()
@@ -612,10 +613,10 @@ async fn test_empty_manifest_header_initial_empty_complex_workflow() -> Res {
                 config: "s3://workflow/config".parse()?,
                 id: Some(WorkflowId {
                     id: "test-workflow".to_string(),
-                    metadata: Some(MetadataSchema {
-                        id: "test-schema".to_string(),
-                        url: "s3://bucket/workflows/test.json".parse()?,
-                    }),
+                    schemas: BTreeMap::from([(
+                        "test-schema".to_string(),
+                        "s3://bucket/workflows/test.json".parse()?,
+                    )]),
                 }),
             }),
             ..ManifestHeader::default()
@@ -802,10 +803,10 @@ async fn test_empty_manifest_header_initial_none_complex_workflow() -> Res {
                 config: "s3://workflow/config".parse()?,
                 id: Some(WorkflowId {
                     id: "test-workflow".to_string(),
-                    metadata: Some(MetadataSchema {
-                        id: "test-schema".to_string(),
-                        url: "s3://bucket/workflows/test.json".parse()?,
-                    }),
+                    schemas: BTreeMap::from([(
+                        "test-schema".to_string(),
+                        "s3://bucket/workflows/test.json".parse()?,
+                    )]),
                 }),
             }),
             ..ManifestHeader::default()

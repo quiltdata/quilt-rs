@@ -1,0 +1,2 @@
+{"message":"","user_meta":{},"version":"v0","workflow":{"config":"s3://workflow/config","id":"dual-wf","schemas":{"meta-schema":"s3://bucket/workflows/meta.json","entries-schema":"s3://bucket/workflows/entries.json"}}}
+{"logical_key":"test1.txt","physical_keys":["s3://bucket/test1.txt"],"hash":{"type":"sha2-256-chunked","value":"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="},"size":0,"meta":{}}

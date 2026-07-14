@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 use jsonschema::Validator;
@@ -12,7 +13,6 @@ use crate::Res;
 use crate::error::RemoteCatalogError;
 use crate::io::remote::Remote;
 use crate::manifest::ManifestRow;
-use crate::manifest::MetadataSchema;
 use crate::manifest::Workflow;
 use crate::manifest::WorkflowId;
 use crate::workflow::EntryView;
@@ -324,22 +324,34 @@ impl WorkflowsConfig {
         }
     }
 
-    /// Resolve the id and URL of the metadata schema referenced by a workflow.
-    async fn schema_url<R: Remote>(
+    /// Resolve every schema a workflow declares into the content-addressed
+    /// `{schema_id → version-pinned url}` map that becomes the stamp's
+    /// `schemas` object.
+    ///
+    /// quilt3 records one entry per schema the workflow references — both
+    /// `metadata_schema` and `entries_schema`
+    /// (`WorkflowConfig.get_workflow_validator` populates `loaded_schemas_by_id`
+    /// from both). We mirror that exactly: resolve each declared key, version-pin
+    /// its url, and key by schema id. A `BTreeMap` deduplicates when two keys
+    /// name one schema id (as quilt3's dict does) and keeps the order
+    /// deterministic. An empty map means the workflow declares no schema — the
+    /// stamp then omits the `schemas` field.
+    async fn resolve_declared_schemas<R: Remote>(
         &self,
         remote: &R,
         host: &Option<Host>,
         workflow_id: &str,
-    ) -> Res<Option<(String, S3Uri)>> {
-        match self.schema_id(workflow_id, "metadata_schema")? {
-            Some(schema_id) => {
+    ) -> Res<BTreeMap<String, S3Uri>> {
+        let mut schemas = BTreeMap::new();
+        for key in ["metadata_schema", "entries_schema"] {
+            if let Some(schema_id) = self.schema_id(workflow_id, key)? {
                 let url = self
                     .resolve_schema_url(remote, host, workflow_id, &schema_id)
                     .await?;
-                Ok(Some((schema_id, url)))
+                schemas.insert(schema_id, url);
             }
-            None => Ok(None),
         }
+        Ok(schemas)
     }
 
     /// Interpret the top-level `default_workflow` key for the bucket-default intent.
@@ -357,8 +369,8 @@ impl WorkflowsConfig {
         }
     }
 
-    /// Resolve a named workflow id against this config, attaching the referenced
-    /// metadata schema when the workflow declares one.
+    /// Resolve a named workflow id against this config, attaching every schema
+    /// the workflow declares (empty map when it declares none).
     async fn resolve_named<R: Remote>(
         &self,
         remote: &R,
@@ -366,23 +378,11 @@ impl WorkflowsConfig {
         config: S3Uri,
         id: String,
     ) -> Res<Option<Workflow>> {
-        if let Some((metadata_id, metadata_url)) = self.schema_url(remote, host, &id).await? {
-            Ok(Some(Workflow {
-                config,
-                id: Some(WorkflowId {
-                    id,
-                    metadata: Some(MetadataSchema {
-                        id: metadata_id,
-                        url: metadata_url,
-                    }),
-                }),
-            }))
-        } else {
-            Ok(Some(Workflow {
-                config,
-                id: Some(WorkflowId { id, metadata: None }),
-            }))
-        }
+        let schemas = self.resolve_declared_schemas(remote, host, &id).await?;
+        Ok(Some(Workflow {
+            config,
+            id: Some(WorkflowId { id, schemas }),
+        }))
     }
 }
 
@@ -857,10 +857,10 @@ schemas:
             result.id.unwrap(),
             WorkflowId {
                 id: "foo".to_string(),
-                metadata: Some(MetadataSchema {
-                    id: "bar".to_string(),
-                    url: "s3://test-bucket/schemas/test.json".parse()?
-                })
+                schemas: BTreeMap::from([(
+                    "bar".to_string(),
+                    "s3://test-bucket/schemas/test.json".parse()?
+                )])
             }
         );
 
@@ -973,13 +973,129 @@ schemas:
             result.id.unwrap(),
             WorkflowId {
                 id: "foo".to_string(),
-                metadata: Some(MetadataSchema {
-                    id: "bar".to_string(),
-                    url: "s3://test-bucket/schemas/test.json".parse()?
-                })
+                schemas: BTreeMap::from([(
+                    "bar".to_string(),
+                    "s3://test-bucket/schemas/test.json".parse()?
+                )])
             }
         );
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_resolve_stamps_both_declared_schemas() -> Res<()> {
+        // A workflow declaring both a metadata_schema and an entries_schema must
+        // stamp *both* content addresses, keyed by schema id — matching quilt3's
+        // `data_to_store['schemas']`. Regression guard for the parity bug where
+        // quilt-rs recorded only the metadata schema.
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        let config = r"
+version: '1'
+workflows:
+  dual:
+    name: Dual
+    metadata_schema: meta-id
+    entries_schema: entries-id
+schemas:
+  meta-id:
+    url: s3://test-bucket/schemas/meta.json
+  entries-id:
+    url: s3://test-bucket/schemas/entries.json
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+        for key in ["meta.json", "entries.json"] {
+            remote
+                .put_object(
+                    &None,
+                    &format!("s3://test-bucket/schemas/{key}").parse()?,
+                    b"{}".to_vec(),
+                )
+                .await?;
+        }
+
+        let result = resolve_workflow(
+            &remote,
+            &host,
+            WorkflowIntent::Named("dual".to_string()),
+            &uri,
+        )
+        .await?
+        .unwrap();
+
+        assert_eq!(
+            result.id.unwrap(),
+            WorkflowId {
+                id: "dual".to_string(),
+                schemas: BTreeMap::from([
+                    (
+                        "meta-id".to_string(),
+                        "s3://test-bucket/schemas/meta.json".parse()?
+                    ),
+                    (
+                        "entries-id".to_string(),
+                        "s3://test-bucket/schemas/entries.json".parse()?
+                    ),
+                ]),
+            }
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_resolve_stamps_entries_only_schema() -> Res<()> {
+        // An entries-schema-only workflow (the reproduced `fiskus-sandbox-dev`
+        // case): the stamp carries the entries schema, where the old model
+        // recorded nothing.
+        let remote = MockRemote::default();
+        let host = None;
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        let config = r"
+version: '1'
+workflows:
+  entries-only:
+    name: Entries only
+    entries_schema: entries-id
+schemas:
+  entries-id:
+    url: s3://test-bucket/schemas/entries.json
+";
+        remote
+            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .await?;
+        remote
+            .put_object(
+                &None,
+                &"s3://test-bucket/schemas/entries.json".parse()?,
+                b"{}".to_vec(),
+            )
+            .await?;
+
+        let result = resolve_workflow(
+            &remote,
+            &host,
+            WorkflowIntent::Named("entries-only".to_string()),
+            &uri,
+        )
+        .await?
+        .unwrap();
+
+        assert_eq!(
+            result.id.unwrap(),
+            WorkflowId {
+                id: "entries-only".to_string(),
+                schemas: BTreeMap::from([(
+                    "entries-id".to_string(),
+                    "s3://test-bucket/schemas/entries.json".parse()?
+                )]),
+            }
+        );
         Ok(())
     }
 
