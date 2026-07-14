@@ -566,10 +566,15 @@ fn workflow_dropdown(
             <Show when=show_required_hint>
                 <span class="qui-workflow-error">"Workflow is required for this bucket."</span>
             </Show>
-            // Neutral note: appears when the current pick diverges from the
+            // Divergence note: appears when the current pick differs from the
             // previous revision's stamp, and disappears when they match again.
+            // Warning-coloured — QuiltSync's default-wins preselection can
+            // silently switch the workflow away from the previous pick, so the
+            // divergence is flagged rather than whispered.
             {move || {
-                note.get().map(|text| view! { <p class="qui-workflow-hint">{text}</p> })
+                note.get().map(|text| view! {
+                    <p class="qui-workflow-hint qui-workflow-note-warn">{text}</p>
+                })
             }}
             // Catalog links for the current selection (config.yml + the
             // selected workflow's schemas), recomputed as the selection changes.
