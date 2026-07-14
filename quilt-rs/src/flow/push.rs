@@ -324,11 +324,11 @@ mod tests {
     use crate::manifest::Workflow;
     use crate::manifest::WorkflowId;
     use crate::workflow::RuleViolation;
-    use std::collections::BTreeMap;
     use crate::workflow::WorkflowValidationError;
     use quilt_uri::S3Uri;
     use serde_json::Value;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test(tokio::test)]
     async fn test_no_push_if_no_commit() -> Res {

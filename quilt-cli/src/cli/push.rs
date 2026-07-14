@@ -170,8 +170,8 @@ mod tests {
         use quilt_rs::manifest::Workflow;
         use quilt_rs::manifest::WorkflowId;
         use quilt_rs::paths::DomainPaths;
-        use std::collections::BTreeMap;
         use quilt_uri::S3Uri;
+        use std::collections::BTreeMap;
         use tempfile::TempDir;
 
         let home_dir = TempDir::new()?;
