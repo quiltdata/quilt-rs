@@ -41,7 +41,10 @@ split -l 1 ~/MANIFEST.jsonl \
   tr -d '\n' | sha256sum
 ```
 
-**Caveat**: Use this meta-null form only when rows actually carry `"meta": null` — applied to a header line (which has no `meta`), `jq` reads the absent `.meta` as null and injects `meta: {}`, corrupting the header hash; use the plain `del(.physical_keys)` form otherwise.
+**Caveat**: Use this meta-null form only when rows actually carry
+`"meta": null`. Applied to a header line (which has no `meta`), `jq` reads the
+absent `.meta` as null and injects `meta: {}`, corrupting the header hash — use
+the plain `del(.physical_keys)` form otherwise.
 
 ## CRC64/NVMe Verification
 
