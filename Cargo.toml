@@ -79,7 +79,7 @@ tokio-stream = "0.1.18"
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = "0.3.23"
 url = {version = "2.5.8", features = ["serde"]}
-uuid = { version = "1.23.4", features = ["v4"] }
+uuid = { version = "1.23.5", features = ["v4"] }
 
 # Dev dependencies
 tokio-test = "0.4.5"
