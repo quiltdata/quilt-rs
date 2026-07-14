@@ -32,8 +32,9 @@
     gap: var(--q-ui-size-4);
   }
 
-  /* A little extra breathing room below the workflow selector before Name. */
-  .qui-workflow {
+  /* A bigger gap between the selector box and its hint text below it (the
+   * divergence note and the "Open in catalog" links). */
+  .qui-workflow-field {
     margin-bottom: var(--q-ui-size-1);
   }
 
