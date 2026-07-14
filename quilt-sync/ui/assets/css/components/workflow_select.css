@@ -54,6 +54,14 @@
   margin: var(--q-ui-size-0-5) 0 0;
 }
 
+/* The previous-revision divergence note: warning-coloured so a silent switch
+ * away from the previous pick (QuiltSync preselects the bucket default) is not
+ * missed. Text stays factual; only the colour signals attention. Declared
+ * after `.qui-workflow-hint` so it wins the colour at equal specificity. */
+.qui-workflow-note-warn {
+  color: var(--q-ui-palette-warning);
+}
+
 /* Malformed-config notice. Normal flow (not absolute) so a long, multi-line
  * schema-violation reason claims its own vertical space and wraps, instead of
  * overlapping the field above it. Mirrors `.qui-workflow-hint`, error-coloured. */

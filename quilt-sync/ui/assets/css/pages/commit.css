@@ -32,6 +32,11 @@
     gap: var(--q-ui-size-4);
   }
 
+  /* A little extra breathing room below the workflow selector before Name. */
+  .qui-workflow {
+    margin-bottom: var(--q-ui-size-1);
+  }
+
   /* Keeps a field and its advisory violation together as one unit, so the
    * form's inter-field `gap` falls between groups, not between a field and its
    * own error. */
