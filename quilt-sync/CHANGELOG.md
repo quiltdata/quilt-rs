@@ -9,96 +9,27 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.18.3-alpha16] - 2026-07-14
+## [v0.19.0] - 2026-07-14
+
+### Added
+
+- Workflow selection in the commit dialog: the bucket's configured workflows appear in a catalog-parity dropdown (by name) instead of a free-text id field, with "Open in catalog" links to the workflow config and the selected workflow's schemas; the dialog validates the message, metadata, and package name against the selected workflow as you type (advisory inline errors); with no workflow chosen it applies the bucket's default (the per-user "Default workflow" setting acting as an override); and a warning-coloured note flags when that default-wins preselection differs from the previous revision's workflow (<https://github.com/quiltdata/quilt-rs/pull/743>, <https://github.com/quiltdata/quilt-rs/pull/746>, <https://github.com/quiltdata/quilt-rs/pull/756>, <https://github.com/quiltdata/quilt-rs/pull/758>, <https://github.com/quiltdata/quilt-rs/pull/770>)
+- Workflow selection in the Set-remote dialog: pick the workflow for a package's first push, with a warning when the bucket default can't be resolved, a malformed bucket config distinguished from a transient load failure, and a note that saving creates a new revision (<https://github.com/quiltdata/quilt-rs/pull/748>, <https://github.com/quiltdata/quilt-rs/pull/755>, <https://github.com/quiltdata/quilt-rs/pull/767>)
 
 ### Changed
 
-- In the commit dialog, the note that the previous revision used a different workflow is now shown in a warning colour (so QuiltSync's default-wins preselection can't silently switch the workflow unnoticed), with a little more spacing below the selector (<https://github.com/quiltdata/quilt-rs/pull/770>)
-
-## [v0.18.3-alpha15] - 2026-07-13
+- Committing, publishing, or setting a remote for a package that fails its bucket's workflow is refused with the reason — in the commit and Set-remote dialogs and in notifications — and autosync pauses the namespace as a conflict instead of retrying (<https://github.com/quiltdata/quilt-rs/pull/753>)
+- The installed packages list marks packages that need attention — a remote error or an autosync-paused workflow conflict — in red with an inline reason (<https://github.com/quiltdata/quilt-rs/pull/764>)
+- Settings lists Autosync before Commit and Push, and the "Edit commit defaults" popup warns that these settings apply to every bucket when a workflow override or default metadata is set (<https://github.com/quiltdata/quilt-rs/pull/759>)
 
 ### Fixed
 
 - Logging out now immediately drops the in-memory S3 credential cache, so reads and writes stop working right away instead of lingering until the cached credentials expire (<https://github.com/quiltdata/quilt-rs/pull/766>)
-
-## [v0.18.3-alpha14] - 2026-07-13
-
-### Changed
-
-- The Set-remote dialog now notes that saving will create a new revision of the package (<https://github.com/quiltdata/quilt-rs/pull/767>)
-
-## [v0.18.3-alpha12] - 2026-07-13
-
-### Fixed
-
-- The Set-remote popup and commit dialog no longer let a long invalid-workflow-config notice overlap the fields — the reason now wraps in normal flow (<https://github.com/quiltdata/quilt-rs/pull/765>)
-
-## [v0.18.3-alpha11] - 2026-07-13
-
-### Changed
-
-- The installed packages list now marks packages that need attention — a remote error or an autosync-paused workflow conflict — in red with an inline reason (<https://github.com/quiltdata/quilt-rs/pull/764>)
-
-## [v0.18.3-alpha10] - 2026-07-13
-
-### Fixed
-
-- The commit dialog's JSON metadata editor no longer disappears after the first dialog of a session (<https://github.com/quiltdata/quilt-rs/pull/763>)
-- Commit dialog field validation errors now sit directly beneath their field instead of a full row below (<https://github.com/quiltdata/quilt-rs/pull/763>)
-
-## [v0.18.3-alpha9] - 2026-07-10
-
-### Changed
-
-- Settings now lists Autosync before Commit and Push, and the "Edit commit defaults" popup shows a warning that these settings apply to every bucket when a workflow override or default metadata is set (<https://github.com/quiltdata/quilt-rs/pull/759>)
-
-## [v0.18.3-alpha8] - 2026-07-10
-
-### Added
-
-- The commit dialog now validates the message, user metadata, and package name against the selected workflow's rules as you type, showing advisory inline errors before you commit (<https://github.com/quiltdata/quilt-rs/pull/758>)
-
-## [v0.18.3-alpha7] - 2026-07-09
-
-### Added
-
-- The workflow selector in the commit and Set-remote dialogs now shows "Open in catalog" links to the bucket's workflow config and the selected workflow's metadata and entries schemas (<https://github.com/quiltdata/quilt-rs/pull/756>)
-
-## [v0.18.3-alpha6] - 2026-07-09
-
-### Changed
-
-- The Set-remote dialog now warns when the bucket's default workflow cannot be resolved, and the workflow selector distinguishes a malformed bucket config (commits will fail until it is fixed) from a transient load failure (<https://github.com/quiltdata/quilt-rs/pull/755>)
-
-## [v0.18.3-alpha5] - 2026-07-08
-
-### Changed
-
-- Committing, publishing, or setting a remote for a package that fails its bucket's workflow is now refused with the reason, shown in the commit and Set-remote dialogs and notifications, and autosync pauses as a conflict instead of retrying (<https://github.com/quiltdata/quilt-rs/pull/753>)
-
-## [v0.18.3-alpha4] - 2026-07-08
-
-### Changed
-
-- The Set-remote dialog now lets you pick the workflow to apply on a package's first push, instead of always using the bucket's default (<https://github.com/quiltdata/quilt-rs/pull/748>)
-
-## [v0.18.3-alpha3] - 2026-07-08
-
-### Changed
-
-- The commit dialog now offers the bucket's configured workflows in a dropdown (by name), matching the web catalog, instead of a free-text workflow-id field (<https://github.com/quiltdata/quilt-rs/pull/746>)
-
-## [v0.18.3-alpha2] - 2026-07-07
-
-### Changed
-
-- Publishing or committing without choosing a workflow now applies the bucket's default workflow from its workflows config, and the per-user "Default workflow" setting acts as an override (<https://github.com/quiltdata/quilt-rs/pull/743>)
-
-## [v0.18.3-alpha1] - 2026-07-02
-
-### Fixed
-
 - Committing or publishing with an empty metadata field now preserves the package's existing metadata instead of silently dropping it (<https://github.com/quiltdata/quilt-rs/pull/734>)
+
+### quilt-rs
+
+- Updated [from v0.32.0 to v0.33.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.32.0...quilt-rs/v0.33.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.18.2] - 2026-05-25
 
