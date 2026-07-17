@@ -27,6 +27,13 @@ pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: Option<quilt_uri::S3PackageUri>,
     pub status: String,
+    /// The currently-installed revision's top-hash (the `remote` hash of the
+    /// four-hash lineage). Used for the version-mismatch banner tooltip.
+    pub installed_hash: Option<String>,
+    /// The installed revision's manifest commit message, shown in place of the
+    /// top-hash on the version-mismatch banner. `None`/empty falls back to the
+    /// short hash in the UI.
+    pub installed_message: Option<String>,
     /// True when the package has been pushed — `lineage.remote_uri.hash` is
     /// non-empty and the remote is now pinned to that push history. The UI
     /// uses this to switch the remote button from "Change remote" to a
@@ -44,6 +51,12 @@ pub struct InstalledPackageData {
     pub filter_ignored: bool,
 }
 
+/// The installed revision's display message: the manifest header's commit
+/// message, or `None` when absent. The short-hash fallback is UI-owned.
+fn manifest_message(manifest: &quilt::manifest::Manifest) -> Option<String> {
+    manifest.header.message.clone()
+}
+
 async fn get_installed_package_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
@@ -57,6 +70,15 @@ async fn get_installed_package_data_from_model(
     })?;
 
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
+
+    let installed_hash = lineage.remote_uri.as_ref().map(|u| u.hash.clone());
+    let installed_message = match installed_package.manifest().await {
+        Ok(manifest) => manifest_message(&manifest),
+        Err(err) => {
+            tracing::warn!("Failed to read installed manifest header: {err}");
+            None
+        }
+    };
 
     let typed_uri = lineage
         .remote_uri
@@ -196,6 +218,8 @@ async fn get_installed_package_data_from_model(
         namespace: namespace.to_string(),
         uri: typed_uri,
         status: status_str.to_string(),
+        installed_hash,
+        installed_message,
         remote_locked,
         has_local_commit,
         entries: entries_list,
@@ -511,5 +535,55 @@ mod tests {
             assert_eq!(entry.size, *expected_size, "Size mismatch for '{name}'");
         }
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn includes_installed_identity() -> Result<(), String> {
+        let mut model = mocks::create();
+        mocks::mock_installed_package(&mut model);
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_installed_package_data_from_model(
+            &model,
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // `installed_hash` comes from the model-mocked lineage's remote_uri,
+        // which `mock_installed_package` sets to a concrete hash.
+        assert_eq!(
+            data.installed_hash.as_deref(),
+            Some("6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22")
+        );
+        // `installed_message` is read from `installed_package.manifest()`, a
+        // real (unmocked) `quilt::InstalledPackage` domain call. The package
+        // built by `mock_installed_package` (via `LocalDomain::new(PathBuf::new())`)
+        // has no on-disk lineage file backing it, so reading its manifest
+        // fails and the best-effort fallback yields `None`.
+        assert_eq!(data.installed_message, None);
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_message_projects_header_message() {
+        let mut manifest = quilt::manifest::Manifest::default();
+        manifest.header.message = Some("Add benchling report".to_string());
+
+        assert_eq!(
+            manifest_message(&manifest),
+            Some("Add benchling report".to_string())
+        );
+    }
+
+    #[test]
+    fn manifest_message_none_when_header_message_absent() {
+        let mut manifest = quilt::manifest::Manifest::default();
+        manifest.header.message = None;
+
+        assert_eq!(manifest_message(&manifest), None);
     }
 }

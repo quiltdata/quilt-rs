@@ -9,6 +9,8 @@ use serde::Serialize;
 
 use quilt_rs::io::remote::WorkflowIntent;
 
+use quilt_uri::Host;
+
 use crate::Error;
 use crate::autopull::Watcher;
 use crate::model;
@@ -508,11 +510,53 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
 
 // ── Remote package handling for Leptos UI ──
 
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RemoteBanner {
+    /// A different revision than the one requested by the deep link is
+    /// already installed; the working copy was not switched. Carries the
+    /// requested revision's own remote (bucket + origin) so the UI fetches
+    /// its message from where it actually lives, not from the installed
+    /// package's remote.
+    DifferentVersion {
+        requested_hash: String,
+        requested_bucket: String,
+        requested_origin: Option<Host>,
+        installed_hash: String,
+    },
+    /// The package is installed locally without a remote origin.
+    LocalOnly,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePackageResult {
     pub namespace: String,
-    pub notification: Option<String>,
+    /// `None` when the requested revision was installed/opened normally.
+    pub banner: Option<RemoteBanner>,
+}
+
+fn banner_for_outcome(
+    outcome: &model::InstallOutcome,
+    requested: &quilt_uri::S3PackageUri,
+) -> Option<RemoteBanner> {
+    match outcome {
+        model::InstallOutcome::DifferentVersion {
+            requested_hash,
+            installed_hash,
+        } => Some(RemoteBanner::DifferentVersion {
+            requested_hash: requested_hash.clone(),
+            requested_bucket: requested.bucket.clone(),
+            requested_origin: requested.catalog.clone(),
+            installed_hash: installed_hash.clone(),
+        }),
+        model::InstallOutcome::LocalOnly => Some(RemoteBanner::LocalOnly),
+        model::InstallOutcome::Installed => None,
+    }
 }
 
 #[tauri::command]
@@ -527,60 +571,127 @@ pub async fn handle_remote_package(
     let namespace = s3_uri.namespace.to_string();
     let _ = &tracing;
 
-    match model::install_package_only(&*m, &s3_uri)
+    let outcome = model::install_package_only(&*m, &s3_uri)
         .await
-        .map_err(|e| e.to_frontend_string())?
+        .map_err(|e| e.to_frontend_string())?;
+
+    // Preserve the Installed side effect: if the URI names a path, install
+    // it and open it in the default application.
+    if let model::InstallOutcome::Installed = outcome
+        && let Some(ref path) = s3_uri.path
     {
-        model::InstallOutcome::DifferentVersion {
-            requested_hash,
-            installed_hash,
-        } => {
-            let short_requested: String = requested_hash.chars().take(8).collect();
-            let short_installed: String = installed_hash.chars().take(8).collect();
-            let notification = rust_i18n::t!(
-                "installed_package_notification.different_version",
-                requested => short_requested,
-                installed => short_installed,
-            )
-            .to_string();
-            Ok(RemotePackageResult {
-                namespace,
-                notification: Some(notification),
-            })
+        let installed_package = m
+            .get_installed_package(&s3_uri.namespace)
+            .await
+            .map_err(|e| e.to_frontend_string())?
+            .ok_or_else(|| format!("Package {namespace} is not installed"))?;
+        if !m
+            .is_path_installed(&installed_package, path)
+            .await
+            .map_err(|e| e.to_frontend_string())?
+        {
+            m.package_install_paths(&installed_package, std::slice::from_ref(path))
+                .await
+                .map_err(|e| e.to_frontend_string())?;
         }
-        model::InstallOutcome::LocalOnly => {
-            let notification =
-                rust_i18n::t!("installed_package_notification.local_only").to_string();
-            Ok(RemotePackageResult {
-                namespace,
-                notification: Some(notification),
-            })
+        m.open_in_default_application(&s3_uri.namespace, path)
+            .await
+            .map_err(|e| e.to_frontend_string())?;
+    }
+
+    Ok(RemotePackageResult {
+        namespace,
+        banner: banner_for_outcome(&outcome, &s3_uri),
+    })
+}
+
+/// Fetch a requested revision's manifest commit message by top-hash, without
+/// installing it. Lazily backs Phase 2 of the version-mismatch banner: the
+/// banner shows immediately with hashes, then the UI calls this to fill in
+/// the requested side's message once it resolves.
+#[tauri::command]
+pub async fn get_revision_message(
+    m: tauri::State<'_, model::Model>,
+    bucket: String,
+    namespace: String,
+    hash: String,
+    catalog: Option<String>,
+) -> Result<Option<String>, String> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let origin = catalog
+        .map(|c| Host::from_str(&c))
+        .transpose()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let manifest_uri = quilt_uri::ManifestUri {
+        origin,
+        bucket,
+        namespace,
+        hash,
+    };
+    model::revision_message(&*m, manifest_uri)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The requested revision's deep-link URI — its own bucket + catalog,
+    /// deliberately different from anything installed.
+    fn requested_uri() -> quilt_uri::S3PackageUri {
+        quilt_uri::S3PackageUri {
+            catalog: Some("cat.example.com".parse().unwrap()),
+            bucket: "reqbucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            revision: quilt_uri::RevisionPointer::Hash("aaaa1111".to_string()),
+            path: None,
         }
-        model::InstallOutcome::Installed => {
-            // If URI has a path, install it and open in default application
-            if let Some(ref path) = s3_uri.path {
-                let installed_package = m
-                    .get_installed_package(&s3_uri.namespace)
-                    .await
-                    .map_err(|e| e.to_frontend_string())?
-                    .ok_or_else(|| format!("Package {namespace} is not installed"))?;
-                if !m
-                    .is_path_installed(&installed_package, path)
-                    .await
-                    .map_err(|e| e.to_frontend_string())?
-                {
-                    m.package_install_paths(&installed_package, std::slice::from_ref(path))
-                        .await
-                        .map_err(|e| e.to_frontend_string())?;
-                }
-                m.open_in_default_application(&s3_uri.namespace, path)
-                    .await
-                    .map_err(|e| e.to_frontend_string())?;
-            }
-            Ok(RemotePackageResult {
-                namespace,
-                notification: None,
+    }
+
+    #[test]
+    fn banner_serializes_expected_json_shape() {
+        let dv = super::RemoteBanner::DifferentVersion {
+            requested_hash: "aaaa1111".to_string(),
+            requested_bucket: "reqbucket".to_string(),
+            requested_origin: Some("cat.example.com".parse().unwrap()),
+            installed_hash: "bbbb2222".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&dv).unwrap(),
+            r#"{"kind":"differentVersion","requestedHash":"aaaa1111","requestedBucket":"reqbucket","requestedOrigin":"cat.example.com","installedHash":"bbbb2222"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&super::RemoteBanner::LocalOnly).unwrap(),
+            r#"{"kind":"localOnly"}"#
+        );
+    }
+
+    #[test]
+    fn banner_maps_different_version() {
+        let outcome = crate::model::InstallOutcome::DifferentVersion {
+            requested_hash: "aaaa1111".to_string(),
+            installed_hash: "bbbb2222".to_string(),
+        };
+        assert_eq!(
+            super::banner_for_outcome(&outcome, &requested_uri()),
+            Some(super::RemoteBanner::DifferentVersion {
+                requested_hash: "aaaa1111".to_string(),
+                requested_bucket: "reqbucket".to_string(),
+                requested_origin: Some("cat.example.com".parse().unwrap()),
+                installed_hash: "bbbb2222".to_string(),
             })
-        }
+        );
+    }
+
+    #[test]
+    fn banner_maps_local_only_and_installed() {
+        assert_eq!(
+            super::banner_for_outcome(&crate::model::InstallOutcome::LocalOnly, &requested_uri()),
+            Some(super::RemoteBanner::LocalOnly)
+        );
+        assert_eq!(
+            super::banner_for_outcome(&crate::model::InstallOutcome::Installed, &requested_uri()),
+            None
+        );
     }
 }

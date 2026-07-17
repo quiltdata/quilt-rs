@@ -221,6 +221,7 @@ fn main() {
             commands::add_to_quiltignore,
             commands::test_quiltignore_pattern,
             commands::handle_remote_package,
+            commands::get_revision_message,
             commands::check_for_update,
             commands::download_and_install_update,
         ])

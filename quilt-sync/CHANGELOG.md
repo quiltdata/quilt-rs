@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.19.1-alpha1] - 2026-07-17
+
+### Changed
+
+- QuiltSync shows a revision's commit message instead of its top-hash on the version-mismatch banner (full hash on hover) (<https://github.com/quiltdata/quilt-rs/pull/781>)
+
 ## [v0.19.0] - 2026-07-14
 
 ### Added

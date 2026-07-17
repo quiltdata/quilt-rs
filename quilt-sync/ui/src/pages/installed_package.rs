@@ -22,9 +22,13 @@ use crate::tauri as tauri_bridge;
 pub fn InstalledPackage() -> impl IntoView {
     let query = use_query_map();
 
-    // Persistent warning passed via query param (e.g. version mismatch from deep link).
-    // Rendered as inline page content, not as a dismissable notification popup.
-    let page_warning = query.read_untracked().get("notification");
+    // Version-mismatch banner inputs from the deep-link navigation (Task 5).
+    // The requested revision's own remote (bucket + catalog) travels alongside
+    // the hash so its message is fetched from where it actually lives.
+    let mismatch_requested = query.read_untracked().get("mismatch");
+    let mismatch_bucket = query.read_untracked().get("mrbucket");
+    let mismatch_catalog = query.read_untracked().get("mrcatalog");
+    let local_only = query.read_untracked().get("localOnly").is_some();
 
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
@@ -126,7 +130,9 @@ pub fn InstalledPackage() -> impl IntoView {
             }
         }>
             {move || {
-                let page_warning = page_warning.clone();
+                let mismatch_requested = mismatch_requested.clone();
+                let mismatch_bucket = mismatch_bucket.clone();
+                let mismatch_catalog = mismatch_catalog.clone();
                 Suspend::new(async move {
                     match data.await {
                         Ok(d) => {
@@ -151,7 +157,10 @@ pub fn InstalledPackage() -> impl IntoView {
                                         notification=notification
                                         ui_locked=ui_locked
                                         refetch=refetch
-                                        page_warning
+                                        mismatch_requested=mismatch_requested.clone()
+                                        mismatch_bucket=mismatch_bucket.clone()
+                                        mismatch_catalog=mismatch_catalog.clone()
+                                        local_only=local_only
                                         show_set_remote_popup=show_set_remote_popup
                                         paused_event=paused_event
                                     />

@@ -1,4 +1,4 @@
-use quilt_uri::S3PackageUri;
+use quilt_uri::{Host, S3PackageUri};
 use serde::{Deserialize, Serialize};
 
 use crate::tauri;
@@ -12,6 +12,12 @@ pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: Option<S3PackageUri>,
     pub status: String,
+    /// Hash of the revision currently installed locally, if any. Feeds the
+    /// version-mismatch deep-link banner on `pages/installed_package.rs`.
+    pub installed_hash: Option<String>,
+    /// Commit message of the revision currently installed locally, if any.
+    /// See `installed_hash`.
+    pub installed_message: Option<String>,
     /// Package has been pushed — the remote is pinned to its push history
     /// and can't be edited. The toolbar's remote button becomes a read-only
     /// "Show remote" view.
@@ -278,11 +284,35 @@ pub struct PackageItemData {
     pub paused_reason: Option<String>,
 }
 
+/// A deep-link banner to surface on the installed-package page after
+/// resolving a `quilt+s3://` remote package URI. UI-side mirror of the
+/// backend `quilt_sync::commands::remote_package::RemoteBanner`; the serde
+/// attributes MUST match so the tagged JSON crosses the Tauri boundary
+/// unchanged:
+/// - `differentVersion` — the requested revision differs from what's
+///   installed locally.
+/// - `localOnly` — the package has no remote; it's local-only.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RemoteBanner {
+    DifferentVersion {
+        requested_hash: String,
+        requested_bucket: String,
+        requested_origin: Option<Host>,
+        installed_hash: String,
+    },
+    LocalOnly,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePackageResult {
     pub namespace: String,
-    pub notification: Option<String>,
+    pub banner: Option<RemoteBanner>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -506,6 +536,35 @@ pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, S
         uri: String,
     }
     tauri::invoke("handle_remote_package", &Args { uri }).await
+}
+
+/// Fetch the commit message for a specific revision of a package, so the
+/// installed-package page can show what the requested (but not installed)
+/// revision says, alongside the currently installed one.
+pub async fn get_revision_message(
+    bucket: String,
+    namespace: String,
+    hash: String,
+    catalog: Option<String>,
+) -> Result<Option<String>, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        bucket: String,
+        namespace: String,
+        hash: String,
+        catalog: Option<String>,
+    }
+    tauri::invoke(
+        "get_revision_message",
+        &Args {
+            bucket,
+            namespace,
+            hash,
+            catalog,
+        },
+    )
+    .await
 }
 
 // ── Auto-update ────────────────────────────────────────────

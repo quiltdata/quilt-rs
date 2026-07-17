@@ -18,12 +18,29 @@ pub fn RemotePackage() -> impl IntoView {
 
             // Navigate to the installed package page
             let ns = &result.namespace;
-            let path = match result.notification {
-                Some(ref msg) => format!(
-                    "/installed-package?namespace={ns}&filter=unmodified&notification={}",
-                    urlencoding::encode(msg)
-                ),
-                None => format!("/installed-package?namespace={ns}&filter=unmodified"),
+            let base = format!("/installed-package?namespace={ns}&filter=unmodified");
+            let path = match &result.banner {
+                Some(commands::RemoteBanner::DifferentVersion {
+                    requested_hash,
+                    requested_bucket,
+                    requested_origin,
+                    ..
+                }) => {
+                    let path = format!(
+                        "{base}&mismatch={}&mrbucket={}",
+                        urlencoding::encode(requested_hash),
+                        urlencoding::encode(requested_bucket),
+                    );
+                    match requested_origin {
+                        Some(origin) => format!(
+                            "{path}&mrcatalog={}",
+                            urlencoding::encode(&origin.to_string())
+                        ),
+                        None => path,
+                    }
+                }
+                Some(commands::RemoteBanner::LocalOnly) => format!("{base}&localOnly=1"),
+                None => base,
             };
             navigate(&path, Default::default());
             Ok::<_, String>(result)

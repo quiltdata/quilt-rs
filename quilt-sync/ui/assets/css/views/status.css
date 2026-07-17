@@ -30,6 +30,20 @@
     margin: var(--q-ui-size-1) 0 0;
   }
 
+  .revision + .revision {
+    margin-top: 8px;
+  }
+
+  .revision-title {
+    font-size: 0.875rem;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .revision-message {
+    margin: 0;
+  }
+
   .action {
     display: flex;
     gap: var(--q-ui-size-2);
