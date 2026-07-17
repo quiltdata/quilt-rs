@@ -193,30 +193,38 @@ pub(super) fn InstalledPackageContent(
                         let requested_full = requested.clone();
                         view! {
                             <div class="qui-status"><div class="root">
-                                <h2 class="description">
-                                    "Showing the installed version: "
-                                    {installed_label}
-                                    ". A different version was requested: "
-                                    <Suspense fallback=move || view! {
-                                        <span title=requested_full.clone()>{requested_short.clone()}</span>
-                                    }>
-                                        {
-                                            let requested = requested.clone();
-                                            move || {
-                                                let requested = requested.clone();
-                                                Suspend::new(async move {
-                                                    let msg = requested_msg.await.ok().flatten();
-                                                    let short: String = requested.chars().take(8).collect();
-                                                    revision_label(&msg, &Some(requested.clone()))
-                                                        .unwrap_or_else(|| view! {
-                                                            <span title=requested.clone()>{short}</span>
-                                                        }.into_any())
-                                                })
-                                            }
-                                        }
-                                    </Suspense>
-                                    "."
-                                </h2>
+                                <div class="description">
+                                    <div class="revision">
+                                        <p class="revision-title">"Requested version"</p>
+                                        <p class="revision-message">
+                                            <Suspense fallback=move || view! {
+                                                <span title=requested_full.clone()>{requested_short.clone()}</span>
+                                            }>
+                                                {
+                                                    let requested = requested.clone();
+                                                    move || {
+                                                        let requested = requested.clone();
+                                                        Suspend::new(async move {
+                                                            let msg = requested_msg.await.ok().flatten();
+                                                            let short: String = requested.chars().take(8).collect();
+                                                            revision_label(&msg, &Some(requested.clone()))
+                                                                .unwrap_or_else(|| view! {
+                                                                    <span title=requested.clone()>{short}</span>
+                                                                }.into_any())
+                                                        })
+                                                    }
+                                                }
+                                            </Suspense>
+                                        </p>
+                                    </div>
+                                    <div class="revision">
+                                        <p class="revision-title">"Installed version"</p>
+                                        <p class="revision-message">{installed_label}</p>
+                                    </div>
+                                    <p class="detail">
+                                        "The requested version isn’t installed locally — showing the version you have."
+                                    </p>
+                                </div>
                             </div></div>
                         }.into_any()
                     }
