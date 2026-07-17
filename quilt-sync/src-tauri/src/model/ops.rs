@@ -383,20 +383,62 @@ mod tests {
     use mockall::predicate::{always, eq};
 
     use crate::model::MockQuiltModel;
-    use crate::model::mocks;
 
     #[tokio::test]
     async fn revision_message_browses_requested_hash() {
-        let mut model = mocks::create();
-        mocks::mock_remote_package_different_version(&mut model);
         let ns = Namespace::try_from("test/package").unwrap();
+        let requested_hash = "requestedhash0000".to_string();
 
-        let msg = super::revision_message(&model, ns, "requestedhash0000".to_string())
+        let mut model = MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("test", "package").into())
+                    .unwrap(),
+            ))
+        });
+
+        let remote_uri = ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ns.clone(),
+            hash: "installedhash".to_string(),
+            origin: Some("test.quilt.dev".parse().unwrap()),
+        };
+        model.expect_get_installed_package_lineage().returning({
+            let remote_uri = remote_uri.clone();
+            move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_uri.clone(),
+                    remote_uri.hash.clone(),
+                ))
+            }
+        });
+
+        // Assert the browsed URI carries the *requested* hash (not the
+        // installed one) — this is what proves the lookup targets the
+        // revision the caller asked about.
+        let expected_hash = requested_hash.clone();
+        model
+            .expect_browse_remote_manifest()
+            .times(1)
+            .withf(move |uri| uri.hash == expected_hash)
+            .returning(|_| {
+                Ok(quilt::manifest::Manifest {
+                    header: quilt::manifest::ManifestHeader {
+                        version: "v0".to_string(),
+                        message: Some("Add benchling report".to_string()),
+                        user_meta: None,
+                        workflow: None,
+                    },
+                    rows: Vec::new(),
+                })
+            });
+
+        let msg = super::revision_message(&model, ns, requested_hash)
             .await
             .unwrap();
 
-        // The mock's browse_remote_manifest returns the remote manifest.
-        assert_eq!(msg, mocks::create_remote_manifest().header.message.clone());
+        assert_eq!(msg, Some("Add benchling report".to_string()));
     }
 
     /// A workflow-rejection error as `quilt-rs` surfaces it from the
