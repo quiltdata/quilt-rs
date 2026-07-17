@@ -18,7 +18,10 @@ pub(super) fn InstalledPackageContent(
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
-    page_warning: Option<String>,
+    /// Requested revision top-hash from a version-mismatch deep link.
+    mismatch_requested: Option<String>,
+    /// True when the deep link resolved to a local-only package.
+    local_only: bool,
     show_set_remote_popup: RwSignal<bool>,
     paused_event: RwSignal<Option<PausedEvent>>,
 ) -> impl IntoView {
@@ -157,14 +160,67 @@ pub(super) fn InstalledPackageContent(
     view! {
         <div class="qui-page-installed-package">
             <div class="container">
-                // ── Persistent page warning (e.g. version mismatch from deep link) ──
-                {page_warning.map(|msg| view! {
-                    <div class="qui-status">
-                        <div class="root">
-                            <h2 class="description">{msg}</h2>
-                        </div>
-                    </div>
-                })}
+                // ── Version-mismatch / local-only banner (deep link) ──
+                {
+                    let installed_hash = data.installed_hash.clone();
+                    let installed_message = data.installed_message.clone();
+                    let namespace_for_banner = namespace.clone();
+                    move || {
+                        if local_only {
+                            return view! {
+                                <div class="qui-status"><div class="root">
+                                    <h2 class="description">
+                                        "This package is installed locally without a remote origin. Showing the local version."
+                                    </h2>
+                                </div></div>
+                            }.into_any();
+                        }
+                        let Some(requested) = mismatch_requested.clone() else {
+                            return ().into_any();
+                        };
+                        // Phase 1: installed side, immediate.
+                        let installed_label =
+                            revision_label(&installed_message, &installed_hash);
+                        // Phase 2: requested side, fetched lazily.
+                        let requested_for_fetch = requested.clone();
+                        let ns_for_fetch = namespace_for_banner.clone();
+                        let requested_msg = LocalResource::new(move || {
+                            let ns = ns_for_fetch.clone();
+                            let hash = requested_for_fetch.clone();
+                            async move { commands::get_revision_message(ns, hash).await }
+                        });
+                        let requested_short: String = requested.chars().take(8).collect();
+                        let requested_full = requested.clone();
+                        view! {
+                            <div class="qui-status"><div class="root">
+                                <h2 class="description">
+                                    "Showing the installed version: "
+                                    {installed_label}
+                                    ". A different version was requested: "
+                                    <Suspense fallback=move || view! {
+                                        <span title=requested_full.clone()>{requested_short.clone()}</span>
+                                    }>
+                                        {
+                                            let requested = requested.clone();
+                                            move || {
+                                                let requested = requested.clone();
+                                                Suspend::new(async move {
+                                                    let msg = requested_msg.await.ok().flatten();
+                                                    let short: String = requested.chars().take(8).collect();
+                                                    revision_label(&msg, &Some(requested.clone()))
+                                                        .unwrap_or_else(|| view! {
+                                                            <span title=requested.clone()>{short}</span>
+                                                        }.into_any())
+                                                })
+                                            }
+                                        }
+                                    </Suspense>
+                                    "."
+                                </h2>
+                            </div></div>
+                        }.into_any()
+                    }
+                }
 
                 // ── Status banner ──
                 <StatusBanner
@@ -291,5 +347,21 @@ pub(super) fn InstalledPackageContent(
                 on_close=move || show_set_remote_popup.set(false)
             />
         </Show>
+    }
+}
+
+/// A revision's display label: its manifest message with the full top-hash as
+/// a hover tooltip, falling back to the 8-char short hash when the message is
+/// empty. Returns `None` only when neither a message nor a hash is available.
+fn revision_label(message: &Option<String>, hash: &Option<String>) -> Option<AnyView> {
+    let title = hash.clone().unwrap_or_default();
+    match message {
+        Some(m) if !m.trim().is_empty() => {
+            Some(view! { <span title=title>{m.clone()}</span> }.into_any())
+        }
+        _ => hash.as_ref().map(|h| {
+            let short: String = h.chars().take(8).collect();
+            view! { <span title=h.clone()>{short}</span> }.into_any()
+        }),
     }
 }

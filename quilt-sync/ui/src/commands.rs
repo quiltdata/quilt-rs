@@ -12,14 +12,11 @@ pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: Option<S3PackageUri>,
     pub status: String,
-    /// Hash of the revision currently installed locally, if any. Not yet
-    /// consumed on the UI side — the deep-link banner that reads this lands
-    /// in a follow-up change to `pages/installed_package.rs`.
-    #[allow(dead_code)]
+    /// Hash of the revision currently installed locally, if any. Feeds the
+    /// version-mismatch deep-link banner on `pages/installed_package.rs`.
     pub installed_hash: Option<String>,
     /// Commit message of the revision currently installed locally, if any.
-    /// Not yet consumed on the UI side; see `installed_hash`.
-    #[allow(dead_code)]
+    /// See `installed_hash`.
     pub installed_message: Option<String>,
     /// Package has been pushed — the remote is pinned to its push history
     /// and can't be edited. The toolbar's remote button becomes a read-only
@@ -537,10 +534,7 @@ pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, S
 
 /// Fetch the commit message for a specific revision of a package, so the
 /// installed-package page can show what the requested (but not installed)
-/// revision says, alongside the currently installed one. Not yet called —
-/// the deep-link banner that uses this lands in a follow-up change to
-/// `pages/installed_package.rs`.
-#[allow(dead_code)]
+/// revision says, alongside the currently installed one.
 pub async fn get_revision_message(
     namespace: String,
     hash: String,
