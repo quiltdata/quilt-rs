@@ -51,6 +51,12 @@ pub struct InstalledPackageData {
     pub filter_ignored: bool,
 }
 
+/// The installed revision's display message: the manifest header's commit
+/// message, or `None` when absent. The short-hash fallback is UI-owned.
+fn manifest_message(manifest: &quilt::manifest::Manifest) -> Option<String> {
+    manifest.header.message.clone()
+}
+
 async fn get_installed_package_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
@@ -67,7 +73,7 @@ async fn get_installed_package_data_from_model(
 
     let installed_hash = lineage.remote_uri.as_ref().map(|u| u.hash.clone());
     let installed_message = match installed_package.manifest().await {
-        Ok(manifest) => manifest.header.message.clone(),
+        Ok(manifest) => manifest_message(&manifest),
         Err(err) => {
             tracing::warn!("Failed to read installed manifest header: {err}");
             None
@@ -560,5 +566,24 @@ mod tests {
         // fails and the best-effort fallback yields `None`.
         assert_eq!(data.installed_message, None);
         Ok(())
+    }
+
+    #[test]
+    fn manifest_message_projects_header_message() {
+        let mut manifest = quilt::manifest::Manifest::default();
+        manifest.header.message = Some("Add benchling report".to_string());
+
+        assert_eq!(
+            manifest_message(&manifest),
+            Some("Add benchling report".to_string())
+        );
+    }
+
+    #[test]
+    fn manifest_message_none_when_header_message_absent() {
+        let mut manifest = quilt::manifest::Manifest::default();
+        manifest.header.message = None;
+
+        assert_eq!(manifest_message(&manifest), None);
     }
 }
