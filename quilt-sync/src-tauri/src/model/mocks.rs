@@ -106,6 +106,9 @@ pub fn mock_remote_package_different_version(model: &mut MockQuiltModel) -> &Moc
             quilt::manifest::ManifestRow::default(),
         )]))
     });
+    model
+        .expect_browse_remote_manifest()
+        .returning(|_| Ok(create_remote_manifest()));
 
     model
 }

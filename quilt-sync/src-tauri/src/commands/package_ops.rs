@@ -589,6 +589,23 @@ pub async fn handle_remote_package(
     })
 }
 
+/// Fetch a requested revision's manifest commit message by top-hash, without
+/// installing it. Lazily backs Phase 2 of the version-mismatch banner: the
+/// banner shows immediately with hashes, then the UI calls this to fill in
+/// the requested side's message once it resolves.
+#[tauri::command]
+pub async fn get_revision_message(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    hash: String,
+) -> Result<Option<String>, String> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    model::revision_message(&*m, namespace, hash)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

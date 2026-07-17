@@ -12,6 +12,9 @@ use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
 
+use quilt_uri::ManifestUri;
+use quilt_uri::Namespace;
+
 use super::{InstallCheck, InstallOutcome, QuiltModel};
 
 fn parse_metadata(input: &str) -> Result<UserMeta, Error> {
@@ -336,6 +339,28 @@ pub async fn login_oauth(
     Ok(())
 }
 
+/// Resolve a revision's manifest commit message by top-hash, without
+/// installing it — the requested-side fill for the version-mismatch banner.
+/// Returns `None` when the package has no remote to browse or the manifest
+/// carries no message.
+pub async fn revision_message(
+    model: &impl QuiltModel,
+    namespace: Namespace,
+    hash: String,
+) -> Result<Option<String>, Error> {
+    let installed = model
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    let lineage = model.get_installed_package_lineage(&installed).await?;
+    let Some(remote) = lineage.remote_uri else {
+        return Ok(None);
+    };
+    let requested_uri = ManifestUri { hash, ..remote };
+    let manifest = model.browse_remote_manifest(&requested_uri).await?;
+    Ok(manifest.header.message)
+}
+
 pub async fn get_or_register_client(
     model: &impl QuiltModel,
     host: &quilt_uri::Host,
@@ -358,6 +383,21 @@ mod tests {
     use mockall::predicate::{always, eq};
 
     use crate::model::MockQuiltModel;
+    use crate::model::mocks;
+
+    #[tokio::test]
+    async fn revision_message_browses_requested_hash() {
+        let mut model = mocks::create();
+        mocks::mock_remote_package_different_version(&mut model);
+        let ns = Namespace::try_from("test/package").unwrap();
+
+        let msg = super::revision_message(&model, ns, "requestedhash0000".to_string())
+            .await
+            .unwrap();
+
+        // The mock's browse_remote_manifest returns the remote manifest.
+        assert_eq!(msg, mocks::create_remote_manifest().header.message.clone());
+    }
 
     /// A workflow-rejection error as `quilt-rs` surfaces it from the
     /// commit/push flow. The single `MessageRequired` violation gives a
