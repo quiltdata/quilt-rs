@@ -9,6 +9,8 @@ use serde::Serialize;
 
 use quilt_rs::io::remote::WorkflowIntent;
 
+use quilt_uri::Host;
+
 use crate::Error;
 use crate::autopull::Watcher;
 use crate::model;
@@ -516,9 +518,14 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
 )]
 pub enum RemoteBanner {
     /// A different revision than the one requested by the deep link is
-    /// already installed; the working copy was not switched.
+    /// already installed; the working copy was not switched. Carries the
+    /// requested revision's own remote (bucket + origin) so the UI fetches
+    /// its message from where it actually lives, not from the installed
+    /// package's remote.
     DifferentVersion {
         requested_hash: String,
+        requested_bucket: String,
+        requested_origin: Option<Host>,
         installed_hash: String,
     },
     /// The package is installed locally without a remote origin.
@@ -533,13 +540,18 @@ pub struct RemotePackageResult {
     pub banner: Option<RemoteBanner>,
 }
 
-fn banner_for_outcome(outcome: &model::InstallOutcome) -> Option<RemoteBanner> {
+fn banner_for_outcome(
+    outcome: &model::InstallOutcome,
+    requested: &quilt_uri::S3PackageUri,
+) -> Option<RemoteBanner> {
     match outcome {
         model::InstallOutcome::DifferentVersion {
             requested_hash,
             installed_hash,
         } => Some(RemoteBanner::DifferentVersion {
             requested_hash: requested_hash.clone(),
+            requested_bucket: requested.bucket.clone(),
+            requested_origin: requested.catalog.clone(),
             installed_hash: installed_hash.clone(),
         }),
         model::InstallOutcome::LocalOnly => Some(RemoteBanner::LocalOnly),
@@ -589,7 +601,7 @@ pub async fn handle_remote_package(
 
     Ok(RemotePackageResult {
         namespace,
-        banner: banner_for_outcome(&outcome),
+        banner: banner_for_outcome(&outcome, &s3_uri),
     })
 }
 
@@ -600,27 +612,53 @@ pub async fn handle_remote_package(
 #[tauri::command]
 pub async fn get_revision_message(
     m: tauri::State<'_, model::Model>,
+    bucket: String,
     namespace: String,
     hash: String,
+    catalog: Option<String>,
 ) -> Result<Option<String>, String> {
     let namespace = quilt_uri::Namespace::try_from(namespace)
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
-    model::revision_message(&*m, namespace, hash)
+    let origin = catalog
+        .map(|c| Host::from_str(&c))
+        .transpose()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let manifest_uri = quilt_uri::ManifestUri {
+        origin,
+        bucket,
+        namespace,
+        hash,
+    };
+    model::revision_message(&*m, manifest_uri)
         .await
         .map_err(|e| e.to_frontend_string())
 }
 
 #[cfg(test)]
 mod tests {
+    /// The requested revision's deep-link URI — its own bucket + catalog,
+    /// deliberately different from anything installed.
+    fn requested_uri() -> quilt_uri::S3PackageUri {
+        quilt_uri::S3PackageUri {
+            catalog: Some("cat.example.com".parse().unwrap()),
+            bucket: "reqbucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            revision: quilt_uri::RevisionPointer::Hash("aaaa1111".to_string()),
+            path: None,
+        }
+    }
+
     #[test]
     fn banner_serializes_expected_json_shape() {
         let dv = super::RemoteBanner::DifferentVersion {
             requested_hash: "aaaa1111".to_string(),
+            requested_bucket: "reqbucket".to_string(),
+            requested_origin: Some("cat.example.com".parse().unwrap()),
             installed_hash: "bbbb2222".to_string(),
         };
         assert_eq!(
             serde_json::to_string(&dv).unwrap(),
-            r#"{"kind":"differentVersion","requestedHash":"aaaa1111","installedHash":"bbbb2222"}"#
+            r#"{"kind":"differentVersion","requestedHash":"aaaa1111","requestedBucket":"reqbucket","requestedOrigin":"cat.example.com","installedHash":"bbbb2222"}"#
         );
         assert_eq!(
             serde_json::to_string(&super::RemoteBanner::LocalOnly).unwrap(),
@@ -635,9 +673,11 @@ mod tests {
             installed_hash: "bbbb2222".to_string(),
         };
         assert_eq!(
-            super::banner_for_outcome(&outcome),
+            super::banner_for_outcome(&outcome, &requested_uri()),
             Some(super::RemoteBanner::DifferentVersion {
                 requested_hash: "aaaa1111".to_string(),
+                requested_bucket: "reqbucket".to_string(),
+                requested_origin: Some("cat.example.com".parse().unwrap()),
                 installed_hash: "bbbb2222".to_string(),
             })
         );
@@ -646,11 +686,11 @@ mod tests {
     #[test]
     fn banner_maps_local_only_and_installed() {
         assert_eq!(
-            super::banner_for_outcome(&crate::model::InstallOutcome::LocalOnly),
+            super::banner_for_outcome(&crate::model::InstallOutcome::LocalOnly, &requested_uri()),
             Some(super::RemoteBanner::LocalOnly)
         );
         assert_eq!(
-            super::banner_for_outcome(&crate::model::InstallOutcome::Installed),
+            super::banner_for_outcome(&crate::model::InstallOutcome::Installed, &requested_uri()),
             None
         );
     }

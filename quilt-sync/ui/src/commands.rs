@@ -1,4 +1,4 @@
-use quilt_uri::S3PackageUri;
+use quilt_uri::{Host, S3PackageUri};
 use serde::{Deserialize, Serialize};
 
 use crate::tauri;
@@ -301,6 +301,8 @@ pub struct PackageItemData {
 pub enum RemoteBanner {
     DifferentVersion {
         requested_hash: String,
+        requested_bucket: String,
+        requested_origin: Option<Host>,
         installed_hash: String,
     },
     LocalOnly,
@@ -540,16 +542,29 @@ pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, S
 /// installed-package page can show what the requested (but not installed)
 /// revision says, alongside the currently installed one.
 pub async fn get_revision_message(
+    bucket: String,
     namespace: String,
     hash: String,
+    catalog: Option<String>,
 ) -> Result<Option<String>, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
+        bucket: String,
         namespace: String,
         hash: String,
+        catalog: Option<String>,
     }
-    tauri::invoke("get_revision_message", &Args { namespace, hash }).await
+    tauri::invoke(
+        "get_revision_message",
+        &Args {
+            bucket,
+            namespace,
+            hash,
+            catalog,
+        },
+    )
+    .await
 }
 
 // ── Auto-update ────────────────────────────────────────────

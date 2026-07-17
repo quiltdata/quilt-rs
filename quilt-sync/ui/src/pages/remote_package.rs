@@ -20,8 +20,24 @@ pub fn RemotePackage() -> impl IntoView {
             let ns = &result.namespace;
             let base = format!("/installed-package?namespace={ns}&filter=unmodified");
             let path = match &result.banner {
-                Some(commands::RemoteBanner::DifferentVersion { requested_hash, .. }) => {
-                    format!("{base}&mismatch={}", urlencoding::encode(requested_hash))
+                Some(commands::RemoteBanner::DifferentVersion {
+                    requested_hash,
+                    requested_bucket,
+                    requested_origin,
+                    ..
+                }) => {
+                    let path = format!(
+                        "{base}&mismatch={}&mrbucket={}",
+                        urlencoding::encode(requested_hash),
+                        urlencoding::encode(requested_bucket),
+                    );
+                    match requested_origin {
+                        Some(origin) => format!(
+                            "{path}&mrcatalog={}",
+                            urlencoding::encode(&origin.to_string())
+                        ),
+                        None => path,
+                    }
                 }
                 Some(commands::RemoteBanner::LocalOnly) => format!("{base}&localOnly=1"),
                 None => base,

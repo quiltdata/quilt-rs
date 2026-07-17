@@ -13,7 +13,6 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
 
 use quilt_uri::ManifestUri;
-use quilt_uri::Namespace;
 
 use super::{InstallCheck, InstallOutcome, QuiltModel};
 
@@ -339,25 +338,18 @@ pub async fn login_oauth(
     Ok(())
 }
 
-/// Resolve a revision's manifest commit message by top-hash, without
-/// installing it — the requested-side fill for the version-mismatch banner.
-/// Returns `None` when the package has no remote to browse or the manifest
-/// carries no message.
+/// Resolve a revision's manifest commit message by browsing the *requested*
+/// manifest URI, without installing it — the requested-side fill for the
+/// version-mismatch banner. The caller passes the requested revision's own
+/// remote (bucket + origin + hash), so a deep link to the same namespace on a
+/// different bucket or registry is browsed against the revision it actually
+/// names — not reconstructed from the installed package's lineage. Returns
+/// `None` when the manifest carries no message.
 pub async fn revision_message(
     model: &impl QuiltModel,
-    namespace: Namespace,
-    hash: String,
+    manifest_uri: ManifestUri,
 ) -> Result<Option<String>, Error> {
-    let installed = model
-        .get_installed_package(&namespace)
-        .await?
-        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
-    let lineage = model.get_installed_package_lineage(&installed).await?;
-    let Some(remote) = lineage.remote_uri else {
-        return Ok(None);
-    };
-    let requested_uri = ManifestUri { hash, ..remote };
-    let manifest = model.browse_remote_manifest(&requested_uri).await?;
+    let manifest = model.browse_remote_manifest(&manifest_uri).await?;
     Ok(manifest.header.message)
 }
 
@@ -383,45 +375,30 @@ mod tests {
     use mockall::predicate::{always, eq};
 
     use crate::model::MockQuiltModel;
+    use quilt_uri::Namespace;
 
     #[tokio::test]
-    async fn revision_message_browses_requested_hash() {
+    async fn revision_message_browses_requested_uri() {
         let ns = Namespace::try_from("test/package").unwrap();
-        let requested_hash = "requestedhash0000".to_string();
+
+        // The requested revision lives on its OWN remote (bucket + origin +
+        // hash), which may differ from whatever is installed for this
+        // namespace. `revision_message` must browse exactly this URI.
+        let requested = ManifestUri {
+            bucket: "requested-bucket".to_string(),
+            namespace: ns.clone(),
+            hash: "requestedhash0000".to_string(),
+            origin: Some("other.quilt.dev".parse().unwrap()),
+        };
 
         let mut model = MockQuiltModel::new();
-        model.expect_get_installed_package().returning(|_| {
-            Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("test", "package").into())
-                    .unwrap(),
-            ))
-        });
-
-        let remote_uri = ManifestUri {
-            bucket: "quilt-example".to_string(),
-            namespace: ns.clone(),
-            hash: "installedhash".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
-        };
-        model.expect_get_installed_package_lineage().returning({
-            let remote_uri = remote_uri.clone();
-            move |_| {
-                Ok(quilt::lineage::PackageLineage::from_remote(
-                    remote_uri.clone(),
-                    remote_uri.hash.clone(),
-                ))
-            }
-        });
-
-        // Assert the browsed URI carries the *requested* hash (not the
-        // installed one) — this is what proves the lookup targets the
-        // revision the caller asked about.
-        let expected_hash = requested_hash.clone();
+        // Assert the browsed URI is exactly the requested one — bucket,
+        // origin, and hash — not reconstructed from any installed lineage.
+        let expected = requested.clone();
         model
             .expect_browse_remote_manifest()
             .times(1)
-            .withf(move |uri| uri.hash == expected_hash)
+            .withf(move |uri| *uri == expected)
             .returning(|_| {
                 Ok(quilt::manifest::Manifest {
                     header: quilt::manifest::ManifestHeader {
@@ -434,9 +411,7 @@ mod tests {
                 })
             });
 
-        let msg = super::revision_message(&model, ns, requested_hash)
-            .await
-            .unwrap();
+        let msg = super::revision_message(&model, requested).await.unwrap();
 
         assert_eq!(msg, Some("Add benchling report".to_string()));
     }

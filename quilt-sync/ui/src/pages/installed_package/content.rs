@@ -20,6 +20,11 @@ pub(super) fn InstalledPackageContent(
     refetch: Trigger,
     /// Requested revision top-hash from a version-mismatch deep link.
     mismatch_requested: Option<String>,
+    /// The requested revision's own bucket, so its message is fetched from the
+    /// remote it actually lives on (not the installed package's remote).
+    mismatch_bucket: Option<String>,
+    /// The requested revision's catalog origin, if the deep link carried one.
+    mismatch_catalog: Option<String>,
     /// True when the deep link resolved to a local-only package.
     local_only: bool,
     show_set_remote_popup: RwSignal<bool>,
@@ -182,13 +187,20 @@ pub(super) fn InstalledPackageContent(
                         // Phase 1: installed side, immediate.
                         let installed_label =
                             revision_label(&installed_message, &installed_hash);
-                        // Phase 2: requested side, fetched lazily.
+                        // Phase 2: requested side, fetched lazily from the
+                        // requested revision's own remote (bucket + catalog).
                         let requested_for_fetch = requested.clone();
                         let ns_for_fetch = namespace_for_banner.clone();
+                        let bucket_for_fetch = mismatch_bucket.clone().unwrap_or_default();
+                        let catalog_for_fetch = mismatch_catalog.clone();
                         let requested_msg = LocalResource::new(move || {
                             let ns = ns_for_fetch.clone();
                             let hash = requested_for_fetch.clone();
-                            async move { commands::get_revision_message(ns, hash).await }
+                            let bucket = bucket_for_fetch.clone();
+                            let catalog = catalog_for_fetch.clone();
+                            async move {
+                                commands::get_revision_message(bucket, ns, hash, catalog).await
+                            }
                         });
                         let requested_short: String = requested.chars().take(8).collect();
                         let requested_full = requested.clone();
