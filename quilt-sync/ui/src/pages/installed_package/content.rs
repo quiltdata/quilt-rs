@@ -200,7 +200,7 @@ pub(super) fn InstalledPackageContent(
                             "behind" => "The requested version isn't installed on this computer. You're seeing the version you have.",
                             "ahead" => "The requested version isn't installed on this computer. You have local changes that aren't on the remote yet.",
                             "diverged" => "The requested version isn't installed on this computer. Your local version has diverged from the remote — resolve that below.",
-                            "up_to_date" => "The requested version isn't installed on this computer. You have the latest version installed.",
+                            "up_to_date" => "The requested version isn't installed on this computer. You have the latest version installed, and that's what's shown.",
                             _ => "The requested version isn't installed on this computer, and the remote can't be checked right now.",
                         };
                         view! {
