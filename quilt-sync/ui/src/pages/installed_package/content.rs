@@ -165,6 +165,7 @@ pub(super) fn InstalledPackageContent(
                     let installed_hash = data.installed_hash.clone();
                     let installed_message = data.installed_message.clone();
                     let namespace_for_banner = namespace.clone();
+                    let status_for_banner = status.clone();
                     move || {
                         if local_only {
                             return view! {
@@ -191,6 +192,17 @@ pub(super) fn InstalledPackageContent(
                         });
                         let requested_short: String = requested.chars().take(8).collect();
                         let requested_full = requested.clone();
+                        // Reason line: always says the requested revision isn't
+                        // installed; when there is no Pull button (any state but
+                        // `behind`), it also says why. The `behind` StatusBanner
+                        // below carries the Pull button and its own explanation.
+                        let reason = match status_for_banner.as_str() {
+                            "behind" => "The requested version isn't installed on this computer. You're seeing the version you have.",
+                            "ahead" => "The requested version isn't installed on this computer. You have local changes that aren't on the remote yet.",
+                            "diverged" => "The requested version isn't installed on this computer. Your local version has diverged from the remote — resolve that below.",
+                            "up_to_date" => "The requested version isn't installed on this computer. You have the latest version installed.",
+                            _ => "The requested version isn't installed on this computer, and the remote can't be checked right now.",
+                        };
                         view! {
                             <div class="qui-status"><div class="root">
                                 <div class="description">
@@ -221,9 +233,7 @@ pub(super) fn InstalledPackageContent(
                                         <p class="revision-title">"Installed version"</p>
                                         <p class="revision-message">{installed_label}</p>
                                     </div>
-                                    <p class="detail">
-                                        "The requested version isn’t installed locally — showing the version you have."
-                                    </p>
+                                    <p class="detail">{reason}</p>
                                 </div>
                             </div></div>
                         }.into_any()
