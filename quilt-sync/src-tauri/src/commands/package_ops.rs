@@ -508,11 +508,39 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
 
 // ── Remote package handling for Leptos UI ──
 
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum RemoteBanner {
+    /// A different revision than the one requested by the deep link is
+    /// already installed; the working copy was not switched.
+    DifferentVersion {
+        requested_hash: String,
+        installed_hash: String,
+    },
+    /// The package is installed locally without a remote origin.
+    LocalOnly,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePackageResult {
     pub namespace: String,
-    pub notification: Option<String>,
+    /// `None` when the requested revision was installed/opened normally.
+    pub banner: Option<RemoteBanner>,
+}
+
+fn banner_for_outcome(outcome: &model::InstallOutcome) -> Option<RemoteBanner> {
+    match outcome {
+        model::InstallOutcome::DifferentVersion {
+            requested_hash,
+            installed_hash,
+        } => Some(RemoteBanner::DifferentVersion {
+            requested_hash: requested_hash.clone(),
+            installed_hash: installed_hash.clone(),
+        }),
+        model::InstallOutcome::LocalOnly => Some(RemoteBanner::LocalOnly),
+        model::InstallOutcome::Installed => None,
+    }
 }
 
 #[tauri::command]
@@ -527,60 +555,82 @@ pub async fn handle_remote_package(
     let namespace = s3_uri.namespace.to_string();
     let _ = &tracing;
 
-    match model::install_package_only(&*m, &s3_uri)
+    let outcome = model::install_package_only(&*m, &s3_uri)
         .await
-        .map_err(|e| e.to_frontend_string())?
+        .map_err(|e| e.to_frontend_string())?;
+
+    // Preserve the Installed side effect: if the URI names a path, install
+    // it and open it in the default application.
+    if let model::InstallOutcome::Installed = outcome
+        && let Some(ref path) = s3_uri.path
     {
-        model::InstallOutcome::DifferentVersion {
-            requested_hash,
-            installed_hash,
-        } => {
-            let short_requested: String = requested_hash.chars().take(8).collect();
-            let short_installed: String = installed_hash.chars().take(8).collect();
-            let notification = rust_i18n::t!(
-                "installed_package_notification.different_version",
-                requested => short_requested,
-                installed => short_installed,
-            )
-            .to_string();
-            Ok(RemotePackageResult {
-                namespace,
-                notification: Some(notification),
-            })
+        let installed_package = m
+            .get_installed_package(&s3_uri.namespace)
+            .await
+            .map_err(|e| e.to_frontend_string())?
+            .ok_or_else(|| format!("Package {namespace} is not installed"))?;
+        if !m
+            .is_path_installed(&installed_package, path)
+            .await
+            .map_err(|e| e.to_frontend_string())?
+        {
+            m.package_install_paths(&installed_package, std::slice::from_ref(path))
+                .await
+                .map_err(|e| e.to_frontend_string())?;
         }
-        model::InstallOutcome::LocalOnly => {
-            let notification =
-                rust_i18n::t!("installed_package_notification.local_only").to_string();
-            Ok(RemotePackageResult {
-                namespace,
-                notification: Some(notification),
+        m.open_in_default_application(&s3_uri.namespace, path)
+            .await
+            .map_err(|e| e.to_frontend_string())?;
+    }
+
+    Ok(RemotePackageResult {
+        namespace,
+        banner: banner_for_outcome(&outcome),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn banner_serializes_expected_json_shape() {
+        let dv = super::RemoteBanner::DifferentVersion {
+            requested_hash: "aaaa1111".to_string(),
+            installed_hash: "bbbb2222".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&dv).unwrap(),
+            r#"{"kind":"differentVersion","requestedHash":"aaaa1111","installedHash":"bbbb2222"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&super::RemoteBanner::LocalOnly).unwrap(),
+            r#"{"kind":"localOnly"}"#
+        );
+    }
+
+    #[test]
+    fn banner_maps_different_version() {
+        let outcome = crate::model::InstallOutcome::DifferentVersion {
+            requested_hash: "aaaa1111".to_string(),
+            installed_hash: "bbbb2222".to_string(),
+        };
+        assert_eq!(
+            super::banner_for_outcome(&outcome),
+            Some(super::RemoteBanner::DifferentVersion {
+                requested_hash: "aaaa1111".to_string(),
+                installed_hash: "bbbb2222".to_string(),
             })
-        }
-        model::InstallOutcome::Installed => {
-            // If URI has a path, install it and open in default application
-            if let Some(ref path) = s3_uri.path {
-                let installed_package = m
-                    .get_installed_package(&s3_uri.namespace)
-                    .await
-                    .map_err(|e| e.to_frontend_string())?
-                    .ok_or_else(|| format!("Package {namespace} is not installed"))?;
-                if !m
-                    .is_path_installed(&installed_package, path)
-                    .await
-                    .map_err(|e| e.to_frontend_string())?
-                {
-                    m.package_install_paths(&installed_package, std::slice::from_ref(path))
-                        .await
-                        .map_err(|e| e.to_frontend_string())?;
-                }
-                m.open_in_default_application(&s3_uri.namespace, path)
-                    .await
-                    .map_err(|e| e.to_frontend_string())?;
-            }
-            Ok(RemotePackageResult {
-                namespace,
-                notification: None,
-            })
-        }
+        );
+    }
+
+    #[test]
+    fn banner_maps_local_only_and_installed() {
+        assert_eq!(
+            super::banner_for_outcome(&crate::model::InstallOutcome::LocalOnly),
+            Some(super::RemoteBanner::LocalOnly)
+        );
+        assert_eq!(
+            super::banner_for_outcome(&crate::model::InstallOutcome::Installed),
+            None
+        );
     }
 }
