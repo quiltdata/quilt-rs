@@ -12,6 +12,15 @@ pub struct InstalledPackageData {
     pub namespace: String,
     pub uri: Option<S3PackageUri>,
     pub status: String,
+    /// Hash of the revision currently installed locally, if any. Not yet
+    /// consumed on the UI side — the deep-link banner that reads this lands
+    /// in a follow-up change to `pages/installed_package.rs`.
+    #[allow(dead_code)]
+    pub installed_hash: Option<String>,
+    /// Commit message of the revision currently installed locally, if any.
+    /// Not yet consumed on the UI side; see `installed_hash`.
+    #[allow(dead_code)]
+    pub installed_message: Option<String>,
     /// Package has been pushed — the remote is pinned to its push history
     /// and can't be edited. The toolbar's remote button becomes a read-only
     /// "Show remote" view.
@@ -278,11 +287,29 @@ pub struct PackageItemData {
     pub paused_reason: Option<String>,
 }
 
+/// A deep-link banner to surface on the installed-package page after
+/// resolving a `quilt+s3://` remote package URI. UI-side mirror of the
+/// backend `quilt_sync::commands::remote_package::RemoteBanner`; the serde
+/// attributes MUST match so the tagged JSON crosses the Tauri boundary
+/// unchanged:
+/// - `differentVersion` — the requested revision differs from what's
+///   installed locally.
+/// - `localOnly` — the package has no remote; it's local-only.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum RemoteBanner {
+    DifferentVersion {
+        requested_hash: String,
+        installed_hash: String,
+    },
+    LocalOnly,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePackageResult {
     pub namespace: String,
-    pub notification: Option<String>,
+    pub banner: Option<RemoteBanner>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -506,6 +533,25 @@ pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, S
         uri: String,
     }
     tauri::invoke("handle_remote_package", &Args { uri }).await
+}
+
+/// Fetch the commit message for a specific revision of a package, so the
+/// installed-package page can show what the requested (but not installed)
+/// revision says, alongside the currently installed one. Not yet called —
+/// the deep-link banner that uses this lands in a follow-up change to
+/// `pages/installed_package.rs`.
+#[allow(dead_code)]
+pub async fn get_revision_message(
+    namespace: String,
+    hash: String,
+) -> Result<Option<String>, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        hash: String,
+    }
+    tauri::invoke("get_revision_message", &Args { namespace, hash }).await
 }
 
 // ── Auto-update ────────────────────────────────────────────
