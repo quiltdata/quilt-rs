@@ -293,7 +293,11 @@ pub struct PackageItemData {
 ///   installed locally.
 /// - `localOnly` — the package has no remote; it's local-only.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum RemoteBanner {
     DifferentVersion {
         requested_hash: String,

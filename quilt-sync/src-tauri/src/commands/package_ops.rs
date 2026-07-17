@@ -509,7 +509,11 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
 // ── Remote package handling for Leptos UI ──
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum RemoteBanner {
     /// A different revision than the one requested by the deep link is
     /// already installed; the working copy was not switched.
