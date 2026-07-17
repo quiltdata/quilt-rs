@@ -1,4 +1,4 @@
-# QuiltSync
+# QuiltSync keeps your data under revision control and never asks you to think about it.
 
 ## Cross-platform desktop application for editing Quilt data packages
 
