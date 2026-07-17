@@ -1,18 +1,24 @@
-# QuiltSync keeps your data under revision control and never asks you to think about it.
+# Cross-platform desktop application for editing Quilt data packages
 
-Built for bench scientists rather than engineers, QuiltSync lets you find a data
-package in the Quilt Web Catalog, open it on your desktop, and bring down only the
-files you need — not the whole package — into an ordinary local folder. Edit them
-in your usual tools and QuiltSync syncs your changes back as a new revision, so
-getting data in and out never means the command line or uploading file copies
-through the browser. Every revision is an immutable, reproducible snapshot with its
-metadata — versioned data you can trust and return to, not the opaque mirroring of
+**QuiltSync keeps your data under revision control and never asks you to
+think about it.**
+
+Built for bench scientists rather than engineers, QuiltSync lets you find a
+data package in the Quilt Web Catalog, open it on your desktop, and bring
+down only the files you need — not the whole package — into an ordinary
+local folder.
+
+Edit them in your usual tools and QuiltSync syncs your changes back as a new
+revision, so getting data in and out never means the command line or
+uploading file copies through the browser.
+
+Every revision is an immutable, reproducible snapshot with its metadata —
+versioned data you can trust and return to, not the opaque mirroring of
 ordinary file-sync.
 
-## Cross-platform desktop application for editing Quilt data packages
-
-Uses Tauri (<https://tauri.app/v1/guides/getting-started/setup/html-css-js>)
-to build a Rust application with a web frontend.
+Your team's existing rules still apply: each revision conforms to the
+workflow configured for its bucket and reuses the same roles and policies
+you already have in the Catalog — nothing new to set up.
 
 ## Usage
 
