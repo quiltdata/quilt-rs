@@ -7,15 +7,12 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use std::fmt;
-use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 
-use crate::Error;
-use crate::Res;
-use crate::checksum::hash::Hash;
-use crate::error::ChecksumError;
+use crate::object_hash::error::Error;
+use crate::object_hash::hash::Hash;
 
 /// Multihash code for legacy or single-chunked checksums
 pub const MULTIHASH_SHA256: u64 = 0x12;
@@ -26,7 +23,7 @@ pub struct Sha256Hash(Multihash<256>);
 
 impl Sha256Hash {
     /// Calculates legacy or single-chunk checksum from any async reader
-    pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
+    pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Result<Self, Error> {
         let mut hasher = ChecksumAlgorithm::Sha256.into_impl();
         let mut reader = BufReader::new(file);
         let mut buf = [0; 4096];
@@ -47,9 +44,13 @@ impl Hash for Sha256Hash {
         &self.0
     }
 
-    /// Calculates legacy or single-chunk checksum from file
-    async fn from_file(file: File) -> Res<Self> {
-        Self::from_async_read(file).await
+    /// Calculates legacy or single-chunk checksum from an async reader.
+    /// `length` is unused: the whole stream is hashed regardless of size.
+    async fn from_reader<R: AsyncRead + Unpin + Send>(
+        reader: R,
+        _length: u64,
+    ) -> Result<Self, Error> {
+        Self::from_async_read(reader).await
     }
 }
 
@@ -67,11 +68,11 @@ impl TryFrom<Multihash<256>> for Sha256Hash {
         if hash.code() == MULTIHASH_SHA256 {
             Ok(Self(hash))
         } else {
-            Err(Error::Checksum(ChecksumError::InvalidMultihash(format!(
+            Err(Error::InvalidMultihash(format!(
                 "Expected SHA256 hash (code {:#06x}), got code {:#06x}",
                 MULTIHASH_SHA256,
                 hash.code()
-            ))))
+            )))
         }
     }
 }

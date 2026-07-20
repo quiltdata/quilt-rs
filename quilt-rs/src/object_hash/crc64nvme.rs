@@ -7,15 +7,12 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use std::fmt;
-use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 
-use crate::Error;
-use crate::Res;
-use crate::checksum::hash::Hash;
-use crate::error::ChecksumError;
+use crate::object_hash::error::Error;
+use crate::object_hash::hash::Hash;
 
 /// Multihash code for CRC64-NVMe
 pub const MULTIHASH_CRC64_NVME: u64 = 0x0165;
@@ -32,7 +29,7 @@ impl Default for Crc64Hash {
 
 impl Crc64Hash {
     /// Calculates CRC64-NVMe checksum from any async reader
-    pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Res<Self> {
+    pub async fn from_async_read<F: AsyncRead + Unpin>(file: F) -> Result<Self, Error> {
         let mut hasher = ChecksumAlgorithm::Crc64Nvme.into_impl();
         let mut reader = BufReader::new(file);
         let mut buf = [0; 4096];
@@ -52,15 +49,19 @@ impl Crc64Hash {
     }
 }
 
-impl crate::checksum::Hash for Crc64Hash {
+impl crate::object_hash::Hash for Crc64Hash {
     /// Get the inner multihash
     fn multihash(&self) -> &Multihash<256> {
         &self.0
     }
 
-    /// Calculates CRC64-NVMe checksum from a file
-    async fn from_file(file: File) -> Res<Self> {
-        Self::from_async_read(file).await
+    /// Calculates CRC64-NVMe checksum from an async reader.
+    /// `length` is unused: the whole stream is hashed regardless of size.
+    async fn from_reader<R: AsyncRead + Unpin + Send>(
+        reader: R,
+        _length: u64,
+    ) -> Result<Self, Error> {
+        Self::from_async_read(reader).await
     }
 }
 
@@ -78,11 +79,11 @@ impl TryFrom<Multihash<256>> for Crc64Hash {
         if hash.code() == MULTIHASH_CRC64_NVME {
             Ok(Self(hash))
         } else {
-            Err(Error::Checksum(ChecksumError::InvalidMultihash(format!(
+            Err(Error::InvalidMultihash(format!(
                 "Expected CRC64-NVMe hash (code {:#06x}), got code {:#06x}",
                 MULTIHASH_CRC64_NVME,
                 hash.code()
-            ))))
+            )))
         }
     }
 }

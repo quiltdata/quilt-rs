@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.0-alpha1] - 2026-07-20
+
+### Changed
+
+- The per-object hash types moved from the `checksum` module to a new `object_hash` module — `checksum` now holds only the storage-aware `calculate_hash` / `verify_hash` / `refresh_hash` helpers — and `Hash::from_file` became `Hash::from_reader`, taking an async reader plus an explicit length instead of a `tokio::fs::File` (<https://github.com/quiltdata/quilt-rs/pull/785>)
+
 ## [v0.33.0] - 2026-07-14
 
 ### Added

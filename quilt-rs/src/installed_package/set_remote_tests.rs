@@ -12,6 +12,7 @@ use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
 use crate::manifest::ManifestHeader;
+use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 use crate::workflow::RuleViolation;
 use crate::workflow::WorkflowValidationError;
@@ -171,7 +172,7 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
             _source_path: impl AsRef<std::path::Path>,
             _dest_uri: &S3Uri,
             _size: u64,
-        ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
+        ) -> Res<(S3Uri, ObjectHash)> {
             unreachable!("test only exercises verify_bucket")
         }
         async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {

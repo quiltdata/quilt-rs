@@ -7,6 +7,7 @@ use reqwest::header::ToStrError;
 use thiserror::Error;
 
 use crate::io::remote::HostChecksums;
+use crate::object_hash::Error as ObjectHashError;
 use crate::workflow::WorkflowValidationError;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
@@ -128,17 +129,8 @@ pub enum ChecksumError {
     #[error("Malformed checksum: {0}")]
     Malformed(String),
 
-    #[error("Invalid multihash: {0}")]
-    InvalidMultihash(String),
-
     #[error("Failed to get checksum from S3: {0}")]
     NoS3Checksum(String),
-
-    #[error("Multihash error: {0}")]
-    Multihash(#[from] multihash::Error),
-
-    #[error("Multibase error: {0}")]
-    Multibase(#[from] multibase::Error),
 }
 
 #[derive(Error, Debug)]
@@ -287,6 +279,9 @@ pub enum Error {
     Manifest(#[from] ManifestError),
 
     #[error(transparent)]
+    ObjectHash(#[from] ObjectHashError),
+
+    #[error(transparent)]
     PackageOp(#[from] PackageOpError),
 
     #[error("Reqwest error: {0}")]
@@ -336,13 +331,13 @@ impl Error {
 
 impl From<multihash::Error> for Error {
     fn from(err: multihash::Error) -> Self {
-        Error::Checksum(ChecksumError::Multihash(err))
+        Error::ObjectHash(err.into())
     }
 }
 
 impl From<multibase::Error> for Error {
     fn from(err: multibase::Error) -> Self {
-        Error::Checksum(ChecksumError::Multibase(err))
+        Error::ObjectHash(err.into())
     }
 }
 

@@ -290,14 +290,14 @@ mod tests {
 
     use aws_sdk_s3::primitives::ByteStream;
 
-    use crate::checksum::Crc64Hash;
-    use crate::checksum::Sha256ChunkedHash;
     use crate::fixtures;
     use crate::io::remote::HostChecksums;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
     use crate::lineage::UpstreamState;
+    use crate::object_hash::Crc64Hash;
+    use crate::object_hash::Sha256ChunkedHash;
     use quilt_uri::ManifestUri;
 
     /// Helper to create a `PackageLineage` with a dummy remote (avoids Local state).

@@ -7,15 +7,12 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use std::fmt;
-use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
-use crate::Error;
-use crate::Res;
-use crate::checksum::Sha256Hash;
-use crate::checksum::hash::Hash;
-use crate::error::ChecksumError;
+use crate::object_hash::Sha256Hash;
+use crate::object_hash::error::Error;
+use crate::object_hash::hash::Hash;
 
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
@@ -51,15 +48,27 @@ pub struct Sha256ChunkedHash(Multihash<256>);
 
 impl Sha256ChunkedHash {
     /// Calculates chunksum from any async reader with known length
-    pub async fn from_async_read<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Res<Self> {
+    pub async fn from_async_read<F: AsyncRead + Unpin + Send>(
+        file: F,
+        length: u64,
+    ) -> Result<Self, Error> {
         let (chunksize, num_parts) = chunksize_and_parts(length);
 
         let mut sha256_hasher = ChecksumAlgorithm::Sha256.into_impl();
 
+        // Cap each chunk to the bytes still owed for the declared `length`, not
+        // a full `chunksize`. For a reader that EOFs exactly at `length` (a file
+        // handle) the last chunk reads the same bytes either way; but a reader
+        // that yields past `length` (a stream, a slice of a larger buffer) would
+        // otherwise let the final chunk over-read and hash bytes outside the
+        // object, producing a checksum that disagrees with the manifest / S3.
         let mut chunk = file.take(0);
+        let mut remaining = length;
         for _ in 0..num_parts {
-            chunk.set_limit(chunksize);
+            let part = chunksize.min(remaining);
+            chunk.set_limit(part);
             sha256_hasher.update(Sha256Hash::from_async_read(&mut chunk).await?.digest());
+            remaining -= part;
         }
 
         Ok(Self(Multihash::wrap(
@@ -69,16 +78,19 @@ impl Sha256ChunkedHash {
     }
 }
 
-impl crate::checksum::Hash for Sha256ChunkedHash {
+impl crate::object_hash::Hash for Sha256ChunkedHash {
     /// Get the inner multihash
     fn multihash(&self) -> &Multihash<256> {
         &self.0
     }
 
-    /// Calculates chunksum from a file
-    async fn from_file(file: File) -> Res<Self> {
-        let length = file.metadata().await?.len();
-        Self::from_async_read(file, length).await
+    /// Calculates chunksum from an async reader of `length` bytes.
+    /// `length` drives the multipart chunk boundaries.
+    async fn from_reader<R: AsyncRead + Unpin + Send>(
+        reader: R,
+        length: u64,
+    ) -> Result<Self, Error> {
+        Self::from_async_read(reader, length).await
     }
 }
 
@@ -96,11 +108,11 @@ impl TryFrom<Multihash<256>> for Sha256ChunkedHash {
         if hash.code() == MULTIHASH_SHA256_CHUNKED {
             Ok(Self(hash))
         } else {
-            Err(Error::Checksum(ChecksumError::InvalidMultihash(format!(
+            Err(Error::InvalidMultihash(format!(
                 "Expected SHA256 chunked hash (code {:#06x}), got code {:#06x}",
                 MULTIHASH_SHA256_CHUNKED,
                 hash.code()
-            ))))
+            )))
         }
     }
 }
@@ -339,6 +351,26 @@ mod tests {
         assert_eq!(
             base64::encode(hash.digest()),
             crate::fixtures::objects::MORE_THAN_8MB_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_from_async_read_stops_at_declared_length() -> crate::Res {
+        // A reader that yields bytes past the declared `length` (a stream, or a
+        // slice of a larger buffer) must hash only the first `length` bytes: the
+        // final chunk must not over-read into the trailing bytes. Declaring the
+        // object length over a padded reader must reproduce the object's hash.
+        let object = crate::fixtures::objects::less_than_8mb();
+        let mut padded = object.to_vec();
+        padded.extend_from_slice(b"trailing bytes that are not part of the object");
+
+        let hash =
+            Sha256ChunkedHash::from_async_read(padded.as_slice(), object.len() as u64).await?;
+
+        assert_eq!(
+            base64::encode(hash.digest()),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
         Ok(())
     }

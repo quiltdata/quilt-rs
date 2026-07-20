@@ -20,11 +20,11 @@ use tokio::io::BufReader;
 
 use crate::Error;
 use crate::Res;
-use crate::checksum;
 use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
+use crate::object_hash;
 
 /// Header (or first row) in JSONL manifest
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
@@ -52,7 +52,7 @@ impl Default for ManifestHeader {
 struct Quilt3ManifestRow {
     pub logical_key: PathBuf,
     pub physical_keys: Vec<String>,
-    pub hash: checksum::ObjectHash,
+    pub hash: object_hash::ObjectHash,
     // XXX: u64 cannot be safely deserialized by standard JS json parser,
     //      which treats numbers as 64-bit floats.
     //      However, having file size more than ~9PB (max safe/lossless integer - 53 bits)
@@ -87,7 +87,7 @@ pub struct ManifestRow {
     pub logical_key: PathBuf,
     // XXX: use Url to have validated string?
     pub physical_key: String,
-    pub hash: checksum::ObjectHash,
+    pub hash: object_hash::ObjectHash,
     pub size: u64,
     pub meta: Option<serde_json::Value>,
 }
@@ -286,14 +286,14 @@ mod tests {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
+            hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "B".to_string(),
-            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
+            hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
@@ -308,14 +308,14 @@ mod tests {
         let left = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "FOO".to_string(),
-            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
+            hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: Some(serde_json::Value::Object(meta)),
         };
         let right = ManifestRow {
             logical_key: PathBuf::from("A"),
             physical_key: "BAR".to_string(),
-            hash: checksum::Sha256Hash::try_from("deadbeef")?.into(),
+            hash: object_hash::Sha256Hash::try_from("deadbeef")?.into(),
             size: 1,
             meta: None,
         };
@@ -464,7 +464,7 @@ mod tests {
                         logical_key: PathBuf::from("e0-0.txt".to_string()),
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-0.txt?versionId=jHb6DGN43Ex7EhbxZc2G9JnAkWSeTfEY".to_string(),
                         size: 29,
-                        hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
+                        hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
                         meta: Some(serde_json::json!({})),
                     }
         );
@@ -474,7 +474,7 @@ mod tests {
                         logical_key: PathBuf::from("e0-9.txt".to_string()),
                         physical_key: "s3://data-yaml-spec-tests/scale/10u/e0-9.txt?versionId=T5tkWkC.7PVcpiFYRoCQKhhKC249fdBC".to_string(),
                         size: 29,
-                        hash: checksum::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
+                        hash: object_hash::Sha256ChunkedHash::try_from("/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=")?.into(),
                         meta: Some(serde_json::json!({})),
                     }
         );

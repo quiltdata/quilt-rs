@@ -1519,7 +1519,7 @@ workflows:
         use std::os::unix::ffi::OsStrExt;
         use std::path::PathBuf;
 
-        use crate::checksum::ObjectHash;
+        use crate::object_hash::ObjectHash;
 
         // A logical key with an invalid UTF-8 byte must project as the lossy
         // form (U+FFFD replacement character), not as a fabricated empty key.

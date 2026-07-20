@@ -15,7 +15,7 @@ use aws_sdk_s3::types::Object;
 use tokio_stream::Stream;
 
 use crate::Res;
-use crate::checksum::ObjectHash;
+use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
 

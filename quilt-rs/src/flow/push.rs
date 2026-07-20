@@ -1098,7 +1098,7 @@ mod tests {
                 .insert_record(ManifestRow {
                     logical_key: PathBuf::from(format!("e0-{i}.txt")),
                     physical_key: format!("file://{}", file_path.display()),
-                    hash: crate::checksum::Sha256ChunkedHash::try_from(
+                    hash: crate::object_hash::Sha256ChunkedHash::try_from(
                         "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=",
                     )?
                     .into(),

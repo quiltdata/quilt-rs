@@ -6,15 +6,15 @@ use aws_sdk_s3::types::ChecksumAlgorithm;
 
 use crate::Error;
 use crate::Res;
-use crate::checksum::Crc64Hash;
-use crate::checksum::ObjectHash;
-use crate::checksum::Sha256ChunkedHash;
 use crate::error::ChecksumError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::describe_sdk_error;
+use crate::object_hash::Crc64Hash;
+use crate::object_hash::ObjectHash;
+use crate::object_hash::Sha256ChunkedHash;
 use quilt_uri::S3Uri;
 
 fn extract_sha256_checksum(output: &PutObjectOutput) -> Res<Option<ObjectHash>> {

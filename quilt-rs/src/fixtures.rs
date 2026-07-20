@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
 use aws_smithy_types::base64;
 use multihash::Multihash;
 

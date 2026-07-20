@@ -11,6 +11,7 @@ use crate::io::storage::StorageExt;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
+use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 
 #[test(tokio::test)]
@@ -448,7 +449,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _source_path: impl AsRef<std::path::Path>,
         _dest_uri: &S3Uri,
         _size: u64,
-    ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
+    ) -> Res<(S3Uri, ObjectHash)> {
         Err(Error::Login(LoginError::Required(None)))
     }
     async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {
