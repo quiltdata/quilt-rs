@@ -3,7 +3,7 @@ name = "quilt-rs"
 description = "Rust library for accessing Quilt data packages."
 
 # Inherit from workspace
-version = "0.34.0-alpha1"
+version = "0.34.0-alpha2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

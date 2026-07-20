@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.0-alpha2] - 2026-07-20
+
+### Removed
+
+- The unused `object_hash::hash_sha256_checksum` helper (<https://github.com/quiltdata/quilt-rs/pull/786>)
+
 ## [v0.34.0-alpha1] - 2026-07-20
 
 ### Changed
