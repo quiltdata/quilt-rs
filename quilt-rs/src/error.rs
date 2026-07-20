@@ -7,6 +7,7 @@ use reqwest::header::ToStrError;
 use thiserror::Error;
 
 use crate::io::remote::HostChecksums;
+use crate::object_hash::Error as ObjectHashError;
 use crate::workflow::WorkflowValidationError;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
@@ -278,7 +279,7 @@ pub enum Error {
     Manifest(#[from] ManifestError),
 
     #[error(transparent)]
-    ObjectHash(#[from] crate::object_hash::Error),
+    ObjectHash(#[from] ObjectHashError),
 
     #[error(transparent)]
     PackageOp(#[from] PackageOpError),
