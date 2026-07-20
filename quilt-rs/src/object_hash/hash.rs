@@ -2,7 +2,7 @@
 use std::future::Future;
 
 use multihash::Multihash;
-use tokio::fs::File;
+use tokio::io::AsyncRead;
 
 use crate::object_hash::error::Result;
 
@@ -21,8 +21,16 @@ pub trait Hash {
         self.multihash().digest()
     }
 
-    /// Calculate hash from a file
-    fn from_file(file: File) -> impl Future<Output = Result<Self>> + Send
+    /// Calculate hash from an async reader of `length` bytes.
+    ///
+    /// `length` is required by chunked algorithms to derive multipart chunk
+    /// boundaries; algorithms that hash the whole stream ignore it. The caller
+    /// supplies the length (e.g. from file metadata) since a reader does not
+    /// carry one.
+    fn from_reader<R: AsyncRead + Unpin + Send>(
+        reader: R,
+        length: u64,
+    ) -> impl Future<Output = Result<Self>> + Send
     where
         Self: Sized;
 }

@@ -7,7 +7,6 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use std::fmt;
-use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
@@ -45,9 +44,13 @@ impl Hash for Sha256Hash {
         &self.0
     }
 
-    /// Calculates legacy or single-chunk checksum from file
-    async fn from_file(file: File) -> Result<Self, Error> {
-        Self::from_async_read(file).await
+    /// Calculates legacy or single-chunk checksum from an async reader.
+    /// `length` is unused: the whole stream is hashed regardless of size.
+    async fn from_reader<R: AsyncRead + Unpin + Send>(
+        reader: R,
+        _length: u64,
+    ) -> Result<Self, Error> {
+        Self::from_async_read(reader).await
     }
 }
 

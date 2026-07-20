@@ -379,15 +379,17 @@ mod tests {
             .write_byte_stream(test_path, ByteStream::from_static(test_data))
             .await?;
 
-        // Test Hash trait implementation and consistent from_file signatures
-        let file = storage.open_file(test_path).await?;
-        let sha256_hash: Sha256Hash = <Sha256Hash as Hash>::from_file(file).await?;
+        // Test Hash trait implementation and consistent from_reader signatures
+        let length = test_data.len() as u64;
 
         let file = storage.open_file(test_path).await?;
-        let sha256_chunked_hash = <Sha256ChunkedHash as Hash>::from_file(file).await?;
+        let sha256_hash: Sha256Hash = <Sha256Hash as Hash>::from_reader(file, length).await?;
 
         let file = storage.open_file(test_path).await?;
-        let crc64_hash = <Crc64Hash as Hash>::from_file(file).await?;
+        let sha256_chunked_hash = <Sha256ChunkedHash as Hash>::from_reader(file, length).await?;
+
+        let file = storage.open_file(test_path).await?;
+        let crc64_hash = <Crc64Hash as Hash>::from_reader(file, length).await?;
 
         // Test Hash trait methods
         assert_eq!(sha256_hash.algorithm(), MULTIHASH_SHA256);

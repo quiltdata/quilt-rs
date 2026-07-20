@@ -7,7 +7,6 @@ use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use std::fmt;
-use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
@@ -73,10 +72,13 @@ impl crate::object_hash::Hash for Sha256ChunkedHash {
         &self.0
     }
 
-    /// Calculates chunksum from a file
-    async fn from_file(file: File) -> Result<Self, Error> {
-        let length = file.metadata().await?.len();
-        Self::from_async_read(file, length).await
+    /// Calculates chunksum from an async reader of `length` bytes.
+    /// `length` drives the multipart chunk boundaries.
+    async fn from_reader<R: AsyncRead + Unpin + Send>(
+        reader: R,
+        length: u64,
+    ) -> Result<Self, Error> {
+        Self::from_async_read(reader, length).await
     }
 }
 
