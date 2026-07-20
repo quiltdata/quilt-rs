@@ -238,8 +238,8 @@ mod tests {
     use aws_sdk_s3::primitives::ByteStream;
     use aws_smithy_types::base64;
 
-    use crate::object_hash::Sha256ChunkedHash;
     use crate::io::storage::mocks::MockStorage;
+    use crate::object_hash::Sha256ChunkedHash;
     use quilt_uri::ManifestUri;
 
     #[test]

@@ -20,11 +20,11 @@ use tokio::io::BufReader;
 
 use crate::Error;
 use crate::Res;
-use crate::object_hash;
 use crate::error::ManifestError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::StreamRowsChunk;
 use crate::io::storage::ByteStream;
+use crate::object_hash;
 
 /// Header (or first row) in JSONL manifest
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]

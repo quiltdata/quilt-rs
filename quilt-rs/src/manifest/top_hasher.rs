@@ -159,12 +159,12 @@ mod tests {
     use test_log::test;
 
     use crate::Res;
-    use crate::object_hash::Crc64Hash;
-    use crate::object_hash::Sha256ChunkedHash;
-    use crate::object_hash::Sha256Hash;
     use crate::fixtures;
     use crate::fixtures::objects;
     use crate::fixtures::top_hash;
+    use crate::object_hash::Crc64Hash;
+    use crate::object_hash::Sha256ChunkedHash;
+    use crate::object_hash::Sha256Hash;
 
     #[test]
     fn test_manifest_header_default_no_rows() -> Res {

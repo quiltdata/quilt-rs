@@ -10,8 +10,8 @@ use std::fmt;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
-use crate::object_hash::error::Error;
 use crate::object_hash::Sha256Hash;
+use crate::object_hash::error::Error;
 use crate::object_hash::hash::Hash;
 
 /// Multihash code for chunksums
@@ -48,7 +48,10 @@ pub struct Sha256ChunkedHash(Multihash<256>);
 
 impl Sha256ChunkedHash {
     /// Calculates chunksum from any async reader with known length
-    pub async fn from_async_read<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Result<Self, Error> {
+    pub async fn from_async_read<F: AsyncRead + Unpin + Send>(
+        file: F,
+        length: u64,
+    ) -> Result<Self, Error> {
         let (chunksize, num_parts) = chunksize_and_parts(length);
 
         let mut sha256_hasher = ChecksumAlgorithm::Sha256.into_impl();

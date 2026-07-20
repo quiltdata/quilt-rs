@@ -122,8 +122,9 @@ mod tests {
             .await?;
 
         let file = storage.open_file(file_path).await?;
-        let hash: Multihash<256> =
-            Sha256Hash::from_reader(file, file_content.len() as u64).await?.into();
+        let hash: Multihash<256> = Sha256Hash::from_reader(file, file_content.len() as u64)
+            .await?
+            .into();
 
         let manifest_row = ManifestRow {
             logical_key: PathBuf::from("bar"),
@@ -148,8 +149,9 @@ mod tests {
 
         // Calculate the actual hash first
         let file = storage.open_file(file_path).await?;
-        let hash: Multihash<256> =
-            Sha256Hash::from_reader(file, file_content.len() as u64).await?.into();
+        let hash: Multihash<256> = Sha256Hash::from_reader(file, file_content.len() as u64)
+            .await?
+            .into();
 
         // Test with wrong hash - should return updated ManifestRow
         let wrong_hash = Multihash::wrap(MULTIHASH_SHA256, b"wrong_hash_data")?;

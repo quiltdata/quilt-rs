@@ -11,8 +11,8 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
 
-pub mod error;
 mod crc64nvme;
+pub mod error;
 mod hash;
 mod remote;
 mod sha256;
