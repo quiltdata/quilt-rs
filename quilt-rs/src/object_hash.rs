@@ -14,7 +14,6 @@ use std::fmt;
 mod crc64nvme;
 pub mod error;
 mod hash;
-mod remote;
 mod sha256;
 mod sha256_chunked;
 
@@ -22,7 +21,6 @@ pub use crc64nvme::Crc64Hash;
 pub use crc64nvme::MULTIHASH_CRC64_NVME;
 pub use error::Error;
 pub use hash::Hash;
-pub use remote::hash_sha256_checksum;
 pub use sha256::MULTIHASH_SHA256;
 pub use sha256::Sha256Hash;
 pub use sha256_chunked::MULTIHASH_SHA256_CHUNKED;
