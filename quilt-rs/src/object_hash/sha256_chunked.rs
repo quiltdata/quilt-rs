@@ -56,10 +56,19 @@ impl Sha256ChunkedHash {
 
         let mut sha256_hasher = ChecksumAlgorithm::Sha256.into_impl();
 
+        // Cap each chunk to the bytes still owed for the declared `length`, not
+        // a full `chunksize`. For a reader that EOFs exactly at `length` (a file
+        // handle) the last chunk reads the same bytes either way; but a reader
+        // that yields past `length` (a stream, a slice of a larger buffer) would
+        // otherwise let the final chunk over-read and hash bytes outside the
+        // object, producing a checksum that disagrees with the manifest / S3.
         let mut chunk = file.take(0);
+        let mut remaining = length;
         for _ in 0..num_parts {
-            chunk.set_limit(chunksize);
+            let part = chunksize.min(remaining);
+            chunk.set_limit(part);
             sha256_hasher.update(Sha256Hash::from_async_read(&mut chunk).await?.digest());
+            remaining -= part;
         }
 
         Ok(Self(Multihash::wrap(
@@ -342,6 +351,26 @@ mod tests {
         assert_eq!(
             base64::encode(hash.digest()),
             crate::fixtures::objects::MORE_THAN_8MB_HASH_B64
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_from_async_read_stops_at_declared_length() -> crate::Res {
+        // A reader that yields bytes past the declared `length` (a stream, or a
+        // slice of a larger buffer) must hash only the first `length` bytes: the
+        // final chunk must not over-read into the trailing bytes. Declaring the
+        // object length over a padded reader must reproduce the object's hash.
+        let object = crate::fixtures::objects::less_than_8mb();
+        let mut padded = object.to_vec();
+        padded.extend_from_slice(b"trailing bytes that are not part of the object");
+
+        let hash =
+            Sha256ChunkedHash::from_async_read(padded.as_slice(), object.len() as u64).await?;
+
+        assert_eq!(
+            base64::encode(hash.digest()),
+            crate::fixtures::objects::LESS_THAN_8MB_HASH_B64
         );
         Ok(())
     }
