@@ -20,7 +20,7 @@ use crate::Error;
 use crate::Res;
 use crate::auth;
 use crate::auth::OAuthParams;
-use crate::checksum::ObjectHash;
+use crate::object_hash::ObjectHash;
 use crate::error::LoginError;
 use crate::error::RemoteCatalogError;
 use crate::error::S3Error;

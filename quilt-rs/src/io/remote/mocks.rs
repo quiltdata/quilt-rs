@@ -7,8 +7,8 @@ use aws_sdk_s3::primitives::ByteStream;
 use tracing::log;
 
 use crate::Error;
-use crate::checksum::ObjectHash;
-use crate::checksum::Sha256ChunkedHash;
+use crate::object_hash::ObjectHash;
+use crate::object_hash::Sha256ChunkedHash;
 use crate::error::FsError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;

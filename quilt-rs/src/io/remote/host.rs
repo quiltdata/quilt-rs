@@ -6,8 +6,8 @@ use serde::Deserialize;
 
 use crate::Error;
 use crate::Res;
-use crate::checksum::MULTIHASH_CRC64_NVME;
-use crate::checksum::MULTIHASH_SHA256_CHUNKED;
+use crate::object_hash::MULTIHASH_CRC64_NVME;
+use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
 use crate::error::RemoteCatalogError;
 use crate::io::remote::client::HttpClient;
 use quilt_uri::Host;

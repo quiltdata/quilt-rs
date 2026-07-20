@@ -448,7 +448,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _source_path: impl AsRef<std::path::Path>,
         _dest_uri: &S3Uri,
         _size: u64,
-    ) -> Res<(S3Uri, crate::checksum::ObjectHash)> {
+    ) -> Res<(S3Uri, crate::object_hash::ObjectHash)> {
         Err(Error::Login(LoginError::Required(None)))
     }
     async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {

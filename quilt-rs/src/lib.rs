@@ -11,6 +11,7 @@ pub mod junk;
 pub mod lineage;
 mod local_domain;
 pub mod manifest;
+pub mod object_hash;
 pub mod paths;
 pub mod quiltignore;
 pub mod workflow;

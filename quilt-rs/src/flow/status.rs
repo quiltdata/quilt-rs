@@ -290,8 +290,8 @@ mod tests {
 
     use aws_sdk_s3::primitives::ByteStream;
 
-    use crate::checksum::Crc64Hash;
-    use crate::checksum::Sha256ChunkedHash;
+    use crate::object_hash::Crc64Hash;
+    use crate::object_hash::Sha256ChunkedHash;
     use crate::fixtures;
     use crate::io::remote::HostChecksums;
     use crate::io::storage::mocks::MockStorage;

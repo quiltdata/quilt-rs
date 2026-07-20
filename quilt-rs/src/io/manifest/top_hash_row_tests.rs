@@ -7,9 +7,9 @@ use super::*;
 
 use test_log::test;
 
-use crate::checksum::Crc64Hash;
-use crate::checksum::Sha256ChunkedHash;
-use crate::checksum::Sha256Hash;
+use crate::object_hash::Crc64Hash;
+use crate::object_hash::Sha256ChunkedHash;
+use crate::object_hash::Sha256Hash;
 use crate::fixtures::objects;
 use crate::fixtures::top_hash;
 use crate::io::storage::LocalStorage;

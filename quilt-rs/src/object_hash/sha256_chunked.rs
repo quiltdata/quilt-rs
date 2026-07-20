@@ -11,11 +11,9 @@ use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 
-use crate::Error;
-use crate::Res;
-use crate::checksum::Sha256Hash;
-use crate::checksum::hash::Hash;
-use crate::error::ChecksumError;
+use crate::object_hash::error::Error;
+use crate::object_hash::Sha256Hash;
+use crate::object_hash::hash::Hash;
 
 /// Multihash code for chunksums
 pub const MULTIHASH_SHA256_CHUNKED: u64 = 0xb510;
@@ -51,7 +49,7 @@ pub struct Sha256ChunkedHash(Multihash<256>);
 
 impl Sha256ChunkedHash {
     /// Calculates chunksum from any async reader with known length
-    pub async fn from_async_read<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Res<Self> {
+    pub async fn from_async_read<F: AsyncRead + Unpin + Send>(file: F, length: u64) -> Result<Self, Error> {
         let (chunksize, num_parts) = chunksize_and_parts(length);
 
         let mut sha256_hasher = ChecksumAlgorithm::Sha256.into_impl();
@@ -69,14 +67,14 @@ impl Sha256ChunkedHash {
     }
 }
 
-impl crate::checksum::Hash for Sha256ChunkedHash {
+impl crate::object_hash::Hash for Sha256ChunkedHash {
     /// Get the inner multihash
     fn multihash(&self) -> &Multihash<256> {
         &self.0
     }
 
     /// Calculates chunksum from a file
-    async fn from_file(file: File) -> Res<Self> {
+    async fn from_file(file: File) -> Result<Self, Error> {
         let length = file.metadata().await?.len();
         Self::from_async_read(file, length).await
     }
@@ -96,11 +94,11 @@ impl TryFrom<Multihash<256>> for Sha256ChunkedHash {
         if hash.code() == MULTIHASH_SHA256_CHUNKED {
             Ok(Self(hash))
         } else {
-            Err(Error::Checksum(ChecksumError::InvalidMultihash(format!(
+            Err(Error::InvalidMultihash(format!(
                 "Expected SHA256 chunked hash (code {:#06x}), got code {:#06x}",
                 MULTIHASH_SHA256_CHUNKED,
                 hash.code()
-            ))))
+            )))
         }
     }
 }
