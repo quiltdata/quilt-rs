@@ -4,7 +4,7 @@ use std::future::Future;
 use multihash::Multihash;
 use tokio::io::AsyncRead;
 
-use crate::object_hash::error::Result;
+use crate::object_hash::error::Error;
 
 /// This trait ensures all hash types provide consistent access to the underlying multihash
 pub trait Hash {
@@ -30,7 +30,7 @@ pub trait Hash {
     fn from_reader<R: AsyncRead + Unpin + Send>(
         reader: R,
         length: u64,
-    ) -> impl Future<Output = Result<Self>> + Send
+    ) -> impl Future<Output = Result<Self, Error>> + Send
     where
         Self: Sized;
 }

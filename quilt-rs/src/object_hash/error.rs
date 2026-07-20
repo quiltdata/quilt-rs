@@ -18,6 +18,3 @@ pub enum Error {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
-
-/// Result alias for object-hash operations.
-pub type Result<T = ()> = std::result::Result<T, Error>;
