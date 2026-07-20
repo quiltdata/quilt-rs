@@ -24,7 +24,7 @@ opener = { version = "0.8.5", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
 quilt-uri = { path = "../../quilt-uri" }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
-rust-i18n = "4.2.0"
+rust-i18n = "4.2.1"
 semver = "1.0.28"
 sentry = { version = "0.48.5", features = ["tracing"] }
 mixpanel-rs = "0.3.1"
