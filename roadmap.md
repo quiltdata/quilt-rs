@@ -2,7 +2,7 @@
 
 ## How we scope work — build vs. borrow
 
-> Vision: see the QuiltSync README.
+> Vision: see the [QuiltSync README](quilt-sync/README.md).
 
 We build the one hard, unique part ourselves and borrow the rest from two
 systems that already do it well.
