@@ -1,5 +1,13 @@
 use crate::telemetry::prelude::*;
 
+// TODO: replace this fluent ZST with an extension trait on `Result` —
+// `trait NotifyResult<E> { fn notify(self, ok_msg: String, err_fn: impl FnOnce(&E) -> String) -> Result<String, String>; }`
+// implemented for `Result<T, E>`, logging the init line explicitly at the call
+// site (`debug!("{msg_init}"); op().await.notify(ok, err)`). This drops the ZST,
+// the unused `self` on `map`, and its `#[allow(clippy::unused_self)]`, at the
+// cost of splitting the ~25 one-liner call sites into an explicit `debug!` +
+// `.notify(...)`. The ZST exists only to log init before the op runs (receiver
+// evaluated before args); the trait moves that ordering into an explicit line.
 pub struct Notify;
 
 impl Notify {
