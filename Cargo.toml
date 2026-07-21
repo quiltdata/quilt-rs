@@ -23,8 +23,6 @@ must_use_candidate = "allow"
 module_name_repetitions = "allow"
 # Sometimes intentional for trait/API symmetry.
 ref_option = "allow"
-# Architectural — would require Box::pin sprinkled everywhere.
-large_futures = "allow"
 
 [workspace.dependencies]
 base64 = "0.22.1"

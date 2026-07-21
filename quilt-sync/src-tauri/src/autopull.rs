@@ -122,7 +122,10 @@ impl Watcher {
                 tokio::time::sleep(cadence).await;
                 task_inner.aggregator.note_tick_started();
                 let model_state = app_handle.state::<Model>();
-                match run_once(&*model_state, &task_inner).await {
+                // Box the tick future: it is the largest in the app (>18.5 KiB
+                // of state) and lives on the spawn task's stack across every
+                // iteration of this loop. See `clippy.toml`.
+                match Box::pin(run_once(&*model_state, &task_inner)).await {
                     Ok(()) => task_inner.aggregator.note_tick_ended_ok(),
                     Err(err) => {
                         warn!("autosync: tick error: {err}");

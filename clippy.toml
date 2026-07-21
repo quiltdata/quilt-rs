@@ -1,0 +1,8 @@
+# `clippy::large_futures` flags futures whose state machine exceeds this many
+# bytes (default 16384 = 16 KiB), suggesting `Box::pin`. Our command/flow
+# futures cluster up to ~18.2 KiB, above the 16 KiB default. Rather than box
+# that whole cluster (whack-a-mole for a negligible stack saving), the budget
+# sits just above it at 18 KiB so the lint still fires on genuine outliers.
+# The two futures that exceed it (the autosync tick and the publish command)
+# are `Box::pin`-ed at their call sites.
+future-size-threshold = 18500

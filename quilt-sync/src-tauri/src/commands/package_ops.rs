@@ -181,7 +181,10 @@ pub async fn package_publish(
     namespace: String,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
-    let result = package_publish_command(&m, &settings, &namespace).await;
+    // Box the publish future: it exceeds the 18.5 KiB `large_futures`
+    // budget (see `clippy.toml`) — commit + push chained in one state
+    // machine.
+    let result = Box::pin(package_publish_command(&m, &settings, &namespace)).await;
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
     }
