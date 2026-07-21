@@ -22,6 +22,10 @@ pub struct SetRemotePopupData {
 
 #[component]
 #[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 pub fn SetRemotePopup(
     namespace: String,
     current_host: Option<String>,

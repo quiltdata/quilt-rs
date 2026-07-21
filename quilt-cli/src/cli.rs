@@ -200,6 +200,10 @@ enum Commands {
     },
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "cohesive top-level CLI command dispatch"
+)]
 pub async fn init(args: Args) -> Result<Std, Error> {
     // NOTE: every command should have some domain,
     //       because domain stores credentials

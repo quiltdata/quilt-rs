@@ -13,6 +13,10 @@ use crate::util::make_action;
 // ── Main content ──
 
 #[component]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 pub(super) fn InstalledPackageContent(
     data: InstalledPackageData,
     notification: RwSignal<Option<Notification>>,

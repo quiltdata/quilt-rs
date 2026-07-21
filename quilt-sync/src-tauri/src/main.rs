@@ -43,6 +43,7 @@ type Result<T = ()> = std::result::Result<T, Error>;
 
 rust_i18n::i18n!("locales");
 
+#[allow(clippy::too_many_lines, reason = "Tauri app builder and setup wiring")]
 fn main() {
     env::init();
 

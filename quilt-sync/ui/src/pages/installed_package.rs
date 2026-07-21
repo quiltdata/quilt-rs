@@ -19,6 +19,10 @@ use crate::tauri as tauri_bridge;
 // ── Installed Package page ──
 
 #[component]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 pub fn InstalledPackage() -> impl IntoView {
     let query = use_query_map();
 

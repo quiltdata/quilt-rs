@@ -255,6 +255,7 @@ fn workflows_config_to_commit_workflows(
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "cohesive commit-data assembly")]
 async fn get_commit_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,

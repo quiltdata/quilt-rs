@@ -129,6 +129,10 @@ fn EntriesFilter(
 // ── Entry row ──
 
 #[component]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 pub(super) fn EntryRow(
     index: usize,
     entry: EntryData,
