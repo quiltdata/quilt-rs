@@ -22,6 +22,10 @@ enum IgnoreHint {
 
 #[component]
 #[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 pub fn IgnorePopup(
     data: IgnorePopupData,
     notification: RwSignal<Option<Notification>>,

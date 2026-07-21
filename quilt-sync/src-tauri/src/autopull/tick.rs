@@ -266,6 +266,7 @@ fn bump_backoff(
     entry.next_attempt = now + backoff_duration(entry.consecutive_failures);
 }
 
+#[allow(clippy::too_many_lines, reason = "cohesive autosync tick sequence")]
 pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> Result<(), Error> {
     // Cheap pre-check: if both directions are off we have nothing to
     // do. Per-direction gating lives inside `refresh_then_maybe_sync`

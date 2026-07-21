@@ -1,4 +1,11 @@
 #![doc = include_str!("../README.md")]
+// `test_log`'s `#[test]` macro injects an init statement before the body, so it
+// trips `items_after_statements` on leading `use`s/items in test fns. Enforce
+// the lint in production; allow it only under `cfg(test)`.
+#![cfg_attr(test, allow(clippy::items_after_statements))]
+// Test fns return `Res` and end in `Ok(())` so the body can use `?`; that trips
+// `unnecessary_wraps` in tests only. Enforce it in production, allow under test.
+#![cfg_attr(test, allow(clippy::unnecessary_wraps))]
 
 pub mod flow;
 

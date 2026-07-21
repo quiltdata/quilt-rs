@@ -107,6 +107,10 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "large integration test; allowed per-test so new large tests stay flagged"
+    )]
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         use crate::cli::fixtures::packages::default as pkg;

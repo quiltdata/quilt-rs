@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use leptos::html;
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use quilt_uri::S3PackageUri;
@@ -339,7 +340,7 @@ fn CommitContent(
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
                         &format!("/installed-package?namespace={ns}&filter=unmodified"),
-                        Default::default(),
+                        NavigateOptions::default(),
                     );
                 }
                 Err(e) => {
@@ -592,7 +593,7 @@ fn build_toolbar_actions(
                 match commands::package_uninstall(ns).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
-                        navigate("/installed-packages-list", Default::default());
+                        navigate("/installed-packages-list", NavigateOptions::default());
                     }
                     Err(e) => {
                         ui_locked.set(false);

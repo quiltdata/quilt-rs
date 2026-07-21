@@ -12,6 +12,10 @@ use crate::util::make_action;
 // moves them into the component); `status` is only pattern-matched against
 // literals, which cannot consume a `String`.
 #[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 pub(super) fn StatusBanner(
     namespace: String,
     status: String,

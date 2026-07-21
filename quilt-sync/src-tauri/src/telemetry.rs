@@ -38,7 +38,7 @@ impl Telemetry {
         }
     }
 
-    pub fn init_file_logging(&self, base_path: &std::path::Path) -> Result<LogsDir> {
+    pub fn init_file_logging(base_path: &std::path::Path) -> Result<LogsDir> {
         tracing::init_file_logging(base_path)
     }
 
@@ -63,7 +63,7 @@ impl Telemetry {
     }
 
     /// Returns the current global maximum log level as a human-readable string.
-    pub fn log_level(&self) -> String {
+    pub fn log_level() -> String {
         ::tracing::level_filters::LevelFilter::current().to_string()
     }
 }

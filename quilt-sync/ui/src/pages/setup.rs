@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
@@ -80,7 +81,7 @@ fn SetupContent(default_home: String) -> impl IntoView {
         leptos::task::spawn_local(async move {
             match commands::setup(directory.get_untracked()).await {
                 Ok(_) => {
-                    navigate("/installed-packages-list", Default::default());
+                    navigate("/installed-packages-list", NavigateOptions::default());
                 }
                 Err(e) => {
                     hint.set(e);

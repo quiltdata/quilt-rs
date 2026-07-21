@@ -130,6 +130,10 @@ mod tests {
     ///   * `.quilt/installed` contains the installed manifest under the namespace directory
     ///   * `.quilt/packages` contains the cached manifest under the bucket directory
     /// Uses an actual manifest from Quilt without mocks.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "large integration test; allowed per-test so new large tests stay flagged"
+    )]
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);

@@ -1,5 +1,9 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// `test_log`'s `#[test]` macro injects an init statement before the body, so it
+// trips `items_after_statements` on leading `use`s/items in test fns. Enforce
+// the lint in production; allow it only under `cfg(test)`.
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 use std::sync::Arc;
 
@@ -39,6 +43,7 @@ type Result<T = ()> = std::result::Result<T, Error>;
 
 rust_i18n::i18n!("locales");
 
+#[allow(clippy::too_many_lines, reason = "Tauri app builder and setup wiring")]
 fn main() {
     env::init();
 
@@ -79,7 +84,7 @@ fn main() {
                 .app_local_data_dir()
                 .expect("Failed to resolve data dir");
 
-            let logs_dir = telemetry.init_file_logging(&data_dir)?;
+            let logs_dir = telemetry::Telemetry::init_file_logging(&data_dir)?;
 
             telemetry.init();
 

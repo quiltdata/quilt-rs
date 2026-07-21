@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, InstalledPackageData};
@@ -64,7 +65,7 @@ pub(super) fn build_toolbar_actions(
                 match commands::package_uninstall(ns).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
-                        navigate("/installed-packages-list", Default::default());
+                        navigate("/installed-packages-list", NavigateOptions::default());
                     }
                     Err(e) => {
                         ui_locked.set(false);

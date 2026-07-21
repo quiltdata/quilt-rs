@@ -174,6 +174,10 @@ pub enum UserMeta {
 /// than unwrapping `lineage.commit`.
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "cohesive commit orchestration; clearer as a linear sequence than extracted helpers"
+)]
 pub async fn commit_package(
     mut lineage: PackageLineage,
     manifest: &mut Manifest,

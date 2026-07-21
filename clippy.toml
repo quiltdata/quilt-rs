@@ -1,0 +1,8 @@
+# `clippy::large_futures` flags a future whose state machine exceeds the byte
+# budget below, suggesting `Box::pin`. Our command/flow futures cluster just
+# above clippy's default, so rather than box that whole cluster (whack-a-mole
+# for a negligible stack saving) the budget sits just above the cluster — the
+# lint still fires on genuine outliers. Two futures exceed it and are
+# `Box::pin`-ed at their call sites: the autosync tick and the publish state
+# machine (boxing the latter also deflates its caller).
+future-size-threshold = 18500

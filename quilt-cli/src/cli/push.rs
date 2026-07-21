@@ -159,6 +159,10 @@ mod tests {
     /// feature — the only way to script the "config mutates between commit and
     /// push" scenario a live bucket cannot reproduce. It mirrors the commit-side
     /// `test_commit_rejected_by_workflow_surfaces_clear_error`.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "large integration test; allowed per-test so new large tests stay flagged"
+    )]
     #[test(tokio::test)]
     async fn test_push_rejected_by_mutated_workflow_surfaces_clear_error() -> Result<(), Error> {
         use quilt_rs::InstalledPackage;

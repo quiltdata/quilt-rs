@@ -391,6 +391,10 @@ fn PackageItem(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 fn build_package_menu(
     data: &PackageItemData,
     status: RwSignal<String>,

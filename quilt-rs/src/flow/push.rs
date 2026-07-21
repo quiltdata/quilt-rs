@@ -131,6 +131,10 @@ pub async fn push_package(
 /// redundancy. Standalone push (and the publish push-only branch, where no
 /// commit ran this operation) passes `true`.
 #[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "cohesive push orchestration; clearer as a linear sequence than extracted helpers"
+)]
 pub(crate) async fn push_package_impl(
     mut lineage: PackageLineage,
     local_manifest: Manifest,

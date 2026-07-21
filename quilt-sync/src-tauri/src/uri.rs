@@ -100,6 +100,10 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
 }
 
 /// Handle `quilt://auth/callback?code=...&host=...&redirect=...` deep link
+#[allow(
+    clippy::too_many_lines,
+    reason = "cohesive deep-link auth-callback handling"
+)]
 fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     debug!("login_with_code: parsing auth params from {}", url);
     let auth_params = parse_auth_params(url)?;
@@ -239,9 +243,10 @@ pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
 }
 
 async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
-    let mut attempts = 0;
     const MAX_ATTEMPTS: u32 = 10;
     const RETRY_DELAY_MS: u64 = 200;
+
+    let mut attempts = 0;
 
     while attempts < MAX_ATTEMPTS {
         if let Some(window) = app_handle.get_webview_window("main") {

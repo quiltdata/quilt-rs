@@ -22,6 +22,10 @@ pub struct SetRemotePopupData {
 
 #[component]
 #[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "declarative Leptos view; length is markup, not logic complexity"
+)]
 pub fn SetRemotePopup(
     namespace: String,
     current_host: Option<String>,
@@ -51,6 +55,10 @@ pub fn SetRemotePopup(
     // the popup opens immediately and we drive the loading state ourselves — a
     // disabled select plus a disabled Save button. Nothing renders off this
     // context, so the absorbed registrations are inert.
+    #[allow(
+        clippy::default_trait_access,
+        reason = "SuspenseContext.tasks is leptos's internal slotmap::SlotMap; naming it would add a `slotmap` dependency for a nitpick"
+    )]
     provide_context(SuspenseContext {
         tasks: ArcRwSignal::new(Default::default()),
     });

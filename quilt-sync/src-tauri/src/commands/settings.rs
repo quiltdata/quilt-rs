@@ -19,6 +19,7 @@ use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
+use crate::telemetry::Telemetry;
 
 // ── Settings data for Leptos UI ──
 
@@ -133,7 +134,6 @@ pub async fn get_settings_data(
     m: tauri::State<'_, model::Model>,
     app: tauri::State<'_, app::App>,
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     publish: tauri::State<'_, SharedPublishSettings>,
     autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
@@ -156,7 +156,7 @@ pub async fn get_settings_data(
         .map(|h| h.as_ref().display().to_string());
 
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
-    let log_level = tracing.log_level();
+    let log_level = Telemetry::log_level();
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());

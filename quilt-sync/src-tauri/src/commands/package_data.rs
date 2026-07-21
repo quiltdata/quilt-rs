@@ -57,6 +57,7 @@ fn manifest_message(manifest: &quilt::manifest::Manifest) -> Option<String> {
     manifest.header.message.clone()
 }
 
+#[allow(clippy::too_many_lines, reason = "cohesive package-data assembly")]
 async fn get_installed_package_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,

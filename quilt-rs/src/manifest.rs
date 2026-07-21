@@ -176,6 +176,13 @@ impl Manifest {
         Ok(Manifest { header, rows })
     }
 
+    /// Serialize the manifest to JSONL: the header line followed by one line
+    /// per row.
+    ///
+    /// # Panics
+    ///
+    /// Panics if serializing the header or a row to JSON fails, which does not
+    /// happen for well-formed manifest values.
     pub fn to_jsonlines(&self) -> String {
         // TODO: This is slightly inefficient.
         // We could use some kind of async iterator / stream idk
@@ -226,6 +233,10 @@ impl Manifest {
     /// Create a stream of rows compatible with Table API
     /// Returns a stream of Row chunks for compatibility with `io::manifest` streaming functions
     /// Sorted by `logical_key` to match `Table`'s `BTreeMap` behavior and uses proper `TryFrom` conversion
+    #[allow(
+        clippy::unused_async,
+        reason = "kept async for the streaming, Table-compatible manifest API; a streamed backend will await here"
+    )]
     pub async fn records_stream(&self) -> impl RowsStream {
         // Sort by logical_key to match Table's BTreeMap ordering
         let mut indices: Vec<usize> = (0..self.rows.len()).collect();
@@ -239,11 +250,19 @@ impl Manifest {
     }
 
     /// Get the number of records in the manifest
+    #[allow(
+        clippy::unused_async,
+        reason = "kept async for the streaming, Table-compatible manifest API; a streamed backend will await here"
+    )]
     pub async fn records_len(&self) -> usize {
         self.rows.len()
     }
 
     /// Insert a record into the manifest (for compatibility with Table API)
+    #[allow(
+        clippy::unused_async,
+        reason = "kept async for the streaming, Table-compatible manifest API; a streamed backend will await here"
+    )]
     pub async fn insert_record(&mut self, row: ManifestRow) -> Res<Option<ManifestRow>> {
         // Check if row already exists
         let existing_pos = self
