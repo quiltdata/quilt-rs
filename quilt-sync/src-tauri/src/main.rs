@@ -1,5 +1,9 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// `test_log`'s `#[test]` macro injects an init statement before the body, so it
+// trips `items_after_statements` on leading `use`s/items in test fns. Enforce
+// the lint in production; allow it only under `cfg(test)`.
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 use std::sync::Arc;
 

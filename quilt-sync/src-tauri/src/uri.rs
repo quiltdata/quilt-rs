@@ -239,9 +239,10 @@ pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
 }
 
 async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
-    let mut attempts = 0;
     const MAX_ATTEMPTS: u32 = 10;
     const RETRY_DELAY_MS: u64 = 200;
+
+    let mut attempts = 0;
 
     while attempts < MAX_ATTEMPTS {
         if let Some(window) = app_handle.get_webview_window("main") {

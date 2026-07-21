@@ -1,4 +1,8 @@
 #![doc = include_str!("../README.md")]
+// `test_log`'s `#[test]` macro injects an init statement before the body, so it
+// trips `items_after_statements` on leading `use`s/items in test fns. Enforce
+// the lint in production; allow it only under `cfg(test)`.
+#![cfg_attr(test, allow(clippy::items_after_statements))]
 
 pub mod flow;
 
