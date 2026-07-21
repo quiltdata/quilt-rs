@@ -70,6 +70,13 @@ pub struct EntryView<'a> {
     pub meta: Option<&'a Value>,
 }
 
+// TODO: revisit this projection. `PackageCandidate`/`EntryView` duplicate the
+// field names of `ManifestHeader`/`ManifestRow` (message/user_meta, and
+// logical_key/size/meta) and are built from them (see `io::remote::entry_view`).
+// Evaluate reusing the manifest types more directly (e.g. a shared trait) vs
+// keeping the projection. Kept for now so the gate stays ignorant of the
+// manifest layer (WASM / `quilt-workflow` crate-extraction readiness) and the UI
+// gets a simple borrowed shape for live validation — so it is not trivial to change.
 /// A candidate package projected to the surface the gate validates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackageCandidate<'a> {
