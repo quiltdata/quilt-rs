@@ -208,13 +208,13 @@ impl WorkflowsConfig {
     /// Whether the config declares a workflow with this id. The pure counterpart
     /// of the old `workflow_entry(id).is_some()` check, exposed so quilt-rs can
     /// gate on presence without reaching the retained raw YAML.
-    pub fn has_workflow(&self, workflow_id: &str) -> bool {
+    pub(crate) fn has_workflow(&self, workflow_id: &str) -> bool {
         self.workflow_entry(workflow_id).is_some()
     }
 
     /// The `handle_pattern` regex declared by a workflow, if any. Lenient:
     /// a non-string value degrades to `None`, matching the parser's stance.
-    pub fn handle_pattern(&self, workflow_id: &str) -> Option<String> {
+    pub(crate) fn handle_pattern(&self, workflow_id: &str) -> Option<String> {
         self.workflow_entry(workflow_id)?
             .get("handle_pattern")
             .and_then(YamlValue::as_str)
@@ -222,7 +222,7 @@ impl WorkflowsConfig {
     }
 
     /// A workflow's `is_message_required` flag; defaults to `false` (matches quilt3).
-    pub fn is_message_required(&self, workflow_id: &str) -> bool {
+    pub(crate) fn is_message_required(&self, workflow_id: &str) -> bool {
         self.workflow_entry(workflow_id)
             .and_then(|workflow| workflow.get("is_message_required"))
             .and_then(YamlValue::as_bool)
@@ -232,7 +232,11 @@ impl WorkflowsConfig {
     /// The schema id a workflow declares under `key` (`metadata_schema` or
     /// `entries_schema`), mirroring the legacy lazy lookup (including its
     /// error variants) exactly.
-    pub fn schema_id(&self, workflow_id: &str, key: &str) -> Result<Option<String>, ConfigError> {
+    pub(crate) fn schema_id(
+        &self,
+        workflow_id: &str,
+        key: &str,
+    ) -> Result<Option<String>, ConfigError> {
         match self.raw.get("workflows") {
             Some(YamlValue::Mapping(workflows)) => match workflows.get(workflow_id) {
                 Some(YamlValue::Mapping(workflow)) => match workflow.get(key) {
@@ -258,7 +262,7 @@ impl WorkflowsConfig {
     /// The declared (unresolved) URL of a schema by its id, read straight from
     /// the `schemas` section — no I/O, no version resolution. `workflow_id` is
     /// used only for error context.
-    pub fn declared_schema_url(
+    pub(crate) fn declared_schema_url(
         &self,
         workflow_id: &str,
         schema_id: &str,
@@ -284,7 +288,7 @@ impl WorkflowsConfig {
     /// The declared object URI of the schema a workflow references under `key`
     /// (`metadata_schema` / `entries_schema`), or `None` when the workflow
     /// declares no such schema. Pure: resolved from the retained raw config.
-    pub fn declared_schema_uri(
+    fn declared_schema_uri(
         &self,
         workflow_id: &str,
         key: &str,
@@ -305,7 +309,7 @@ impl WorkflowsConfig {
     /// suppressing the other. This is a lenient, display-only accessor — a
     /// broken link should drop that one link, not the whole dialog, so it never
     /// errors. Gate paths must NOT use it: they need misconfiguration to surface
-    /// loudly (see [`Self::declared_schema_uri`]).
+    /// loudly (see `declared_schema_uri`).
     pub fn schema_uris(&self, workflow_id: &str) -> WorkflowSchemaUris {
         WorkflowSchemaUris {
             metadata_schema: self
@@ -324,7 +328,7 @@ impl WorkflowsConfig {
     /// - key absent → `Ok(None)`: caller produces a null-id record.
     /// - string → `Ok(Some(id))`: caller resolves it like a named workflow.
     /// - anything else (including explicit null) → `Err`: misconfiguration.
-    pub fn bucket_default_id(&self) -> Result<Option<String>, ConfigError> {
+    pub(crate) fn bucket_default_id(&self) -> Result<Option<String>, ConfigError> {
         match self.raw.get("default_workflow") {
             None => Ok(None),
             Some(YamlValue::String(id)) => Ok(Some(id.clone())),
