@@ -19,22 +19,23 @@
 //! already-fetched documents.
 
 mod config;
+pub mod error;
 mod stamp;
 mod validate;
 
-pub use config::ConfigError;
 pub use config::WORKFLOWS_CONFIG_KEY;
 pub use config::WorkflowInfo;
 pub use config::WorkflowIntent;
 pub use config::WorkflowSchemaUris;
 pub use config::WorkflowsConfig;
+pub use error::ConfigError;
+pub use error::RuleViolation;
+pub use error::SchemaKind;
+pub use error::WorkflowValidationError;
 pub use stamp::Workflow;
 pub use stamp::WorkflowId;
 pub use validate::EntryView;
 pub use validate::PackageCandidate;
-pub use validate::RuleViolation;
-pub use validate::SchemaKind;
 pub use validate::WorkflowRules;
-pub use validate::WorkflowValidationError;
 pub use validate::validate_candidate_fields;
 pub use validate::validate_package;

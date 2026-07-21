@@ -183,8 +183,7 @@ async fn fetch_schema_for_key<R: Remote>(
 ) -> Res<Option<Value>> {
     match config.schema_id(workflow_id, key)? {
         Some(schema_id) => {
-            let uri = resolve_schema_url(remote, host, config, workflow_id, &schema_id)
-                .await?;
+            let uri = resolve_schema_url(remote, host, config, workflow_id, &schema_id).await?;
             Ok(Some(fetch_schema_doc(remote, host, &uri).await?))
         }
         None => Ok(None),
@@ -1114,5 +1113,4 @@ workflows:
         let view = entry_view(&row);
         assert_eq!(view.logical_key, "bad-\u{FFFD}.txt");
     }
-
 }

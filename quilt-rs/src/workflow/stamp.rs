@@ -52,9 +52,9 @@ impl<'de> Deserialize<'de> for Workflow {
                 // arbitrary single-entry pick would) forks the top-hash.
                 let mut schemas = BTreeMap::new();
                 for (schema_id, schema_url) in helper.schemas.unwrap_or_default() {
-                    let url = schema_url.parse().map_err(|_| {
-                        serde::de::Error::custom(UriError::S3(schema_url.clone()))
-                    })?;
+                    let url = schema_url
+                        .parse()
+                        .map_err(|_| serde::de::Error::custom(UriError::S3(schema_url.clone())))?;
                     schemas.insert(schema_id, url);
                 }
                 Some(WorkflowId { id, schemas })

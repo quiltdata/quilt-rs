@@ -13,29 +13,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use serde_yaml::Value as YamlValue;
-use thiserror::Error;
 
+use super::error::ConfigError;
 use super::validate::compile_config_schema;
 use quilt_uri::S3Uri;
-
-/// Errors from parsing / validating a workflows config, or resolving the
-/// declared (unfetched) schema URLs within it.
-///
-/// The variants mirror the `quilt_rs::RemoteCatalogError` variants they map
-/// onto, so a config error surfaced through quilt-rs keeps its exact `Display`.
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("Workflow error: {0}")]
-    Workflow(String),
-
-    /// The `.quilt/workflows/config.yml` is malformed — it violates the vendored
-    /// quilt3 config schema, or its YAML could not be converted for validation.
-    #[error("Invalid workflows config: {0}")]
-    InvalidWorkflowsConfig(String),
-
-    #[error(transparent)]
-    Uri(#[from] quilt_uri::UriError),
-}
 
 /// The workflows-config JSON Schema, vendored byte-identical from quilt3
 /// (`quilt3/workflows/config-1.schema.json`). quilt3 validates every loaded
