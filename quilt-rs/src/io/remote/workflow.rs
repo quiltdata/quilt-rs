@@ -437,8 +437,7 @@ pub(crate) async fn resolve_workflow_from_config<R: Remote>(
             ))))
         }
         (Some(_), WorkflowIntent::NoWorkflow) => Ok(Some(Workflow { config, id: None })),
-        (None, WorkflowIntent::NoWorkflow) => Ok(None),
-        (None, WorkflowIntent::BucketDefault) => Ok(None),
+        (None, WorkflowIntent::NoWorkflow | WorkflowIntent::BucketDefault) => Ok(None),
         (Some(parsed), WorkflowIntent::BucketDefault) => match parsed.bucket_default_id()? {
             None => Ok(Some(Workflow { config, id: None })),
             Some(id) => resolve_named(remote, host, parsed, config, id).await,

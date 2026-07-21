@@ -113,6 +113,10 @@ pub enum ButtonKind {
 }
 
 impl ButtonKind {
+    #[allow(
+        clippy::match_same_arms,
+        reason = "readable one-variant-per-line lookup table; merging same-value arms obscures it"
+    )]
     pub const fn icon(self) -> &'static str {
         match self {
             Self::CommitRevision => "/assets/img/icons/done.svg",
@@ -142,6 +146,10 @@ impl ButtonKind {
         }
     }
 
+    #[allow(
+        clippy::match_same_arms,
+        reason = "readable one-variant-per-line lookup table; merging same-value arms obscures it"
+    )]
     pub const fn label(self) -> &'static str {
         match self {
             Self::CommitRevision => "Commit",

@@ -59,13 +59,11 @@ pub fn UpdateChecker() -> impl IntoView {
             return;
         }
         leptos::task::spawn_local(async move {
-            match commands::check_for_update().await {
-                Ok(Some(info)) => state.set(UpdateState::Available(info.version)),
-                Ok(None) => {}
-                Err(_) => {
-                    // Silently ignore check failures (network errors, etc.)
-                    // to avoid distracting the user on every launch.
-                }
+            // Show the banner only when an update is available; "no update" or a
+            // check failure (network error, etc.) is silently ignored to avoid
+            // distracting the user on every launch.
+            if let Ok(Some(info)) = commands::check_for_update().await {
+                state.set(UpdateState::Available(info.version));
             }
         });
     });
