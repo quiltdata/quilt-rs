@@ -1219,7 +1219,7 @@ schemas:
         matches!(
             &err,
             Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
-                if matches!(violations.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(&violations[..], [RuleViolation::MetadataInvalid(_)])
         ),
         "expected a MetadataInvalid rejection, got: {err:?}"
     );

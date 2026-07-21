@@ -48,15 +48,9 @@ pub enum RuleViolation {
 
 /// The reasons a candidate package failed its workflow gate. The inner list is
 /// private; read access is through the slice `Deref` (`.iter()`, `.contains()`,
-/// `.as_slice()`), and the multi-line rendering lives here as `Display`.
+/// `&v[..]`), and the multi-line rendering lives here as `Display`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violations(Vec<RuleViolation>);
-
-impl Violations {
-    pub fn as_slice(&self) -> &[RuleViolation] {
-        &self.0
-    }
-}
 
 impl Deref for Violations {
     type Target = [RuleViolation];
