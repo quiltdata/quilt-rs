@@ -79,7 +79,18 @@ The serious alternative is one crate with target-gated deps and
 compiles on both targets and sidesteps Cargo's feature unification.
 Extraction is preferred when a subset has a coherent external API;
 small or tightly-coupled subsets stay as `#[cfg]`-gated modules in
-`quilt-rs`. The extraction case rests on:
+`quilt-rs`.
+
+A third path sits between these: a subset that is extraction-worthy but
+not yet needed as a crate is first consolidated as a self-contained
+module inside `quilt-rs` — its own error type, no dependency on the
+`Remote` trait — so the eventual crate lift is mechanical rather than a
+redesign. `object_hash` and `workflow` are staged this way today;
+`workflow` is already pure and I/O-free (its `jsonschema` / `regex` /
+`serde_yaml` dependency set builds for `wasm32`), with extraction waiting
+on a concrete second consumer.
+
+The extraction case rests on:
 
 - **Named, discoverable surface.** `quilt-uri` has its own `cargo
   doc`, README, and changelog. With cfg-stripping, the WASM-available
