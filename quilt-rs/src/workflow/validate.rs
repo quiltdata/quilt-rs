@@ -40,7 +40,6 @@ use serde_json::json;
 use super::error::RuleViolation;
 use super::error::SUPPORTED_META_SCHEMA;
 use super::error::SchemaKind;
-use super::error::Violations;
 use super::error::WorkflowValidationError;
 
 /// The rules a single workflow imposes, with any referenced schema documents
@@ -208,9 +207,10 @@ fn check_entries_rule(
 /// Turn a collected violation list into the gate's result: `Ok` when empty,
 /// [`WorkflowValidationError::Rejected`] otherwise.
 fn finish(violations: Vec<RuleViolation>) -> Result<(), WorkflowValidationError> {
-    match Violations::from_nonempty(violations) {
-        Some(violations) => Err(WorkflowValidationError::Rejected(violations)),
-        None => Ok(()),
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkflowValidationError::Rejected(violations.into()))
     }
 }
 

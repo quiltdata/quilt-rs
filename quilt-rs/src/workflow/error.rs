@@ -46,21 +46,13 @@ pub enum RuleViolation {
     EntriesInvalid(String),
 }
 
-/// The reasons a candidate package failed its workflow gate — always at least
-/// one. The inner list is private so a `Violations` can only be built non-empty
-/// (via [`Violations::from_nonempty`] or `From<RuleViolation>`); read access is
-/// through its slice `Deref` (`.iter()`, `.contains()`, `.as_slice()`), and the
-/// multi-line rendering lives here as `Display`.
+/// The reasons a candidate package failed its workflow gate. The inner list is
+/// private; read access is through the slice `Deref` (`.iter()`, `.contains()`,
+/// `.as_slice()`), and the multi-line rendering lives here as `Display`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violations(Vec<RuleViolation>);
 
 impl Violations {
-    /// Build from a list, or `None` when it is empty — a rejection must carry a
-    /// reason, so an empty `Violations` is unrepresentable.
-    pub fn from_nonempty(list: Vec<RuleViolation>) -> Option<Self> {
-        (!list.is_empty()).then_some(Self(list))
-    }
-
     pub fn as_slice(&self) -> &[RuleViolation] {
         &self.0
     }
@@ -86,6 +78,12 @@ impl fmt::Display for Violations {
 impl From<RuleViolation> for Violations {
     fn from(violation: RuleViolation) -> Self {
         Violations(vec![violation])
+    }
+}
+
+impl From<Vec<RuleViolation>> for Violations {
+    fn from(list: Vec<RuleViolation>) -> Self {
+        Violations(list)
     }
 }
 
