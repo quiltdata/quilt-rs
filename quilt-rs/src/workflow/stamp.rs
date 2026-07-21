@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::Error;
 use quilt_uri::S3Uri;
 use quilt_uri::UriError;
 
@@ -53,9 +52,9 @@ impl<'de> Deserialize<'de> for Workflow {
                 // arbitrary single-entry pick would) forks the top-hash.
                 let mut schemas = BTreeMap::new();
                 for (schema_id, schema_url) in helper.schemas.unwrap_or_default() {
-                    let url = schema_url.parse().map_err(|_| {
-                        serde::de::Error::custom(Error::Uri(UriError::S3(schema_url.clone())))
-                    })?;
+                    let url = schema_url
+                        .parse()
+                        .map_err(|_| serde::de::Error::custom(UriError::S3(schema_url.clone())))?;
                     schemas.insert(schema_id, url);
                 }
                 Some(WorkflowId { id, schemas })
@@ -107,7 +106,7 @@ mod tests {
     use super::*;
     use test_log::test;
 
-    use crate::Res;
+    type Res = Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     fn test_workflow_deserialization() -> Res {

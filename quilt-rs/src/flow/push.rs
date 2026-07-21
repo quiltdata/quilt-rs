@@ -578,7 +578,7 @@ mod tests {
             matches!(
                 &err,
                 Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
-                    if matches!(violations.as_slice(), [RuleViolation::EntriesInvalid(_)])
+                    if matches!(&violations[..], [RuleViolation::EntriesInvalid(_)])
             ),
             "expected an entries_schema rejection, got: {err:?}"
         );
@@ -775,7 +775,7 @@ mod tests {
             matches!(
                 &err,
                 Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
-                    if matches!(violations.as_slice(), [RuleViolation::WorkflowRequired])
+                    if matches!(&violations[..], [RuleViolation::WorkflowRequired])
             ),
             "expected a WorkflowRequired rejection, got: {err:?}"
         );

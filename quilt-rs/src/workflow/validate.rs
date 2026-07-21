@@ -31,91 +31,17 @@
 //!   metadata of each entry.
 
 use std::borrow::Cow;
-use std::fmt;
 
 use jsonschema::Validator;
 use regex::Regex;
 use serde_json::Value;
 use serde_json::json;
-use thiserror::Error;
 
-/// The only `$schema` meta-schema quilt3 accepts (its `SUPPORTED_META_SCHEMAS`
-/// maps exactly this URI to `Draft7Validator`).
-const SUPPORTED_META_SCHEMA: &str = "http://json-schema.org/draft-07/schema#";
-
-/// Which schema in a workflow a configuration problem refers to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SchemaKind {
-    Metadata,
-    Entries,
-}
-
-impl fmt::Display for SchemaKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SchemaKind::Metadata => f.write_str("metadata_schema"),
-            SchemaKind::Entries => f.write_str("entries_schema"),
-        }
-    }
-}
-
-/// A single reason a candidate package fails its workflow gate. Several may
-/// apply to one package; they are reported together in
-/// [`WorkflowValidationError::Rejected`].
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum RuleViolation {
-    #[error("a workflow is required by this bucket, but none was selected")]
-    WorkflowRequired,
-
-    #[error("a commit message is required by this workflow, but none was provided")]
-    MessageRequired,
-
-    #[error("package name {name:?} does not match the required handle_pattern {pattern:?}")]
-    HandleMismatch { name: String, pattern: String },
-
-    #[error("package metadata does not satisfy the workflow's metadata_schema: {0}")]
-    MetadataInvalid(String),
-
-    #[error("package entries do not satisfy the workflow's entries_schema: {0}")]
-    EntriesInvalid(String),
-}
-
-/// The outcome of running the gate against a candidate package.
-///
-/// A [`WorkflowValidationError::Rejected`] means the package is well-formed
-/// but breaks one or more rules — the caller should surface the violations to
-/// the user. The other variants mean the *gate itself* is misconfigured (a
-/// schema is not valid Draft-7, uses `$ref`, or `handle_pattern` is not a
-/// valid regex) and are hard errors distinct from a rule failure.
-#[derive(Debug, Error)]
-pub enum WorkflowValidationError {
-    #[error("workflow {kind} is not a valid Draft-7 JSON Schema: {reason}")]
-    InvalidSchema { kind: SchemaKind, reason: String },
-
-    #[error("workflow {kind} uses `$ref`, which is not supported")]
-    UnsupportedRef { kind: SchemaKind },
-
-    #[error(
-        "workflow {kind} declares `$schema`: {value}, which is not supported \
-         (only the Draft-7 meta-schema {SUPPORTED_META_SCHEMA:?} is supported)"
-    )]
-    UnsupportedMetaSchema { kind: SchemaKind, value: String },
-
-    #[error("workflow handle_pattern {pattern:?} is not a valid regular expression: {reason}")]
-    InvalidHandlePattern { pattern: String, reason: String },
-
-    #[error("package does not satisfy the workflow:{}", render_violations(.0))]
-    Rejected(Vec<RuleViolation>),
-}
-
-fn render_violations(violations: &[RuleViolation]) -> String {
-    use std::fmt::Write;
-    let mut out = String::new();
-    for violation in violations {
-        let _ = write!(out, "\n  - {violation}");
-    }
-    out
-}
+use super::error::RuleViolation;
+use super::error::SUPPORTED_META_SCHEMA;
+use super::error::SchemaKind;
+use super::error::Violations;
+use super::error::WorkflowValidationError;
 
 /// The rules a single workflow imposes, with any referenced schema documents
 /// already fetched. Built by `crate::io::remote` and handed to
@@ -145,6 +71,13 @@ pub struct EntryView<'a> {
     pub meta: Option<&'a Value>,
 }
 
+// TODO: revisit this projection. `PackageCandidate`/`EntryView` duplicate the
+// field names of `ManifestHeader`/`ManifestRow` (message/user_meta, and
+// logical_key/size/meta) and are built from them (see `io::remote::entry_view`).
+// Evaluate reusing the manifest types more directly (e.g. a shared trait) vs
+// keeping the projection. Kept for now so the gate stays ignorant of the
+// manifest layer (WASM / `quilt-workflow` crate-extraction readiness) and the UI
+// gets a simple borrowed shape for live validation — so it is not trivial to change.
 /// A candidate package projected to the surface the gate validates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackageCandidate<'a> {
@@ -176,9 +109,9 @@ pub fn validate_package(
 ) -> Result<(), WorkflowValidationError> {
     let Some(rules) = rules else {
         return if is_workflow_required {
-            Err(WorkflowValidationError::Rejected(vec![
-                RuleViolation::WorkflowRequired,
-            ]))
+            Err(WorkflowValidationError::Rejected(
+                RuleViolation::WorkflowRequired.into(),
+            ))
         } else {
             Ok(())
         };
@@ -282,10 +215,9 @@ fn check_entries_rule(
 /// Turn a collected violation list into the gate's result: `Ok` when empty,
 /// [`WorkflowValidationError::Rejected`] otherwise.
 fn finish(violations: Vec<RuleViolation>) -> Result<(), WorkflowValidationError> {
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(WorkflowValidationError::Rejected(violations))
+    match Violations::from_nonempty(violations) {
+        Some(violations) => Err(WorkflowValidationError::Rejected(violations)),
+        None => Ok(()),
     }
 }
 
@@ -458,7 +390,7 @@ mod tests {
         let err = validate_package(None, true, &pkg).unwrap_err();
         assert!(matches!(
             err,
-            WorkflowValidationError::Rejected(v) if v == vec![RuleViolation::WorkflowRequired]
+            WorkflowValidationError::Rejected(v) if matches!(&v[..], [RuleViolation::WorkflowRequired])
         ));
     }
 
@@ -505,7 +437,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(&v[..], [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
@@ -528,7 +460,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(&v[..], [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
@@ -565,7 +497,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.as_slice(), [RuleViolation::EntriesInvalid(_)])
+                if matches!(&v[..], [RuleViolation::EntriesInvalid(_)])
         ));
     }
 
@@ -587,7 +519,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.as_slice(), [RuleViolation::HandleMismatch { .. }])
+                if matches!(&v[..], [RuleViolation::HandleMismatch { .. }])
         ));
     }
 
@@ -631,7 +563,7 @@ mod tests {
             assert!(matches!(
                 err,
                 WorkflowValidationError::Rejected(v)
-                    if v == vec![RuleViolation::MessageRequired]
+                    if matches!(&v[..], [RuleViolation::MessageRequired])
             ));
         }
     }
@@ -715,7 +647,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(&v[..], [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
@@ -877,7 +809,7 @@ mod tests {
             let err = validate_candidate_fields(&rules, &pkg).unwrap_err();
             assert!(matches!(
                 err,
-                WorkflowValidationError::Rejected(v) if v == vec![RuleViolation::MessageRequired]
+                WorkflowValidationError::Rejected(v) if matches!(&v[..], [RuleViolation::MessageRequired])
             ));
         }
     }
@@ -923,7 +855,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(&v[..], [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
