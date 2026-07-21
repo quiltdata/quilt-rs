@@ -55,6 +55,12 @@ impl Default for S3Uri {
 }
 
 impl S3Uri {
+    /// Renders this S3 URI as a catalog web URL on `host`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UriError::UrlParse`] if `host`, the bucket, or the key yield
+    /// a string that is not a valid URL.
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
         let mut url = url::Url::parse(&format!(
             "https://{}/b/{}/tree/{}",
