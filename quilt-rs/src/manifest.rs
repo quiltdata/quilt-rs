@@ -2,12 +2,11 @@
 //! Namespace contains helpers to work with manifest and its content (rows).
 
 mod top_hasher;
-mod workflow;
 
 pub use top_hasher::TopHasher;
 
-pub use workflow::Workflow;
-pub use workflow::WorkflowId;
+pub use crate::workflow::Workflow;
+pub use crate::workflow::WorkflowId;
 
 use std::path::PathBuf;
 

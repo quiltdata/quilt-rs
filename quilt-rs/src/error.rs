@@ -318,6 +318,24 @@ pub enum Error {
     Yaml(#[from] serde_yaml::Error),
 }
 
+/// Map a workflow config error onto the existing `Error` variants so the
+/// consumer-visible `Display` and variant matching are byte-identical to before
+/// the crate extraction. The mapping is cross-variant (a single `ConfigError`
+/// splits across `RemoteCatalog` and `Uri`), so it cannot be a `#[from]` field
+/// attribute.
+impl From<crate::workflow::ConfigError> for Error {
+    fn from(err: crate::workflow::ConfigError) -> Self {
+        use crate::workflow::ConfigError;
+        match err {
+            ConfigError::Workflow(msg) => Error::RemoteCatalog(RemoteCatalogError::Workflow(msg)),
+            ConfigError::InvalidWorkflowsConfig(msg) => {
+                Error::RemoteCatalog(RemoteCatalogError::InvalidWorkflowsConfig(msg))
+            }
+            ConfigError::Uri(err) => Error::Uri(err),
+        }
+    }
+}
+
 impl Error {
     /// Returns `true` if this error represents an S3 "not found" (`NoSuchKey`) response.
     pub fn is_not_found(&self) -> bool {

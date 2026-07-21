@@ -14,6 +14,7 @@ pub mod manifest;
 pub mod object_hash;
 pub mod paths;
 pub mod quiltignore;
+
 pub mod workflow;
 
 #[cfg(test)]

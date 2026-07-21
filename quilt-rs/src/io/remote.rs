@@ -81,10 +81,10 @@ where
 pub use client::HttpClient;
 pub use host::{HostChecksums, HostConfig, fetch_host_config};
 pub use s3::RemoteS3;
-pub use workflow::{
+pub use crate::workflow::{
     WORKFLOWS_CONFIG_KEY, WorkflowInfo, WorkflowIntent, WorkflowSchemaUris, WorkflowsConfig,
-    fetch_workflow_rules, fetch_workflows_config_for_bucket, resolve_workflow,
 };
+pub use workflow::{fetch_workflow_rules, fetch_workflows_config_for_bucket, resolve_workflow};
 pub(crate) use workflow::{
     entry_view, fetch_workflows_config, resolve_workflow_from_config, validate_workflow,
     validate_workflow_against_current_config, validate_workflow_with_config,
