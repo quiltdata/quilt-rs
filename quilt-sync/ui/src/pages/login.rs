@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 use wasm_bindgen::JsCast;
 
@@ -82,7 +83,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
                     } else {
                         back
                     };
-                    navigate(&target, Default::default());
+                    navigate(&target, NavigateOptions::default());
                 }
                 Err(e) => {
                     notification.set(Some(Notification::Error(e)));

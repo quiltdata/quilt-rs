@@ -30,8 +30,6 @@ ref_option = "allow"
 large_futures = "allow"
 # Test helpers commonly return Result aliases to use `?` ergonomically.
 unnecessary_wraps = "allow"
-# Stylistic preference — `Default::default()` reads fine inline.
-default_trait_access = "allow"
 
 [workspace.dependencies]
 base64 = "0.22.1"

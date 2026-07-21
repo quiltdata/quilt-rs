@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
@@ -42,7 +43,7 @@ pub fn RemotePackage() -> impl IntoView {
                 Some(commands::RemoteBanner::LocalOnly) => format!("{base}&localOnly=1"),
                 None => base,
             };
-            navigate(&path, Default::default());
+            navigate(&path, NavigateOptions::default());
             Ok::<_, String>(result)
         }
     });

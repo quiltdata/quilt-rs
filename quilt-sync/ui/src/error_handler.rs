@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
@@ -24,7 +25,7 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
                         let back_encoded = urlencoding::encode(&back);
                         navigate(
                             &format!("/login?host={host}&back={back_encoded}"),
-                            Default::default(),
+                            NavigateOptions::default(),
                         );
                         ().into_any()
                     }
@@ -33,7 +34,7 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
             }
             "setup_required" => {
                 let navigate = use_navigate();
-                navigate("/setup", Default::default());
+                navigate("/setup", NavigateOptions::default());
                 ().into_any()
             }
             _ => render_page_error(&parsed.message, notification),
