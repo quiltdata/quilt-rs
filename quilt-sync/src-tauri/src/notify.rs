@@ -9,6 +9,10 @@ impl Notify {
         Notify
     }
 
+    #[allow(
+        clippy::unused_self,
+        reason = "fluent logging helper; `Notify` is a ZST and `self` threads the call chain"
+    )]
     pub fn map<T, E: std::fmt::Display, F>(
         self,
         result: std::result::Result<T, E>,

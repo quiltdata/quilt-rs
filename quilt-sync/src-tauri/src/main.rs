@@ -79,7 +79,7 @@ fn main() {
                 .app_local_data_dir()
                 .expect("Failed to resolve data dir");
 
-            let logs_dir = telemetry.init_file_logging(&data_dir)?;
+            let logs_dir = telemetry::Telemetry::init_file_logging(&data_dir)?;
 
             telemetry.init();
 
