@@ -20,7 +20,6 @@ pedantic = { level = "deny", priority = -1 }
 missing_errors_doc = "allow"
 # Stylistic / debatable — keep code as-is.
 must_use_candidate = "allow"
-module_name_repetitions = "allow"
 # Sometimes intentional for trait/API symmetry.
 ref_option = "allow"
 
