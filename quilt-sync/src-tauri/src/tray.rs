@@ -83,7 +83,7 @@ impl TrayController {
         let _ = open_item;
         let _ = quit_item;
 
-        install_close_handler(app)?;
+        install_close_handler(app);
 
         Ok(Self {
             _tray: tray,
@@ -155,9 +155,9 @@ fn apply_status(tray: &TrayIcon, status: &SyncTrayStatus) {
     let _ = tray.set_tooltip(Some(&tooltip));
 }
 
-fn install_close_handler(app: &AppHandle) -> Result<(), TrayError> {
+fn install_close_handler(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
-        return Ok(());
+        return;
     };
     let handle = app.clone();
     window.on_window_event(move |event| {
@@ -185,5 +185,4 @@ fn install_close_handler(app: &AppHandle) -> Result<(), TrayError> {
             });
         }
     });
-    Ok(())
 }
