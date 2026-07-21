@@ -40,6 +40,7 @@ use serde_json::json;
 use super::error::RuleViolation;
 use super::error::SUPPORTED_META_SCHEMA;
 use super::error::SchemaKind;
+use super::error::Violations;
 use super::error::WorkflowValidationError;
 
 /// The rules a single workflow imposes, with any referenced schema documents
@@ -207,10 +208,9 @@ fn check_entries_rule(
 /// Turn a collected violation list into the gate's result: `Ok` when empty,
 /// [`WorkflowValidationError::Rejected`] otherwise.
 fn finish(violations: Vec<RuleViolation>) -> Result<(), WorkflowValidationError> {
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(WorkflowValidationError::Rejected(violations.into()))
+    match Violations::from_nonempty(violations) {
+        Some(violations) => Err(WorkflowValidationError::Rejected(violations)),
+        None => Ok(()),
     }
 }
 
@@ -383,7 +383,7 @@ mod tests {
         let err = validate_package(None, true, &pkg).unwrap_err();
         assert!(matches!(
             err,
-            WorkflowValidationError::Rejected(v) if v.list == vec![RuleViolation::WorkflowRequired]
+            WorkflowValidationError::Rejected(v) if matches!(v.as_slice(), [RuleViolation::WorkflowRequired])
         ));
     }
 
@@ -430,7 +430,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.list.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
@@ -453,7 +453,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.list.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
@@ -490,7 +490,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.list.as_slice(), [RuleViolation::EntriesInvalid(_)])
+                if matches!(v.as_slice(), [RuleViolation::EntriesInvalid(_)])
         ));
     }
 
@@ -512,7 +512,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.list.as_slice(), [RuleViolation::HandleMismatch { .. }])
+                if matches!(v.as_slice(), [RuleViolation::HandleMismatch { .. }])
         ));
     }
 
@@ -556,7 +556,7 @@ mod tests {
             assert!(matches!(
                 err,
                 WorkflowValidationError::Rejected(v)
-                    if v.list == vec![RuleViolation::MessageRequired]
+                    if matches!(v.as_slice(), [RuleViolation::MessageRequired])
             ));
         }
     }
@@ -572,16 +572,14 @@ mod tests {
         let WorkflowValidationError::Rejected(violations) = err else {
             panic!("expected Rejected, got {err:?}");
         };
-        assert!(violations.list.contains(&RuleViolation::MessageRequired));
+        assert!(violations.contains(&RuleViolation::MessageRequired));
         assert!(
             violations
-                .list
                 .iter()
                 .any(|v| matches!(v, RuleViolation::HandleMismatch { .. }))
         );
         assert!(
             violations
-                .list
                 .iter()
                 .any(|v| matches!(v, RuleViolation::MetadataInvalid(_)))
         );
@@ -642,7 +640,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.list.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
         ));
     }
 
@@ -804,7 +802,7 @@ mod tests {
             let err = validate_candidate_fields(&rules, &pkg).unwrap_err();
             assert!(matches!(
                 err,
-                WorkflowValidationError::Rejected(v) if v.list == vec![RuleViolation::MessageRequired]
+                WorkflowValidationError::Rejected(v) if matches!(v.as_slice(), [RuleViolation::MessageRequired])
             ));
         }
     }
@@ -824,13 +822,11 @@ mod tests {
         };
         assert!(
             violations
-                .list
                 .iter()
                 .any(|v| matches!(v, RuleViolation::HandleMismatch { .. }))
         );
         assert!(
             violations
-                .list
                 .iter()
                 .any(|v| matches!(v, RuleViolation::MetadataInvalid(_)))
         );
@@ -852,7 +848,7 @@ mod tests {
         assert!(matches!(
             err,
             WorkflowValidationError::Rejected(v)
-                if matches!(v.list.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(v.as_slice(), [RuleViolation::MetadataInvalid(_)])
         ));
     }
 

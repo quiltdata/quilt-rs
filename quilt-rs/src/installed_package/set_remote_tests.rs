@@ -1172,7 +1172,7 @@ async fn test_set_remote_no_workflow_against_required_bucket_is_rejected() -> Re
         matches!(
             &err,
             Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
-                if violations.list.contains(&RuleViolation::WorkflowRequired)
+                if violations.contains(&RuleViolation::WorkflowRequired)
         ),
         "expected a WorkflowRequired rejection, got: {err:?}"
     );
@@ -1219,7 +1219,7 @@ schemas:
         matches!(
             &err,
             Error::WorkflowValidation(WorkflowValidationError::Rejected(violations))
-                if matches!(violations.list.as_slice(), [RuleViolation::MetadataInvalid(_)])
+                if matches!(violations.as_slice(), [RuleViolation::MetadataInvalid(_)])
         ),
         "expected a MetadataInvalid rejection, got: {err:?}"
     );

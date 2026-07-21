@@ -1,6 +1,7 @@
 //! Errors produced by the workflow gate and the workflows-config model.
 
 use std::fmt;
+use std::ops::Deref;
 
 use thiserror::Error;
 
@@ -45,17 +46,37 @@ pub enum RuleViolation {
     EntriesInvalid(String),
 }
 
-/// The reasons a candidate package failed its workflow gate. Wrapping the list
-/// keeps the rendering on the type (as `Display`) and lets a single-violation
-/// site build one with `.into()`.
+/// The reasons a candidate package failed its workflow gate — always at least
+/// one. The inner list is private so a `Violations` can only be built non-empty
+/// (via [`Violations::from_nonempty`] or `From<RuleViolation>`); read access is
+/// through its slice `Deref` (`.iter()`, `.contains()`, `.as_slice()`), and the
+/// multi-line rendering lives here as `Display`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Violations {
-    pub list: Vec<RuleViolation>,
+pub struct Violations(Vec<RuleViolation>);
+
+impl Violations {
+    /// Build from a list, or `None` when it is empty — a rejection must carry a
+    /// reason, so an empty `Violations` is unrepresentable.
+    pub fn from_nonempty(list: Vec<RuleViolation>) -> Option<Self> {
+        (!list.is_empty()).then_some(Self(list))
+    }
+
+    pub fn as_slice(&self) -> &[RuleViolation] {
+        &self.0
+    }
+}
+
+impl Deref for Violations {
+    type Target = [RuleViolation];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl fmt::Display for Violations {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for violation in &self.list {
+        for violation in self.iter() {
             write!(f, "\n  - {violation}")?;
         }
         Ok(())
@@ -64,15 +85,7 @@ impl fmt::Display for Violations {
 
 impl From<RuleViolation> for Violations {
     fn from(violation: RuleViolation) -> Self {
-        Violations {
-            list: vec![violation],
-        }
-    }
-}
-
-impl From<Vec<RuleViolation>> for Violations {
-    fn from(list: Vec<RuleViolation>) -> Self {
-        Violations { list }
+        Violations(vec![violation])
     }
 }
 
