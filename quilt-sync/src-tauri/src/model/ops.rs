@@ -421,9 +421,9 @@ mod tests {
     /// deterministic Display we can assert names the failed rule.
     fn workflow_rejection() -> Error {
         Error::from(quilt::Error::from(
-            quilt::workflow::WorkflowValidationError::Rejected(vec![
-                quilt::workflow::RuleViolation::MessageRequired,
-            ]),
+            quilt::workflow::WorkflowValidationError::Rejected(
+                quilt::workflow::RuleViolation::MessageRequired.into(),
+            ),
         ))
     }
 

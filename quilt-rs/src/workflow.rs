@@ -31,6 +31,7 @@ pub use config::WorkflowsConfig;
 pub use error::ConfigError;
 pub use error::RuleViolation;
 pub use error::SchemaKind;
+pub use error::Violations;
 pub use error::WorkflowValidationError;
 pub use stamp::Workflow;
 pub use stamp::WorkflowId;

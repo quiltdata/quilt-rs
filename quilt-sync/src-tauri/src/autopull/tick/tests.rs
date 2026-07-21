@@ -167,9 +167,9 @@ fn classify_push_error_is_paused() {
 /// can assert on without pinning a whole schema payload.
 pub(super) fn workflow_rejection() -> Error {
     Error::from(quilt::Error::from(
-        quilt::workflow::WorkflowValidationError::Rejected(vec![
-            quilt::workflow::RuleViolation::MessageRequired,
-        ]),
+        quilt::workflow::WorkflowValidationError::Rejected(
+            quilt::workflow::RuleViolation::MessageRequired.into(),
+        ),
     ))
 }
 

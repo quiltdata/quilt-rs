@@ -652,6 +652,7 @@ fn validate_candidate(
 fn violations_from_error(err: &WorkflowValidationError) -> Vec<CommitViolation> {
     match err {
         WorkflowValidationError::Rejected(violations) => violations
+            .list
             .iter()
             .map(|violation| CommitViolation {
                 field: match violation {

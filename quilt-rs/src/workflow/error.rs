@@ -45,6 +45,37 @@ pub enum RuleViolation {
     EntriesInvalid(String),
 }
 
+/// The reasons a candidate package failed its workflow gate. Wrapping the list
+/// keeps the rendering on the type (as `Display`) and lets a single-violation
+/// site build one with `.into()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Violations {
+    pub list: Vec<RuleViolation>,
+}
+
+impl fmt::Display for Violations {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for violation in &self.list {
+            write!(f, "\n  - {violation}")?;
+        }
+        Ok(())
+    }
+}
+
+impl From<RuleViolation> for Violations {
+    fn from(violation: RuleViolation) -> Self {
+        Violations {
+            list: vec![violation],
+        }
+    }
+}
+
+impl From<Vec<RuleViolation>> for Violations {
+    fn from(list: Vec<RuleViolation>) -> Self {
+        Violations { list }
+    }
+}
+
 /// The outcome of running the gate against a candidate package.
 ///
 /// A [`WorkflowValidationError::Rejected`] means the package is well-formed
@@ -69,17 +100,8 @@ pub enum WorkflowValidationError {
     #[error("workflow handle_pattern {pattern:?} is not a valid regular expression: {reason}")]
     InvalidHandlePattern { pattern: String, reason: String },
 
-    #[error("package does not satisfy the workflow:{}", render_violations(.0))]
-    Rejected(Vec<RuleViolation>),
-}
-
-fn render_violations(violations: &[RuleViolation]) -> String {
-    use std::fmt::Write;
-    let mut out = String::new();
-    for violation in violations {
-        let _ = write!(out, "\n  - {violation}");
-    }
-    out
+    #[error("package does not satisfy the workflow:{0}")]
+    Rejected(Violations),
 }
 
 /// Errors from parsing / validating a workflows config, or resolving the
