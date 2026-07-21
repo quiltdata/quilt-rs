@@ -22,10 +22,12 @@ pub struct S3Error {
 }
 
 impl S3Error {
+    #[must_use]
     pub fn new(kind: S3ErrorKind) -> Self {
         Self { host: None, kind }
     }
 
+    #[must_use]
     pub fn is_not_found(&self) -> bool {
         matches!(self.kind, S3ErrorKind::NotFound(_))
     }
@@ -338,6 +340,7 @@ impl From<crate::workflow::ConfigError> for Error {
 
 impl Error {
     /// Returns `true` if this error represents an S3 "not found" (`NoSuchKey`) response.
+    #[must_use]
     pub fn is_not_found(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_not_found())
     }

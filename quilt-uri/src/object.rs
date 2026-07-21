@@ -19,6 +19,7 @@ pub struct ObjectUri {
 }
 
 impl ObjectUri {
+    #[must_use]
     pub fn new(package_handle: S3PackageHandle, path: PathBuf) -> Self {
         ObjectUri {
             bucket: package_handle.bucket,

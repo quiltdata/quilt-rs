@@ -28,6 +28,7 @@ pub const DOT_QUILT_DIR: &str = ".quilt";
 ///
 /// Returns a sorted list of directory names found in `<data_dir>/.auth/`.
 // TODO: Also include registries from data.json/Lineage file.
+#[must_use]
 pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
     let auth_dir = data_dir.join(AUTH_DIR);
     let mut hosts: Vec<String> = Vec::new();
@@ -62,6 +63,7 @@ pub use quilt_uri::paths::get_manifest_key;
 pub use quilt_uri::paths::tag_key;
 
 /// Path to the package home directory within the home directory
+#[must_use]
 pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {
     home.join(namespace.to_string())
 }
@@ -80,10 +82,12 @@ pub struct DomainPaths {
 }
 
 impl DomainPaths {
+    #[must_use]
     pub fn new(root_dir: PathBuf) -> Self {
         DomainPaths { root_dir }
     }
 
+    #[must_use]
     pub fn auth_host(&self, host: &Host) -> PathBuf {
         self.root_dir
             .join(AUTH_DIR)
@@ -91,6 +95,7 @@ impl DomainPaths {
     }
 
     /// Path to the `.quilt` bookkeeping directory under the root.
+    #[must_use]
     pub fn dot_quilt_dir(&self) -> PathBuf {
         self.root_dir.join(DOT_QUILT_DIR)
     }
@@ -103,11 +108,13 @@ impl DomainPaths {
     /// (created via `flow::create`, where there is no bucket or origin).
     /// A local commit also produces a hash that has no remote
     /// counterpart yet.
+    #[must_use]
     pub fn installed_manifest(&self, namespace: &Namespace, hash: &str) -> PathBuf {
         self.installed_manifests_dir(namespace).join(hash)
     }
 
     /// Directory for storing installed manifests
+    #[must_use]
     pub fn installed_manifests_dir(&self, namespace: &Namespace) -> PathBuf {
         self.dot_quilt_dir()
             .join(INSTALLED_DIR)
@@ -115,11 +122,13 @@ impl DomainPaths {
     }
 
     /// Path to the lineage file
+    #[must_use]
     pub fn lineage(&self) -> PathBuf {
         self.dot_quilt_dir().join(LINEAGE_FILE)
     }
 
     /// Path to the manifest cached in semi-temporary directory
+    #[must_use]
     pub fn cached_manifest(&self, uri: &ManifestUri) -> PathBuf {
         self.dot_quilt_dir()
             .join(MANIFEST_DIR)
@@ -128,16 +137,19 @@ impl DomainPaths {
     }
 
     /// Directory for storing cached manifests for a bucket
+    #[must_use]
     pub fn cached_manifests_dir(&self, bucket: &str) -> PathBuf {
         self.dot_quilt_dir().join(MANIFEST_DIR).join(bucket)
     }
 
     /// Directory for storing pristine hashed files
+    #[must_use]
     pub fn objects_dir(&self) -> PathBuf {
         self.dot_quilt_dir().join(OBJECTS_DIR)
     }
 
     /// Path to the pristine hashed file
+    #[must_use]
     pub fn object(&self, hash: &[u8]) -> PathBuf {
         self.objects_dir().join(hex::encode(hash))
     }

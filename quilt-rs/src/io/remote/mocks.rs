@@ -38,6 +38,7 @@ impl MockRemote {
     /// # Panics
     ///
     /// Panics if the internal call-count mutex is poisoned.
+    #[must_use]
     pub fn get_object_count(&self, uri: &str) -> usize {
         self.get_object_calls
             .lock()

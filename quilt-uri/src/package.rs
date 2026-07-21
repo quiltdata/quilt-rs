@@ -308,6 +308,7 @@ impl S3PackageUri {
         }
     }
 
+    #[must_use]
     pub fn display(&self) -> String {
         let hash = match &self.revision {
             RevisionPointer::Tag(Tag::Latest) => String::new(),

@@ -62,6 +62,7 @@ pub struct PkceChallenge {
 /// # Panics
 ///
 /// Panics if the OS random number generator is unavailable.
+#[must_use]
 pub fn pkce_challenge() -> PkceChallenge {
     let mut random_bytes = [0u8; 64];
     getrandom::fill(&mut random_bytes).expect("failed to generate random bytes");
@@ -80,6 +81,7 @@ pub fn pkce_challenge() -> PkceChallenge {
 /// # Panics
 ///
 /// Panics if the OS random number generator is unavailable.
+#[must_use]
 pub fn random_state() -> String {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("failed to generate random bytes");
@@ -99,6 +101,7 @@ pub fn random_state() -> String {
 /// Authorization Endpoint (RFC 6749 §3.1) on the catalog host.
 ///
 /// E.g., `test.quilt.dev` → `https://test.quilt.dev/connect/authorize`
+#[must_use]
 pub fn catalog_authorize_url(host: &Host) -> String {
     format!("https://{host}/connect/authorize")
 }
@@ -113,6 +116,7 @@ pub fn catalog_authorize_url(host: &Host) -> String {
 /// dot (e.g. `test` in `test.quilt.dev`). Multi-label prefixes such as
 /// `a.b.quilt.dev` are not supported and will produce an incorrect result
 /// (`a-connect.b.quilt.dev` instead of a well-defined connect hostname).
+#[must_use]
 pub fn connect_host(host: &Host) -> String {
     let s = host.to_string();
     match s.split_once('.') {

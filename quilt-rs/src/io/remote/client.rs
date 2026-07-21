@@ -53,6 +53,7 @@ impl ReqwestClient {
     ///
     /// Panics if building the underlying `reqwest` client fails, which should
     /// not happen with the default TLS configuration.
+    #[must_use]
     pub fn new() -> Self {
         let inner = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)

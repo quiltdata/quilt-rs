@@ -139,6 +139,7 @@ pub struct RemoteS3 {
 }
 
 impl RemoteS3 {
+    #[must_use]
     pub fn new(paths: DomainPaths, storage: LocalStorage) -> Self {
         RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),

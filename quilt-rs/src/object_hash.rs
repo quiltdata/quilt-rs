@@ -94,6 +94,7 @@ impl From<Crc64Hash> for ObjectHash {
 
 impl ObjectHash {
     /// Get the inner multihash
+    #[must_use]
     pub fn multihash(&self) -> &Multihash<256> {
         match self {
             ObjectHash::Sha256(hash) => hash.multihash(),
@@ -103,6 +104,7 @@ impl ObjectHash {
     }
 
     /// Get the algorithm code
+    #[must_use]
     pub fn algorithm(&self) -> u64 {
         match self {
             ObjectHash::Sha256(hash) => hash.algorithm(),
@@ -112,6 +114,7 @@ impl ObjectHash {
     }
 
     /// Get the digest bytes
+    #[must_use]
     pub fn digest(&self) -> &[u8] {
         match self {
             ObjectHash::Sha256(hash) => hash.digest(),

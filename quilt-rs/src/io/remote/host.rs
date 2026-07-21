@@ -25,6 +25,7 @@ pub enum HostChecksums {
 
 impl HostChecksums {
     /// Get the multihash algorithm code for this checksum type
+    #[must_use]
     pub fn algorithm_code(&self) -> u64 {
         match self {
             HostChecksums::Crc64 => MULTIHASH_CRC64_NVME,
@@ -53,6 +54,7 @@ impl Default for HostConfig {
 
 impl HostConfig {
     /// Create a `HostConfig` with CRC64 checksums
+    #[must_use]
     pub fn default_crc64() -> Self {
         Self {
             checksums: HostChecksums::Crc64,
@@ -61,6 +63,7 @@ impl HostConfig {
     }
 
     /// Create a `HostConfig` with SHA256 chunked checksums
+    #[must_use]
     pub fn default_sha256_chunked() -> Self {
         Self {
             checksums: HostChecksums::Sha256Chunked,

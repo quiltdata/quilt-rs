@@ -123,6 +123,7 @@ impl Default for TopHasher {
 }
 
 impl TopHasher {
+    #[must_use]
     pub fn new() -> Self {
         TopHasher {
             hasher: ChecksumAlgorithm::Sha256.into_impl(),
@@ -146,6 +147,7 @@ impl TopHasher {
     }
 
     /// Consume `self` and return `top_hash`
+    #[must_use]
     pub fn finalize(self) -> String {
         hex::encode(self.hasher.finalize())
     }

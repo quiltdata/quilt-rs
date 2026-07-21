@@ -154,6 +154,7 @@ impl Default for LocalStorage {
 }
 
 impl LocalStorage {
+    #[must_use]
     pub fn new() -> Self {
         LocalStorage {}
     }

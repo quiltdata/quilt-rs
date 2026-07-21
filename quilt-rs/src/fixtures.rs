@@ -107,6 +107,7 @@ pub mod objects {
     pub const ZERO_HASH_HEX: &str =
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
+    #[must_use]
     pub fn zero_bytes<'a>() -> &'a [u8] {
         &[]
     }
@@ -116,6 +117,7 @@ pub mod objects {
     pub const LESS_THAN_8MB_HASH_HEX: &str =
         "5dbd4f6e325e5a87f8cc3ef3b8773d3c8eec2e2cff6248f882986569912ddf10";
 
+    #[must_use]
     pub fn less_than_8mb<'a>() -> &'a [u8] {
         "0123456789abcdef".as_bytes()
     }
@@ -125,6 +127,7 @@ pub mod objects {
     pub const EQUAL_TO_8MB_HASH_HEX: &str =
         "ed5deb67743f0260186b1db0b100596dcecdd44308c65c51c8c88cb611917708";
 
+    #[must_use]
     pub fn equal_to_8mb() -> Vec<u8> {
         "12345678".as_bytes().repeat(1024 * 1024)
     }
@@ -134,12 +137,14 @@ pub mod objects {
     pub const MORE_THAN_8MB_HASH_HEX: &str =
         "4feaedfc729124e8809041972af73e0e10b045cad9883ac59232a89c34f5ce0b";
 
+    #[must_use]
     pub fn more_than_8mb() -> Vec<u8> {
         "1234567890abcdefgh".as_bytes().repeat(1024 * 1024)
     }
 
     pub const NESTED_HASH_B64: &str = "J6TS3FqxN+VOhVoaoPU5OsYMUsq6652ykBrlW7krP/k=";
 
+    #[must_use]
     pub fn nested<'a>() -> &'a [u8] {
         "This is the README.".as_bytes()
     }

@@ -164,6 +164,7 @@ impl PackageLineage {
             .ok_or(Error::Lineage(LineageError::NoRemote))
     }
 
+    #[must_use]
     pub fn from_remote(remote: ManifestUri, latest_hash: String) -> Self {
         Self {
             base_hash: remote.hash.clone(),
@@ -174,6 +175,7 @@ impl PackageLineage {
         }
     }
 
+    #[must_use]
     pub fn current_hash(&self) -> Option<&str> {
         self.commit
             .as_ref()

@@ -55,6 +55,7 @@ impl DomainLineage {
     }
 
     /// Returns a sorted vector of all namespaces in the lineage
+    #[must_use]
     pub fn namespaces(&self) -> Vec<Namespace> {
         let mut namespaces: Vec<Namespace> = self.packages.keys().cloned().collect();
         namespaces.sort();
@@ -101,6 +102,7 @@ pub struct DomainLineageIo {
 
 // TODO impl std::io::Write and std::io::Read for DomainLineageIo
 impl DomainLineageIo {
+    #[must_use]
     pub fn new(path: PathBuf) -> Self {
         DomainLineageIo { path }
     }
@@ -179,6 +181,7 @@ impl DomainLineageIo {
         Ok(lineage)
     }
 
+    #[must_use]
     pub fn create_package_lineage(&self, namespace: Namespace) -> PackageLineageIo {
         PackageLineageIo::new(self.clone(), namespace)
     }
@@ -193,6 +196,7 @@ pub struct PackageLineageIo {
 }
 
 impl PackageLineageIo {
+    #[must_use]
     pub fn new(domain_lineage: DomainLineageIo, namespace: Namespace) -> Self {
         PackageLineageIo {
             domain_lineage,

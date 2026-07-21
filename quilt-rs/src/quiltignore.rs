@@ -35,6 +35,7 @@ pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
 /// Check whether the given path should be ignored.
 /// `relative_path` is the logical key (relative to the package home).
 /// `is_dir` must be `true` for directories (so `dir/` patterns work).
+#[must_use]
 pub fn is_ignored(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> bool {
     gitignore
         .matched_path_or_any_parents(relative_path, is_dir)
@@ -42,6 +43,7 @@ pub fn is_ignored(gitignore: &Gitignore, relative_path: &Path, is_dir: bool) -> 
 }
 
 /// If the path is ignored, return the original pattern string that matched it.
+#[must_use]
 pub fn matched_pattern(
     gitignore: &Gitignore,
     relative_path: &Path,

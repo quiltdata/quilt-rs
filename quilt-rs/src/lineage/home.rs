@@ -17,6 +17,7 @@ pub struct Home {
 }
 
 impl Home {
+    #[must_use]
     pub fn new(path: PathBuf) -> Self {
         Home { inner: path }
     }

@@ -310,6 +310,7 @@ impl WorkflowsConfig {
     /// broken link should drop that one link, not the whole dialog, so it never
     /// errors. Gate paths must NOT use it: they need misconfiguration to surface
     /// loudly (see `declared_schema_uri`).
+    #[must_use]
     pub fn schema_uris(&self, workflow_id: &str) -> WorkflowSchemaUris {
         WorkflowSchemaUris {
             metadata_schema: self
