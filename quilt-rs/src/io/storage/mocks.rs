@@ -39,15 +39,15 @@ pub fn relative_to_temp_dir(
     temp_dir: &impl AsRef<Path>,
     path: impl AsRef<Path>,
 ) -> impl AsRef<Path> {
-    let path_to_join = if path.as_ref().starts_with(temp_dir) {
-        // already relative, for example, in recursive calls like `read_dir`
-        // but we must return temp_dir, so we can't just skip this
-        path.as_ref().strip_prefix(temp_dir.as_ref()).unwrap()
-    } else if path.as_ref().starts_with("/") {
-        path.as_ref().strip_prefix("/").unwrap()
-    } else {
-        path.as_ref()
-    };
+    // Re-root `path` under `temp_dir`: strip an existing `temp_dir` prefix
+    // (recursive calls such as `read_dir` arrive already relative to it) or a
+    // leading `/` so we don't double-prefix; a plain relative path is used
+    // as-is (the final `unwrap_or`).
+    let path_to_join = path
+        .as_ref()
+        .strip_prefix(temp_dir.as_ref())
+        .or_else(|_| path.as_ref().strip_prefix("/"))
+        .unwrap_or(path.as_ref());
     temp_dir.as_ref().join(path_to_join)
 }
 

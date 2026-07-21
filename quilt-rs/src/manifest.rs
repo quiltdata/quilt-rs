@@ -176,6 +176,13 @@ impl Manifest {
         Ok(Manifest { header, rows })
     }
 
+    /// Serialize the manifest to JSONL: the header line followed by one line
+    /// per row.
+    ///
+    /// # Panics
+    ///
+    /// Panics if serializing the header or a row to JSON fails, which does not
+    /// happen for well-formed manifest values.
     pub fn to_jsonlines(&self) -> String {
         // TODO: This is slightly inefficient.
         // We could use some kind of async iterator / stream idk

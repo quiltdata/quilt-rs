@@ -34,6 +34,10 @@ pub struct MockRemote {
 
 impl MockRemote {
     /// How many times `get_object_stream` was called for `uri`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal call-count mutex is poisoned.
     pub fn get_object_count(&self, uri: &str) -> usize {
         self.get_object_calls
             .lock()

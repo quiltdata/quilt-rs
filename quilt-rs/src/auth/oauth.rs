@@ -58,6 +58,10 @@ pub struct PkceChallenge {
 ///
 /// The verifier is 64 random bytes, base64url-encoded (86 characters),
 /// well within RFC 7636 §4.1's 43–128 character range.
+///
+/// # Panics
+///
+/// Panics if the OS random number generator is unavailable.
 pub fn pkce_challenge() -> PkceChallenge {
     let mut random_bytes = [0u8; 64];
     getrandom::fill(&mut random_bytes).expect("failed to generate random bytes");
@@ -72,6 +76,10 @@ pub fn pkce_challenge() -> PkceChallenge {
 }
 
 /// Generate a random `state` parameter for CSRF protection (RFC 6749 §10.12).
+///
+/// # Panics
+///
+/// Panics if the OS random number generator is unavailable.
 pub fn random_state() -> String {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("failed to generate random bytes");
