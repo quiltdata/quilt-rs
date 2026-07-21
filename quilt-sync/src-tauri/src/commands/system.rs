@@ -45,7 +45,7 @@ pub async fn get_setup_data(
     })
 }
 
-async fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
+fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let paths = app_handle.path();
     let home_dir = paths.home_dir()?;
 
@@ -97,7 +97,7 @@ pub async fn open_directory_picker(
 
     let app_handle = &app_handle.lock().await;
 
-    match open_directory_picker_command(app_handle).await {
+    match open_directory_picker_command(app_handle) {
         Ok(path) => Ok(path),
         Err(err) => {
             error!("Failed to open directory picker: {}", err);
@@ -106,7 +106,7 @@ pub async fn open_directory_picker(
     }
 }
 
-async fn debug_dot_quilt_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
+fn debug_dot_quilt_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let dot_quilt_dir = DomainPaths::new(local_data_dir).dot_quilt_dir();
 
@@ -126,10 +126,10 @@ pub async fn debug_dot_quilt(
     let msg_ok = "Successfully opened .quilt directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
-    Notify::new(msg_init).map(debug_dot_quilt_command(&app_handle).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(debug_dot_quilt_command(&app_handle), msg_ok, msg_err)
 }
 
-async fn debug_logs_command(app: &app::App) -> Result<(), Error> {
+fn debug_logs_command(app: &app::App) -> Result<(), Error> {
     let logs_dir = &app.logs_dir;
     opener::open_browser(logs_dir.path())?;
     Ok(())
@@ -147,7 +147,7 @@ pub async fn debug_logs(
     let msg_ok = "Successfully opened logs directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open logs directory: {err}");
 
-    Notify::new(msg_init).map(debug_logs_command(app).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(debug_logs_command(app), msg_ok, msg_err)
 }
 
 async fn open_home_dir_command(m: &model::Model) -> Result<(), Error> {
@@ -171,7 +171,7 @@ pub async fn open_home_dir(
     Notify::new(msg_init).map(open_home_dir_command(&m).await, msg_ok, msg_err)
 }
 
-async fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
+fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     opener::open_browser(&local_data_dir)?;
     Ok(())
@@ -189,7 +189,7 @@ pub async fn open_data_dir(
     let msg_ok = "Successfully opened data directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open data directory: {err}");
 
-    Notify::new(msg_init).map(open_data_dir_command(&app_handle).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(open_data_dir_command(&app_handle), msg_ok, msg_err)
 }
 
 async fn collect_diagnostic_logs_command(
@@ -332,7 +332,7 @@ pub async fn open_in_default_application(
     )
 }
 
-async fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
+fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
     model::open_in_web_browser(url)?;
     Ok(())
 }
@@ -347,7 +347,7 @@ pub async fn open_in_web_browser(
     let msg_ok = format!("Successfully opened {url}");
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
 
-    Notify::new(msg_init).map(open_in_web_browser_command(&url).await, msg_ok, msg_err)
+    Notify::new(msg_init).map(open_in_web_browser_command(&url), msg_ok, msg_err)
 }
 
 async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {

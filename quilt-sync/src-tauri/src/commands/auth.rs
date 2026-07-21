@@ -59,7 +59,7 @@ pub async fn get_login_error_data(
     })
 }
 
-async fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<(), Error> {
+fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<(), Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
 
@@ -102,7 +102,7 @@ pub async fn erase_auth(
     // client cache. A cached client holds STS credentials minted before
     // logout (valid ~1h), so without this the running app keeps serving
     // reads/writes until they expire.
-    let result = erase_auth_command(&app_handle, &host).await;
+    let result = erase_auth_command(&app_handle, &host);
     if result.is_ok() {
         // Global logout (empty host) clears every cached client; a per-host
         // logout clears only that host's. An unparseable non-empty host can
