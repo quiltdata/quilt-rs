@@ -167,8 +167,12 @@ async fn package_publish_command(
     let status = m.get_installed_package_status(&installed, None).await?;
 
     let settings = settings.read().await.clone();
-    let (outcome, _message) =
-        model::publish_with_settings(m, &namespace, &settings, status).await?;
+    // Box the publish future — the commit+push state machine exceeds the
+    // `large_futures` budget (see `clippy.toml`).
+    let (outcome, _message) = Box::pin(model::publish_with_settings(
+        m, &namespace, &settings, status,
+    ))
+    .await?;
     Ok((namespace, outcome))
 }
 
@@ -181,10 +185,7 @@ pub async fn package_publish(
     namespace: String,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
-    // Box the publish future: it exceeds the 18.5 KiB `large_futures`
-    // budget (see `clippy.toml`) — commit + push chained in one state
-    // machine.
-    let result = Box::pin(package_publish_command(&m, &settings, &namespace)).await;
+    let result = package_publish_command(&m, &settings, &namespace).await;
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
     }
