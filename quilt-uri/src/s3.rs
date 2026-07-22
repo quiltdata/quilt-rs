@@ -36,22 +36,11 @@ fn extract_path_relative_to_bucket(path: &str) -> Result<&str, UriError> {
 
 /// struct representation of the generic `s3://url`
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Default))]
 pub struct S3Uri {
     pub bucket: String,
     pub key: String,
     pub version: Option<String>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[allow(clippy::derivable_impls)]
-impl Default for S3Uri {
-    fn default() -> Self {
-        Self {
-            bucket: String::new(),
-            key: String::new(),
-            version: None,
-        }
-    }
 }
 
 impl S3Uri {

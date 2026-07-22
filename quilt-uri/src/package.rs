@@ -39,20 +39,10 @@ impl Default for RevisionPointer {
 /// But in practice we use "prefix/name".
 /// For ease of serializing/deserializing and for validation we put it to a struct.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Default))]
 pub struct Namespace {
     prefix: String,
     name: String,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[allow(clippy::derivable_impls)]
-impl Default for Namespace {
-    fn default() -> Self {
-        Self {
-            prefix: String::new(),
-            name: String::new(),
-        }
-    }
 }
 
 impl Ord for Namespace {
