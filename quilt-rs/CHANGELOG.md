@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.0-alpha3] - 2026-07-22
+
+### Changed
+
+- `pull` is now a surgical reconcile instead of a nuke-and-reinstall: it applies only the remote's `base ↔ latest` delta over tracked paths, preserving non-conflicting local work (a `Behind` package with local edits is no longer a dead end), refuses only on a pending local commit or a true conflict, and shares one apply primitive with `reset_to_latest` (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+
 ## [v0.34.0-alpha2] - 2026-07-20
 
 ### Removed
