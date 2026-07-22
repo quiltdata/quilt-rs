@@ -129,13 +129,6 @@ impl Visitor<'_> for NamespaceVisitor {
         formatter.write_str("a string prefix and a string name divided with /")
     }
 
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
-    where
-        E: de::Error,
-    {
-        Namespace::try_from(value).map_err(|e| E::custom(format!("Failed parse namespace {e}")))
-    }
-
     fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
     where
         E: de::Error,
@@ -978,8 +971,8 @@ mod tests {
 
     #[test]
     fn test_namespace_deserialize_owned_string() {
-        // A `/` escape forces serde to hand us an owned `String`,
-        // exercising `visit_string` rather than `visit_str`.
+        // A `/` escape forces serde to hand us an owned `String`; the
+        // `Visitor` default `visit_string` delegates it to `visit_str`.
         let parsed: Namespace = serde_json::from_str("\"foo\\u002fbar\"").unwrap();
         assert_eq!(parsed, Namespace::from(("foo", "bar")));
     }
@@ -1000,8 +993,8 @@ mod tests {
 
     #[test]
     fn test_namespace_deserialize_owned_string_invalid() {
-        // Escaped, but no `/` after decoding: forces `visit_string` down its
-        // error branch.
+        // Escaped, but no `/` after decoding: the owned `String` reaches
+        // `visit_str` (via the default `visit_string`) and errors there.
         let result: Result<Namespace, _> = serde_json::from_str("\"no\\u0061slash\"");
         assert!(result.is_err());
     }

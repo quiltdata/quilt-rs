@@ -1,38 +1,9 @@
 use std::fmt;
-use std::str::Chars;
 
 use url::Url;
 
 use crate::Host;
 use crate::UriError;
-
-fn head_str(mut chars: Chars<'_>) -> (Option<char>, &str) {
-    let leading_char = chars.next();
-    let rest = chars.as_str();
-    (leading_char, rest)
-}
-
-fn extract_path_relative_to_bucket(path: &str) -> Result<&str, UriError> {
-    let (leading_char, rest) = head_str(path.chars());
-
-    match leading_char {
-        None => {
-            return Err(UriError::S3("Path does not exist".to_string()));
-        }
-        Some('/') => (),
-        Some(_) => {
-            return Err(UriError::S3(
-                "Expected path starting with slash".to_string(),
-            ));
-        }
-    }
-
-    if rest.is_empty() {
-        return Err(UriError::S3("Path does not exist".to_string()));
-    }
-
-    Ok(rest)
-}
 
 /// struct representation of the generic `s3://url`
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,13 +48,11 @@ impl TryFrom<&str> for S3Uri {
             .host_str()
             .ok_or(UriError::S3(format!("Missing bucket in {input}")))?;
 
-        let path = extract_path_relative_to_bucket(parsed_url.path()).map_err(|err| {
-            if let UriError::S3(msg) = err {
-                UriError::S3(format!("{msg} in {input}"))
-            } else {
-                err
-            }
-        })?;
+        let path = parsed_url
+            .path()
+            .strip_prefix('/')
+            .filter(|rest| !rest.is_empty())
+            .ok_or_else(|| UriError::S3(format!("Missing object key in {input}")))?;
 
         let key = percent_encoding::percent_decode_str(path).decode_utf8()?;
         let queries = parsed_url.query_pairs().into_owned().collect::<Vec<_>>();
@@ -145,33 +114,6 @@ mod tests {
     type Res<T = ()> = Result<T, UriError>;
 
     #[test]
-    fn test_extract_path_empty() {
-        let err = extract_path_relative_to_bucket("").unwrap_err();
-        assert_eq!(err, UriError::S3("Path does not exist".to_string()));
-    }
-
-    #[test]
-    fn test_extract_path_missing_leading_slash() {
-        let err = extract_path_relative_to_bucket("foo/bar").unwrap_err();
-        assert_eq!(
-            err,
-            UriError::S3("Expected path starting with slash".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_path_only_slash() {
-        let err = extract_path_relative_to_bucket("/").unwrap_err();
-        assert_eq!(err, UriError::S3("Path does not exist".to_string()));
-    }
-
-    #[test]
-    fn test_extract_path_valid() -> Res {
-        assert_eq!(extract_path_relative_to_bucket("/foo/bar")?, "foo/bar");
-        Ok(())
-    }
-
-    #[test]
     fn test_incorrect_scheme() {
         let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
@@ -194,7 +136,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Path does not exist in s3://bucket".to_string(),
+            "Invalid S3 URI: Missing object key in s3://bucket".to_string(),
         );
     }
 
@@ -203,7 +145,7 @@ mod tests {
         let uri = S3Uri::try_from("s3://bucket/");
         assert_eq!(
             uri.unwrap_err().to_string(),
-            "Invalid S3 URI: Path does not exist in s3://bucket/".to_string(),
+            "Invalid S3 URI: Missing object key in s3://bucket/".to_string(),
         );
     }
 
