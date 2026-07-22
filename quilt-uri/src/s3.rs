@@ -36,22 +36,11 @@ fn extract_path_relative_to_bucket(path: &str) -> Result<&str, UriError> {
 
 /// struct representation of the generic `s3://url`
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Default))]
 pub struct S3Uri {
     pub bucket: String,
     pub key: String,
     pub version: Option<String>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[allow(clippy::derivable_impls)]
-impl Default for S3Uri {
-    fn default() -> Self {
-        Self {
-            bucket: String::new(),
-            key: String::new(),
-            version: None,
-        }
-    }
 }
 
 impl S3Uri {
@@ -155,43 +144,39 @@ mod tests {
     type Res<T = ()> = Result<T, UriError>;
 
     #[test]
-    fn test_incorrect_scheme() -> Res {
+    fn test_incorrect_scheme() {
         let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid URI scheme: Expected s3:// scheme in https://bucket/foo/bar".to_string(),
         );
-        Ok(())
     }
 
     #[test]
-    fn test_no_bucket() -> Res {
+    fn test_no_bucket() {
         let uri = S3Uri::try_from("s3://");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Missing bucket in s3://".to_string(),
         );
-        Ok(())
     }
 
     #[test]
-    fn test_no_path() -> Res {
+    fn test_no_path() {
         let uri = S3Uri::try_from("s3://bucket");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Path does not exist in s3://bucket".to_string(),
         );
-        Ok(())
     }
 
     #[test]
-    fn test_no_path_trailing_slash() -> Res {
+    fn test_no_path_trailing_slash() {
         let uri = S3Uri::try_from("s3://bucket/");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Path does not exist in s3://bucket/".to_string(),
         );
-        Ok(())
     }
 
     #[test]
@@ -223,13 +208,12 @@ mod tests {
     }
 
     #[test]
-    fn test_incorrect_query() -> Res {
+    fn test_incorrect_query() {
         let uri = S3Uri::try_from("s3://bucket/foo/bar?another=query");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Unknown query parameter in s3://bucket/foo/bar?another=query. Only single versionId is allowed".to_string(),
         );
-        Ok(())
     }
 
     #[test]
@@ -247,14 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn test_multiple_version_id() -> Res {
+    fn test_multiple_version_id() {
         let uri = S3Uri::try_from("s3://bucket/foo  bar?versionId=query&versionId=another");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid S3 URI: Too many query parameters in s3://bucket/foo  bar?versionId=query&versionId=another. Only single versionId is allowed"
                 .to_string(),
         );
-        Ok(())
     }
 
     #[test]

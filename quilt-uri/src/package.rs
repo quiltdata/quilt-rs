@@ -39,20 +39,10 @@ impl Default for RevisionPointer {
 /// But in practice we use "prefix/name".
 /// For ease of serializing/deserializing and for validation we put it to a struct.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Default))]
 pub struct Namespace {
     prefix: String,
     name: String,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[allow(clippy::derivable_impls)]
-impl Default for Namespace {
-    fn default() -> Self {
-        Self {
-            prefix: String::new(),
-            name: String::new(),
-        }
-    }
 }
 
 impl Ord for Namespace {
@@ -465,54 +455,49 @@ mod tests {
     }
 
     #[test]
-    fn test_incorrect_scheme() -> Res {
+    fn test_incorrect_scheme() {
         let uri = S3PackageUri::try_from("s3://bucket#packagefoo/bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid package URI: expected quilt+s3, got s3".to_string(),
         );
-        Ok(())
     }
 
     #[test]
-    fn test_no_fragment() -> Res {
+    fn test_no_fragment() {
         let uri = S3PackageUri::try_from("quilt+s3://bucket");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid package URI: S3 package URI must contain a fragment: quilt+s3://bucket"
                 .to_string(),
         );
-        Ok(())
     }
 
     #[test]
-    fn test_no_package() -> Res {
+    fn test_no_package() {
         let uri = S3PackageUri::try_from("quilt+s3://bucket#foo=bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
             "Invalid package URI: missing package in fragment".to_string(),
         );
-        Ok(())
     }
 
     #[test]
-    fn test_unknown_paramter() -> Res {
+    fn test_unknown_paramter() {
         let uri = S3PackageUri::try_from("quilt+s3://bucket#package=a/b&foo=bar");
         assert_eq!(
             uri.unwrap_err().to_string(),
             r#"Invalid package URI: unexpected parameters in fragment: {"foo": "bar"}"#.to_string(),
         );
-        Ok(())
     }
 
     #[test]
-    fn test_no_bucket() -> Res {
+    fn test_no_bucket() {
         let uri = S3PackageUri::try_from("quilt+s3://#package=a/b");
         assert_eq!(
             uri.unwrap_err().to_string(),
             r"Invalid package URI: expected host in S3 package URI, got ".to_string(),
         );
-        Ok(())
     }
 
     #[test]
@@ -566,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stringify_with_latest() -> Res {
+    fn test_stringify_with_latest() {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
             catalog: Some(Host::default()),
@@ -578,11 +563,10 @@ mod tests {
             uri.to_string(),
             "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_stringify_with_hash() -> Res {
+    fn test_stringify_with_hash() {
         // Test with short hash
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
@@ -605,11 +589,10 @@ mod tests {
             uri.to_string(),
             "quilt+s3://bucket#package=foo/bar@abcdef1234567890xyz"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_stringify_with_timestamp_tag() -> Res {
+    fn test_stringify_with_timestamp_tag() {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
             catalog: None,
@@ -621,11 +604,10 @@ mod tests {
             uri.to_string(),
             "quilt+s3://bucket#package=foo/bar:1697916638"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_from_manifest_uri() -> Res {
+    fn test_from_manifest_uri() {
         let manifest_uri = ManifestUri {
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
@@ -656,11 +638,10 @@ mod tests {
                 revision: RevisionPointer::Hash("abc123".to_string()),
             }
         );
-        Ok(())
     }
 
     #[test]
-    fn test_namespace_ordering_greater() -> Res {
+    fn test_namespace_ordering_greater() {
         let ns1 = Namespace::from(("z", "a"));
         let ns2 = Namespace::from(("a", "b"));
 
@@ -672,12 +653,10 @@ mod tests {
 
         assert!(ns3 > ns4);
         assert_eq!(ns3.cmp(&ns4), Ordering::Greater);
-
-        Ok(())
     }
 
     #[test]
-    fn test_namespace_partial_ordering() -> Res {
+    fn test_namespace_partial_ordering() {
         let ns1 = Namespace::from(("a", "b"));
         let ns2 = Namespace::from(("a", "b"));
         let ns3 = Namespace::from(("c", "d"));
@@ -699,8 +678,6 @@ mod tests {
         assert!(ns3 >= ns1);
         assert!(ns3 >= ns1);
         assert!(ns3 > ns1);
-
-        Ok(())
     }
 
     #[test]
@@ -805,53 +782,48 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_tag_error() -> Res {
+    fn test_empty_tag_error() {
         let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar:");
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid package URI: tag must not be empty"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_multiple_colons_error() -> Res {
+    fn test_multiple_colons_error() {
         let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar:latest:extra");
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid package URI: package spec may contain only one \":\""
         );
-        Ok(())
     }
 
     #[test]
-    fn test_empty_hash_error() -> Res {
+    fn test_empty_hash_error() {
         let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar@");
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid package URI: hash must not be empty"
         );
-        Ok(())
     }
 
     #[test]
-    fn test_multiple_at_signs_error() -> Res {
+    fn test_multiple_at_signs_error() {
         let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar@abc123@def456");
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid package URI: package spec may contain only one \"@\""
         );
-        Ok(())
     }
 
     #[test]
-    fn test_both_tag_and_hash_error() -> Res {
+    fn test_both_tag_and_hash_error() {
         let result = S3PackageUri::try_from("quilt+s3://bucket#package=foo/bar:latest@abc123");
         assert_eq!(
             result.unwrap_err().to_string(),
             "Invalid package URI: package spec may either contain \":\" or \"@\""
         );
-        Ok(())
     }
 
     #[test]
