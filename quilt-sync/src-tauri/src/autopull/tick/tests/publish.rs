@@ -236,6 +236,11 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
 
 #[tokio::test]
 async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
+    // The publish branch must never fire on a `Behind` tree. Here the pull
+    // branch is entered (Behind, pull enabled) but the dry-run classifier
+    // returns `UpToDate` — the race where the tip moved back between the
+    // status read and the classify — so neither pull nor publish runs and the
+    // tick falls through with the cheap-refresh status.
     let ns: Namespace = ("acme", "demo").into();
     let mut changes = BTreeMap::new();
     changes.insert(
@@ -246,6 +251,10 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h1".to_string());
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::UpToDate));
     model.expect_package_pull().times(0);
     model.expect_package_publish().times(0);
 
@@ -726,9 +735,9 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
 
 #[tokio::test]
 async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
-    // Behind + has_changes path: refresh_then_maybe_sync returns
-    // has_changes = true and tick.rs must propagate that to the
-    // aggregator as pending_changes = 1.
+    // Behind + has_changes path: the tick auto-pulls (keeping the local
+    // work), and the post-pull `RefreshOutcome` carries `has_changes = true`,
+    // which tick.rs must propagate to the aggregator as pending_changes = 1.
     let ns: Namespace = ("acme", "demo").into();
     let mut changes = BTreeMap::new();
     changes.insert(
@@ -736,8 +745,24 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h1".to_string());
-    let (model, _) =
+    let (mut model, _) =
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::Behind, changes));
+    // Non-conflicting local work: the pull reconciles cleanly and keeps it.
+    model.expect_package_pull_outcome().times(1).returning(|_| {
+        Ok(PullOutcome::KeepsLocalChanges {
+            added: vec![std::path::PathBuf::from("file.txt")],
+            modified: Vec::new(),
+            removed: Vec::new(),
+        })
+    });
+    model.expect_package_pull().times(1).returning(|_, _| {
+        Ok(quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h1".to_string(),
+            origin: None,
+        })
+    });
     let reporter = Arc::new(RecordingReporter::default());
     let (tx, rx) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
