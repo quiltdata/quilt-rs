@@ -1,22 +1,20 @@
 use std::path::PathBuf;
 
 use crate::Res;
-use crate::flow;
+use crate::flow::apply_latest_update;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
-use crate::paths::copy_cached_to_installed;
-use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::Tag;
 use tracing::debug;
 use tracing::info;
 
 pub async fn reset_to_latest(
-    lineage: PackageLineage,
+    mut lineage: PackageLineage,
     manifest: &mut Manifest,
     paths: &DomainPaths,
     storage: &(impl Storage + std::marker::Sync),
@@ -41,15 +39,6 @@ pub async fn reset_to_latest(
         return Ok(lineage);
     }
 
-    let installed_paths: Vec<PathBuf> = lineage.paths.clone().into_keys().collect();
-    debug!("⏳ Uninstalling {} paths", installed_paths.len());
-    let mut lineage =
-        flow::uninstall_paths(lineage, package_home.clone(), storage, &installed_paths).await?;
-
-    debug!("⏳ Updating lineage hashes");
-    // TODO: Should be a method of lineage
-    lineage.latest_hash.clone_from(&latest.hash);
-    lineage.base_hash.clone_from(&latest.hash);
     // Discard any pending local commit. The prior behavior preserved
     // `commit` across reset to support an offline-commit / independent-push
     // workflow: a user could reset their view of remote `latest` without
@@ -58,51 +47,23 @@ pub async fn reset_to_latest(
     // pushes when `commit.is_some()`, so a stale commit after reset would
     // let a subsequent certify resurrect the discarded revision (its
     // installed manifest is still on disk). The trade-off shifted; reset
-    // now matches the UX promise of erasing local commits.
+    // now matches the UX promise of erasing local commits. This must run on
+    // the pre-uninstall lineage, before it is moved into the primitive.
     lineage.commit = None;
-    debug!("✔️ Updated lineage to latest hash: {}", latest.hash);
 
-    debug!("⏳ Caching remote manifest");
-    *manifest = flow::cache_remote_manifest(paths, storage, remote, &latest).await?;
+    // Reset's touch-set is every installed path: overwrite local with remote.
+    let touched: Vec<PathBuf> = lineage.paths.keys().cloned().collect();
 
-    // TODO: merge the following steps with `pull.rs`
-
-    debug!("⏳ Installing cached manifest");
-    copy_cached_to_installed(
-        paths,
-        storage,
-        &ManifestUri {
-            namespace: namespace.clone(),
-            ..latest.clone()
-        },
-    )
-    .await?;
-    lineage.remote_uri = Some(latest);
-    debug!("✔️ Manifest installed successfully");
-
-    debug!("⏳ Checking which paths to reinstall");
-    let mut paths_to_install = Vec::new();
-    for x in &installed_paths {
-        if manifest.contains_record(x) {
-            debug!("✔️ Will reinstall path: {}", x.display());
-            paths_to_install.push(x);
-        } else {
-            debug!("ℹ️ Path no longer exists in manifest: {}", x.display());
-        }
-    }
-
-    info!("⏳ Reinstalling {} paths", paths_to_install.len());
-
-    // Convert Manifest to Table for install_paths function
-    let result = flow::install_paths(
+    let result = apply_latest_update(
         lineage,
         manifest,
         paths,
-        package_home,
-        namespace,
         storage,
         remote,
-        &paths_to_install,
+        package_home,
+        namespace,
+        latest,
+        &touched,
     )
     .await?;
 
@@ -117,6 +78,7 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PackageLineage;
+    use quilt_uri::ManifestUri;
     use quilt_uri::S3Uri;
 
     use test_log::test;
