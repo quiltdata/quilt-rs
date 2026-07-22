@@ -417,7 +417,7 @@ impl From<&ManifestUri> for S3PackageUri {
 mod tests {
     use super::*;
     use crate::Seconds;
-    use crate::fixtures::test_host;
+    use crate::fixtures;
 
     type Res<T = ()> = Result<T, UriError>;
 
@@ -542,7 +542,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                catalog: Some(test_host()),
+                catalog: Some(fixtures::host()),
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Tag(Tag::Latest),
                 path: Some(PathBuf::from("read/me.md")),
@@ -555,7 +555,7 @@ mod tests {
     fn test_stringify_with_latest() {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
-            catalog: Some(test_host()),
+            catalog: Some(fixtures::host()),
             namespace: ("foo", "bar").into(),
             revision: RevisionPointer::Tag(Tag::Latest),
             path: Some(PathBuf::from("read/me.md")),
@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn test_display_for_host() -> Res {
-        let host = test_host();
+        let host = fixtures::host();
 
         let uri_latest: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
@@ -920,7 +920,7 @@ mod tests {
 
         let timestamped = S3PackageUri {
             bucket: "bucket".to_string(),
-            catalog: Some(test_host()),
+            catalog: Some(fixtures::host()),
             namespace: ("foo", "bar").into(),
             revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1_697_916_638))),
             path: None,
@@ -1017,7 +1017,7 @@ mod tests {
     fn test_s3_package_uri_serde_round_trip() {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
-            catalog: Some(test_host()),
+            catalog: Some(fixtures::host()),
             namespace: ("foo", "bar").into(),
             revision: RevisionPointer::Hash("abc123".to_string()),
             path: Some(PathBuf::from("read/me.md")),

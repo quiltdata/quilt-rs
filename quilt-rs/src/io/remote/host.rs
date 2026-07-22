@@ -124,7 +124,7 @@ mod tests {
     use super::*;
 
     use async_trait::async_trait;
-    use quilt_uri::fixtures::test_host;
+    use quilt_uri::fixtures;
     use reqwest::header::HeaderMap;
     use serde::de::DeserializeOwned;
     use std::collections::HashMap;
@@ -193,7 +193,7 @@ mod tests {
             Ok(r#"{"crc64Checksums": true}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, Some(test_host()).as_ref()).await?;
+        let config = fetch_host_config(&client, Some(fixtures::host()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Crc64);
 
         Ok(())
@@ -207,7 +207,7 @@ mod tests {
             Ok(r#"{"crc64Checksums": false}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, Some(test_host()).as_ref()).await?;
+        let config = fetch_host_config(&client, Some(fixtures::host()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Sha256Chunked);
 
         Ok(())
@@ -221,7 +221,7 @@ mod tests {
             Ok(r"{}".to_string()),
         );
 
-        let config = fetch_host_config(&client, Some(test_host()).as_ref()).await?;
+        let config = fetch_host_config(&client, Some(fixtures::host()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Sha256Chunked);
 
         Ok(())
@@ -235,7 +235,7 @@ mod tests {
             Ok(r#"{"crc64Checksums": true, "mode": "OPEN", "other": "ignored"}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, Some(test_host()).as_ref()).await?;
+        let config = fetch_host_config(&client, Some(fixtures::host()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Crc64);
 
         Ok(())
@@ -249,7 +249,7 @@ mod tests {
             Err("Network error".to_string()),
         );
 
-        let result = fetch_host_config(&client, Some(test_host()).as_ref()).await;
+        let result = fetch_host_config(&client, Some(fixtures::host()).as_ref()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Network error"));
     }
@@ -262,7 +262,7 @@ mod tests {
             Ok(r"invalid json".to_string()),
         );
 
-        let result = fetch_host_config(&client, Some(test_host()).as_ref()).await;
+        let result = fetch_host_config(&client, Some(fixtures::host()).as_ref()).await;
         assert!(result.is_err());
 
         // JSON parsing errors get wrapped in HostConfig error by map_err

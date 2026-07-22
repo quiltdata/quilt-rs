@@ -7,6 +7,6 @@ use crate::Host;
 
 /// The canonical catalog host used throughout the test suite.
 #[must_use]
-pub fn test_host() -> Host {
+pub fn host() -> Host {
     Host::from(url::Host::Domain("test.quilt.dev".to_string()))
 }
