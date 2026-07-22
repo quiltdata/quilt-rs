@@ -155,7 +155,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(hc) => hc,
             None => match lineage.remote_uri.as_ref() {
                 Some(remote_uri) if !remote_uri.bucket.is_empty() => {
-                    self.remote.host_config(&remote_uri.origin).await?
+                    self.remote.host_config(remote_uri.origin.as_ref()).await?
                 }
                 _ => HostConfig::default(),
             },
@@ -197,7 +197,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(hc) => hc,
             None => match lineage.remote_uri.as_ref() {
                 Some(remote_uri) if !remote_uri.bucket.is_empty() => {
-                    self.remote.host_config(&remote_uri.origin).await?
+                    self.remote.host_config(remote_uri.origin.as_ref()).await?
                 }
                 _ => HostConfig::default(),
             },
@@ -275,7 +275,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(hc) => hc,
             None => match lineage.remote_uri.as_ref() {
                 Some(remote_uri) if !remote_uri.bucket.is_empty() => {
-                    self.remote.host_config(&remote_uri.origin).await?
+                    self.remote.host_config(remote_uri.origin.as_ref()).await?
                 }
                 _ => HostConfig::default(),
             },
@@ -301,7 +301,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &self.paths,
             &self.storage,
             &self.remote,
-            &host,
+            host.as_ref(),
             package_home,
             status,
             self.namespace.clone(),
@@ -354,7 +354,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         let mut manifest = self.manifest().await?;
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
         let (lineage, status) = match status_opt {
             Some(status) => (lineage, status),
@@ -438,7 +438,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
         let result = flow::push(
             lineage,
@@ -478,7 +478,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let mut manifest = self.manifest().await?;
 
         let host_config =
-            host_config_opt.unwrap_or(self.remote.host_config(&remote_uri.origin).await?);
+            host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
         let (lineage, status) = flow::status(
             lineage,
@@ -657,7 +657,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         workflow: WorkflowIntent,
     ) -> Res {
         let host = Some(origin);
-        let host_config = self.remote.host_config(&host).await?;
+        let host_config = self.remote.host_config(host.as_ref()).await?;
         let workflows_config_uri = S3Uri {
             key: WORKFLOWS_CONFIG_KEY.to_string(),
             bucket,
@@ -668,7 +668,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // gate would otherwise re-download the same config via the header's
         // pinned URI.
         let (config_uri, workflows_config) =
-            fetch_workflows_config(&self.remote, &host, &workflows_config_uri).await?;
+            fetch_workflows_config(&self.remote, host.as_ref(), &workflows_config_uri).await?;
         // Publish later pushes this pending recommit *without* re-resolving the
         // workflow, so recommit must stamp the caller's chosen workflow now.
         // With `WorkflowIntent::BucketDefault` (the no-gesture path) this picks
@@ -676,7 +676,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // first publish is governed even when the user expresses no choice.
         let workflow = resolve_workflow_from_config(
             &self.remote,
-            &host,
+            host.as_ref(),
             workflow,
             config_uri,
             workflows_config.as_ref(),
@@ -689,7 +689,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &self.paths,
             &self.storage,
             &self.remote,
-            &host,
+            host.as_ref(),
             self.namespace.clone(),
             host_config,
             workflow,
@@ -722,7 +722,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let Some((origin, config_uri)) = self.workflows_config_location().await? else {
             return Ok(None);
         };
-        resolve_workflow(&self.remote, &origin, intent, &config_uri).await
+        resolve_workflow(&self.remote, origin.as_ref(), intent, &config_uri).await
     }
 
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
@@ -736,7 +736,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let Some((origin, config_uri)) = self.workflows_config_location().await? else {
             return Ok(None);
         };
-        let (_, config) = fetch_workflows_config(&self.remote, &origin, &config_uri).await?;
+        let (_, config) =
+            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
         Ok(config)
     }
 
@@ -757,12 +758,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let Some((origin, config_uri)) = self.workflows_config_location().await? else {
             return Ok(None);
         };
-        let (_, config) = fetch_workflows_config(&self.remote, &origin, &config_uri).await?;
+        let (_, config) =
+            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
         let Some(config) = config else {
             return Ok(None);
         };
         Ok(Some(
-            fetch_workflow_rules(&self.remote, &origin, &config, workflow_id).await?,
+            fetch_workflow_rules(&self.remote, origin.as_ref(), &config, workflow_id).await?,
         ))
     }
 }

@@ -90,7 +90,7 @@ pub async fn recommit_for_remote(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    host: &Option<Host>,
+    host: Option<&Host>,
     namespace: Namespace,
     host_config: HostConfig,
     workflow: Option<Workflow>,
@@ -291,7 +291,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             namespace,
             crc64_config,
             None,
@@ -325,7 +325,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             namespace,
             HostConfig::default(),
             None,
@@ -352,7 +352,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             namespace,
             sha256_config,
             None,
@@ -388,7 +388,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             namespace.clone(),
             crc64_config,
             None,
@@ -436,7 +436,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             namespace.clone(),
             host_config,
             Some(workflow),
@@ -506,7 +506,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             namespace,
             crc64_config,
             None,
@@ -583,7 +583,7 @@ mod tests {
         let ok_remote = MockRemote::default();
         ok_remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
@@ -596,7 +596,7 @@ mod tests {
             &paths,
             &ok_storage,
             &ok_remote,
-            &None,
+            None,
             namespace.clone(),
             HostConfig::default(),
             Some(workflow.clone()),
@@ -610,14 +610,14 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &"s3://b/schemas/meta.json".parse()?,
                 br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
             )
@@ -632,7 +632,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            &None,
+            None,
             namespace.clone(),
             HostConfig::default(),
             Some(workflow),

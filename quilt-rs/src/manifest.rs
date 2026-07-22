@@ -98,6 +98,7 @@ impl ManifestRow {
     /// push flow uses this to reuse the remote location instead of
     /// re-uploading) and `meta` (user metadata that does not change the
     /// stored bytes, so a metadata-only edit should not force a re-upload).
+    #[must_use]
     pub fn matches_content(&self, other: &Self) -> bool {
         self.logical_key == other.logical_key && self.hash == other.hash && self.size == other.size
     }
@@ -183,6 +184,7 @@ impl Manifest {
     ///
     /// Panics if serializing the header or a row to JSON fails, which does not
     /// happen for well-formed manifest values.
+    #[must_use]
     pub fn to_jsonlines(&self) -> String {
         // TODO: This is slightly inefficient.
         // We could use some kind of async iterator / stream idk
@@ -221,11 +223,13 @@ impl Manifest {
     }
 
     /// Find a record by path (for compatibility with Table API)
+    #[must_use]
     pub fn get_record(&self, path: &PathBuf) -> Option<&ManifestRow> {
         self.rows.iter().find(|row| &row.logical_key == path)
     }
 
     /// Check if manifest contains a record for the given path
+    #[must_use]
     pub fn contains_record(&self, path: &PathBuf) -> bool {
         self.rows.iter().any(|row| &row.logical_key == path)
     }

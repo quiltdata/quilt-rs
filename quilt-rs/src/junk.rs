@@ -106,6 +106,7 @@ fn global() -> &'static Gitignore {
 /// Check if a file path looks like junk. Returns the suggested pattern if so.
 ///
 /// `path` should be a relative path (logical key) within the package.
+#[must_use]
 pub fn check(path: &Path) -> Option<Match> {
     let gitignore = global();
 
@@ -143,6 +144,7 @@ fn check_dotfile(path: &Path) -> Option<Match> {
 }
 
 /// Test whether a gitignore-syntax pattern matches a given path.
+#[must_use]
 pub fn pattern_matches(pattern: &str, path: &str) -> bool {
     let mut builder = GitignoreBuilder::new("/");
     if builder.add_line(None, pattern).is_err() {

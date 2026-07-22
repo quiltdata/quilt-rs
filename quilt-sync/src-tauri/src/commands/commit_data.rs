@@ -740,7 +740,10 @@ mod tests {
         assert_eq!(data.namespace, "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
-        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(data.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
         Ok(())
     }
 
@@ -771,7 +774,10 @@ mod tests {
         assert_eq!(data.namespace, "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
-        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(data.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
         Ok(())
     }
 

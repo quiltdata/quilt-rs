@@ -57,6 +57,7 @@ pub struct Violations(Vec<RuleViolation>);
 impl Violations {
     /// Build from a list, or `None` when it is empty — a rejection must carry a
     /// reason, so an empty `Violations` is unrepresentable.
+    #[must_use]
     pub fn from_nonempty(list: Vec<RuleViolation>) -> Option<Self> {
         (!list.is_empty()).then_some(Self(list))
     }

@@ -55,7 +55,11 @@ async fn upload_from(
     let body = storage.read_byte_stream(manifest_path).await?;
     log::info!("Writing remote manifest to {manifest_uri:?}");
     remote
-        .put_object(&manifest_uri.origin, &manifest_uri.clone().into(), body)
+        .put_object(
+            manifest_uri.origin.as_ref(),
+            &manifest_uri.clone().into(),
+            body,
+        )
         .await
 }
 
@@ -102,7 +106,7 @@ pub async fn tag_latest(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res
 async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: TagUri) -> Res {
     remote
         .put_object(
-            &manifest_uri.origin,
+            manifest_uri.origin.as_ref(),
             &tag_uri.into(),
             manifest_uri.hash.as_bytes().to_vec(),
         )
@@ -114,7 +118,7 @@ async fn upload_tag(remote: &impl Remote, manifest_uri: &ManifestUri, tag_uri: T
 /// Then creates `ManifestUri`.
 pub async fn resolve_tag(
     remote: &impl Remote,
-    host: &Option<Host>,
+    host: Option<&Host>,
     uri: impl Into<S3PackageHandle>,
     tag: Tag,
 ) -> Res<ManifestUri> {
@@ -124,7 +128,7 @@ pub async fn resolve_tag(
         .await?;
     let hash = bytestream_to_string(stream.body).await?;
     let S3PackageHandle { bucket, namespace } = tag_uri.into();
-    let origin = host.to_owned();
+    let origin = host.cloned();
     Ok(ManifestUri {
         hash,
         bucket,
@@ -138,7 +142,7 @@ pub async fn resolve_tag(
 /// So, we need to download the tag and find out what the `hash` is
 async fn resolve_top_hash(
     remote: &impl Remote,
-    host: &Option<Host>,
+    host: Option<&Host>,
     uri: &S3PackageUri,
 ) -> Res<String> {
     match &uri.revision {
@@ -153,13 +157,13 @@ async fn resolve_top_hash(
 /// So, we need to download the tag and find out what the `hash` is
 pub async fn resolve_manifest_uri(
     remote: &impl Remote,
-    host: &Option<Host>,
+    host: Option<&Host>,
     uri: &S3PackageUri,
 ) -> Res<ManifestUri> {
     let bucket = uri.bucket.clone();
     let namespace = uri.namespace.clone();
     let hash = resolve_top_hash(remote, host, uri).await?;
-    let origin = host.to_owned();
+    let origin = host.cloned();
     Ok(ManifestUri {
         bucket,
         namespace,
@@ -279,7 +283,7 @@ mod tests {
     async fn test_resolve_existing_hash() -> Res {
         let uri = S3PackageUri::try_from("quilt+s3://b#package=foo/bar@hjknlmn")?;
         let remote = MockRemote::default();
-        let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
+        let top_hash = resolve_top_hash(&remote, None, &uri).await?;
         assert_eq!(top_hash, "hjknlmn".to_string(),);
         Ok(())
     }
@@ -290,12 +294,12 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,
                 b"abcdef".to_vec(),
             )
             .await?;
-        let top_hash = resolve_top_hash(&remote, &None, &uri).await?;
+        let top_hash = resolve_top_hash(&remote, None, &uri).await?;
         assert_eq!(top_hash, "abcdef".to_string(),);
         Ok(())
     }

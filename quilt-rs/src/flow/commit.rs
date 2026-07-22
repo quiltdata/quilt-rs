@@ -184,7 +184,7 @@ pub async fn commit_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
-    host: &Option<Host>,
+    host: Option<&Host>,
     working_dir: PathBuf,
     status: InstalledPackageStatus,
     namespace: Namespace,
@@ -406,7 +406,7 @@ mod tests {
         let ok_remote = MockRemote::default();
         ok_remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
@@ -418,7 +418,7 @@ mod tests {
             &paths,
             &ok_storage,
             &ok_remote,
-            &None,
+            None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             namespace.clone(),
@@ -434,14 +434,14 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &"s3://b/schemas/meta.json".parse()?,
                 br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
             )
@@ -454,7 +454,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            &None,
+            None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             namespace.clone(),
@@ -493,7 +493,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -526,7 +526,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -589,7 +589,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             PathBuf::default(),
             InstalledPackageStatus::default(),
             ("foo", "bar").into(),
@@ -650,7 +650,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
@@ -719,7 +719,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             PathBuf::from("/working-dir"),
             status,
             ("foo", "bar").into(),
@@ -803,7 +803,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             PathBuf::default(),
             status,
             ("foo", "bar").into(),
@@ -877,7 +877,7 @@ mod tests {
             &paths,
             &storage,
             &MockRemote::default(),
-            &None,
+            None,
             PathBuf::from("/working-dir"),
             status,
             ("foo", "bar").into(),

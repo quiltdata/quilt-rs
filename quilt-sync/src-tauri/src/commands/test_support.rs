@@ -5,9 +5,8 @@ use crate::quilt;
 /// Stringify the catalog host of a typed package URI, if set.
 /// Used by tests to verify host propagation without poking at
 /// `Option<&Host>` chains inline.
-pub(crate) fn catalog_host(uri: &Option<quilt_uri::S3PackageUri>) -> Option<String> {
-    uri.as_ref()
-        .and_then(|u| u.catalog.as_ref())
+pub(crate) fn catalog_host(uri: Option<&quilt_uri::S3PackageUri>) -> Option<String> {
+    uri.and_then(|u| u.catalog.as_ref())
         .map(std::string::ToString::to_string)
 }
 

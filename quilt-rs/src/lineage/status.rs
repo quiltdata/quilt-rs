@@ -66,6 +66,7 @@ pub struct InstalledPackageStatus {
 }
 
 impl InstalledPackageStatus {
+    #[must_use]
     pub fn new(upstream_state: UpstreamState, changes: ChangeSet) -> Self {
         Self {
             upstream_state,
@@ -76,6 +77,7 @@ impl InstalledPackageStatus {
         }
     }
 
+    #[must_use]
     pub fn error() -> Self {
         Self {
             upstream_state: UpstreamState::Error,
@@ -83,6 +85,7 @@ impl InstalledPackageStatus {
         }
     }
 
+    #[must_use]
     pub fn local() -> Self {
         Self {
             upstream_state: UpstreamState::Local,
@@ -93,6 +96,7 @@ impl InstalledPackageStatus {
     /// True when no tracked file was modified within `quiet_window` of
     /// `now`. Defensive: a `mtime` strictly later than `now` (clock
     /// skew, file dated in the future) is clamped to `now`.
+    #[must_use]
     pub fn working_tree_quiet(&self, now: SystemTime, quiet_window: Duration) -> bool {
         let Some(mtime) = self.most_recent_mtime else {
             return true;

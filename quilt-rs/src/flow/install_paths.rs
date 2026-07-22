@@ -28,7 +28,7 @@ use quilt_uri::S3Uri;
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
-    host: &Option<Host>,
+    host: Option<&Host>,
     object_dest: &PathBuf,
     uri: &S3Uri,
 ) -> Res {
@@ -141,7 +141,7 @@ pub async fn install_paths(
             cache_immutable_object(
                 storage,
                 remote,
-                &remote_uri.origin,
+                remote_uri.origin.as_ref(),
                 &object_dest,
                 &row.physical_key.parse()?,
             )
@@ -297,7 +297,7 @@ mod tests {
         // Simulate the remote object
         let remote_object_uri = S3Uri::from_str(&remote_file_url)?;
         remote
-            .put_object(&None, &remote_object_uri, Vec::new())
+            .put_object(None, &remote_object_uri, Vec::new())
             .await?;
 
         // Create the manifest with a single remote row with a random hash
@@ -400,11 +400,11 @@ mod tests {
         let remote = MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.physical_key)?;
         remote
-            .put_object(&None, &remote_object_uri_2, Vec::new())
+            .put_object(None, &remote_object_uri_2, Vec::new())
             .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.physical_key)?;
         remote
-            .put_object(&None, &remote_object_uri_4, Vec::new())
+            .put_object(None, &remote_object_uri_4, Vec::new())
             .await?;
 
         let entries_paths = vec![
@@ -518,7 +518,7 @@ mod tests {
 
             // Simulate remote objects
             let remote_uri = S3Uri::from_str(&place)?;
-            remote.put_object(&None, &remote_uri, Vec::new()).await?;
+            remote.put_object(None, &remote_uri, Vec::new()).await?;
         }
 
         // Create references for the function call

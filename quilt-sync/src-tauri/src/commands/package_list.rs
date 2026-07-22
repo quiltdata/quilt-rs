@@ -323,7 +323,10 @@ mod tests {
         let ahead_uri = ahead.uri.as_ref().expect("URI present");
         assert_eq!(ahead_uri.bucket, "test");
         assert_eq!(ahead_uri.namespace.to_string(), "test/ahead");
-        assert_eq!(catalog_host(&ahead.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(ahead.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
         assert!(ahead.remote_display.is_some());
 
         // For the rest, only the status mapping is the point of this test.
@@ -366,7 +369,10 @@ mod tests {
         // Light phase derives status from lineage (up_to_date, not error)
         assert_eq!(pkg.status, "up_to_date");
         assert!(!pkg.has_changes); // Always false in light phase
-        assert_eq!(catalog_host(&pkg.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(pkg.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
 
         Ok(())
     }
@@ -476,7 +482,10 @@ mod tests {
         assert_eq!(pkg.status, "local");
         assert!(!pkg.has_changes);
         // Has origin (for Push button and disabled Catalog button in UI).
-        assert_eq!(catalog_host(&pkg.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(pkg.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
 
         Ok(())
     }

@@ -6,6 +6,12 @@
 // Test fns return `Res` and end in `Ok(())` so the body can use `?`; that trips
 // `unnecessary_wraps` in tests only. Enforce it in production, allow under test.
 #![cfg_attr(test, allow(clippy::unnecessary_wraps))]
+// `missing_errors_doc` is enforced workspace-wide, but this crate's public
+// surface is internal (consumed only by quilt-cli and QuiltSync) and nearly
+// every fn returns the unified `Res` alias, so a per-fn "# Errors" section
+// would add noise without information. Allow it here; the public-facing
+// quilt-uri crate still enforces the lint.
+#![allow(clippy::missing_errors_doc)]
 
 pub mod flow;
 

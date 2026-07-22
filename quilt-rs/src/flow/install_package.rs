@@ -58,7 +58,13 @@ pub async fn install_package(
     );
 
     debug!("⏳ Resolving latest hash for this package handle");
-    let latest = resolve_tag(remote, &manifest_uri.origin, manifest_uri, Tag::Latest).await?;
+    let latest = resolve_tag(
+        remote,
+        manifest_uri.origin.as_ref(),
+        manifest_uri,
+        Tag::Latest,
+    )
+    .await?;
     debug!("✔️ Latest hash is {}", latest.hash);
 
     let mut lineage = lineage;
@@ -142,7 +148,7 @@ mod tests {
         ))?;
         remote
             .put_object(
-                &manifest_uri.origin,
+                manifest_uri.origin.as_ref(),
                 &remote_uri,
                 test_manifest.as_bytes().to_vec(),
             )
@@ -155,7 +161,7 @@ mod tests {
         ))?;
         remote
             .put_object(
-                &manifest_uri.origin,
+                manifest_uri.origin.as_ref(),
                 &latest_uri,
                 manifest_uri.hash.as_bytes().to_vec(),
             )
@@ -205,7 +211,7 @@ mod tests {
         ))?;
         remote
             .put_object(
-                &manifest_uri.origin,
+                manifest_uri.origin.as_ref(),
                 &remote_uri,
                 test_manifest.as_bytes().to_vec(),
             )

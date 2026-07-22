@@ -72,6 +72,7 @@ impl fmt::Display for ManifestUri {
 }
 
 impl ManifestUri {
+    #[must_use]
     pub fn display(&self) -> String {
         S3PackageUri::from(self).display()
     }

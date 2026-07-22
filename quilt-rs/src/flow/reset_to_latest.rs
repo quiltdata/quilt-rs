@@ -33,7 +33,7 @@ pub async fn reset_to_latest(
         remote_uri.display()
     );
     let origin = remote_uri.origin.clone();
-    let latest = resolve_tag(remote, &origin, remote_uri, Tag::Latest).await?;
+    let latest = resolve_tag(remote, origin.as_ref(), remote_uri, Tag::Latest).await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);
 
     if latest.hash == lineage.remote()?.hash {
@@ -137,7 +137,7 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"foo".to_vec(),
             )
@@ -182,14 +182,14 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 test_hash.as_bytes().to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from(format!("s3://b/.quilt/packages/{test_hash}").as_str())?,
                 dummy_manifest.as_bytes().to_vec(),
             )
@@ -255,14 +255,14 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 test_hash.as_bytes().to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from(format!("s3://b/.quilt/packages/{test_hash}").as_str())?,
                 dummy_manifest.as_bytes().to_vec(),
             )

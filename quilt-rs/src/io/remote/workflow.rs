@@ -34,7 +34,7 @@ use quilt_uri::S3Uri;
 /// context.
 async fn resolve_schema_url<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     config: &WorkflowsConfig,
     workflow_id: &str,
     schema_id: &str,
@@ -57,7 +57,7 @@ async fn resolve_schema_url<R: Remote>(
 /// `schemas` field.
 async fn resolve_declared_schemas<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     config: &WorkflowsConfig,
     workflow_id: &str,
 ) -> Res<BTreeMap<String, S3Uri>> {
@@ -76,7 +76,7 @@ async fn resolve_declared_schemas<R: Remote>(
 /// (possibly version-pinned) config address the resulting stamp records.
 async fn resolve_named<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     config: &WorkflowsConfig,
     config_uri: S3Uri,
     id: String,
@@ -90,7 +90,7 @@ async fn resolve_named<R: Remote>(
 
 pub(crate) async fn fetch_workflows_config<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     uri: &S3Uri,
 ) -> Res<(S3Uri, Option<WorkflowsConfig>)> {
     if !remote.exists(host, uri).await? {
@@ -121,7 +121,7 @@ pub(crate) async fn fetch_workflows_config<R: Remote>(
 /// Returns `Ok(None)` when the bucket has no config.
 pub async fn fetch_workflows_config_for_bucket<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     bucket: &str,
 ) -> Res<Option<WorkflowsConfig>> {
     let uri = S3Uri {
@@ -134,7 +134,7 @@ pub async fn fetch_workflows_config_for_bucket<R: Remote>(
 }
 
 /// Fetch a schema document from the remote and parse it as JSON.
-async fn fetch_schema_doc<R: Remote>(remote: &R, host: &Option<Host>, uri: &S3Uri) -> Res<Value> {
+async fn fetch_schema_doc<R: Remote>(remote: &R, host: Option<&Host>, uri: &S3Uri) -> Res<Value> {
     let stream = remote.get_object_stream(host, uri).await?;
     let mut bytes = Vec::new();
     stream
@@ -155,7 +155,7 @@ async fn fetch_schema_doc<R: Remote>(remote: &R, host: &Option<Host>, uri: &S3Ur
 /// [`crate::workflow::validate_package`] consumes.
 pub async fn fetch_workflow_rules<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     config: &WorkflowsConfig,
     workflow_id: &str,
 ) -> Res<WorkflowRules> {
@@ -176,7 +176,7 @@ pub async fn fetch_workflow_rules<R: Remote>(
 /// the workflow declares no such schema.
 async fn fetch_schema_for_key<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     config: &WorkflowsConfig,
     workflow_id: &str,
     key: &str,
@@ -240,7 +240,7 @@ pub(crate) fn entry_view(row: &ManifestRow) -> EntryView<'_> {
 /// (retry) — while a failed *fetch* stays an `Error::S3` and remains transient.
 pub(crate) async fn validate_workflow<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     name: &str,
     message: Option<&str>,
     user_meta: Option<&Value>,
@@ -281,7 +281,7 @@ pub(crate) async fn validate_workflow<R: Remote>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn validate_workflow_with_config<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     name: &str,
     message: Option<&str>,
     user_meta: Option<&Value>,
@@ -348,7 +348,7 @@ pub(crate) async fn validate_workflow_with_config<R: Remote>(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     bucket: &str,
     name: &str,
     message: Option<&str>,
@@ -403,7 +403,7 @@ pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
 ///   silently ungoverned); a non-string value → error.
 pub async fn resolve_workflow<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     intent: WorkflowIntent,
     uri: &S3Uri,
 ) -> Res<Option<Workflow>> {
@@ -422,7 +422,7 @@ pub async fn resolve_workflow<R: Remote>(
 /// delegates here after fetching.
 pub(crate) async fn resolve_workflow_from_config<R: Remote>(
     remote: &R,
-    host: &Option<Host>,
+    host: Option<&Host>,
     intent: WorkflowIntent,
     config: S3Uri,
     parsed: Option<&WorkflowsConfig>,
@@ -467,13 +467,13 @@ workflows:
     metadata_schema: bar
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
         // Should error when trying to resolve a workflow with missing schema section
         let err = resolve_workflow(
             &remote,
-            &host,
+            host.as_ref(),
             WorkflowIntent::Named("foo".to_string()),
             &uri,
         )
@@ -496,13 +496,14 @@ workflows:
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         // Case 1.a: No config.yaml and workflow_id is None
-        let result = resolve_workflow(&remote, &host, WorkflowIntent::NoWorkflow, &uri).await?;
+        let result =
+            resolve_workflow(&remote, host.as_ref(), WorkflowIntent::NoWorkflow, &uri).await?;
         assert!(result.is_none());
 
         // Case 1.b: No config.yaml but workflow_id is set
         let err = resolve_workflow(
             &remote,
-            &host,
+            host.as_ref(),
             WorkflowIntent::Named("test-workflow".to_string()),
             &uri,
         )
@@ -537,16 +538,16 @@ schemas:
         let schema_uri: S3Uri = "s3://test-bucket/schemas/test.json".parse()?;
         let schema = b"{}";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
         remote
-            .put_object(&None, &schema_uri, schema.to_vec())
+            .put_object(None, &schema_uri, schema.to_vec())
             .await?;
 
         // Case 2.a: Config exists, workflow_id is set and valid
         let result = resolve_workflow(
             &remote,
-            &host,
+            host.as_ref(),
             WorkflowIntent::Named("foo".to_string()),
             &uri,
         )
@@ -565,7 +566,7 @@ schemas:
         );
 
         // Case 2.b: Config exists but workflow_id is None
-        let result = resolve_workflow(&remote, &host, WorkflowIntent::NoWorkflow, &uri)
+        let result = resolve_workflow(&remote, host.as_ref(), WorkflowIntent::NoWorkflow, &uri)
             .await?
             .unwrap();
         assert_eq!(result.config, uri);
@@ -574,7 +575,7 @@ schemas:
         // Case 2.c: Config exists but workflow_id is not found
         let err = resolve_workflow(
             &remote,
-            &host,
+            host.as_ref(),
             WorkflowIntent::Named("non-existent".to_string()),
             &uri,
         )
@@ -587,9 +588,14 @@ schemas:
         assert!(err.to_string().contains("Workflow non-existent not found"));
 
         // Case 2.d: Config exists but workflow_id is empty
-        let err = resolve_workflow(&remote, &host, WorkflowIntent::Named(String::new()), &uri)
-            .await
-            .unwrap_err();
+        let err = resolve_workflow(
+            &remote,
+            host.as_ref(),
+            WorkflowIntent::Named(String::new()),
+            &uri,
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             err,
             Error::RemoteCatalog(RemoteCatalogError::Workflow(_))
@@ -606,7 +612,8 @@ schemas:
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 
         // No config.yaml: bucket-default resolves to nothing.
-        let result = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri).await?;
+        let result =
+            resolve_workflow(&remote, host.as_ref(), WorkflowIntent::BucketDefault, &uri).await?;
         assert!(result.is_none());
 
         Ok(())
@@ -627,10 +634,10 @@ workflows:
     metadata_schema: bar
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let result = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+        let result = resolve_workflow(&remote, host.as_ref(), WorkflowIntent::BucketDefault, &uri)
             .await?
             .unwrap();
         assert_eq!(result.config, uri);
@@ -659,13 +666,11 @@ schemas:
 ";
         let schema_uri: S3Uri = "s3://test-bucket/schemas/test.json".parse()?;
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
-        remote
-            .put_object(&None, &schema_uri, b"{}".to_vec())
-            .await?;
+        remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
-        let result = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+        let result = resolve_workflow(&remote, host.as_ref(), WorkflowIntent::BucketDefault, &uri)
             .await?
             .unwrap();
         assert_eq!(result.config, uri);
@@ -707,12 +712,12 @@ schemas:
     url: s3://test-bucket/schemas/entries.json
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
         for key in ["meta.json", "entries.json"] {
             remote
                 .put_object(
-                    &None,
+                    None,
                     &format!("s3://test-bucket/schemas/{key}").parse()?,
                     b"{}".to_vec(),
                 )
@@ -721,7 +726,7 @@ schemas:
 
         let result = resolve_workflow(
             &remote,
-            &host,
+            host.as_ref(),
             WorkflowIntent::Named("dual".to_string()),
             &uri,
         )
@@ -767,11 +772,11 @@ schemas:
     url: s3://test-bucket/schemas/entries.json
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &"s3://test-bucket/schemas/entries.json".parse()?,
                 b"{}".to_vec(),
             )
@@ -779,7 +784,7 @@ schemas:
 
         let result = resolve_workflow(
             &remote,
-            &host,
+            host.as_ref(),
             WorkflowIntent::Named("entries-only".to_string()),
             &uri,
         )
@@ -815,10 +820,10 @@ workflows:
     metadata_schema: bar
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let err = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+        let err = resolve_workflow(&remote, host.as_ref(), WorkflowIntent::BucketDefault, &uri)
             .await
             .unwrap_err();
         assert!(matches!(
@@ -848,10 +853,10 @@ workflows:
     metadata_schema: bar
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let err = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+        let err = resolve_workflow(&remote, host.as_ref(), WorkflowIntent::BucketDefault, &uri)
             .await
             .unwrap_err();
         assert!(matches!(
@@ -890,10 +895,10 @@ workflows:
     metadata_schema: bar
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let err = resolve_workflow(&remote, &host, WorkflowIntent::BucketDefault, &uri)
+        let err = resolve_workflow(&remote, host.as_ref(), WorkflowIntent::BucketDefault, &uri)
             .await
             .unwrap_err();
         assert!(matches!(
@@ -927,10 +932,10 @@ workflows:
     name: Foo
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let parsed = fetch_workflows_config_for_bucket(&remote, &host, "my-bucket")
+        let parsed = fetch_workflows_config_for_bucket(&remote, host.as_ref(), "my-bucket")
             .await?
             .expect("config present → Some");
         assert_eq!(parsed.default_workflow, Some("foo".to_string()));
@@ -952,7 +957,8 @@ workflows:
         let host = None;
 
         // No config object for this bucket → None.
-        let result = fetch_workflows_config_for_bucket(&remote, &host, "empty-bucket").await?;
+        let result =
+            fetch_workflows_config_for_bucket(&remote, host.as_ref(), "empty-bucket").await?;
         assert!(result.is_none());
 
         Ok(())
@@ -982,22 +988,22 @@ schemas:
         let meta_uri: S3Uri = "s3://test-bucket/schemas/meta.json".parse()?;
         let entries_uri: S3Uri = "s3://test-bucket/schemas/entries.json".parse()?;
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &meta_uri,
                 br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
             )
             .await?;
         remote
-            .put_object(&None, &entries_uri, br#"{"type": "array"}"#.to_vec())
+            .put_object(None, &entries_uri, br#"{"type": "array"}"#.to_vec())
             .await?;
 
-        let (_, parsed) = fetch_workflows_config(&remote, &host, &uri).await?;
+        let (_, parsed) = fetch_workflows_config(&remote, host.as_ref(), &uri).await?;
         let parsed = parsed.expect("config present");
-        let rules = fetch_workflow_rules(&remote, &host, &parsed, "foo").await?;
+        let rules = fetch_workflow_rules(&remote, host.as_ref(), &parsed, "foo").await?;
 
         assert_eq!(
             rules,
@@ -1029,12 +1035,12 @@ workflows:
     name: Bare
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let (_, parsed) = fetch_workflows_config(&remote, &host, &uri).await?;
+        let (_, parsed) = fetch_workflows_config(&remote, host.as_ref(), &uri).await?;
         let parsed = parsed.expect("config present");
-        let rules = fetch_workflow_rules(&remote, &host, &parsed, "bare").await?;
+        let rules = fetch_workflow_rules(&remote, host.as_ref(), &parsed, "bare").await?;
 
         assert_eq!(
             rules,
@@ -1067,10 +1073,10 @@ workflows:
     metadata_schema: ~
 ";
         remote
-            .put_object(&None, &uri, config.as_bytes().to_vec())
+            .put_object(None, &uri, config.as_bytes().to_vec())
             .await?;
 
-        let err = fetch_workflows_config(&remote, &host, &uri)
+        let err = fetch_workflows_config(&remote, host.as_ref(), &uri)
             .await
             .unwrap_err();
 

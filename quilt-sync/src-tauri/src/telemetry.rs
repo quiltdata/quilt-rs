@@ -53,13 +53,13 @@ impl Telemetry {
     }
 
     pub async fn track(&self, event: MixpanelEvent) {
-        if let Err(err) = mixpanel::track_event(&self.mixpanel, &event).await {
+        if let Err(err) = mixpanel::track_event(self.mixpanel.as_ref(), &event).await {
             Sentry::capture_error(&err);
         }
     }
 
     pub fn init(&self) {
-        mixpanel::init(&self.mixpanel);
+        mixpanel::init(self.mixpanel.as_ref());
     }
 
     /// Returns the current global maximum log level as a human-readable string.

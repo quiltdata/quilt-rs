@@ -111,27 +111,27 @@ impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
     /// Checks if object exists
-    fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri)
+    fn exists(&self, host: Option<&Host>, s3_uri: &S3Uri)
     -> impl Future<Output = Res<bool>> + Send;
 
     /// Fetches the objects contents as a `ByteStream`
     fn get_object_stream(
         &self,
-        host: &Option<Host>,
+        host: Option<&Host>,
         s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<RemoteObjectStream>> + Send;
 
     // Makes a head request and resolves the final versioned URL
     fn resolve_url(
         &self,
-        host: &Option<Host>,
+        host: Option<&Host>,
         s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<S3Uri>> + Send;
 
     /// Upload file. Just that
     fn put_object(
         &self,
-        host: &Option<Host>,
+        host: Option<&Host>,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> impl Future<Output = Res>;
@@ -146,7 +146,7 @@ pub trait Remote {
     ) -> impl Future<Output = Res<(S3Uri, ObjectHash)>>;
 
     /// Fetch host configuration from the given host
-    fn host_config(&self, host: &Option<Host>) -> impl Future<Output = Res<HostConfig>> + Send;
+    fn host_config(&self, host: Option<&Host>) -> impl Future<Output = Res<HostConfig>> + Send;
 
     /// Verify that a bucket exists and is addressable on S3. Used for
     /// pre-flight validation when a user sets a remote, so a typo in

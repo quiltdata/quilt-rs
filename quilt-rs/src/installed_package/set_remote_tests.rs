@@ -145,22 +145,22 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
     struct BadBucketRemote;
 
     impl Remote for BadBucketRemote {
-        async fn exists(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<bool> {
+        async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
             unreachable!("test only exercises verify_bucket")
         }
         async fn get_object_stream(
             &self,
-            _host: &Option<Host>,
+            _host: Option<&Host>,
             _s3_uri: &S3Uri,
         ) -> Res<crate::io::remote::RemoteObjectStream> {
             unreachable!("test only exercises verify_bucket")
         }
-        async fn resolve_url(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+        async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
             unreachable!("test only exercises verify_bucket")
         }
         async fn put_object(
             &self,
-            _host: &Option<Host>,
+            _host: Option<&Host>,
             _s3_uri: &S3Uri,
             _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
         ) -> Res {
@@ -175,7 +175,7 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
         ) -> Res<(S3Uri, ObjectHash)> {
             unreachable!("test only exercises verify_bucket")
         }
-        async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {
+        async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
             Ok(crate::io::remote::HostConfig::default())
         }
         async fn verify_bucket(&self, bucket: &str) -> Res {
@@ -624,11 +624,9 @@ schemas:
 ";
     let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
     remote
-        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .put_object(None, &config_uri, config.as_bytes().to_vec())
         .await?;
-    remote
-        .put_object(&None, &schema_uri, b"{}".to_vec())
-        .await?;
+    remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
     // Start with no remote and no commit
     let lineage_json = r#"{
@@ -743,11 +741,9 @@ schemas:
 ";
     let schema_uri: S3Uri = schema_uri_str.parse()?;
     remote
-        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .put_object(None, &config_uri, config.as_bytes().to_vec())
         .await?;
-    remote
-        .put_object(&None, &schema_uri, b"{}".to_vec())
-        .await?;
+    remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
     let lineage_json = r#"{
         "packages": {
@@ -850,11 +846,9 @@ schemas:
 ";
     let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
     remote
-        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .put_object(None, &config_uri, config.as_bytes().to_vec())
         .await?;
-    remote
-        .put_object(&None, &schema_uri, b"{}".to_vec())
-        .await?;
+    remote.put_object(None, &schema_uri, b"{}".to_vec()).await?;
 
     let lineage_json = format!(
         r#"{{
@@ -960,10 +954,10 @@ async fn package_with_config(
     let config_uri: S3Uri = "s3://my-bucket/.quilt/workflows/config.yml".parse()?;
     let schema_uri: S3Uri = "s3://my-bucket/schemas/test.json".parse()?;
     remote
-        .put_object(&None, &config_uri, config.as_bytes().to_vec())
+        .put_object(None, &config_uri, config.as_bytes().to_vec())
         .await?;
     remote
-        .put_object(&None, &schema_uri, schema.to_vec())
+        .put_object(None, &schema_uri, schema.to_vec())
         .await?;
 
     let lineage_json = format!(

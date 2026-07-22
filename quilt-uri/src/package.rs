@@ -308,6 +308,7 @@ impl S3PackageUri {
         }
     }
 
+    #[must_use]
     pub fn display(&self) -> String {
         let hash = match &self.revision {
             RevisionPointer::Tag(Tag::Latest) => String::new(),
@@ -328,6 +329,12 @@ impl S3PackageUri {
         )
     }
 
+    /// Renders this package URI as a catalog web URL on `host`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UriError::UrlParse`] if `host`, the bucket, or the namespace
+    /// yield a string that is not a valid URL.
     pub fn display_for_host(&self, host: &Host) -> Result<url::Url, UriError> {
         let version = match &self.revision {
             RevisionPointer::Tag(tag) => tag.to_string(),
@@ -347,6 +354,12 @@ impl S3PackageUri {
         Ok(url)
     }
 
+    /// Renders this package URI as a web URL on its own catalog host.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UriError::Package`] if the URI has no catalog host, or any
+    /// error from [`display_for_host`](Self::display_for_host).
     pub fn display_for_catalog(&self) -> Result<url::Url, UriError> {
         let host = self.catalog.as_ref().ok_or(UriError::Package(
             "Package URI has no catalog specified".to_string(),
