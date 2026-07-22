@@ -76,6 +76,20 @@ pub async fn pull_package(
         PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {}
     }
 
+    // TODO: `status` is a snapshot taken before the fetch above; a file edited
+    // after the status walk but before the apply below is absent from
+    // `status.changes`, lands in the touch-set if remote-changed, and is
+    // overwritten with no conflict signal (pre-existing TOCTOU, reachable from
+    // dirty trees since pull stopped refusing on them). Re-validate the touched
+    // paths against the working tree at apply time.
+    //
+    // TODO: this second `remote_delta` pass re-derives the partition
+    // `classify_pull` just computed and discarded, and the blanket skip of
+    // user-touched paths is correct only because classify already `Blocked`
+    // every disagreeing both-changed path. Have the classifier return the
+    // per-path disposition (or the delta) so the two derivations cannot
+    // silently desynchronize.
+    //
     // Touch-set: remote-changed tracked paths the user did NOT touch. Paths the
     // user changed are left in place (kept, or trivially resolved).
     let touched: Vec<PathBuf> = remote_delta(manifest, &latest_manifest)

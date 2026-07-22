@@ -37,6 +37,12 @@ pub(crate) async fn apply_latest_update(
     latest: ManifestUri,
     touched: &[PathBuf],
 ) -> Res<PackageLineage> {
+    // TODO: a failure between `uninstall_paths` and `install_paths` (e.g. a
+    // network drop) leaves the touched files deleted but still tracked, so the
+    // retry classifies the gap as local-Removed vs remote-Modified and refuses
+    // with `PullConflict` instead of resuming. Make the apply transactional
+    // (install-before-uninstall for modified paths, or stage-then-swap) so the
+    // retryability promised in the doc comment holds mid-apply.
     // Uninstall only the touched paths we currently track (a remote-added
     // path is not tracked; a remote-removed path is).
     let to_uninstall: Vec<PathBuf> = touched

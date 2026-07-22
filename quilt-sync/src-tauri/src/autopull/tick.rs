@@ -179,6 +179,17 @@ pub(crate) async fn refresh_then_maybe_sync(
     // shape, this gate is what stops a pull and a publish from racing on
     // the same package in the same tick.
     if pull_enabled && upstream == quilt::lineage::UpstreamState::Behind && !has_pending_commit {
+        // TODO: this dry-run repeats the status walk and tag resolution that
+        // `package_pull` performs again internally, so `classify_pull` runs
+        // twice per Behind tick with a race window between them. Have
+        // `flow::pull` return the `PullOutcome` it already computes and route
+        // on the pull result alone — same outcome-based routing, half the
+        // network work.
+        //
+        // TODO: the blanket `Transient` mapping below bypasses the
+        // `LoginRequired` classification the status call gets, so an expired
+        // session surfaces the login affordance one backoff (~2 s) later than
+        // it could. Route this error through the same classification.
         let outcome = model
             .package_pull_outcome(&installed)
             .await
@@ -196,6 +207,10 @@ pub(crate) async fn refresh_then_maybe_sync(
                         // `has_changes` is the intended post-pull state, so
                         // carry `has_changes` through rather than forcing it
                         // to `false`.
+                        // TODO: when the pull trivially resolved every local
+                        // change, the pre-pull `has_changes` is stale-true and
+                        // the UI counts phantom pending changes for one tick
+                        // interval. Recompute (or refresh) after the pull.
                         Ok(RefreshOutcome {
                             upstream: quilt::lineage::UpstreamState::UpToDate,
                             has_changes,

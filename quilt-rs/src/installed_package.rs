@@ -519,6 +519,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // `status` refreshes `latest_hash` in memory but no longer persists it
         // (see `pull`), so the on-disk lineage is stale here — refresh again to
         // address the freshly-moved `latest` manifest rather than the base.
+        // TODO: that makes two tag resolutions (plus extra lineage reads) per
+        // dry-run; threading the refreshed lineage out of `status` would drop
+        // this second `refresh_latest_hash` and make "network-light" accurate
+        // for the Behind case too.
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let base = self.manifest().await?;
