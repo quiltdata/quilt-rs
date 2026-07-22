@@ -70,6 +70,7 @@ impl ManifestUri {
 mod tests {
     use super::*;
     use crate::Tag;
+    use crate::fixtures::test_host;
 
     type Res<T = ()> = Result<T, UriError>;
 
@@ -142,7 +143,7 @@ mod tests {
     #[test]
     fn test_manifest_uri_display_method_with_origin() {
         let uri = ManifestUri {
-            origin: Some(Host::default()),
+            origin: Some(test_host()),
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),
@@ -156,7 +157,7 @@ mod tests {
     #[test]
     fn test_manifest_uri_serde_round_trip() {
         let uri = ManifestUri {
-            origin: Some(Host::default()),
+            origin: Some(test_host()),
             bucket: "test-bucket".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),

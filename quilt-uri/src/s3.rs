@@ -138,6 +138,7 @@ impl std::str::FromStr for S3Uri {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::test_host;
 
     use test_log::test;
 
@@ -283,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_display_for_host() -> Res {
-        let host = Host::default();
+        let host = test_host();
         let uri = S3Uri {
             bucket: "bucket".to_string(),
             key: "foo/bar".to_string(),

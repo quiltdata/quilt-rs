@@ -3,6 +3,8 @@
 //! Most of them you can convert one to another.
 
 pub mod error;
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixtures;
 mod host;
 mod manifest;
 mod object;

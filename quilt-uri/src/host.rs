@@ -52,15 +52,6 @@ impl FromStr for Host {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl Default for Host {
-    fn default() -> Self {
-        Host {
-            inner: url::Host::Domain("test.quilt.dev".to_string()),
-        }
-    }
-}
-
 impl fmt::Display for Host {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.inner)
