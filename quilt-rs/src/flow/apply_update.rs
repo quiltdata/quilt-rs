@@ -54,7 +54,10 @@ pub(crate) async fn apply_latest_update(
     lineage.latest_hash.clone_from(&latest.hash);
 
     debug!("⏳ Caching + installing latest manifest as the new base");
-    *manifest = flow::cache_remote_manifest(paths, storage, remote, &latest).await?;
+    // Cache the remote manifest for its side effect only; the parse result is
+    // discarded because `*manifest` is (re)loaded from the installed copy just
+    // below from a byte-identical file.
+    flow::cache_remote_manifest(paths, storage, remote, &latest).await?;
     copy_cached_to_installed(
         paths,
         storage,
@@ -67,6 +70,20 @@ pub(crate) async fn apply_latest_update(
     *manifest =
         Manifest::from_path(storage, &paths.installed_manifest(&namespace, &latest.hash)).await?;
     lineage.remote_uri = Some(latest);
+
+    // Prune lineage paths that have no row in the new base manifest. This only
+    // catches trivially-resolved both-removed paths (locally deleted + absent
+    // from `latest`): they are filtered out of the touch-set, so they never go
+    // through `uninstall_paths`, yet the persisted lineage must not track a
+    // path with no manifest row — `create_status` hard-errors on that for
+    // remote-backed packages. Every other case is already handled: a
+    // locally-removed path the remote still has keeps its row; a
+    // remote-removed + locally-modified path is classified `Blocked` and never
+    // reaches apply; a remote-removed untouched path is in the touch-set and
+    // uninstalled normally. For reset (touch-set = every path) this is a no-op.
+    lineage
+        .paths
+        .retain(|path, _| manifest.contains_record(path));
 
     let to_install: Vec<&PathBuf> = touched
         .iter()
@@ -96,8 +113,11 @@ mod tests {
     use super::*;
     use test_log::test;
 
+    use std::collections::BTreeMap;
+
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
+    use crate::lineage::PathState;
     use quilt_uri::S3Uri;
 
     // An empty touch-set advances the hashes (`base_hash`, `latest_hash`, and
@@ -156,6 +176,72 @@ mod tests {
         assert_eq!(result.base_hash, new_hash);
         assert_eq!(result.latest_hash, new_hash);
         assert_eq!(result.remote()?.hash, new_hash);
+        Ok(())
+    }
+
+    // A path tracked in lineage but absent from the new `latest` manifest — a
+    // trivially-resolved both-removed path (locally deleted + gone from remote,
+    // so filtered out of the touch-set and never uninstalled) — must be pruned
+    // from `lineage.paths`. Otherwise the persisted lineage tracks a path with
+    // no manifest row and `create_status` hard-errors for remote-backed
+    // packages.
+    #[test(tokio::test)]
+    async fn prunes_lineage_path_absent_from_latest_manifest() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        let paths = DomainPaths::default();
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let stale = PathBuf::from("both-removed.txt");
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            paths: BTreeMap::from([(stale.clone(), PathState::default())]),
+            ..PackageLineage::default()
+        };
+
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{new_hash}").as_str())?,
+                // `latest` manifest has no rows → no record for `stale`.
+                r#"{"version": "v0"}"#.as_bytes().to_vec(),
+            )
+            .await?;
+
+        let latest = ManifestUri {
+            hash: new_hash.to_string(),
+            ..manifest_uri
+        };
+        let mut manifest = Manifest::default();
+        let result = apply_latest_update(
+            lineage,
+            &mut manifest,
+            &paths,
+            &storage,
+            &remote,
+            PathBuf::default(),
+            Namespace::default(),
+            latest,
+            // Empty touch-set: `stale` is NOT uninstalled the normal way.
+            &[],
+        )
+        .await?;
+
+        assert!(
+            !result.paths.contains_key(&stale),
+            "stale both-removed path must be pruned from lineage"
+        );
         Ok(())
     }
 }
