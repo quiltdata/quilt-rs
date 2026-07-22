@@ -137,7 +137,10 @@ mod tests {
             namespace: ("foo", "bar").into(),
             hash: "abc123".to_string(),
         };
-        assert_eq!(uri.to_string(), "quilt+s3://test-bucket#package=foo/bar@abc123");
+        assert_eq!(
+            uri.to_string(),
+            "quilt+s3://test-bucket#package=foo/bar@abc123"
+        );
     }
 
     #[test]

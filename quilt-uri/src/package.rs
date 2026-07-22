@@ -901,7 +901,10 @@ mod tests {
             revision: RevisionPointer::Hash("abcdef1234567890".to_string()),
             path: None,
         };
-        assert_eq!(long.display(), "quilt+s3://bucket#package=foo/bar@abcdef...567890");
+        assert_eq!(
+            long.display(),
+            "quilt+s3://bucket#package=foo/bar@abcdef...567890"
+        );
     }
 
     #[test]
@@ -989,7 +992,10 @@ mod tests {
 
     #[test]
     fn test_revision_pointer_default() {
-        assert_eq!(RevisionPointer::default(), RevisionPointer::Tag(Tag::Latest));
+        assert_eq!(
+            RevisionPointer::default(),
+            RevisionPointer::Tag(Tag::Latest)
+        );
     }
 
     #[test]
