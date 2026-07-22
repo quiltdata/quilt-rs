@@ -12,6 +12,7 @@ mod install_package;
 mod install_paths;
 mod publish;
 mod pull;
+mod pull_outcome;
 pub(crate) mod push;
 mod recommit;
 mod reset_to_latest;
@@ -35,6 +36,12 @@ pub use publish::CommitOptions;
 pub use publish::PublishOutcome;
 pub use publish::publish_package as publish;
 pub use pull::pull_package as pull;
+pub use pull_outcome::PullOutcome;
+pub use pull_outcome::classify_pull;
+// `remote_delta` is consumed by the gentle `pull` in a later task; the
+// re-export lands here so the surgical primitive has a stable `flow::` path.
+#[allow(unused_imports)]
+pub(crate) use pull_outcome::remote_delta;
 pub use push::PushResult;
 pub use push::push_package as push;
 pub use recommit::recommit_for_remote as recommit;
