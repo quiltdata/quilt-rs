@@ -12,7 +12,10 @@ use crate::object_hash::ObjectHash;
 /// See `model/ctx/sync/node.md#pull-outcome` in the spec corpus.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PullOutcome {
-    /// Nothing to pull.
+    /// Nothing to pull: `base` and `latest` are the *same revision* (identical
+    /// manifests). A newer metadata-only revision (same rows, different header)
+    /// is **not** `UpToDate` — it is a [`CleanUpdate`](Self::CleanUpdate) (or
+    /// [`KeepsLocalChanges`](Self::KeepsLocalChanges)) so its hashes advance.
     UpToDate,
     /// No local changes; a straight surgical update of remote-changed paths.
     CleanUpdate,
@@ -43,6 +46,11 @@ pub(crate) enum RemoteChange {
 /// The remote `base → latest` delta over paths present in `base`. Latest-only
 /// (remote-added) paths are excluded — installing them is out of scope
 /// (sparse checkout).
+///
+/// This diffs manifest **rows** only, so a metadata-only revision (same rows,
+/// different header) yields an empty delta. It therefore drives the surgical
+/// touch set and conflict detection, but it is **not** the `UpToDate` signal —
+/// [`classify_pull`] decides that from whole-manifest identity instead.
 pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathBuf, RemoteChange> {
     let mut delta = BTreeMap::new();
     for base_row in &base.rows {
@@ -73,17 +81,29 @@ fn same_resulting_content(local: &Change, remote: &RemoteChange) -> bool {
 }
 
 /// Classify what a pull would do. Pure — no network, no I/O.
+///
+/// `UpToDate` is returned only when `base` and `latest` are the same revision
+/// (identical manifests). A newer metadata-only revision (same rows, different
+/// header) is a `CleanUpdate`/`KeepsLocalChanges` so the pull advances the
+/// hashes even though the surgical touch set is empty.
 #[must_use]
 pub fn classify_pull(
     status: &InstalledPackageStatus,
     base: &Manifest,
     latest: &Manifest,
 ) -> PullOutcome {
-    let delta = remote_delta(base, latest);
-    if delta.is_empty() {
+    // Same revision — identical manifests — is the only genuine "nothing to
+    // pull". A newer revision that changed *only* the manifest header
+    // (message / user_meta) has an empty row delta but is still something to
+    // pull: its hashes must advance. Keying `UpToDate` off the row delta alone
+    // would strand such a revision permanently `Behind`.
+    if base == latest {
         return PullOutcome::UpToDate;
     }
+    let delta = remote_delta(base, latest);
     if status.changes.is_empty() {
+        // Includes the metadata-only case (empty `delta`): the surgical touch
+        // set is empty, but the hashes still advance to `latest`.
         return PullOutcome::CleanUpdate;
     }
 
@@ -262,6 +282,43 @@ mod tests {
         let latest = manifest_of(vec![row("a", b"1")]); // identical
         let out = classify_pull(&behind(ChangeSet::default()), &base, &latest);
         assert_eq!(out, PullOutcome::UpToDate);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn metadata_only_change_is_clean_update() -> Res {
+        // Same file rows, newer manifest header (message differs). This is a
+        // real revision to pull — hashes must advance — so it is a
+        // `CleanUpdate`, never `UpToDate`, even though the row delta is empty.
+        let base = manifest_of(vec![row("a", b"1")]);
+        let mut latest = manifest_of(vec![row("a", b"1")]);
+        latest.header.message = Some("newer revision message".to_string());
+        let out = classify_pull(&behind(ChangeSet::default()), &base, &latest);
+        assert_eq!(out, PullOutcome::CleanUpdate);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn metadata_only_change_keeps_local_changes() -> Res {
+        // Metadata-only remote revision with an untouched-by-remote local add:
+        // the local work is kept and the (empty) surgical update still proceeds.
+        let base = manifest_of(vec![row("a", b"1")]);
+        let mut latest = manifest_of(vec![row("a", b"1")]);
+        latest.header.message = Some("newer revision message".to_string());
+        let mut changes = ChangeSet::new();
+        changes.insert(
+            PathBuf::from("new.txt"),
+            Change::Added(row("new.txt", b"x")),
+        );
+        let out = classify_pull(&behind(changes), &base, &latest);
+        assert_eq!(
+            out,
+            PullOutcome::KeepsLocalChanges {
+                added: vec![PathBuf::from("new.txt")],
+                modified: vec![],
+                removed: vec![],
+            }
+        );
         Ok(())
     }
 }
