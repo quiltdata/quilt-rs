@@ -261,7 +261,7 @@ pub trait QuiltModel {
         bucket: &str,
     ) -> Result<Option<WorkflowsConfig>, Error> {
         let quilt = self.get_quilt().lock().await;
-        Ok(fetch_workflows_config_for_bucket(quilt.get_remote(), &host, bucket).await?)
+        Ok(fetch_workflows_config_for_bucket(quilt.get_remote(), host.as_ref(), bucket).await?)
     }
 
     async fn package_revision_certify_latest(
@@ -396,7 +396,7 @@ pub trait QuiltModel {
     ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(quilt::io::manifest::resolve_manifest_uri(
             self.get_quilt().lock().await.get_remote(),
-            &uri.catalog,
+            uri.catalog.as_ref(),
             uri,
         )
         .await?)

@@ -50,7 +50,7 @@ impl MockRemote {
 }
 
 impl Remote for MockRemote {
-    async fn exists(&self, _host: &Option<Host>, s3_uri: &S3Uri) -> Res<bool> {
+    async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} exists request");
         Ok(self.storage.exists(&key).await)
@@ -58,7 +58,7 @@ impl Remote for MockRemote {
 
     async fn get_object_stream(
         &self,
-        _host: &Option<Host>,
+        _host: Option<&Host>,
         s3_uri: &S3Uri,
     ) -> Res<RemoteObjectStream> {
         let key = s3_uri.to_string();
@@ -91,7 +91,7 @@ impl Remote for MockRemote {
 
     async fn put_object(
         &self,
-        _host: &Option<Host>,
+        _host: Option<&Host>,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> Res {
@@ -100,7 +100,7 @@ impl Remote for MockRemote {
         self.storage.write_byte_stream(key, contents.into()).await
     }
 
-    async fn resolve_url(&self, _host: &Option<Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
+    async fn resolve_url(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} HEAD request");
         if self.storage.exists(&key).await {
@@ -128,7 +128,7 @@ impl Remote for MockRemote {
         ))
     }
 
-    async fn host_config(&self, _host: &Option<Host>) -> Res<HostConfig> {
+    async fn host_config(&self, _host: Option<&Host>) -> Res<HostConfig> {
         Ok(HostConfig::default())
     }
 
@@ -147,18 +147,18 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://found/n?versionId=v")?,
                 b"Hello".to_vec(),
             )
             .await?;
         let s3_uri_not_found = S3Uri::try_from("s3://b/n?versionId=v")?;
-        let Err(err) = remote.get_object_stream(&None, &s3_uri_not_found).await else {
+        let Err(err) = remote.get_object_stream(None, &s3_uri_not_found).await else {
             panic!("expected S3NotFound error");
         };
         assert!(err.is_not_found(), "expected S3NotFound, got: {err}");
         let s3_uri_found = S3Uri::try_from("s3://found/n?versionId=v")?;
-        let found = remote.get_object_stream(&None, &s3_uri_found).await?;
+        let found = remote.get_object_stream(None, &s3_uri_found).await?;
         assert_eq!(found.body.collect().await?.to_vec(), b"Hello");
         Ok(())
     }

@@ -215,7 +215,7 @@ mod tests {
         // Config v1: a permissive `gate` workflow with no metadata_schema.
         remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
@@ -264,7 +264,7 @@ mod tests {
         package
             .remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
@@ -272,7 +272,7 @@ mod tests {
         package
             .remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/schemas/meta.json")?,
                 br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
             )

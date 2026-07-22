@@ -35,7 +35,7 @@ pub async fn refresh_latest_hash(
 ) -> Res<PackageLineage> {
     let remote_uri = lineage.remote()?.clone();
     let origin = remote_uri.origin.clone();
-    let latest = resolve_tag(remote, &origin, remote_uri, Tag::Latest).await?;
+    let latest = resolve_tag(remote, origin.as_ref(), remote_uri, Tag::Latest).await?;
     if lineage.latest_hash == latest.hash {
         return Ok(lineage);
     }

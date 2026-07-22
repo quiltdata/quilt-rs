@@ -16,7 +16,7 @@ use quilt_uri::S3Uri;
 async fn fetch_jsonl(remote: &impl Remote, manifest_uri: &ManifestUri) -> Res<Manifest> {
     let s3_uri: S3Uri = manifest_uri.clone().into();
     let contents = remote
-        .get_object_stream(&manifest_uri.origin, &s3_uri)
+        .get_object_stream(manifest_uri.origin.as_ref(), &s3_uri)
         .await?;
     Manifest::from_reader(contents.body.into_async_read()).await
 }
@@ -217,7 +217,7 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.origin, &remote_uri, jsonl)
+            .put_object(manifest_uri.origin.as_ref(), &remote_uri, jsonl)
             .await?;
 
         // Should recover: delete stale cache, re-fetch, succeed
@@ -268,7 +268,7 @@ mod tests {
             manifest_uri.bucket, manifest_uri.hash
         ))?;
         remote
-            .put_object(&manifest_uri.origin, &remote_uri, jsonl.clone())
+            .put_object(manifest_uri.origin.as_ref(), &remote_uri, jsonl.clone())
             .await?;
 
         let storage = MockStorage::default();

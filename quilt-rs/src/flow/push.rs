@@ -206,7 +206,7 @@ pub(crate) async fn push_package_impl(
         let entries: Vec<EntryView> = sorted_rows.iter().copied().map(entry_view).collect();
         validate_workflow_against_current_config(
             remote,
-            &host_config.host,
+            host_config.host.as_ref(),
             &manifest_uri.bucket,
             &manifest_uri.namespace.to_string(),
             local_manifest.header.message.as_deref(),
@@ -256,15 +256,21 @@ pub(crate) async fn push_package_impl(
     debug!("✔️ Timestamp tag added");
 
     debug!("⏳ Checking remote's latest manifest hash");
-    lineage.latest_hash =
-        match resolve_tag(remote, &new_manifest_uri.origin, manifest_uri, Tag::Latest).await {
-            Ok(uri) => uri.hash,
-            Err(e) if e.is_not_found() => {
-                debug!("✔️ No existing latest tag — first push for this package");
-                String::new()
-            }
-            Err(e) => return Err(e),
-        };
+    lineage.latest_hash = match resolve_tag(
+        remote,
+        new_manifest_uri.origin.as_ref(),
+        manifest_uri,
+        Tag::Latest,
+    )
+    .await
+    {
+        Ok(uri) => uri.hash,
+        Err(e) if e.is_not_found() => {
+            debug!("✔️ No existing latest tag — first push for this package");
+            String::new()
+        }
+        Err(e) => return Err(e),
+    };
     debug!("✔️ Latest hash is: {}", lineage.latest_hash);
 
     lineage.remote_uri = Some(new_manifest_uri.clone());
@@ -410,14 +416,14 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/schemas/meta.json")?,
                 br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
             )
@@ -462,7 +468,7 @@ mod tests {
         // manifest satisfies it.
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
@@ -501,14 +507,14 @@ mod tests {
     async fn seed_entries_schema_gate(remote: &MockRemote) -> Res {
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/schemas/entries.json")?,
                 br#"{"type": "array", "items": {"type": "object", "properties": {"meta": {"type": "object", "required": ["approved"]}}}}"#.to_vec(),
             )
@@ -523,14 +529,14 @@ mod tests {
     async fn seed_ordered_entries_schema_gate(remote: &MockRemote) -> Res {
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    entries_schema: entries\nschemas:\n  entries:\n    url: s3://b/schemas/entries.json\n".to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/schemas/entries.json")?,
                 br#"{"type": "array", "items": [{"properties": {"logical_key": {"const": "a.txt"}}}, {"properties": {"logical_key": {"const": "b.txt"}}}]}"#.to_vec(),
             )
@@ -757,7 +763,7 @@ mod tests {
         // declared but the header selected none.
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
@@ -804,7 +810,7 @@ mod tests {
         // the old header-trust gate)...
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/stale-config.yml")?,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
@@ -812,7 +818,7 @@ mod tests {
         // ...but the bucket's *current* config no longer declares it.
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
                 b"version: \"1\"\nis_workflow_required: false\nworkflows:\n  other:\n    name: Other\n".to_vec(),
             )
@@ -870,7 +876,7 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
             )
@@ -901,14 +907,14 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &config_uri,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/schemas/meta.json")?,
                 br#"{"type": "object", "required": ["owner"]}"#.to_vec(),
             )
@@ -1005,14 +1011,14 @@ mod tests {
         let dummy_manifest = r#"{"version": "v0"}"#;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/packages/__FOO__")?,
                 dummy_manifest.as_bytes().to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/a/c/latest")?,
                 b"abcdef".to_vec(),
             )
@@ -1072,14 +1078,14 @@ mod tests {
         let dummy_manifest = r#"{"version": "v0"}"#;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/packages/hash-we-later-rewrite-with-push")?,
                 dummy_manifest.as_bytes().to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"latest-hash-abcdef".to_vec(),
             )

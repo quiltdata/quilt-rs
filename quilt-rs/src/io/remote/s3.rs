@@ -216,18 +216,14 @@ impl RemoteS3 {
     /// [`QuiltCredentialsProvider`] on every S3 request — the cached
     /// client itself holds the provider, not a frozen access key, so
     /// it stays usable across STS rotations.
-    #[allow(
-        clippy::ref_option,
-        reason = "mirrors the Remote trait's &Option<Host> parameter; Option<&Host> needs a trait-wide migration"
-    )]
     async fn get_client_for_region(
         &self,
-        host: &Option<Host>,
+        host: Option<&Host>,
         region: aws_types::region::Region,
     ) -> Res<aws_sdk_s3::Client> {
         let creds_ref = CredsRef {
             region: region.clone(),
-            host: host.clone(),
+            host: host.cloned(),
         };
 
         let cached_client = {
@@ -321,13 +317,9 @@ impl RemoteS3 {
         }
     }
 
-    #[allow(
-        clippy::ref_option,
-        reason = "mirrors the Remote trait's &Option<Host> parameter; Option<&Host> needs a trait-wide migration"
-    )]
     async fn get_client_for_bucket(
         &self,
-        host: &Option<Host>,
+        host: Option<&Host>,
         bucket: &str,
     ) -> Res<aws_sdk_s3::Client> {
         let region = self.get_region_for_bucket(bucket).await?.clone();
@@ -336,7 +328,7 @@ impl RemoteS3 {
             .map_err(|e| match e {
                 Error::Login(LoginError::Required(_)) | Error::S3(_) => e,
                 _ => Error::S3(S3Error {
-                    host: host.to_owned(),
+                    host: host.cloned(),
                     kind: S3ErrorKind::Client(e.to_string()),
                 }),
             })
@@ -344,7 +336,7 @@ impl RemoteS3 {
 }
 
 impl Remote for RemoteS3 {
-    async fn exists(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<bool> {
+    async fn exists(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         debug!(
             "⏳ Checking if object exists - host: {:?}, uri: {}",
             host, s3_uri
@@ -367,7 +359,7 @@ impl Remote for RemoteS3 {
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
                 Err(Error::S3(S3Error {
-                    host: host.to_owned(),
+                    host: host.cloned(),
                     kind: S3ErrorKind::Exists(describe_sdk_error(err)),
                 }))
             }
@@ -376,7 +368,7 @@ impl Remote for RemoteS3 {
 
     async fn get_object_stream(
         &self,
-        host: &Option<Host>,
+        host: Option<&Host>,
         s3_uri: &S3Uri,
     ) -> Res<RemoteObjectStream> {
         debug!(
@@ -396,7 +388,7 @@ impl Remote for RemoteS3 {
             Err(e) => {
                 warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
                 Err(Error::S3(S3Error {
-                    host: host.to_owned(),
+                    host: host.cloned(),
                     kind: S3ErrorKind::GetObjectStream(e.to_string()),
                 }))
             }
@@ -405,7 +397,7 @@ impl Remote for RemoteS3 {
 
     async fn put_object(
         &self,
-        host: &Option<Host>,
+        host: Option<&Host>,
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> Res {
@@ -419,7 +411,7 @@ impl Remote for RemoteS3 {
             .await
             .map_err(|err| {
                 Error::S3(S3Error {
-                    host: host.to_owned(),
+                    host: host.cloned(),
                     kind: S3ErrorKind::PutObject(describe_sdk_error(err)),
                 })
             })?;
@@ -427,7 +419,7 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
-    async fn resolve_url(&self, host: &Option<Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
+    async fn resolve_url(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
         let result = match &s3_uri.version {
@@ -440,7 +432,7 @@ impl Remote for RemoteS3 {
                 ..s3_uri.clone()
             }),
             Err(err) => Err(Error::S3(S3Error {
-                host: host.to_owned(),
+                host: host.cloned(),
                 kind: S3ErrorKind::ResolveUrl(describe_sdk_error(err)),
             })),
         }
@@ -456,7 +448,7 @@ impl Remote for RemoteS3 {
         size: u64,
     ) -> Res<(S3Uri, ObjectHash)> {
         let client = self
-            .get_client_for_bucket(&host_config.host, &dest_uri.bucket)
+            .get_client_for_bucket(host_config.host.as_ref(), &dest_uri.bucket)
             .await?;
 
         if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
@@ -466,7 +458,7 @@ impl Remote for RemoteS3 {
         }
     }
 
-    async fn host_config(&self, host: &Option<Host>) -> Res<HostConfig> {
+    async fn host_config(&self, host: Option<&Host>) -> Res<HostConfig> {
         fetch_host_config(&self.http, host).await
     }
 

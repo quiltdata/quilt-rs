@@ -93,7 +93,7 @@ struct ConfigResponse {
 /// * `Err(Error::RemoteCatalog(RemoteCatalogError::HostConfig(..)))` - Failed to fetch or parse configuration
 /// * `Err(Error::Reqwest)` - HTTP request failed
 /// * `Err(Error::Json)` - JSON parsing failed
-pub async fn fetch_host_config(client: &impl HttpClient, host: &Option<Host>) -> Res<HostConfig> {
+pub async fn fetch_host_config(client: &impl HttpClient, host: Option<&Host>) -> Res<HostConfig> {
     match host {
         Some(host) => {
             let url = format!("https://{host}/config.json");
@@ -192,7 +192,7 @@ mod tests {
             Ok(r#"{"crc64Checksums": true}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, &Some(Host::default())).await?;
+        let config = fetch_host_config(&client, Some(Host::default()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Crc64);
 
         Ok(())
@@ -206,7 +206,7 @@ mod tests {
             Ok(r#"{"crc64Checksums": false}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, &Some(Host::default())).await?;
+        let config = fetch_host_config(&client, Some(Host::default()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Sha256Chunked);
 
         Ok(())
@@ -220,7 +220,7 @@ mod tests {
             Ok(r"{}".to_string()),
         );
 
-        let config = fetch_host_config(&client, &Some(Host::default())).await?;
+        let config = fetch_host_config(&client, Some(Host::default()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Sha256Chunked);
 
         Ok(())
@@ -234,7 +234,7 @@ mod tests {
             Ok(r#"{"crc64Checksums": true, "mode": "OPEN", "other": "ignored"}"#.to_string()),
         );
 
-        let config = fetch_host_config(&client, &Some(Host::default())).await?;
+        let config = fetch_host_config(&client, Some(Host::default()).as_ref()).await?;
         assert_eq!(config.checksums, HostChecksums::Crc64);
 
         Ok(())
@@ -248,7 +248,7 @@ mod tests {
             Err("Network error".to_string()),
         );
 
-        let result = fetch_host_config(&client, &Some(Host::default())).await;
+        let result = fetch_host_config(&client, Some(Host::default()).as_ref()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Network error"));
     }
@@ -261,7 +261,7 @@ mod tests {
             Ok(r"invalid json".to_string()),
         );
 
-        let result = fetch_host_config(&client, &Some(Host::default())).await;
+        let result = fetch_host_config(&client, Some(Host::default()).as_ref()).await;
         assert!(result.is_err());
 
         // JSON parsing errors get wrapped in HostConfig error by map_err
@@ -279,7 +279,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_fetch_host_config_none() -> Res<()> {
         let client = MockHttpClient::new();
-        let config = fetch_host_config(&client, &None).await?;
+        let config = fetch_host_config(&client, None).await?;
         assert_eq!(config, HostConfig::default());
         Ok(())
     }

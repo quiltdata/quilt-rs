@@ -187,7 +187,7 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
     // makes the state Diverged.
     remote
         .put_object(
-            &None,
+            None,
             &S3Uri::try_from(
                 format!("s3://{bucket}/.quilt/named_packages/test/diverged/latest").as_str(),
             )?,
@@ -213,7 +213,7 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
     )?;
     let latest_body = package
         .remote
-        .get_object_stream(&None, &latest_uri)
+        .get_object_stream(None, &latest_uri)
         .await?
         .body
         .collect()
@@ -276,7 +276,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     // Remote `latest` tag currently points at someone else's hash.
     remote
         .put_object(
-            &None,
+            None,
             &S3Uri::try_from(
                 format!("s3://{bucket}/.quilt/named_packages/test/pushed/latest").as_str(),
             )?,
@@ -301,7 +301,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     )?;
     let latest_body = package
         .remote
-        .get_object_stream(&None, &latest_uri)
+        .get_object_stream(None, &latest_uri)
         .await?
         .body
         .collect()
@@ -314,7 +314,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
         !package
             .remote
             .exists(
-                &None,
+                None,
                 &S3Uri::try_from(format!("s3://{bucket}/.quilt/packages/{pushed_hash}").as_str(),)?,
             )
             .await?,
@@ -422,22 +422,22 @@ async fn test_manifest_recovery_from_corruption() -> Res {
 struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
-    async fn exists(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<bool> {
+    async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
         Err(Error::Login(LoginError::Required(None)))
     }
     async fn get_object_stream(
         &self,
-        _host: &Option<Host>,
+        _host: Option<&Host>,
         _s3_uri: &S3Uri,
     ) -> Res<crate::io::remote::RemoteObjectStream> {
         Err(Error::Login(LoginError::Required(None)))
     }
-    async fn resolve_url(&self, _host: &Option<Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+    async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
         Err(Error::Login(LoginError::Required(None)))
     }
     async fn put_object(
         &self,
-        _host: &Option<Host>,
+        _host: Option<&Host>,
         _s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
     ) -> Res {
@@ -452,7 +452,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     ) -> Res<(S3Uri, ObjectHash)> {
         Err(Error::Login(LoginError::Required(None)))
     }
-    async fn host_config(&self, _host: &Option<Host>) -> Res<crate::io::remote::HostConfig> {
+    async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
         Ok(crate::io::remote::HostConfig::default())
     }
     async fn verify_bucket(&self, _bucket: &str) -> Res {
@@ -577,7 +577,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     // exact state that broke after the read-only-status refactor.
     remote
         .put_object(
-            &None,
+            None,
             &S3Uri::try_from(
                 format!("s3://{bucket}/.quilt/named_packages/test/pull_refresh/latest").as_str(),
             )?,

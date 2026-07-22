@@ -38,7 +38,7 @@ mod tests {
         let remote = MockRemote::default();
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?,
                 b"OUTDATED_HASH".to_vec(),
             )
@@ -70,7 +70,7 @@ mod tests {
         );
 
         let latest_uri = S3Uri::try_from("s3://b/.quilt/named_packages/f/a/latest")?;
-        let latest_file = remote.get_object_stream(&None, &latest_uri).await?;
+        let latest_file = remote.get_object_stream(None, &latest_uri).await?;
         assert_eq!(latest_file.body.collect().await?.to_vec(), b"LATEST_HASH",);
         Ok(())
     }

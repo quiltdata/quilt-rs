@@ -95,7 +95,7 @@ pub async fn publish_package(
             paths,
             storage,
             remote,
-            &host_config.host,
+            host_config.host.as_ref(),
             working_dir,
             status,
             namespace.clone(),
@@ -176,7 +176,7 @@ mod tests {
     async fn seed_remote_latest(remote: &MockRemote, latest_hash: &str) -> Res {
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from("s3://b/.quilt/named_packages/foo/bar/latest")?,
                 latest_hash.as_bytes().to_vec(),
             )
@@ -563,14 +563,14 @@ mod tests {
         let schema_uri = "s3://b/schemas/meta.json";
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from(config_uri)?,
                 b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n    metadata_schema: meta\nschemas:\n  meta:\n    url: s3://b/schemas/meta.json\n".to_vec(),
             )
             .await?;
         remote
             .put_object(
-                &None,
+                None,
                 &S3Uri::try_from(schema_uri)?,
                 br#"{"type": "object"}"#.to_vec(),
             )
