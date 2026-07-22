@@ -2,10 +2,6 @@
 //! Namespace containing various URIs.
 //! Most of them you can convert one to another.
 
-// Test fns return `Res` and end in `Ok(())` so the body can use `?`; that trips
-// `unnecessary_wraps` in tests only. Enforce it in production, allow under test.
-#![cfg_attr(test, allow(clippy::unnecessary_wraps))]
-
 pub mod error;
 mod host;
 mod manifest;

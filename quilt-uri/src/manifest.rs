@@ -74,7 +74,7 @@ mod tests {
     type Res<T = ()> = Result<T, UriError>;
 
     #[test]
-    fn test_manifest_uri_try_from_package_uri_with_tag() -> Res {
+    fn test_manifest_uri_try_from_package_uri_with_tag() {
         let package_uri = S3PackageUri {
             bucket: "foo".to_string(),
             namespace: ("bar", "baz").into(),
@@ -89,7 +89,6 @@ mod tests {
             result.unwrap_err().to_string(),
             "Invalid package URI: Hash is required for that conversion"
         );
-        Ok(())
     }
 
     #[test]
