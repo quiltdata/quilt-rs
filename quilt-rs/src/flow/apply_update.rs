@@ -100,10 +100,12 @@ mod tests {
     use crate::io::storage::mocks::MockStorage;
     use quilt_uri::S3Uri;
 
-    // A touch-set of one removed path uninstalls it, advances the hashes to
-    // `latest`, and leaves an empty touch-set otherwise untouched.
+    // An empty touch-set advances the hashes (`base_hash`, `latest_hash`, and
+    // `remote.hash`) to `latest` and reloads the manifest cache without touching
+    // any installed paths. Uninstall/reinstall mechanics are covered by the
+    // callers' suites (reset_to_latest, pull, quilt-cli).
     #[test(tokio::test)]
-    async fn advances_hashes_and_uninstalls_removed() -> Res {
+    async fn empty_touch_set_advances_hashes() -> Res {
         let manifest_uri = ManifestUri {
             bucket: "b".to_string(),
             namespace: ("f", "a").into(),
