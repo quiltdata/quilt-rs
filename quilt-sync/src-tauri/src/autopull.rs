@@ -52,6 +52,10 @@ pub enum PausedReason {
     PendingChanges,
     PendingCommit,
     Diverged,
+    /// A surgical pull found a real conflict (`PullOutcome::Blocked`): a
+    /// tracked path changed on both sides. Carries the conflicting file names
+    /// for the banner; the user resolves by committing → the merge page.
+    PullConflict(Vec<String>),
     /// Catch-all for non-transient errors we haven't enumerated:
     /// workflow validation failures, hash mismatches, remote
     /// configuration drift. The string travels to the UI in the

@@ -15,6 +15,7 @@ use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
 use crate::quilt;
+use crate::quilt::flow::PullOutcome;
 use crate::telemetry::prelude::*;
 
 #[derive(Debug)]
@@ -78,6 +79,14 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
             | quilt::PackageOpError::Commit(msg)
             | quilt::PackageOpError::Publish(msg),
         )) => Err(WatchError::Conflict(PausedReason::Other(msg.clone()))),
+        // The engine's defensive refusal when a `pull` hits a conflict the
+        // dry-run classifier didn't foresee (a race between classify and
+        // apply). Map it to the same `PullConflict` pause the dry-run path
+        // produces so both routes agree on the reason the UI renders.
+        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
+            let files = conflicts.iter().map(|p| p.display().to_string()).collect();
+            Err(WatchError::Conflict(PausedReason::PullConflict(files)))
+        }
         // Workflow rejection (commit- or push-side): user-actionable, so
         // pause rather than retry. Bind the inner `WorkflowValidationError`
         // so the reason text is the validator's own message (which names the
@@ -154,7 +163,11 @@ pub(crate) async fn refresh_then_maybe_sync(
         return Err(WatchError::Conflict(PausedReason::Diverged));
     }
 
-    // Pull branch.
+    // Pull branch — route on the `PullOutcome`, not clean-vs-dirty. A
+    // `Behind` tree with non-conflicting local work now pulls (preserving
+    // it) rather than falling through to the publish arm and diverging; a
+    // real conflict pauses. Pull runs before publish so additive local work
+    // reconciles to `latest` rather than committing into divergence.
     //
     // The `!has_pending_commit` clause is **defensive**, not load-bearing:
     // under the new `From<PackageLineage> for UpstreamState`, a package
@@ -164,26 +177,40 @@ pub(crate) async fn refresh_then_maybe_sync(
     // explicit at the call site — if the `From` conversion ever changes
     // shape, this gate is what stops a pull and a publish from racing on
     // the same package in the same tick.
-    if pull_enabled
-        && upstream == quilt::lineage::UpstreamState::Behind
-        && !has_changes
-        && !has_pending_commit
-    {
-        return match model.package_pull(&installed, None).await {
-            Ok(_) => {
-                info!("autosync: pulled namespace={namespace}");
-                Ok(RefreshOutcome {
-                    upstream: quilt::lineage::UpstreamState::UpToDate,
-                    has_changes: false,
-                    published: None,
-                })
+    if pull_enabled && upstream == quilt::lineage::UpstreamState::Behind && !has_pending_commit {
+        let outcome = model
+            .package_pull_outcome(&installed)
+            .await
+            .map_err(WatchError::Transient)?;
+        match outcome {
+            PullOutcome::Blocked { conflicts } => {
+                let files = conflicts.iter().map(|p| p.display().to_string()).collect();
+                return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
             }
-            Err(err) => classify_sync_err(err).map(|()| RefreshOutcome {
-                upstream,
-                has_changes,
-                published: None,
-            }),
-        };
+            PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
+                return match model.package_pull(&installed, None).await {
+                    Ok(_) => {
+                        info!("autosync: pulled namespace={namespace}");
+                        // Kept work leaves a dirty tree: `UpToDate` +
+                        // `has_changes` is the intended post-pull state, so
+                        // carry `has_changes` through rather than forcing it
+                        // to `false`.
+                        Ok(RefreshOutcome {
+                            upstream: quilt::lineage::UpstreamState::UpToDate,
+                            has_changes,
+                            published: None,
+                        })
+                    }
+                    Err(err) => classify_sync_err(err).map(|()| RefreshOutcome {
+                        upstream,
+                        has_changes,
+                        published: None,
+                    }),
+                };
+            }
+            // Race: tip moved back to up-to-date between status and classify.
+            PullOutcome::UpToDate => {}
+        }
     }
 
     // Publish branch.
@@ -399,6 +426,10 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                     PausedReason::PendingChanges => ("behind", true),
                     PausedReason::PendingCommit => ("ahead", false),
                     PausedReason::Diverged => ("diverged", false),
+                    PausedReason::PullConflict(ref files) => {
+                        warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
+                        ("paused", true)
+                    }
                     PausedReason::Other(ref msg) => {
                         warn!("autosync: paused namespace={namespace} error={msg}");
                         ("paused", false)
@@ -416,6 +447,7 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                     PausedReason::PendingChanges => "pending changes",
                     PausedReason::PendingCommit => "pending commits",
                     PausedReason::Diverged => "diverged",
+                    PausedReason::PullConflict(_) => "pull conflict",
                     PausedReason::Other(msg) => msg.as_str(),
                 };
                 inner.aggregator.note_paused(&namespace, aggregator_message);

@@ -12,6 +12,7 @@ use crate::error::Error;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
+use quilt_rs::flow::PullOutcome;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
@@ -157,6 +158,17 @@ pub trait QuiltModel {
         host_config: Option<HostConfig>,
     ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(package.pull(host_config).await?)
+    }
+
+    /// Dry-run classifier: what would `package_pull` do right now? Delegates
+    /// to the engine's [`InstalledPackage::pull_outcome`]; wrapping it on the
+    /// trait lets the autosync tick route on the [`PullOutcome`] through a
+    /// `MockQuiltModel` in unit tests without hitting real storage.
+    async fn package_pull_outcome(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<PullOutcome, Error> {
+        Ok(package.pull_outcome(None).await?)
     }
 
     async fn is_package_installed(
