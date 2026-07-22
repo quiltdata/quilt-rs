@@ -54,7 +54,7 @@ pub async fn pull_package(
     // status() tries to update, but may fail.
     if lineage.base_hash == lineage.latest_hash {
         error!("❌ Package is already up-to-date");
-        return Err(PackageOpError::Package("package is already up-to-date".to_string()).into());
+        return Err(PackageOpError::AlreadyUpToDate.into());
     }
 
     // Resolve + cache the `latest` manifest, then classify before mutating.
@@ -67,9 +67,7 @@ pub async fn pull_package(
     let outcome = classify_pull(&status, manifest, &latest_manifest);
     match &outcome {
         PullOutcome::UpToDate => {
-            return Err(
-                PackageOpError::Package("package is already up-to-date".to_string()).into(),
-            );
+            return Err(PackageOpError::AlreadyUpToDate.into());
         }
         PullOutcome::Blocked { conflicts } => {
             error!("❌ Pull blocked by conflicts: {conflicts:?}");
@@ -156,10 +154,10 @@ mod tests {
         )
         .await;
         // Reaches the up-to-date branch (guard relaxed), not "pending changes".
-        assert_eq!(
-            error.unwrap_err().to_string(),
-            "General error regarding package: package is already up-to-date".to_string()
-        );
+        assert!(matches!(
+            error.unwrap_err(),
+            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
+        ));
     }
 
     #[test(tokio::test)]
@@ -241,9 +239,9 @@ mod tests {
             Namespace::default(),
         )
         .await;
-        assert_eq!(
-            error.unwrap_err().to_string(),
-            "General error regarding package: package is already up-to-date".to_string()
-        );
+        assert!(matches!(
+            error.unwrap_err(),
+            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
+        ));
     }
 }

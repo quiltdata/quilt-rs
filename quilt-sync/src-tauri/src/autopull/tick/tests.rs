@@ -82,9 +82,9 @@ fn classify_sync_diverged() {
 
 #[test]
 fn classify_sync_already_up_to_date_is_ok() {
-    let err = Error::from(quilt::Error::PackageOp(quilt::PackageOpError::Package(
-        "package is already up-to-date".to_string(),
-    )));
+    let err = Error::from(quilt::Error::PackageOp(
+        quilt::PackageOpError::AlreadyUpToDate,
+    ));
     assert!(classify_sync_err(err).is_ok());
 }
 

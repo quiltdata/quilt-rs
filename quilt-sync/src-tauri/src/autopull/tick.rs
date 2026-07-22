@@ -68,12 +68,13 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
                 Err(WatchError::Conflict(PausedReason::PendingCommit))
             } else if msg == "package has diverged" {
                 Err(WatchError::Conflict(PausedReason::Diverged))
-            } else if msg == "package is already up-to-date" {
-                Ok(())
             } else {
                 Err(WatchError::Conflict(PausedReason::Other(msg.clone())))
             }
         }
+        // A pull that raced another pull and found nothing to do. Benign:
+        // the namespace is already at `latest`, so keep syncing quietly.
+        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::AlreadyUpToDate)) => Ok(()),
         Error::Quilt(quilt::Error::PackageOp(
             quilt::PackageOpError::Push(msg)
             | quilt::PackageOpError::Commit(msg)
