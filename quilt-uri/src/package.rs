@@ -653,7 +653,6 @@ mod tests {
 
         assert!(ns3 > ns4);
         assert_eq!(ns3.cmp(&ns4), Ordering::Greater);
-
     }
 
     #[test]
@@ -679,7 +678,6 @@ mod tests {
         assert!(ns3 >= ns1);
         assert!(ns3 >= ns1);
         assert!(ns3 > ns1);
-
     }
 
     #[test]
