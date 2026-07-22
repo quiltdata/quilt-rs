@@ -159,6 +159,27 @@ pub(super) fn InstalledPackageContent(
     let ns_for_status = namespace.clone();
     let origin_host_for_status = origin_host.clone();
     let status_clone = status.clone();
+
+    // Two-phase Pull affordance: the banner renders immediately from `status`;
+    // when the package is `behind`, the dry-run pull outcome is fetched
+    // asynchronously and fills in the Pull button's enabled state and copy once
+    // `latest` is cached (`None` while it resolves, or on a fetch failure —
+    // Pull stays disabled with a "Checking…" placeholder in either case). A
+    // non-behind status never queries: the outcome only gates the Pull button.
+    let ns_for_outcome = namespace.clone();
+    let status_for_outcome = status.clone();
+    let pull_outcome_res = LocalResource::new(move || {
+        let ns = ns_for_outcome.clone();
+        let is_behind = status_for_outcome == "behind";
+        async move {
+            if is_behind {
+                commands::package_pull_outcome(ns).await.ok()
+            } else {
+                None
+            }
+        }
+    });
+    let pull_outcome = Signal::derive(move || pull_outcome_res.get().flatten());
     let show_commit = status != "error";
     let has_origin = origin_host.is_some();
     // Mirror the Publish gating from the Installed Packages List: Commit and
@@ -261,7 +282,7 @@ pub(super) fn InstalledPackageContent(
                     namespace=ns_for_status
                     status=status_clone
                     origin_host=origin_host_for_status
-                    has_changes=has_changes
+                    pull_outcome=pull_outcome
                     paused_event=paused_event
                     notification=notification
                     ui_locked=ui_locked

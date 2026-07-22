@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::commands::{self, PausedEvent};
+use crate::commands::{self, PausedEvent, PullOutcome};
 use crate::components::Notification;
 use crate::components::buttons;
 use crate::util::make_action;
@@ -20,7 +20,11 @@ pub(super) fn StatusBanner(
     namespace: String,
     status: String,
     origin_host: Option<String>,
-    has_changes: bool,
+    /// The dry-run pull outcome for the two-phase Pull affordance, filled in
+    /// asynchronously by the parent. `None` = still resolving (or failed):
+    /// Pull renders disabled with a "Checking…" placeholder. Only consulted by
+    /// the `behind` arm.
+    pull_outcome: Signal<Option<PullOutcome>>,
     paused_event: RwSignal<Option<PausedEvent>>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
@@ -61,23 +65,31 @@ pub(super) fn StatusBanner(
                 Some(ui_locked),
                 move || refetch.notify(),
             );
-            // The old wording assumed local commits ("Your commits are
-            // behind the remote") but `Behind` is reachable from a
-            // pristine install + remote movement — there may be no
-            // commits at all. State the actual fact: the remote has
-            // newer revisions. If working-tree changes block pull, say
-            // so up-front (in the banner, not in a hover popover) so
-            // autosync's reason for not auto-pulling is visible.
-            let description: &'static str = if has_changes {
-                "The remote has newer revisions. Commit or discard your local changes to pull."
-            } else {
-                "The remote has newer revisions."
-            };
+            // Two-phase: the banner renders from `status` immediately with a
+            // "Checking…" placeholder; the dry-run `PullOutcome` (fetched by
+            // the parent) then drives both the copy and whether Pull is
+            // enabled. Pull is disabled while the outcome is unknown and when
+            // it is `Blocked` — a real two-sided conflict — whose message names
+            // the conflicting files and points at the merge page. The clean and
+            // keeps-local-changes outcomes enable Pull, the latter reassuring
+            // the user their local work survives the pull.
+            let description = move || behind_description(pull_outcome.get().as_ref());
+            let pull_disabled =
+                Signal::derive(move || !pull_outcome.get().is_some_and(|o| o.is_pullable()));
             Some(
                 view! {
-                    <StatusBannerInner description=description>
-                        <buttons::Pull on_click=on_pull busy=pull_busy disabled=has_changes />
-                    </StatusBannerInner>
+                    <div class="qui-status">
+                        <div class="root">
+                            <h2 class="description">{description}</h2>
+                            <div class="action">
+                                <buttons::Pull
+                                    on_click=on_pull
+                                    busy=pull_busy
+                                    disabled=pull_disabled
+                                />
+                            </div>
+                        </div>
+                    </div>
                 }
                 .into_any(),
             )
@@ -172,6 +184,24 @@ pub(super) fn StatusBanner(
     }
 }
 
+/// The `behind`-arm banner description for a (possibly still-loading) pull
+/// outcome. `None` = the dry-run outcome has not resolved yet (or failed to),
+/// so the copy invites the user to wait while Pull stays disabled.
+fn behind_description(outcome: Option<&PullOutcome>) -> String {
+    match outcome {
+        None => "Checking for updates\u{2026}".to_string(),
+        Some(PullOutcome::Blocked { conflicts }) => format!(
+            "Conflicts in {}. Commit your changes to resolve them on the merge page.",
+            conflicts.join(", ")
+        ),
+        Some(PullOutcome::KeepsLocalChanges { .. }) => {
+            "The remote has newer revisions. Your local changes are safe — pulling keeps them."
+                .to_string()
+        }
+        Some(_) => "The remote has newer revisions.".to_string(),
+    }
+}
+
 #[component]
 fn StatusBannerInner(description: &'static str, children: Children) -> impl IntoView {
     view! {
@@ -183,5 +213,48 @@ fn StatusBannerInner(description: &'static str, children: Children) -> impl Into
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::behind_description;
+    use crate::commands::PullOutcome;
+
+    #[test]
+    fn loading_outcome_shows_checking_placeholder() {
+        assert_eq!(behind_description(None), "Checking for updates\u{2026}");
+    }
+
+    #[test]
+    fn clean_update_states_newer_revisions() {
+        assert_eq!(
+            behind_description(Some(&PullOutcome::CleanUpdate)),
+            "The remote has newer revisions."
+        );
+    }
+
+    #[test]
+    fn keeps_local_changes_reassures_local_work_is_safe() {
+        let outcome = PullOutcome::KeepsLocalChanges {
+            added: vec!["a.txt".to_string()],
+            modified: vec![],
+            removed: vec![],
+        };
+        assert_eq!(
+            behind_description(Some(&outcome)),
+            "The remote has newer revisions. Your local changes are safe — pulling keeps them."
+        );
+    }
+
+    #[test]
+    fn blocked_names_conflicts_and_points_at_merge() {
+        let outcome = PullOutcome::Blocked {
+            conflicts: vec!["a.txt".to_string(), "b.txt".to_string()],
+        };
+        assert_eq!(
+            behind_description(Some(&outcome)),
+            "Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
+        );
     }
 }

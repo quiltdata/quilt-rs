@@ -708,6 +708,48 @@ pub async fn package_pull(namespace: String) -> Result<String, String> {
     tauri::invoke("package_pull", &Args { namespace }).await
 }
 
+/// The dry-run verdict of what a Pull would do right now. UI-side mirror of the
+/// engine's `quilt_rs::flow::PullOutcome` (the UI crate cannot depend on the
+/// engine crate). The serde shape is the engine enum's default externally
+/// tagged form with no field renaming; it MUST stay identical so the tagged
+/// JSON crosses the Tauri boundary unchanged. Paths arrive as strings (the
+/// engine's `PathBuf`s serialize as such); the UI only displays them.
+///
+/// The literals are anchored identically in the backend's
+/// `pull_outcome_wire_form_is_verbatim`; if the two drift, the two-phase Pull
+/// affordance silently misreads the outcome at the boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub enum PullOutcome {
+    UpToDate,
+    CleanUpdate,
+    KeepsLocalChanges {
+        added: Vec<String>,
+        modified: Vec<String>,
+        removed: Vec<String>,
+    },
+    Blocked {
+        conflicts: Vec<String>,
+    },
+}
+
+impl PullOutcome {
+    /// Whether a Pull can proceed for this dry-run outcome. Only `Blocked` — a
+    /// real two-sided conflict — disables the button; every other outcome,
+    /// including `KeepsLocalChanges`, pulls safely.
+    #[must_use]
+    pub fn is_pullable(&self) -> bool {
+        !matches!(self, PullOutcome::Blocked { .. })
+    }
+}
+
+pub async fn package_pull_outcome(namespace: String) -> Result<PullOutcome, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("package_pull_outcome", &Args { namespace }).await
+}
+
 pub async fn package_uninstall(namespace: String) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
@@ -953,8 +995,8 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, PackageItemData, ViolationField, WorkflowInfo,
-        WorkflowIntent,
+        CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, ViolationField,
+        WorkflowInfo, WorkflowIntent,
     };
 
     /// The mirror struct must deserialize the exact JSON the backend
@@ -1055,6 +1097,60 @@ mod tests {
                     "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string()
                 ),
             }
+        );
+    }
+
+    /// The mirror enum must deserialize the exact externally-tagged JSON the
+    /// backend (`quilt_rs::flow::PullOutcome`) serializes. These literals are
+    /// anchored identically in the backend's `pull_outcome_wire_form_is_verbatim`;
+    /// if the two drift, the two-phase Pull affordance silently misreads the
+    /// dry-run outcome at the Tauri boundary.
+    #[test]
+    fn pull_outcome_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<PullOutcome>(r#""UpToDate""#).unwrap(),
+            PullOutcome::UpToDate
+        );
+        assert_eq!(
+            serde_json::from_str::<PullOutcome>(r#""CleanUpdate""#).unwrap(),
+            PullOutcome::CleanUpdate
+        );
+        assert_eq!(
+            serde_json::from_str::<PullOutcome>(
+                r#"{"KeepsLocalChanges":{"added":["a.txt"],"modified":[],"removed":["c.txt"]}}"#
+            )
+            .unwrap(),
+            PullOutcome::KeepsLocalChanges {
+                added: vec!["a.txt".to_string()],
+                modified: vec![],
+                removed: vec!["c.txt".to_string()],
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<PullOutcome>(r#"{"Blocked":{"conflicts":["x.txt"]}}"#).unwrap(),
+            PullOutcome::Blocked {
+                conflicts: vec!["x.txt".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn pull_outcome_is_pullable_only_blocks_on_conflicts() {
+        assert!(PullOutcome::UpToDate.is_pullable());
+        assert!(PullOutcome::CleanUpdate.is_pullable());
+        assert!(
+            PullOutcome::KeepsLocalChanges {
+                added: vec!["a.txt".to_string()],
+                modified: vec![],
+                removed: vec![],
+            }
+            .is_pullable()
+        );
+        assert!(
+            !PullOutcome::Blocked {
+                conflicts: vec!["x.txt".to_string()],
+            }
+            .is_pullable()
         );
     }
 

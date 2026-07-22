@@ -6,7 +6,7 @@ use leptos::prelude::*;
 
 use crate::commands::{
     self, AUTOSYNC_PAUSED_EVENT, AUTOSYNC_PUBLISHED_EVENT, PACKAGE_STATUS_EVENT, PackageItemData,
-    PackageStatusEvent, PausedEvent, PublishedEvent,
+    PackageStatusEvent, PausedEvent, PublishedEvent, PullOutcome,
 };
 use crate::components::buttons;
 use crate::components::layout::BreadcrumbItem;
@@ -55,6 +55,20 @@ fn hint_lines(status: &str, has_host: bool, paused_message: Option<&str>) -> Vec
         }];
     }
     Vec::new()
+}
+
+/// Hover-popover text for the list-row Pull button: shown only for a `Blocked`
+/// outcome, naming the conflicting files and the commit → merge resolution
+/// path. `None` for every other (or still-loading) outcome, so no popover
+/// renders and Pull is simply enabled or, while loading, disabled.
+fn pull_popover(outcome: Option<&PullOutcome>) -> Option<String> {
+    match outcome {
+        Some(PullOutcome::Blocked { conflicts }) => Some(format!(
+            "Resolve conflicts in {} via commit \u{2192} merge",
+            conflicts.join(", ")
+        )),
+        _ => None,
+    }
 }
 
 // ── Installed Packages List page ──
@@ -331,11 +345,32 @@ fn PackageItem(
     let hint =
         Signal::derive(move || status.with(|s| hint_lines(s, has_host, paused_reason.as_deref())));
 
+    // Two-phase Pull affordance: only the `behind` row action gates on it.
+    // When the row is behind, the dry-run pull outcome is fetched and drives
+    // the Pull button's enabled state and its conflict popover. The resource
+    // re-runs when `status` changes, so it clears/refetches as the row's status
+    // moves; `None` (still resolving, or a fetch failure) keeps Pull disabled
+    // with no popover.
+    let ns_for_outcome = data.namespace.clone();
+    let pull_outcome_res = LocalResource::new(move || {
+        let ns = ns_for_outcome.clone();
+        let is_behind = status.get() == "behind";
+        async move {
+            if is_behind {
+                commands::package_pull_outcome(ns).await.ok()
+            } else {
+                None
+            }
+        }
+    });
+    let pull_outcome = Signal::derive(move || pull_outcome_res.get().flatten());
+
     // Build menu buttons
     let menu = build_package_menu(
         &data,
         status,
         has_changes,
+        pull_outcome,
         refreshing,
         notification,
         ui_locked,
@@ -399,6 +434,7 @@ fn build_package_menu(
     data: &PackageItemData,
     status: RwSignal<String>,
     has_changes: RwSignal<bool>,
+    pull_outcome: Signal<Option<PullOutcome>>,
     refreshing: RwSignal<bool>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
@@ -535,11 +571,16 @@ fn build_package_menu(
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
                 <div class="qui-popover">
-                    <buttons::Pull on_click=move |ev| on_pull.with_value(|f| f(ev)) small=true busy=pull_busy disabled=has_changes />
-                    <Show when=move || has_changes.get()>
+                    <buttons::Pull
+                        on_click=move |ev| on_pull.with_value(|f| f(ev))
+                        small=true
+                        busy=pull_busy
+                        disabled=Signal::derive(move || !pull_outcome.get().is_some_and(|o| o.is_pullable()))
+                    />
+                    <Show when=move || pull_popover(pull_outcome.get().as_ref()).is_some()>
                         <div class="popover-wrapper">
                             <div class="popover">
-                                "Commit or discard local changes before pulling"
+                                {move || pull_popover(pull_outcome.get().as_ref()).unwrap_or_default()}
                             </div>
                         </div>
                     </Show>
@@ -692,7 +733,32 @@ fn CreatePackagePopup(
 
 #[cfg(test)]
 mod tests {
-    use super::{PAUSED_GUIDANCE, hint_lines};
+    use super::{PAUSED_GUIDANCE, PullOutcome, hint_lines, pull_popover};
+
+    #[test]
+    fn blocked_popover_names_conflicts_and_resolution_path() {
+        let outcome = PullOutcome::Blocked {
+            conflicts: vec!["a.txt".to_string(), "b.txt".to_string()],
+        };
+        assert_eq!(
+            pull_popover(Some(&outcome)),
+            Some("Resolve conflicts in a.txt, b.txt via commit \u{2192} merge".to_string())
+        );
+    }
+
+    #[test]
+    fn non_blocking_outcomes_have_no_popover() {
+        assert_eq!(pull_popover(None), None);
+        assert_eq!(pull_popover(Some(&PullOutcome::CleanUpdate)), None);
+        assert_eq!(
+            pull_popover(Some(&PullOutcome::KeepsLocalChanges {
+                added: vec!["a.txt".to_string()],
+                modified: vec![],
+                removed: vec![],
+            })),
+            None
+        );
+    }
 
     #[test]
     fn paused_with_reason_shows_guidance_then_reason() {
