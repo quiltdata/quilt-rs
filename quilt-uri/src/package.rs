@@ -417,6 +417,7 @@ impl From<&ManifestUri> for S3PackageUri {
 mod tests {
     use super::*;
     use crate::Seconds;
+    use crate::fixtures;
 
     type Res<T = ()> = Result<T, UriError>;
 
@@ -541,7 +542,7 @@ mod tests {
             uri,
             S3PackageUri {
                 bucket: "bucket".to_string(),
-                catalog: Some(Host::default()),
+                catalog: Some(fixtures::host()),
                 namespace: ("foo", "bar").into(),
                 revision: RevisionPointer::Tag(Tag::Latest),
                 path: Some(PathBuf::from("read/me.md")),
@@ -554,7 +555,7 @@ mod tests {
     fn test_stringify_with_latest() {
         let uri = S3PackageUri {
             bucket: "bucket".to_string(),
-            catalog: Some(Host::default()),
+            catalog: Some(fixtures::host()),
             namespace: ("foo", "bar").into(),
             revision: RevisionPointer::Tag(Tag::Latest),
             path: Some(PathBuf::from("read/me.md")),
@@ -682,7 +683,7 @@ mod tests {
 
     #[test]
     fn test_display_for_host() -> Res {
-        let host = Host::default();
+        let host = fixtures::host();
 
         let uri_latest: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
@@ -878,5 +879,157 @@ mod tests {
             err.to_string(),
             "Invalid namespace: namespace must contain exactly one `/`; got: foo/bar/baz"
         );
+    }
+
+    #[test]
+    fn test_display_method_short_and_long_hash() {
+        // Short hash (<= 12 chars) is rendered verbatim.
+        let short = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abc123".to_string()),
+            path: None,
+        };
+        assert_eq!(short.display(), "quilt+s3://bucket#package=foo/bar@abc123");
+
+        // Long hash is abbreviated to `first6...last6`.
+        let long = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abcdef1234567890".to_string()),
+            path: None,
+        };
+        assert_eq!(
+            long.display(),
+            "quilt+s3://bucket#package=foo/bar@abcdef...567890"
+        );
+    }
+
+    #[test]
+    fn test_display_method_latest_timestamp_and_catalog() {
+        let latest = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: Some(PathBuf::from("read/me.md")),
+        };
+        assert_eq!(
+            latest.display(),
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md"
+        );
+
+        let timestamped = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: Some(fixtures::host()),
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Tag(Tag::Timestamp(Seconds(1_697_916_638))),
+            path: None,
+        };
+        assert_eq!(
+            timestamped.display(),
+            "quilt+s3://bucket#package=foo/bar:1697916638&catalog=test.quilt.dev"
+        );
+    }
+
+    #[test]
+    fn test_s3_package_handle_from_package_uri() {
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: None,
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abc123".to_string()),
+            path: None,
+        };
+        let expected = S3PackageHandle {
+            bucket: "bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+        };
+        assert_eq!(S3PackageHandle::from(&uri), expected);
+        assert_eq!(S3PackageHandle::from(uri), expected);
+    }
+
+    #[test]
+    fn test_s3_package_handle_from_manifest_uri() {
+        let manifest = ManifestUri {
+            origin: None,
+            bucket: "bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abc123".to_string(),
+        };
+        let expected = S3PackageHandle {
+            bucket: "bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+        };
+        assert_eq!(S3PackageHandle::from(&manifest), expected);
+        assert_eq!(S3PackageHandle::from(manifest), expected);
+    }
+
+    #[test]
+    fn test_namespace_serde_round_trip() {
+        let namespace = Namespace::from(("foo", "bar"));
+        let json = serde_json::to_string(&namespace).unwrap();
+        assert_eq!(json, "\"foo/bar\"");
+        let parsed: Namespace = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, namespace);
+    }
+
+    #[test]
+    fn test_namespace_deserialize_owned_string() {
+        // A `/` escape forces serde to hand us an owned `String`,
+        // exercising `visit_string` rather than `visit_str`.
+        let parsed: Namespace = serde_json::from_str("\"foo\\u002fbar\"").unwrap();
+        assert_eq!(parsed, Namespace::from(("foo", "bar")));
+    }
+
+    #[test]
+    fn test_namespace_deserialize_invalid() {
+        let result: Result<Namespace, _> = serde_json::from_str("\"noslash\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_revision_pointer_default() {
+        assert_eq!(
+            RevisionPointer::default(),
+            RevisionPointer::Tag(Tag::Latest)
+        );
+    }
+
+    #[test]
+    fn test_namespace_deserialize_owned_string_invalid() {
+        // Escaped, but no `/` after decoding: forces `visit_string` down its
+        // error branch.
+        let result: Result<Namespace, _> = serde_json::from_str("\"no\\u0061slash\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_namespace_deserialize_wrong_type() {
+        // A non-string JSON value drives the visitor's `expecting` message.
+        let result: Result<Namespace, _> = serde_json::from_str("123");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("prefix and a string name")
+        );
+    }
+
+    #[test]
+    fn test_s3_package_uri_serde_round_trip() {
+        let uri = S3PackageUri {
+            bucket: "bucket".to_string(),
+            catalog: Some(fixtures::host()),
+            namespace: ("foo", "bar").into(),
+            revision: RevisionPointer::Hash("abc123".to_string()),
+            path: Some(PathBuf::from("read/me.md")),
+        };
+        let json = serde_json::to_string(&uri).unwrap();
+        let parsed: S3PackageUri = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, uri);
     }
 }

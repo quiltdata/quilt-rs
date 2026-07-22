@@ -52,17 +52,50 @@ impl FromStr for Host {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl Default for Host {
-    fn default() -> Self {
-        Host {
-            inner: url::Host::Domain("test.quilt.dev".to_string()),
-        }
-    }
-}
-
 impl fmt::Display for Host {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_host_from_str_valid() {
+        let host = Host::from_str("example.com").unwrap();
+        assert_eq!(host.to_string(), "example.com");
+    }
+
+    #[test]
+    fn test_host_from_str_invalid() {
+        // Unterminated IPv6 literal is rejected by `url::Host::parse`.
+        let result = Host::from_str("[::1");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), UriError::Host(_)));
+    }
+
+    #[test]
+    fn test_host_serde_round_trip() {
+        let host = Host::from_str("example.com").unwrap();
+        let json = serde_json::to_string(&host).unwrap();
+        assert_eq!(json, "\"example.com\"");
+        let parsed: Host = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, host);
+    }
+
+    #[test]
+    fn test_host_deserialize_invalid() {
+        let result: Result<Host, _> = serde_json::from_str("\"[::1\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_host_url_host_round_trip() {
+        let host = Host::from_str("example.com").unwrap();
+        let inner: url::Host = host.clone().into();
+        let back: Host = inner.into();
+        assert_eq!(back, host);
     }
 }

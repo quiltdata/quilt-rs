@@ -63,4 +63,21 @@ mod tests {
             "s3://test-bucket/foo/bar/data/file.txt?versionId=final"
         );
     }
+
+    #[test]
+    fn test_object_uri_new_to_s3uri() {
+        let handle = S3PackageHandle {
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+        };
+        let uri = ObjectUri::new(handle, PathBuf::from("data/file.txt"));
+        assert_eq!(
+            S3Uri::from(uri),
+            S3Uri {
+                bucket: "test-bucket".to_string(),
+                key: "foo/bar/data/file.txt".to_string(),
+                version: None,
+            }
+        );
+    }
 }

@@ -8,6 +8,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.4.0] - 2026-07-22
+
+### Changed
+
+- Replaced the test-only `Default` impl for `Host` with `fixtures::host()` behind the `test-support` feature (<https://github.com/quiltdata/quilt-rs/pull/797>)
+
 ## [v0.3.0] - 2026-05-06
 
 ### Changed

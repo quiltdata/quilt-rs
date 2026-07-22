@@ -190,4 +190,62 @@ mod tests {
             "1697916638"
         );
     }
+
+    #[test]
+    fn test_seconds_from_str() {
+        let seconds: Seconds = "1697916638".parse().unwrap();
+        assert_eq!(seconds, Seconds(1_697_916_638));
+    }
+
+    #[test]
+    fn test_seconds_from_str_invalid() {
+        let result: Result<Seconds, _> = "not-a-number".parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_seconds_display() {
+        assert_eq!(Seconds(1_697_916_638).to_string(), "1697916638");
+    }
+
+    fn handle() -> S3PackageHandle {
+        S3PackageHandle {
+            bucket: "bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+        }
+    }
+
+    #[test]
+    fn test_tag_uri_latest_to_s3uri() {
+        let tag_uri = TagUri::latest(handle());
+        assert_eq!(
+            S3Uri::from(tag_uri),
+            S3Uri {
+                bucket: "bucket".to_string(),
+                key: ".quilt/named_packages/foo/bar/latest".to_string(),
+                version: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_tag_uri_timestamp_ref_to_s3uri() {
+        let tag_uri = TagUri::timestamp(handle(), Seconds(1_697_916_638));
+        // Exercises the `From<&TagUri>` borrow conversion.
+        assert_eq!(
+            S3Uri::from(&tag_uri),
+            S3Uri {
+                bucket: "bucket".to_string(),
+                key: ".quilt/named_packages/foo/bar/1697916638".to_string(),
+                version: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_tag_uri_new_into_handle() {
+        let tag_uri = TagUri::new(handle(), Tag::Latest);
+        let back: S3PackageHandle = tag_uri.into();
+        assert_eq!(back, handle());
+    }
 }

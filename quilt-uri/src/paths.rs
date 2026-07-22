@@ -21,3 +21,22 @@ pub fn tag_key(namespace: &Namespace, tag: &str) -> String {
 pub fn get_manifest_key(hash: &str) -> String {
     format!("{MANIFEST_DIR}/{hash}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tag_key() {
+        let namespace = Namespace::from(("foo", "bar"));
+        assert_eq!(
+            tag_key(&namespace, "latest"),
+            ".quilt/named_packages/foo/bar/latest"
+        );
+    }
+
+    #[test]
+    fn test_get_manifest_key() {
+        assert_eq!(get_manifest_key("abc123"), ".quilt/packages/abc123");
+    }
+}
