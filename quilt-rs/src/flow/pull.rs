@@ -1,13 +1,15 @@
 use std::path::PathBuf;
 
-use tracing::debug;
 use tracing::error;
 use tracing::info;
-use tracing::warn;
 
 use crate::Res;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::flow::PullOutcome;
+use crate::flow::apply_latest_update;
+use crate::flow::classify_pull;
+use crate::flow::remote_delta;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -15,14 +17,14 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
-use crate::paths::copy_cached_to_installed;
-use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::Tag;
 
-/// Pulls the latest package from remote.
-/// It also remove every local file in working directory and then re-installs it.
-/// Doesn't pull if there are uncommited changes in working directory.
+/// Pulls the latest package revision from remote and reconciles it into the
+/// working tree surgically: only remote-changed tracked paths the user did not
+/// touch are updated, while non-conflicting local changes are kept in place.
+/// A conflicting local change on a remote-changed path blocks the whole pull.
+/// Doesn't pull if there are uncommitted commits or the package has diverged.
 #[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -35,11 +37,6 @@ pub async fn pull_package(
     namespace: Namespace,
 ) -> Res<PackageLineage> {
     info!("⏳ Starting pull for package {}", namespace);
-
-    if !status.changes.is_empty() {
-        error!("❌ Found pending changes, cannot pull");
-        return Err(PackageOpError::Package("package has pending changes".to_string()).into());
-    }
 
     if lineage.commit.is_some() {
         error!("❌ Found pending commits, cannot pull");
@@ -60,83 +57,50 @@ pub async fn pull_package(
         return Err(PackageOpError::Package("package is already up-to-date".to_string()).into());
     }
 
-    // TODO: What should we do about installed paths?
-    // They may or may not exist in the updated package.
-    let installed_paths: Vec<PathBuf> = lineage.paths.keys().cloned().collect();
-    debug!("⏳ Uninstalling {} paths", installed_paths.len());
-    let mut lineage =
-        flow::uninstall_paths(lineage, working_dir.clone(), storage, &installed_paths).await?;
-
-    debug!("⏳ Updating lineage hashes");
-    // TODO: uninstall_paths() just modified the lineage, so re-reading it here.
-    // There needs to be a better way.
-    let latest = lineage.latest_hash.clone();
-    lineage.remote_mut()?.hash.clone_from(&latest);
-    lineage.base_hash.clone_from(&latest);
-
+    // Resolve + cache the `latest` manifest, then classify before mutating.
     let remote_uri = lineage.remote()?.clone();
-
-    debug!("⏳ Resolving latest manifest");
     let origin = remote_uri.origin.clone();
-    let manifest_uri = resolve_tag(remote, origin.as_ref(), remote_uri, Tag::Latest).await?;
-    debug!("✔️ Latest manifest resolved: {}", manifest_uri.display());
+    let latest = resolve_tag(remote, origin.as_ref(), remote_uri, Tag::Latest).await?;
+    let latest_manifest = flow::cache_remote_manifest(paths, storage, remote, &latest).await?;
 
-    debug!("⏳ Caching remote manifest");
-    flow::cache_remote_manifest(paths, storage, remote, &manifest_uri).await?;
-
-    debug!("⏳ Installing cached manifest");
-    copy_cached_to_installed(
-        paths,
-        storage,
-        &ManifestUri {
-            namespace: namespace.clone(),
-            ..manifest_uri.clone()
-        },
-    )
-    .await?;
-
-    // Swap `manifest` to the freshly-installed revision. The caller
-    // passed in the manifest at the install-time hash; `install_paths`
-    // below reads `row.hash` and `row.physical_key` from this manifest
-    // to fetch the actual object bytes, and `manifest.contains_record`
-    // is used to decide which paths still belong in the new revision.
-    // Without this reload, install_paths would re-cache and copy the
-    // OLD object content over the (just-deleted) working-tree files —
-    // pull would update lineage hashes but leave file bytes stale.
-    debug!("⏳ Reloading newly-installed manifest");
-    *manifest = Manifest::from_path(
-        storage,
-        &paths.installed_manifest(&namespace, &manifest_uri.hash),
-    )
-    .await?;
-
-    debug!("⏳ Checking which paths to reinstall");
-    let mut paths_to_install = Vec::new();
-    for x in &installed_paths {
-        if manifest.contains_record(x) {
-            debug!("✔️ Will reinstall path: {}", x.display());
-            paths_to_install.push(x);
-        } else {
-            warn!("❌ Path no longer exists in manifest: {}", x.display());
+    // `manifest` is the installed (base) manifest the caller passed in.
+    let outcome = classify_pull(&status, manifest, &latest_manifest);
+    match &outcome {
+        PullOutcome::UpToDate => {
+            return Err(
+                PackageOpError::Package("package is already up-to-date".to_string()).into(),
+            );
         }
+        PullOutcome::Blocked { conflicts } => {
+            error!("❌ Pull blocked by conflicts: {conflicts:?}");
+            return Err(PackageOpError::PullConflict(conflicts.clone()).into());
+        }
+        PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {}
     }
-    info!("⏳ Reinstalling {} paths", paths_to_install.len());
 
-    let package_lineage = flow::install_paths(
+    // Touch-set: remote-changed tracked paths the user did NOT touch. Paths the
+    // user changed are left in place (kept, or trivially resolved).
+    let touched: Vec<PathBuf> = remote_delta(manifest, &latest_manifest)
+        .into_keys()
+        .filter(|p| lineage.paths.contains_key(p))
+        .filter(|p| !status.changes.contains_key(p))
+        .collect();
+
+    let lineage = apply_latest_update(
         lineage,
         manifest,
         paths,
-        working_dir,
-        namespace,
         storage,
         remote,
-        &paths_to_install,
+        working_dir,
+        namespace,
+        latest,
+        &touched,
     )
     .await?;
 
-    info!("✔️ Successfully pulled and updated package");
-
-    Ok(package_lineage)
+    info!("✔️ Successfully pulled (surgical), outcome={outcome:?}");
+    Ok(lineage)
 }
 
 #[cfg(test)]
@@ -151,24 +115,38 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::CommitState;
     use crate::manifest::ManifestRow;
+    use quilt_uri::ManifestUri;
 
+    // Gentle pull no longer refuses on a working-tree change: an added file
+    // that the remote did not touch is kept, and pull proceeds. (Behind + one
+    // added file — Kevin's field report.) Full end-to-end apply is covered by
+    // the primitive's tests; here we assert the guard is *gone* by getting past
+    // it to the up-to-date short-circuit when base == latest with local changes.
     #[test(tokio::test)]
-    async fn test_no_pull_if_changes() -> Res {
+    async fn added_file_does_not_block_the_guard() {
         let storage = MockStorage::default();
-        let lineage = PackageLineage::default();
-        let mut manifest = Manifest::default();
-
+        let remote = MockRemote::default();
+        // base == latest → up-to-date short-circuit, but only reached if the
+        // working-tree guard no longer fires first.
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                hash: "a".to_string(),
+                ..ManifestUri::default()
+            }),
+            base_hash: "a".to_string(),
+            latest_hash: "a".to_string(),
+            ..PackageLineage::default()
+        };
         let status = InstalledPackageStatus {
             changes: BTreeMap::from([(
-                PathBuf::from("foo"),
+                PathBuf::from("new"),
                 Change::Added(ManifestRow::default()),
             )]),
             ..InstalledPackageStatus::default()
         };
-        let remote = MockRemote::default();
         let error = pull_package(
             lineage,
-            &mut manifest,
+            &mut Manifest::default(),
             &DomainPaths::default(),
             &storage,
             &remote,
@@ -177,11 +155,11 @@ mod tests {
             Namespace::default(),
         )
         .await;
+        // Reaches the up-to-date branch (guard relaxed), not "pending changes".
         assert_eq!(
             error.unwrap_err().to_string(),
-            "General error regarding package: package has pending changes".to_string()
+            "General error regarding package: package is already up-to-date".to_string()
         );
-        Ok(())
     }
 
     #[test(tokio::test)]

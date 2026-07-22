@@ -8,6 +8,7 @@ use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::flow::PullOutcome;
 use crate::flow::UserMeta;
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
@@ -26,6 +27,7 @@ use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
+use crate::lineage::UpstreamState;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
@@ -501,6 +503,30 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
+    }
+
+    /// Dry-run: what would `pull` do right now? Fetches the `latest` manifest
+    /// (cached by hash) only when `Behind`; otherwise `UpToDate`. Network-light
+    /// — the caller (watcher / UI) uses it for two-phase render and routing.
+    ///
+    /// # Errors
+    /// Propagates status refresh, manifest read, and remote fetch errors.
+    pub async fn pull_outcome(&self, host_config_opt: Option<HostConfig>) -> Res<PullOutcome> {
+        let status = self.status(host_config_opt).await?;
+        if status.upstream_state != UpstreamState::Behind {
+            return Ok(PullOutcome::UpToDate);
+        }
+        // `status` refreshes `latest_hash` in memory but no longer persists it
+        // (see `pull`), so the on-disk lineage is stale here — refresh again to
+        // address the freshly-moved `latest` manifest rather than the base.
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
+        let base = self.manifest().await?;
+        let mut latest_uri = lineage.remote()?.clone();
+        latest_uri.hash.clone_from(&lineage.latest_hash);
+        let latest =
+            cache_remote_manifest(&self.paths, &self.storage, &self.remote, &latest_uri).await?;
+        Ok(flow::classify_pull(&status, &base, &latest))
     }
 
     /// Pushes any pending local commit, then promotes the resulting remote

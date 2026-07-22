@@ -20,9 +20,6 @@ mod status;
 mod uninstall_package;
 mod uninstall_paths;
 
-// Consumed by gentle `pull` and `reset_to_latest` in later tasks; the
-// re-export lands here so the surgical primitive has a stable `flow::` path.
-#[allow(unused_imports)]
 pub(crate) use apply_update::apply_latest_update;
 pub use browse::browse_remote_manifest as browse;
 pub use browse::cache_remote_manifest;
@@ -38,9 +35,6 @@ pub use publish::publish_package as publish;
 pub use pull::pull_package as pull;
 pub use pull_outcome::PullOutcome;
 pub use pull_outcome::classify_pull;
-// `remote_delta` is consumed by the gentle `pull` in a later task; the
-// re-export lands here so the surgical primitive has a stable `flow::` path.
-#[allow(unused_imports)]
 pub(crate) use pull_outcome::remote_delta;
 pub use push::PushResult;
 pub use push::push_package as push;

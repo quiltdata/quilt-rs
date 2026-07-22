@@ -245,6 +245,9 @@ pub enum PackageOpError {
 
     #[error("General error regarding package: {0}")]
     Package(String),
+
+    #[error("Pull blocked by conflicting local changes: {0:?}")]
+    PullConflict(Vec<PathBuf>),
 }
 
 /// The error type for this library

@@ -25,10 +25,6 @@ use quilt_uri::Namespace;
 /// # Errors
 /// Propagates uninstall / caching / install failures. The reconcile is not a
 /// transaction across I/O; callers treat `pull`/`reset` as retryable.
-// The only non-test caller arrives with gentle `pull` / `reset_to_latest` in
-// later tasks of this reconcile; landing the primitive first keeps the crate
-// building under `-D warnings` until then.
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_latest_update(
     lineage: PackageLineage,
