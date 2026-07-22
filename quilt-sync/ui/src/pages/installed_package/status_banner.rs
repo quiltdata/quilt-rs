@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use crate::commands::{self, PausedEvent, PullOutcome};
+use crate::commands::{self, PausedEvent, PullCheck, PullOutcome};
 use crate::components::Notification;
 use crate::components::buttons;
 use crate::util::make_action;
@@ -20,11 +20,15 @@ pub(super) fn StatusBanner(
     namespace: String,
     status: String,
     origin_host: Option<String>,
-    /// The dry-run pull outcome for the two-phase Pull affordance, filled in
-    /// asynchronously by the parent. `None` = still resolving (or failed):
-    /// Pull renders disabled with a "Checking…" placeholder. Only consulted by
+    /// The dry-run pull check for the two-phase Pull affordance, filled in
+    /// asynchronously by the parent. `Loading` = still resolving (Pull disabled,
+    /// "Checking…"); `Failed` = the dry-run errored (Pull disabled, with a retry
+    /// affordance); `Ready` drives the copy and enabled state. Only consulted by
     /// the `behind` arm.
-    pull_outcome: Signal<Option<PullOutcome>>,
+    pull_check: Signal<PullCheck>,
+    /// Re-runs the dry-run pull check; wired to the retry affordance shown when
+    /// `pull_check` is `Failed`.
+    pull_retry: Trigger,
     paused_event: RwSignal<Option<PausedEvent>>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
@@ -66,16 +70,17 @@ pub(super) fn StatusBanner(
                 move || refetch.notify(),
             );
             // Two-phase: the banner renders from `status` immediately with a
-            // "Checking…" placeholder; the dry-run `PullOutcome` (fetched by
-            // the parent) then drives both the copy and whether Pull is
-            // enabled. Pull is disabled while the outcome is unknown and when
-            // it is `Blocked` — a real two-sided conflict — whose message names
-            // the conflicting files and points at the merge page. The clean and
-            // keeps-local-changes outcomes enable Pull, the latter reassuring
-            // the user their local work survives the pull.
-            let description = move || behind_description(pull_outcome.get().as_ref());
-            let pull_disabled =
-                Signal::derive(move || !pull_outcome.get().is_some_and(|o| o.is_pullable()));
+            // "Checking…" placeholder; the dry-run `PullCheck` (fetched by the
+            // parent) then drives the copy and whether Pull is enabled. Pull is
+            // disabled while the check is `Loading`, when it `Failed` (a retry
+            // is offered), and when the outcome is `Blocked` — a real two-sided
+            // conflict — whose message names the conflicting files and points
+            // at the merge page. The clean and keeps-local-changes outcomes
+            // enable Pull, the latter reassuring the user their local work
+            // survives the pull.
+            let description = move || behind_description(&pull_check.get());
+            let pull_disabled = Signal::derive(move || !pull_check.get().pull_enabled());
+            let show_retry = Signal::derive(move || pull_check.get().is_failed());
             Some(
                 view! {
                     <div class="qui-status">
@@ -87,6 +92,9 @@ pub(super) fn StatusBanner(
                                     busy=pull_busy
                                     disabled=pull_disabled
                                 />
+                                <Show when=move || show_retry.get()>
+                                    <buttons::Refresh on_click=move |_| pull_retry.notify() />
+                                </Show>
                             </div>
                         </div>
                     </div>
@@ -158,22 +166,22 @@ pub(super) fn StatusBanner(
     view! {
         <Show when=move || paused_event.get().is_some()>
             {move || paused_event.get().map(|ev| {
-                // Only `reason = "other"` reaches us — the listener in
-                // `InstalledPackage` filters everything else out so we
-                // don't double-banner Diverged / Behind / Ahead, which
-                // are already covered by the status-driven `content`
-                // below. `message` carries just the raw refusal reason;
-                // the guidance line ("resolve, then push manually to
-                // resume") is presentation, added here.
-                let reason = ev.message;
+                // Only `reason = "other"` and `"pullConflict"` reach us — the
+                // listener in `InstalledPackage` filters everything else out so
+                // we don't double-banner Diverged / Behind / Ahead, which are
+                // already covered by the status-driven `content` below. The
+                // headline + detail are keyed on the reason: a pull conflict
+                // names the files and points at the merge page (the same
+                // remediation as the manual-pull `Blocked` copy), while every
+                // other reason keeps the generic "push manually to resume"
+                // guidance with the raw refusal reason as the detail line.
+                let (headline, detail) = paused_banner_copy(&ev.reason, ev.message.as_deref());
                 view! {
                     <div class="qui-status">
                         <div class="root">
                             <div class="text">
-                                <h2 class="description">
-                                    "Autosync paused. Resolve the issue, then push manually to resume."
-                                </h2>
-                                {reason.map(|r| view! { <p class="detail">{r}</p> })}
+                                <h2 class="description">{headline}</h2>
+                                {detail.map(|d| view! { <p class="detail">{d}</p> })}
                             </div>
                         </div>
                     </div>
@@ -184,21 +192,56 @@ pub(super) fn StatusBanner(
     }
 }
 
-/// The `behind`-arm banner description for a (possibly still-loading) pull
-/// outcome. `None` = the dry-run outcome has not resolved yet (or failed to),
-/// so the copy invites the user to wait while Pull stays disabled.
-fn behind_description(outcome: Option<&PullOutcome>) -> String {
+/// Headline + optional detail line for the autosync paused banner, keyed on the
+/// pause reason. A `pullConflict` names the conflicting files and points at the
+/// merge page — the same remediation the manual-pull `Blocked` copy gives —
+/// because "push manually to resume" is the wrong fix for a pull conflict.
+/// Every other reason keeps the generic guidance with the raw refusal reason as
+/// the detail line.
+fn paused_banner_copy(reason: &str, message: Option<&str>) -> (String, Option<String>) {
+    const GENERIC: &str = "Autosync paused. Resolve the issue, then push manually to resume.";
+    match reason {
+        "pullConflict" => {
+            let headline = match message {
+                Some(files) if !files.is_empty() => format!(
+                    "Conflicts in {files}. Commit your changes to resolve them on the merge page."
+                ),
+                _ => "Pull conflict. Commit your changes to resolve it on the merge page."
+                    .to_string(),
+            };
+            (headline, None)
+        }
+        _ => (GENERIC.to_string(), message.map(str::to_string)),
+    }
+}
+
+/// The `behind`-arm banner description for the dry-run pull check. `Loading` is
+/// the genuine in-flight state (Pull disabled, "Checking…"); `Failed` is an
+/// honest fetch-error state (Pull disabled, a retry offered); `Ready` defers to
+/// [`outcome_description`].
+fn behind_description(check: &PullCheck) -> String {
+    match check {
+        PullCheck::Loading => "Checking for updates\u{2026}".to_string(),
+        PullCheck::Failed => "Couldn't check for updates.".to_string(),
+        PullCheck::Ready(outcome) => outcome_description(outcome),
+    }
+}
+
+/// The banner copy for a resolved dry-run outcome. `Blocked` names the
+/// conflicting files and points at the merge page; `KeepsLocalChanges`
+/// reassures the user their local work survives; everything else states there
+/// are newer revisions.
+fn outcome_description(outcome: &PullOutcome) -> String {
     match outcome {
-        None => "Checking for updates\u{2026}".to_string(),
-        Some(PullOutcome::Blocked { conflicts }) => format!(
+        PullOutcome::Blocked { conflicts } => format!(
             "Conflicts in {}. Commit your changes to resolve them on the merge page.",
             conflicts.join(", ")
         ),
-        Some(PullOutcome::KeepsLocalChanges { .. }) => {
+        PullOutcome::KeepsLocalChanges { .. } => {
             "The remote has newer revisions. Your local changes are safe — pulling keeps them."
                 .to_string()
         }
-        Some(_) => "The remote has newer revisions.".to_string(),
+        _ => "The remote has newer revisions.".to_string(),
     }
 }
 
@@ -218,43 +261,100 @@ fn StatusBannerInner(description: &'static str, children: Children) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::behind_description;
-    use crate::commands::PullOutcome;
+    use super::{behind_description, paused_banner_copy};
+    use crate::commands::{PullCheck, PullOutcome};
 
     #[test]
-    fn loading_outcome_shows_checking_placeholder() {
-        assert_eq!(behind_description(None), "Checking for updates\u{2026}");
+    fn paused_other_shows_generic_guidance_and_raw_reason_detail() {
+        assert_eq!(
+            paused_banner_copy("other", Some("workflow rejected metadata")),
+            (
+                "Autosync paused. Resolve the issue, then push manually to resume.".to_string(),
+                Some("workflow rejected metadata".to_string()),
+            )
+        );
+    }
+
+    #[test]
+    fn paused_pull_conflict_names_files_and_points_at_merge() {
+        // Same copy shape as the manual-pull `Blocked` banner, so the
+        // autosync-on and status-behind paths read identically.
+        assert_eq!(
+            paused_banner_copy("pullConflict", Some("a.txt, b.txt")),
+            (
+                "Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
+                    .to_string(),
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn paused_pull_conflict_falls_back_without_files() {
+        assert_eq!(
+            paused_banner_copy("pullConflict", None),
+            (
+                "Pull conflict. Commit your changes to resolve it on the merge page.".to_string(),
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn loading_check_shows_checking_placeholder() {
+        assert_eq!(
+            behind_description(&PullCheck::Loading),
+            "Checking for updates\u{2026}"
+        );
+    }
+
+    #[test]
+    fn failed_check_shows_honest_error_and_keeps_pull_disabled() {
+        // The error state is distinct from loading — an honest failure the
+        // retry affordance pairs with — and Pull stays disabled (fail-safe).
+        assert_eq!(
+            behind_description(&PullCheck::Failed),
+            "Couldn't check for updates."
+        );
+        assert!(!PullCheck::Failed.pull_enabled());
+        assert!(PullCheck::Failed.is_failed());
+        assert!(!PullCheck::Loading.pull_enabled());
+        assert!(!PullCheck::Loading.is_failed());
     }
 
     #[test]
     fn clean_update_states_newer_revisions() {
         assert_eq!(
-            behind_description(Some(&PullOutcome::CleanUpdate)),
+            behind_description(&PullCheck::Ready(PullOutcome::CleanUpdate)),
             "The remote has newer revisions."
         );
+        assert!(PullCheck::Ready(PullOutcome::CleanUpdate).pull_enabled());
     }
 
     #[test]
     fn keeps_local_changes_reassures_local_work_is_safe() {
-        let outcome = PullOutcome::KeepsLocalChanges {
+        let check = PullCheck::Ready(PullOutcome::KeepsLocalChanges {
             added: vec!["a.txt".to_string()],
             modified: vec![],
             removed: vec![],
-        };
+        });
         assert_eq!(
-            behind_description(Some(&outcome)),
+            behind_description(&check),
             "The remote has newer revisions. Your local changes are safe — pulling keeps them."
         );
+        assert!(check.pull_enabled());
     }
 
     #[test]
-    fn blocked_names_conflicts_and_points_at_merge() {
-        let outcome = PullOutcome::Blocked {
+    fn blocked_names_conflicts_and_keeps_pull_disabled() {
+        let check = PullCheck::Ready(PullOutcome::Blocked {
             conflicts: vec!["a.txt".to_string(), "b.txt".to_string()],
-        };
+        });
         assert_eq!(
-            behind_description(Some(&outcome)),
+            behind_description(&check),
             "Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
         );
+        assert!(!check.pull_enabled());
+        assert!(!check.is_failed());
     }
 }

@@ -18,6 +18,7 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
+use crate::quilt::flow::PullOutcome;
 use crate::telemetry::MixpanelEvent;
 
 async fn package_commit_command(
@@ -313,7 +314,7 @@ pub async fn package_pull(
 async fn package_pull_outcome_command(
     m: &model::Model,
     namespace: &str,
-) -> Result<quilt::flow::PullOutcome, Error> {
+) -> Result<PullOutcome, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = m
         .get_installed_package(&namespace)
@@ -331,7 +332,7 @@ async fn package_pull_outcome_command(
 pub async fn package_pull_outcome(
     m: tauri::State<'_, model::Model>,
     namespace: String,
-) -> Result<quilt::flow::PullOutcome, String> {
+) -> Result<PullOutcome, String> {
     package_pull_outcome_command(&m, &namespace)
         .await
         .map_err(|e| e.to_string())

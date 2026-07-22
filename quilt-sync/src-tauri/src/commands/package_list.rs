@@ -41,12 +41,27 @@ pub struct InstalledPackageListItem {
     /// truth) at fetch time, so the UI derives the red/hint state from
     /// authoritative data instead of a reconciled frontend cache.
     pub paused_reason: Option<String>,
+    /// The stable reason discriminant for the pause (`"pullConflict"`,
+    /// `"other"`, …), paired with `paused_reason`. `Some` exactly when
+    /// `paused_reason` is; lets the UI pick conflict- vs. generic guidance
+    /// without re-parsing the message.
+    pub paused_kind: Option<String>,
+}
+
+/// A message-bearing autosync pause for a namespace: the stable reason
+/// discriminant plus the human-readable message (raw refusal reason, or the
+/// comma-joined conflicting files for a pull conflict). Keyed by namespace in
+/// the paused map the list builder consumes.
+#[derive(Clone, Debug)]
+pub struct PausedRow {
+    pub reason: String,
+    pub message: String,
 }
 
 async fn get_installed_packages_list_data_from_model(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
-    paused_reasons: &HashMap<String, String>,
+    paused_reasons: &HashMap<String, PausedRow>,
 ) -> Result<InstalledPackagesListData, Error> {
     let list = m.get_installed_packages_list().await?;
     let mut packages = Vec::new();
@@ -68,10 +83,12 @@ async fn load_package_item(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
     installed_package: &quilt::InstalledPackage,
-    paused_reasons: &HashMap<String, String>,
+    paused_reasons: &HashMap<String, PausedRow>,
 ) -> Result<InstalledPackageListItem, Error> {
     let namespace = installed_package.namespace.to_string();
-    let paused_reason = paused_reasons.get(&namespace).cloned();
+    let paused = paused_reasons.get(&namespace);
+    let paused_reason = paused.map(|p| p.message.clone());
+    let paused_kind = paused.map(|p| p.reason.clone());
     let lineage = m.get_installed_package_lineage(installed_package).await?;
     // Computed before `lineage` is moved by the `into()` below.
     let has_local_commit = lineage.commit.is_some();
@@ -85,6 +102,7 @@ async fn load_package_item(
             uri: None,
             remote_display: None,
             paused_reason,
+            paused_kind,
         });
     };
 
@@ -99,6 +117,7 @@ async fn load_package_item(
             uri: Some(typed_uri),
             remote_display: Some(remote_uri.to_string()),
             paused_reason,
+            paused_kind,
         });
     }
 
@@ -117,6 +136,7 @@ async fn load_package_item(
         uri: Some(typed_uri),
         remote_display: Some(remote_display),
         paused_reason,
+        paused_kind,
     })
 }
 
@@ -127,15 +147,26 @@ pub async fn get_installed_packages_list_data(
     watcher: tauri::State<'_, Watcher>,
 ) -> Result<InstalledPackagesListData, String> {
     // Read the watcher's paused map — the single source of truth — the
-    // same way `get_autosync_snapshot` does. Only `Other`-reason pauses
-    // carry a `message`; those are the reasons the status string cannot
-    // convey, so they are the only ones surfaced on each row.
-    let paused_reasons: HashMap<String, String> = watcher
+    // same way `get_autosync_snapshot` does. Only message-bearing pauses
+    // (`other`, `pullConflict`) surface on a row; the status string alone
+    // carries the rest. The reason discriminant rides along so the UI can
+    // pick conflict- vs. generic guidance.
+    let paused_reasons: HashMap<String, PausedRow> = watcher
         .snapshot()
         .await
         .paused
         .into_iter()
-        .filter_map(|entry| entry.message.map(|message| (entry.namespace, message)))
+        .filter_map(|entry| {
+            entry.message.map(|message| {
+                (
+                    entry.namespace,
+                    PausedRow {
+                        reason: entry.reason,
+                        message,
+                    },
+                )
+            })
+        })
         .collect();
 
     get_installed_packages_list_data_from_model(&*m, &tracing, &paused_reasons)
@@ -721,7 +752,10 @@ mod tests {
         let mut paused_reasons = HashMap::new();
         paused_reasons.insert(
             "test/paused".to_string(),
-            "workflow rejected metadata".to_string(),
+            PausedRow {
+                reason: "other".to_string(),
+                message: "workflow rejected metadata".to_string(),
+            },
         );
 
         let tracing = crate::telemetry::Telemetry::default();
@@ -753,10 +787,11 @@ mod tests {
             uri: None,
             remote_display: None,
             paused_reason: Some("workflow rejected metadata".to_string()),
+            paused_kind: Some("other".to_string()),
         };
         assert_eq!(
             serde_json::to_string(&item).unwrap(),
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata"}"#
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other"}"#
         );
     }
 }

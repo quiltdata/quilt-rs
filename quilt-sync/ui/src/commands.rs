@@ -282,6 +282,11 @@ pub struct PackageItemData {
     /// directly from the backend's authoritative paused map — there is no
     /// frontend cache to go stale.
     pub paused_reason: Option<String>,
+    /// The stable reason discriminant for the pause (`"pullConflict"`,
+    /// `"other"`, …), paired with `paused_reason`. `Some` exactly when
+    /// `paused_reason` is; lets the row pick conflict- vs. generic guidance
+    /// without re-parsing the message.
+    pub paused_kind: Option<String>,
 }
 
 /// A deep-link banner to surface on the installed-package page after
@@ -742,6 +747,35 @@ impl PullOutcome {
     }
 }
 
+/// Tri-state view of the dry-run pull check for the Pull affordance. Replaces
+/// the old `Option<PullOutcome>`, where `None` conflated "still loading" with
+/// "the fetch failed" — a single failed dry-run then stranded the Pull button
+/// on "Checking for updates…" forever, with no retry. `Loading` and `Failed`
+/// both keep Pull disabled (fail-safe); `Failed` additionally offers a retry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PullCheck {
+    /// The dry-run has not resolved yet (genuine in-flight state).
+    Loading,
+    /// The dry-run fetch errored; the button area offers a retry.
+    Failed,
+    /// The dry-run resolved to a concrete outcome.
+    Ready(PullOutcome),
+}
+
+impl PullCheck {
+    /// Whether Pull should be enabled: only a resolved, pullable outcome.
+    #[must_use]
+    pub fn pull_enabled(&self) -> bool {
+        matches!(self, PullCheck::Ready(o) if o.is_pullable())
+    }
+
+    /// Whether the dry-run failed, so a retry affordance should show.
+    #[must_use]
+    pub fn is_failed(&self) -> bool {
+        matches!(self, PullCheck::Failed)
+    }
+}
+
 pub async fn package_pull_outcome(namespace: String) -> Result<PullOutcome, String> {
     #[derive(Serialize)]
     struct Args {
@@ -1009,7 +1043,7 @@ mod tests {
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
         let item = serde_json::from_str::<PackageItemData>(
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata"}"#,
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other"}"#,
         )
         .unwrap();
         assert_eq!(item.namespace, "acme/data");
@@ -1022,6 +1056,7 @@ mod tests {
             item.paused_reason.as_deref(),
             Some("workflow rejected metadata")
         );
+        assert_eq!(item.paused_kind.as_deref(), Some("other"));
     }
 
     /// The mirror types must deserialize the exact tagged JSON the backend

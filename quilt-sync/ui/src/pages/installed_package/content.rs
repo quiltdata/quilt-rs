@@ -2,7 +2,7 @@ use leptos::prelude::*;
 
 use super::entries::{EntriesToolbar, EntryRow};
 use super::status_banner::StatusBanner;
-use crate::commands::{self, InstalledPackageData, PausedEvent};
+use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
 use crate::components::{
     IgnorePopup, IgnorePopupData, Notification, SetRemotePopup, UnignorePopup, UnignorePopupData,
@@ -162,24 +162,32 @@ pub(super) fn InstalledPackageContent(
 
     // Two-phase Pull affordance: the banner renders immediately from `status`;
     // when the package is `behind`, the dry-run pull outcome is fetched
-    // asynchronously and fills in the Pull button's enabled state and copy once
-    // `latest` is cached (`None` while it resolves, or on a fetch failure —
-    // Pull stays disabled with a "Checking…" placeholder in either case). A
-    // non-behind status never queries: the outcome only gates the Pull button.
+    // asynchronously and fills in the Pull button's enabled state and copy. The
+    // resource yields a `PullCheck`: `Loading` until the outcome resolves
+    // (genuine in-flight state → "Checking for updates…"), `Failed` on a fetch
+    // error (→ "Couldn't check for updates." with a retry), or `Ready`. The
+    // `pull_retry` trigger re-runs the dry-run so one network blip no longer
+    // strands the button on "Checking…" forever. A non-behind status never
+    // queries: the outcome only gates the Pull button.
     let ns_for_outcome = namespace.clone();
     let status_for_outcome = status.clone();
+    let pull_retry = Trigger::new();
     let pull_outcome_res = LocalResource::new(move || {
+        pull_retry.track();
         let ns = ns_for_outcome.clone();
         let is_behind = status_for_outcome == "behind";
         async move {
             if is_behind {
-                commands::package_pull_outcome(ns).await.ok()
+                match commands::package_pull_outcome(ns).await {
+                    Ok(outcome) => PullCheck::Ready(outcome),
+                    Err(_) => PullCheck::Failed,
+                }
             } else {
-                None
+                PullCheck::Loading
             }
         }
     });
-    let pull_outcome = Signal::derive(move || pull_outcome_res.get().flatten());
+    let pull_check = Signal::derive(move || pull_outcome_res.get().unwrap_or(PullCheck::Loading));
     let show_commit = status != "error";
     let has_origin = origin_host.is_some();
     // Mirror the Publish gating from the Installed Packages List: Commit and
@@ -282,7 +290,8 @@ pub(super) fn InstalledPackageContent(
                     namespace=ns_for_status
                     status=status_clone
                     origin_host=origin_host_for_status
-                    pull_outcome=pull_outcome
+                    pull_check=pull_check
+                    pull_retry=pull_retry
                     paused_event=paused_event
                     notification=notification
                     ui_locked=ui_locked

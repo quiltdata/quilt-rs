@@ -18,6 +18,16 @@ use crate::tauri as tauri_bridge;
 
 // ── Installed Package page ──
 
+/// Which autosync pause reasons warrant the detail page's dedicated paused
+/// banner. Diverged / Behind / Ahead are already covered by the status-driven
+/// banner, so only the reasons the status string cannot fully convey get the
+/// dedicated banner: free-form `"other"` refusals and `"pullConflict"` (which
+/// the status string flattens to `"paused"`, hiding the conflict details and
+/// the merge-page remediation).
+fn warrants_paused_banner(reason: &str) -> bool {
+    matches!(reason, "other" | "pullConflict")
+}
+
 #[component]
 #[allow(
     clippy::too_many_lines,
@@ -59,22 +69,22 @@ pub fn InstalledPackage() -> impl IntoView {
     on_cleanup(move || drop(listener));
 
     // Autosync pause event for the currently-open namespace: drives the
-    // dedicated paused banner. We only render this banner for `Other(_)`
-    // pauses — the regular status banner (`"diverged"`, `"behind"`,
-    // `"ahead"`) already conveys the per-state-machine reasons, and
-    // stacking the autosync paused banner on top would double up the
+    // dedicated paused banner. We only render this banner for the reasons
+    // the status string can't convey (`other`, `pullConflict` — see
+    // `warrants_paused_banner`) — the regular status banner (`"diverged"`,
+    // `"behind"`, `"ahead"`) already conveys the per-state-machine reasons,
+    // and stacking the autosync paused banner on top would double up the
     // same information (this was a Greptile finding on the
     // get_autosync_snapshot hydration). Filtering at both ingress
     // points — the live listener AND the snapshot replay — keeps the
-    // detail page from showing two banners side-by-side for any
-    // non-Other paused namespace.
+    // detail page from showing two banners side-by-side for those.
     let paused_event: RwSignal<Option<PausedEvent>> = RwSignal::new(None);
     // Register the listener BEFORE fetching the snapshot so a pause
     // event that fires between the two doesn't get dropped. If the
     // listener wins the race the snapshot won't overwrite a fresher
     // value — see the `slot.is_none()` check on the seed below.
     let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
-        if ev.reason != "other" {
+        if !warrants_paused_banner(&ev.reason) {
             return;
         }
         let current = query.read_untracked().get("namespace").unwrap_or_default();
@@ -89,7 +99,7 @@ pub fn InstalledPackage() -> impl IntoView {
     // listener above will never fire for that pause. Fetch the
     // watcher's current paused map and seed `paused_event` if our
     // namespace appears with a reason that warrants the dedicated
-    // banner (i.e. `other`).
+    // banner (`other` or `pullConflict`).
     leptos::task::spawn_local(async move {
         let Ok(snapshot) = commands::get_autosync_snapshot().await else {
             return;
@@ -98,7 +108,7 @@ pub fn InstalledPackage() -> impl IntoView {
         if let Some(entry) = snapshot
             .paused
             .into_iter()
-            .find(|p| p.namespace == current && p.reason == "other")
+            .find(|p| p.namespace == current && warrants_paused_banner(&p.reason))
         {
             // Don't overwrite a fresher value the live listener may have
             // already set between listener registration and now.
@@ -179,5 +189,24 @@ pub fn InstalledPackage() -> impl IntoView {
                 })
             }}
         </Suspense>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::warrants_paused_banner;
+
+    #[test]
+    fn message_bearing_reasons_get_the_dedicated_banner() {
+        assert!(warrants_paused_banner("other"));
+        assert!(warrants_paused_banner("pullConflict"));
+    }
+
+    #[test]
+    fn status_legible_reasons_are_filtered_out() {
+        assert!(!warrants_paused_banner("diverged"));
+        assert!(!warrants_paused_banner("behind"));
+        assert!(!warrants_paused_banner("pendingChanges"));
+        assert!(!warrants_paused_banner("pendingCommit"));
     }
 }

@@ -6,7 +6,7 @@ use leptos::prelude::*;
 
 use crate::commands::{
     self, AUTOSYNC_PAUSED_EVENT, AUTOSYNC_PUBLISHED_EVENT, PACKAGE_STATUS_EVENT, PackageItemData,
-    PackageStatusEvent, PausedEvent, PublishedEvent, PullOutcome,
+    PackageStatusEvent, PausedEvent, PublishedEvent, PullCheck, PullOutcome,
 };
 use crate::components::buttons;
 use crate::components::layout::BreadcrumbItem;
@@ -34,15 +34,39 @@ type StatusEventSignal = RwSignal<Option<PackageStatusEvent>>;
 /// leaving them to wonder why autosync stopped.
 const PAUSED_GUIDANCE: &str = "Autosync paused. Resolve the issue, then push manually to resume.";
 
+/// The pull-conflict guidance line: names the conflicting files and points at
+/// the commit → merge-page remediation, matching the manual-pull `Blocked`
+/// copy so both paths read the same. "Push manually to resume" (the generic
+/// paused guidance) is the wrong fix for a pull conflict, so this replaces it
+/// whenever the pause reason is `pullConflict`. Falls back to a file-less
+/// phrasing when the reason message is empty.
+fn pull_conflict_hint(files: Option<&str>) -> String {
+    match files {
+        Some(f) if !f.is_empty() => {
+            format!("Conflicts in {f}. Commit your changes to resolve them on the merge page.")
+        }
+        _ => "Pull conflict. Commit your changes to resolve it on the merge page.".to_string(),
+    }
+}
+
 /// The one or two hint lines shown under a row's URI, error-coloured; empty
 /// when the row is healthy (which is also the not-red condition).
 ///
-/// Pure so it can be unit-tested. A `paused` row shows the guidance line
-/// followed by the raw refusal reason (when one is known); an `error` row
-/// shows a sign-in or no-remote hint depending on whether a remote host
-/// exists.
-fn hint_lines(status: &str, has_host: bool, paused_message: Option<&str>) -> Vec<String> {
+/// Pure so it can be unit-tested. A `pullConflict` pause shows the
+/// conflict-specific guidance (files + merge page); any other paused row shows
+/// the generic guidance line followed by the raw refusal reason (when one is
+/// known); an `error` row shows a sign-in or no-remote hint depending on
+/// whether a remote host exists.
+fn hint_lines(
+    status: &str,
+    has_host: bool,
+    paused_kind: Option<&str>,
+    paused_message: Option<&str>,
+) -> Vec<String> {
     if status == "paused" || paused_message.is_some() {
+        if paused_kind == Some("pullConflict") {
+            return vec![pull_conflict_hint(paused_message)];
+        }
         let mut lines = vec![PAUSED_GUIDANCE.to_string()];
         lines.extend(paused_message.map(str::to_string));
         return lines;
@@ -57,13 +81,34 @@ fn hint_lines(status: &str, has_host: bool, paused_message: Option<&str>) -> Vec
     Vec::new()
 }
 
-/// Hover-popover text for the list-row Pull button: shown only for a `Blocked`
-/// outcome, naming the conflicting files and the commit → merge resolution
-/// path. `None` for every other (or still-loading) outcome, so no popover
+/// The autosync-paused toast for a namespace, or `None` when the pause needs
+/// no toast. The classic refusals (pendingChanges/pendingCommit/diverged) are
+/// already legible from the row's status string, so they stay silent; `other`
+/// and `pullConflict` carry information the status string drops, so both toast
+/// — the pull conflict with its file names and merge-page remediation.
+fn paused_toast(reason: &str, namespace: &str, message: Option<&str>) -> Option<String> {
+    match reason {
+        "pullConflict" => Some(format!(
+            "Autosync paused {namespace} — {}",
+            pull_conflict_hint(message)
+        )),
+        "other" => {
+            let msg = message.unwrap_or("Autosync paused");
+            Some(format!("Autosync paused {namespace} — {msg}"))
+        }
+        _ => None,
+    }
+}
+
+/// Hover-popover text for the list-row Pull button: shown for a `Blocked`
+/// outcome (naming the conflicting files and the commit → merge resolution
+/// path) and for a `Failed` dry-run (an honest error, paired with the retry
+/// affordance). `None` for every other (or still-loading) check, so no popover
 /// renders and Pull is simply enabled or, while loading, disabled.
-fn pull_popover(outcome: Option<&PullOutcome>) -> Option<String> {
-    match outcome {
-        Some(PullOutcome::Blocked { conflicts }) => Some(format!(
+fn pull_popover(check: &PullCheck) -> Option<String> {
+    match check {
+        PullCheck::Failed => Some("Couldn't check for updates.".to_string()),
+        PullCheck::Ready(PullOutcome::Blocked { conflicts }) => Some(format!(
             "Resolve conflicts in {} via commit \u{2192} merge",
             conflicts.join(", ")
         )),
@@ -135,17 +180,13 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // state reflects authoritative data (the toast is transient feedback).
     let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
         // The classic refusal kinds (pendingChanges, pendingCommit,
-        // diverged) are already legible from the per-row status
-        // string. Only the `other` reason carries information the
-        // status string drops, so only toast for that.
-        if ev.reason != "other" {
+        // diverged) are already legible from the per-row status string;
+        // `other` and `pullConflict` carry information it drops, so only
+        // those toast (see `paused_toast`).
+        let Some(msg) = paused_toast(&ev.reason, &ev.namespace, ev.message.as_deref()) else {
             return;
-        }
-        let msg = ev.message.unwrap_or_else(|| "Autosync paused".to_string());
-        notification.set(Some(Notification::Error(format!(
-            "Autosync paused {} — {}",
-            ev.namespace, msg,
-        ))));
+        };
+        notification.set(Some(Notification::Error(msg)));
         refetch.notify();
     });
     on_cleanup(move || drop(paused_listener));
@@ -342,35 +383,51 @@ fn PackageItem(
     // drops it here. `status` stays reactive for the in-place status update.
     let has_host = data.uri.as_ref().and_then(util::host_str).is_some();
     let paused_reason = data.paused_reason.clone();
-    let hint =
-        Signal::derive(move || status.with(|s| hint_lines(s, has_host, paused_reason.as_deref())));
+    let paused_kind = data.paused_kind.clone();
+    let hint = Signal::derive(move || {
+        status.with(|s| {
+            hint_lines(
+                s,
+                has_host,
+                paused_kind.as_deref(),
+                paused_reason.as_deref(),
+            )
+        })
+    });
 
     // Two-phase Pull affordance: only the `behind` row action gates on it.
     // When the row is behind, the dry-run pull outcome is fetched and drives
     // the Pull button's enabled state and its conflict popover. The resource
-    // re-runs when `status` changes, so it clears/refetches as the row's status
-    // moves; `None` (still resolving, or a fetch failure) keeps Pull disabled
-    // with no popover.
+    // re-runs when `status` changes (and when `pull_retry` fires), so it
+    // clears/refetches as the row's status moves; the yielded `PullCheck`
+    // distinguishes `Loading` (disabled, no popover) from `Failed` (disabled,
+    // with a retry), so one network blip no longer strands the button.
     let ns_for_outcome = data.namespace.clone();
+    let pull_retry = Trigger::new();
     let pull_outcome_res = LocalResource::new(move || {
+        pull_retry.track();
         let ns = ns_for_outcome.clone();
         let is_behind = status.get() == "behind";
         async move {
             if is_behind {
-                commands::package_pull_outcome(ns).await.ok()
+                match commands::package_pull_outcome(ns).await {
+                    Ok(outcome) => PullCheck::Ready(outcome),
+                    Err(_) => PullCheck::Failed,
+                }
             } else {
-                None
+                PullCheck::Loading
             }
         }
     });
-    let pull_outcome = Signal::derive(move || pull_outcome_res.get().flatten());
+    let pull_check = Signal::derive(move || pull_outcome_res.get().unwrap_or(PullCheck::Loading));
 
     // Build menu buttons
     let menu = build_package_menu(
         &data,
         status,
         has_changes,
-        pull_outcome,
+        pull_check,
+        pull_retry,
         refreshing,
         notification,
         ui_locked,
@@ -434,7 +491,8 @@ fn build_package_menu(
     data: &PackageItemData,
     status: RwSignal<String>,
     has_changes: RwSignal<bool>,
-    pull_outcome: Signal<Option<PullOutcome>>,
+    pull_check: Signal<PullCheck>,
+    pull_retry: Trigger,
     refreshing: RwSignal<bool>,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
@@ -575,12 +633,15 @@ fn build_package_menu(
                         on_click=move |ev| on_pull.with_value(|f| f(ev))
                         small=true
                         busy=pull_busy
-                        disabled=Signal::derive(move || !pull_outcome.get().is_some_and(|o| o.is_pullable()))
+                        disabled=Signal::derive(move || !pull_check.get().pull_enabled())
                     />
-                    <Show when=move || pull_popover(pull_outcome.get().as_ref()).is_some()>
+                    <Show when=move || pull_check.get().is_failed()>
+                        <buttons::Refresh on_click=move |_| pull_retry.notify() />
+                    </Show>
+                    <Show when=move || pull_popover(&pull_check.get()).is_some()>
                         <div class="popover-wrapper">
                             <div class="popover">
-                                {move || pull_popover(pull_outcome.get().as_ref()).unwrap_or_default()}
+                                {move || pull_popover(&pull_check.get()).unwrap_or_default()}
                             </div>
                         </div>
                     </Show>
@@ -733,25 +794,41 @@ fn CreatePackagePopup(
 
 #[cfg(test)]
 mod tests {
-    use super::{PAUSED_GUIDANCE, PullOutcome, hint_lines, pull_popover};
+    use super::{
+        PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast, pull_conflict_hint,
+        pull_popover,
+    };
 
     #[test]
     fn blocked_popover_names_conflicts_and_resolution_path() {
-        let outcome = PullOutcome::Blocked {
+        let check = PullCheck::Ready(PullOutcome::Blocked {
             conflicts: vec!["a.txt".to_string(), "b.txt".to_string()],
-        };
+        });
         assert_eq!(
-            pull_popover(Some(&outcome)),
+            pull_popover(&check),
             Some("Resolve conflicts in a.txt, b.txt via commit \u{2192} merge".to_string())
         );
     }
 
     #[test]
-    fn non_blocking_outcomes_have_no_popover() {
-        assert_eq!(pull_popover(None), None);
-        assert_eq!(pull_popover(Some(&PullOutcome::CleanUpdate)), None);
+    fn failed_check_popover_reports_honest_error_and_disables_pull() {
         assert_eq!(
-            pull_popover(Some(&PullOutcome::KeepsLocalChanges {
+            pull_popover(&PullCheck::Failed),
+            Some("Couldn't check for updates.".to_string())
+        );
+        assert!(!PullCheck::Failed.pull_enabled());
+        assert!(PullCheck::Failed.is_failed());
+    }
+
+    #[test]
+    fn non_blocking_checks_have_no_popover() {
+        assert_eq!(pull_popover(&PullCheck::Loading), None);
+        assert_eq!(
+            pull_popover(&PullCheck::Ready(PullOutcome::CleanUpdate)),
+            None
+        );
+        assert_eq!(
+            pull_popover(&PullCheck::Ready(PullOutcome::KeepsLocalChanges {
                 added: vec!["a.txt".to_string()],
                 modified: vec![],
                 removed: vec![],
@@ -763,7 +840,12 @@ mod tests {
     #[test]
     fn paused_with_reason_shows_guidance_then_reason() {
         assert_eq!(
-            hint_lines("paused", true, Some("workflow rejected metadata")),
+            hint_lines(
+                "paused",
+                true,
+                Some("other"),
+                Some("workflow rejected metadata")
+            ),
             vec![
                 PAUSED_GUIDANCE.to_string(),
                 "workflow rejected metadata".to_string(),
@@ -772,15 +854,41 @@ mod tests {
         // A snapshot-seeded pause carries its reason even when the row's
         // own status string was refreshed to something else on mount.
         assert_eq!(
-            hint_lines("up_to_date", false, Some("hash mismatch")),
+            hint_lines("up_to_date", false, Some("other"), Some("hash mismatch")),
             vec![PAUSED_GUIDANCE.to_string(), "hash mismatch".to_string()]
+        );
+    }
+
+    #[test]
+    fn pull_conflict_paused_row_points_at_merge_page() {
+        // Keyed on the `pullConflict` reason, the row drops the generic
+        // "push manually to resume" guidance for the merge-page remediation,
+        // naming the conflicting files (which arrive as the pause message).
+        assert_eq!(
+            hint_lines("paused", true, Some("pullConflict"), Some("a.txt, b.txt")),
+            vec![
+                "Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn pull_conflict_hint_falls_back_without_files() {
+        assert_eq!(
+            pull_conflict_hint(None),
+            "Pull conflict. Commit your changes to resolve it on the merge page."
+        );
+        assert_eq!(
+            pull_conflict_hint(Some("")),
+            "Pull conflict. Commit your changes to resolve it on the merge page."
         );
     }
 
     #[test]
     fn paused_without_reason_shows_guidance_only() {
         assert_eq!(
-            hint_lines("paused", true, None),
+            hint_lines("paused", true, None, None),
             vec![PAUSED_GUIDANCE.to_string()]
         );
     }
@@ -790,7 +898,12 @@ mod tests {
         // A row that is both `error` and has a pause reason shows the pause
         // guidance + reason — the more specific, actionable message wins.
         assert_eq!(
-            hint_lines("error", true, Some("workflow rejected metadata")),
+            hint_lines(
+                "error",
+                true,
+                Some("other"),
+                Some("workflow rejected metadata")
+            ),
             vec![
                 PAUSED_GUIDANCE.to_string(),
                 "workflow rejected metadata".to_string(),
@@ -801,7 +914,7 @@ mod tests {
     #[test]
     fn error_with_host_prompts_sign_in() {
         assert_eq!(
-            hint_lines("error", true, None),
+            hint_lines("error", true, None, None),
             vec!["Unable to check remote status — sign in again".to_string()]
         );
     }
@@ -809,14 +922,32 @@ mod tests {
     #[test]
     fn error_without_host_reports_no_remote() {
         assert_eq!(
-            hint_lines("error", false, None),
+            hint_lines("error", false, None, None),
             vec!["No remote configured".to_string()]
         );
     }
 
     #[test]
     fn healthy_row_has_no_hint() {
-        assert!(hint_lines("up_to_date", true, None).is_empty());
-        assert!(hint_lines("ahead", false, None).is_empty());
+        assert!(hint_lines("up_to_date", true, None, None).is_empty());
+        assert!(hint_lines("ahead", false, None, None).is_empty());
+    }
+
+    #[test]
+    fn paused_toast_fires_for_other_and_pull_conflict_only() {
+        assert_eq!(
+            paused_toast("other", "acme/demo", Some("workflow rejected metadata")),
+            Some("Autosync paused acme/demo — workflow rejected metadata".to_string())
+        );
+        assert_eq!(
+            paused_toast("pullConflict", "acme/demo", Some("a.txt, b.txt")),
+            Some(
+                "Autosync paused acme/demo — Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
+                    .to_string()
+            )
+        );
+        // Status-legible refusals stay silent.
+        assert_eq!(paused_toast("pendingChanges", "acme/demo", None), None);
+        assert_eq!(paused_toast("diverged", "acme/demo", None), None);
     }
 }
