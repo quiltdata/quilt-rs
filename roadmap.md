@@ -44,6 +44,12 @@ systems that already do it well.
   with a grace period so existing installs keep updating.
 - **Rework the index page** *(M)* — give the package list more structure and a
   filter, so you can find a package quickly instead of scanning a flat list.
+- **Quick test-environment bootstrap** — a way to bootstrap a test environment
+  quickly for local manual testing, pre-populated with installed packages,
+  without breaking your current in-use installation. It can likely be done with
+  test harnessing alone, without any production code.
+- **Extract S3 operations** — move the S3 operations into their own crate, or at
+  least into a mostly-independent module, like `workflow` and `object_hash`.
 
 ## Later / exploring
 
