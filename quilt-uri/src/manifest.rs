@@ -127,4 +127,42 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_manifest_uri_display() {
+        let uri = ManifestUri {
+            origin: None,
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abc123".to_string(),
+        };
+        assert_eq!(uri.to_string(), "quilt+s3://test-bucket#package=foo/bar@abc123");
+    }
+
+    #[test]
+    fn test_manifest_uri_display_method_with_origin() {
+        let uri = ManifestUri {
+            origin: Some(Host::default()),
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abc123".to_string(),
+        };
+        assert_eq!(
+            uri.display(),
+            "quilt+s3://test-bucket#package=foo/bar@abc123&catalog=test.quilt.dev"
+        );
+    }
+
+    #[test]
+    fn test_manifest_uri_serde_round_trip() {
+        let uri = ManifestUri {
+            origin: Some(Host::default()),
+            bucket: "test-bucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abc123".to_string(),
+        };
+        let json = serde_json::to_string(&uri).unwrap();
+        let parsed: ManifestUri = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, uri);
+    }
 }

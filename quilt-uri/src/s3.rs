@@ -144,6 +144,33 @@ mod tests {
     type Res<T = ()> = Result<T, UriError>;
 
     #[test]
+    fn test_extract_path_empty() {
+        let err = extract_path_relative_to_bucket("").unwrap_err();
+        assert_eq!(err, UriError::S3("Path does not exist".to_string()));
+    }
+
+    #[test]
+    fn test_extract_path_missing_leading_slash() {
+        let err = extract_path_relative_to_bucket("foo/bar").unwrap_err();
+        assert_eq!(
+            err,
+            UriError::S3("Expected path starting with slash".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_path_only_slash() {
+        let err = extract_path_relative_to_bucket("/").unwrap_err();
+        assert_eq!(err, UriError::S3("Path does not exist".to_string()));
+    }
+
+    #[test]
+    fn test_extract_path_valid() -> Res {
+        assert_eq!(extract_path_relative_to_bucket("/foo/bar")?, "foo/bar");
+        Ok(())
+    }
+
+    #[test]
     fn test_incorrect_scheme() {
         let uri = S3Uri::try_from("https://bucket/foo/bar");
         assert_eq!(
