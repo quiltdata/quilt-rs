@@ -3,6 +3,7 @@
 //! But you don't need to use it outise of this crate.
 //! All these functions are wrapped with `LocalDomain` methods with some context.
 
+mod apply_update;
 mod browse;
 mod certify_latest;
 mod commit;
@@ -18,6 +19,10 @@ mod status;
 mod uninstall_package;
 mod uninstall_paths;
 
+// Consumed by gentle `pull` and `reset_to_latest` in later tasks; the
+// re-export lands here so the surgical primitive has a stable `flow::` path.
+#[allow(unused_imports)]
+pub(crate) use apply_update::apply_latest_update;
 pub use browse::browse_remote_manifest as browse;
 pub use browse::cache_remote_manifest;
 pub use certify_latest::certify_latest;
