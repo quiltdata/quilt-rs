@@ -25,6 +25,10 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+#[allow(
+    clippy::ref_option,
+    reason = "mirrors the Remote trait's &Option<Host> parameter; Option<&Host> needs a trait-wide migration"
+)]
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,

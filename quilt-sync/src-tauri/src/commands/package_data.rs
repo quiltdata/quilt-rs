@@ -282,7 +282,10 @@ mod tests {
         assert_eq!(data.namespace, "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
-        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(data.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
         // Mock has one record "NAME" — should appear as an entry
         assert!(!data.entries.is_empty());
         let entry = data.entries.iter().find(|e| e.filename == "NAME");
@@ -384,7 +387,10 @@ mod tests {
         .map_err(|e| e.to_string())?;
 
         assert_eq!(data.status, "error");
-        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(data.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
         Ok(())
     }
 
@@ -465,7 +471,10 @@ mod tests {
 
         assert_eq!(data.status, "local");
         // Has origin for Push button and disabled Catalog button.
-        assert_eq!(catalog_host(&data.uri).as_deref(), Some("test.quilt.dev"));
+        assert_eq!(
+            catalog_host(data.uri.as_ref()).as_deref(),
+            Some("test.quilt.dev")
+        );
         Ok(())
     }
 

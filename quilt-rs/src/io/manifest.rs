@@ -136,6 +136,10 @@ pub async fn resolve_tag(
 /// `ManifestUri` should always have `hash`.
 /// But `S3PackageUri` can be tagged (e.g. "latest" or timestamp).
 /// So, we need to download the tag and find out what the `hash` is
+#[allow(
+    clippy::ref_option,
+    reason = "mirrors the Remote trait's &Option<Host> parameter; Option<&Host> needs a trait-wide migration"
+)]
 async fn resolve_top_hash(
     remote: &impl Remote,
     host: &Option<Host>,

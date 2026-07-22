@@ -216,6 +216,10 @@ impl RemoteS3 {
     /// [`QuiltCredentialsProvider`] on every S3 request — the cached
     /// client itself holds the provider, not a frozen access key, so
     /// it stays usable across STS rotations.
+    #[allow(
+        clippy::ref_option,
+        reason = "mirrors the Remote trait's &Option<Host> parameter; Option<&Host> needs a trait-wide migration"
+    )]
     async fn get_client_for_region(
         &self,
         host: &Option<Host>,
@@ -317,6 +321,10 @@ impl RemoteS3 {
         }
     }
 
+    #[allow(
+        clippy::ref_option,
+        reason = "mirrors the Remote trait's &Option<Host> parameter; Option<&Host> needs a trait-wide migration"
+    )]
     async fn get_client_for_bucket(
         &self,
         host: &Option<Host>,

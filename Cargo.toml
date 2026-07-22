@@ -16,9 +16,6 @@ warnings = "deny"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
-# Stylistic / debatable — keep code as-is.
-# Sometimes intentional for trait/API symmetry.
-ref_option = "allow"
 
 [workspace.dependencies]
 base64 = "0.22.1"

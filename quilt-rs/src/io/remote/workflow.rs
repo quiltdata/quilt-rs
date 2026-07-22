@@ -5,6 +5,12 @@
 //! in the `crate::workflow` module; this module turns config + S3 into the plain
 //! inputs that crate consumes.
 
+// Every fn here threads `host: &Option<Host>` straight into `Remote` trait
+// calls, whose methods take `&Option<Host>`; switching to `Option<&Host>`
+// would require migrating the trait and all impls. Allow `ref_option`
+// module-wide rather than annotating each fn — it stays enforced elsewhere.
+#![allow(clippy::ref_option)]
+
 use std::collections::BTreeMap;
 
 use serde_json::Value;

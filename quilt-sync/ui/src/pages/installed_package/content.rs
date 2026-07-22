@@ -190,7 +190,7 @@ pub(super) fn InstalledPackageContent(
                         };
                         // Phase 1: installed side, immediate.
                         let installed_label =
-                            revision_label(&installed_message, &installed_hash);
+                            revision_label(installed_message.as_deref(), installed_hash.as_deref());
                         // Phase 2: requested side, fetched lazily from the
                         // requested revision's own remote (bucket + catalog).
                         let requested_for_fetch = requested.clone();
@@ -235,7 +235,7 @@ pub(super) fn InstalledPackageContent(
                                                         Suspend::new(async move {
                                                             let msg = requested_msg.await.ok().flatten();
                                                             let short: String = requested.chars().take(8).collect();
-                                                            revision_label(&msg, &Some(requested.clone()))
+                                                            revision_label(msg.as_deref(), Some(requested.as_str()))
                                                                 .unwrap_or_else(|| view! {
                                                                     <span title=requested.clone()>{short}</span>
                                                                 }.into_any())
@@ -387,15 +387,15 @@ pub(super) fn InstalledPackageContent(
 /// A revision's display label: its manifest message with the full top-hash as
 /// a hover tooltip, falling back to the 8-char short hash when the message is
 /// empty. Returns `None` only when neither a message nor a hash is available.
-fn revision_label(message: &Option<String>, hash: &Option<String>) -> Option<AnyView> {
-    let title = hash.clone().unwrap_or_default();
+fn revision_label(message: Option<&str>, hash: Option<&str>) -> Option<AnyView> {
+    let title = hash.unwrap_or_default().to_string();
     match message {
         Some(m) if !m.trim().is_empty() => {
-            Some(view! { <span title=title>{m.clone()}</span> }.into_any())
+            Some(view! { <span title=title>{m.to_string()}</span> }.into_any())
         }
-        _ => hash.as_ref().map(|h| {
+        _ => hash.map(|h| {
             let short: String = h.chars().take(8).collect();
-            view! { <span title=h.clone()>{short}</span> }.into_any()
+            view! { <span title=h.to_string()>{short}</span> }.into_any()
         }),
     }
 }
