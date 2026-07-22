@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use serde::Deserialize;
+use serde::Serialize;
+
 use crate::lineage::Change;
 use crate::lineage::InstalledPackageStatus;
 use crate::manifest::Manifest;
@@ -10,7 +13,7 @@ use crate::object_hash::ObjectHash;
 /// from the working-tree changeset and the `base ↔ latest` manifest diff.
 ///
 /// See `model/ctx/sync/node.md#pull-outcome` in the spec corpus.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PullOutcome {
     /// Nothing to pull: `base` and `latest` are the *same revision* (identical
     /// manifests). A newer metadata-only revision (same rows, different header)
@@ -26,8 +29,10 @@ pub enum PullOutcome {
         modified: Vec<PathBuf>,
         removed: Vec<PathBuf>,
     },
-    /// A tracked path changed on both sides with a different result. Any single
-    /// conflict blocks the whole (atomic) pull.
+    /// A path changed on both sides with a different result — either a tracked
+    /// path modified/removed on both sides, or a path *added* on both sides
+    /// (present in `latest`, absent from `base`) with different content. Any
+    /// single conflict blocks the whole (atomic) pull.
     Blocked { conflicts: Vec<PathBuf> },
 }
 
@@ -121,9 +126,23 @@ pub fn classify_pull(
             // Same result → trivially resolved: not kept work, not a conflict.
             continue;
         }
-        // Remote left this path alone → the local change is carried forward.
+        // No `remote_delta` entry. For a local add this is ambiguous: the
+        // delta is base-only, so a path added on BOTH sides (present in
+        // `latest`, absent from `base`) also has no entry. Consult `latest`
+        // directly to tell a genuine local-only add from a hidden both-added
+        // case — otherwise a differing remote add would be silently overwritten
+        // by the next publish.
         match change {
-            Change::Added(_) => added.push(path.clone()),
+            Change::Added(row) => match latest.get_record(path) {
+                // Genuinely local-only add: remote does not have this path.
+                None => added.push(path.clone()),
+                // Both added, same content → trivially resolved (like
+                // `same_resulting_content`): neither kept work nor a conflict.
+                Some(latest_row) if latest_row.hash == row.hash => {}
+                // Both added, different content → conflict.
+                Some(_) => conflicts.push(path.clone()),
+            },
+            // Remote left this path alone → the local change is carried forward.
             Change::Modified(_) => modified.push(path.clone()),
             Change::Removed(_) => removed.push(path.clone()),
         }
@@ -145,6 +164,8 @@ mod tests {
     use super::*;
     use test_log::test;
 
+    use multihash::Multihash;
+
     use crate::Res;
     use crate::lineage::Change;
     use crate::lineage::ChangeSet;
@@ -157,7 +178,7 @@ mod tests {
         ManifestRow {
             logical_key: PathBuf::from(key),
             physical_key: format!("s3://b/{key}"),
-            hash: multihash::Multihash::<256>::wrap(0x12, hash_seed)
+            hash: Multihash::<256>::wrap(0x12, hash_seed)
                 .unwrap()
                 .try_into()
                 .unwrap(),
@@ -271,6 +292,53 @@ mod tests {
                 added: vec![],
                 modified: vec![],
                 removed: vec![]
+            }
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn both_added_different_content_blocks() -> Res {
+        // "new.txt" is absent from `base` but added on BOTH sides with
+        // different content. It has no `remote_delta` entry (delta is
+        // base-only), so it must be caught via `latest.get_record` and treated
+        // as a conflict, not silently kept.
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), row("new.txt", b"remote")]);
+        let mut changes = ChangeSet::new();
+        changes.insert(
+            PathBuf::from("new.txt"),
+            Change::Added(row("new.txt", b"local")),
+        );
+        let out = classify_pull(&behind(changes), &base, &latest);
+        assert_eq!(
+            out,
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from("new.txt")]
+            }
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn both_added_same_content_is_trivially_resolved() -> Res {
+        // "new.txt" added on both sides with identical content: like
+        // `same_resulting_content`, it appears in neither the kept lists nor
+        // the conflicts.
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), row("new.txt", b"same")]);
+        let mut changes = ChangeSet::new();
+        changes.insert(
+            PathBuf::from("new.txt"),
+            Change::Added(row("new.txt", b"same")),
+        );
+        let out = classify_pull(&behind(changes), &base, &latest);
+        assert_eq!(
+            out,
+            PullOutcome::KeepsLocalChanges {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
             }
         );
         Ok(())
