@@ -464,15 +464,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        // `flow::pull`'s `base_hash == latest_hash` guard reads
-        // `latest_hash` from the lineage we pass in. Before the
-        // `Stop writing lineage from InstalledPackage::status` refactor,
-        // a prior `status` call would have refreshed-and-persisted
-        // `latest_hash`, so disk was reliably fresh when `pull` ran.
-        // That implicit persist is gone now, so `pull` must refresh
-        // on its own — otherwise a moved remote always trips the
-        // "already up-to-date" branch and the user sees no pull.
-        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let remote_uri = lineage.remote()?.clone();
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
@@ -482,10 +473,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
-        let (lineage, status) = flow::status(
+        // All network (tag resolve + manifest fetch) happens here, before the
+        // status walk — the snapshot is the freshest classification input.
+        let (lineage, snapshot) = flow::snapshot_for_pull(
             lineage,
-            &self.storage,
             &manifest,
+            &self.paths,
+            &self.storage,
+            &self.remote,
             &package_home,
             host_config,
         )
@@ -497,7 +492,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &self.storage,
             &self.remote,
             package_home,
-            status,
+            snapshot,
             self.namespace.clone(),
         )
         .await?;
@@ -512,25 +507,45 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// # Errors
     /// Propagates status refresh, manifest read, and remote fetch errors.
     pub async fn pull_outcome(&self, host_config_opt: Option<HostConfig>) -> Res<PullOutcome> {
-        let status = self.status(host_config_opt).await?;
-        if status.upstream_state != UpstreamState::Behind {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let remote_uri = lineage.remote()?.clone();
+        let base = self.manifest().await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
+
+        // Build the classification snapshot with the same ctor `pull` uses: one
+        // tag resolution, then the manifest fetch, then the walk. The ctor
+        // short-circuits `base == latest` before any fetch, so `Ahead` (where
+        // `latest == base`) costs no network here.
+        let snapshot = match flow::snapshot_for_pull(
+            lineage,
+            &base,
+            &self.paths,
+            &self.storage,
+            &self.remote,
+            &package_home,
+            host_config,
+        )
+        .await
+        {
+            Ok((_, snapshot)) => snapshot,
+            Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
+                return Ok(PullOutcome::UpToDate);
+            }
+            Err(err) => return Err(err),
+        };
+
+        // `upstream_state` is computed from the ctor-refreshed lineage, so
+        // `Diverged`/`Ahead` still report `UpToDate` (nothing to pull), matching
+        // the previous contract.
+        if snapshot.status.upstream_state != UpstreamState::Behind {
             return Ok(PullOutcome::UpToDate);
         }
-        // `status` refreshes `latest_hash` in memory but no longer persists it
-        // (see `pull`), so the on-disk lineage is stale here — refresh again to
-        // address the freshly-moved `latest` manifest rather than the base.
-        // TODO: that makes two tag resolutions (plus extra lineage reads) per
-        // dry-run; threading the refreshed lineage out of `status` would drop
-        // this second `refresh_latest_hash` and make "network-light" accurate
-        // for the Behind case too.
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
-        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
-        let base = self.manifest().await?;
-        let mut latest_uri = lineage.remote()?.clone();
-        latest_uri.hash.clone_from(&lineage.latest_hash);
-        let latest =
-            cache_remote_manifest(&self.paths, &self.storage, &self.remote, &latest_uri).await?;
-        Ok(flow::classify_pull(&status, &base, &latest))
+        Ok(flow::classify_pull(
+            &snapshot.status,
+            &base,
+            &snapshot.latest_manifest,
+        ))
     }
 
     /// Pushes any pending local commit, then promotes the resulting remote

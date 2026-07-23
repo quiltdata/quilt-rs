@@ -179,12 +179,12 @@ pub(crate) async fn refresh_then_maybe_sync(
     // shape, this gate is what stops a pull and a publish from racing on
     // the same package in the same tick.
     if pull_enabled && upstream == quilt::lineage::UpstreamState::Behind && !has_pending_commit {
-        // TODO: this dry-run repeats the status walk and tag resolution that
-        // `package_pull` performs again internally, so `classify_pull` runs
-        // twice per Behind tick with a race window between them. Have
-        // `flow::pull` return the `PullOutcome` it already computes and route
-        // on the pull result alone — same outcome-based routing, half the
-        // network work.
+        // TODO: this dry-run and the `package_pull` below each build their own
+        // snapshot (one tag resolution + one status walk apiece — the per-call
+        // cost is now a single tag read), so `classify_pull` still runs twice
+        // per Behind tick with a race window between them. Have `flow::pull`
+        // return the `PullOutcome` it already computes and route on the pull
+        // result alone — same outcome-based routing, half the work.
         //
         // TODO: the blanket `Transient` mapping below bypasses the
         // `LoginRequired` classification the status call gets, so an expired
