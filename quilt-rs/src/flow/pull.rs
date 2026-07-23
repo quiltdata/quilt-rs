@@ -5,6 +5,7 @@ use tracing::error;
 use tracing::info;
 
 use crate::Res;
+use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
 use crate::flow;
 use crate::flow::PullOutcome;
@@ -155,12 +156,17 @@ pub async fn pull_package(
         PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {}
     }
 
-    // TODO: `snapshot.status` is walked before the apply below with no network
-    // in between (the fetch now happens before the walk, inside the ctor), so
-    // the remaining window is walk→apply: a file edited after the walk but
-    // before the apply is absent from `status.changes`, lands in the touch-set
-    // if remote-changed, and is overwritten with no conflict signal. Close it
-    // with a verify-before-uninstall pass in `apply_latest_update`.
+    // The verify-before-uninstall pass below closes the walk→apply TOCTOU
+    // window: `snapshot.status` was walked before this apply with no network in
+    // between (the fetch happens before the walk, inside the ctor), so a file
+    // edited after the walk is absent from `status.changes` and — if
+    // remote-changed — lands in the touch-set. Re-checking the base content at
+    // the destruction site turns such a raced edit into a `PullConflict`
+    // instead of a silent overwrite. The residual window shrinks to the
+    // verify→unlink syscalls (per file, microseconds). The one case still not
+    // covered is an editor writing through an already-open fd *during* the
+    // apply; that is addressed by the displace-don't-delete design in the
+    // transactional-apply follow-up (the `apply_update.rs` TODO).
     //
     // TODO: this second `remote_delta` pass re-derives the partition
     // `classify_pull` just computed and discarded, and the blanket skip of
@@ -176,6 +182,41 @@ pub async fn pull_package(
         .filter(|p| lineage.paths.contains_key(p))
         .filter(|p| !snapshot.status.changes.contains_key(p))
         .collect();
+
+    // Verify-before-uninstall. For every touched path, confirm the working-tree
+    // file still holds the BASE content the classifier assumed — the row in
+    // `manifest` (the installed/base manifest), whose self-describing
+    // `ObjectHash` (a multihash) picks its own algorithm, so no `host_config`
+    // is needed. `refresh_hash` returns `Ok(None)` when the file still matches
+    // the base row; `Ok(Some(_))` (content changed) or `Err(_)` (file missing —
+    // a local delete raced in) both mean drift.
+    //
+    // This lives HERE, not inside `apply_latest_update`: `reset_to_latest`
+    // shares that primitive precisely to DISCARD local drift, so a verify pass
+    // there would break reset. Verify ALL paths first, then decide — never
+    // interleave verification with deletion. Fail-safe in the same direction as
+    // the conflict rule: the worst case is a spurious, retryable `PullConflict`,
+    // never data loss.
+    let mut drifted = Vec::new();
+    for path in &touched {
+        let matches_base = match manifest.get_record(path) {
+            Some(base_row) => matches!(
+                refresh_hash(storage, &working_dir.join(path), base_row.clone()).await,
+                Ok(None)
+            ),
+            // The touch-set is derived from `remote_delta(manifest, ..)`, whose
+            // keys are all base rows, so this arm is unreachable; treat a
+            // missing base expectation as "nothing to verify against".
+            None => true,
+        };
+        if !matches_base {
+            drifted.push(path.clone());
+        }
+    }
+    if !drifted.is_empty() {
+        error!("❌ Working-tree drift on touched paths since the walk: {drifted:?}");
+        return Err(PackageOpError::PullConflict(drifted).into());
+    }
 
     let lineage = apply_latest_update(
         lineage,
@@ -201,14 +242,45 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use aws_sdk_s3::primitives::ByteStream;
+    use multihash::Multihash;
+
     use crate::io::remote::HostConfig;
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::StorageExt;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
     use crate::lineage::CommitState;
+    use crate::lineage::PathState;
     use crate::manifest::ManifestRow;
+    use crate::object_hash::Hash;
+    use crate::object_hash::Sha256Hash;
     use quilt_uri::ManifestUri;
     use quilt_uri::S3Uri;
+
+    /// A manifest row with a fake, self-describing SHA-256 multihash derived
+    /// from `hash_seed` (mirrors the `row` helper in `pull_outcome.rs` tests).
+    /// The digest is not a real hash of any file, so it never matches a
+    /// working-tree file — exactly what the drift-detection test wants.
+    fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
+        ManifestRow {
+            logical_key: PathBuf::from(key),
+            physical_key: format!("s3://b/{key}"),
+            hash: Multihash::<256>::wrap(0x12, hash_seed)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            size: hash_seed.len() as u64,
+            meta: None,
+        }
+    }
+
+    fn manifest_of(rows: Vec<ManifestRow>) -> Manifest {
+        Manifest {
+            rows,
+            ..Manifest::default()
+        }
+    }
 
     /// A hand-built snapshot for the guard tests: real `status`, dummy
     /// `latest`/`latest_manifest`. Guards that fire before classification never
@@ -402,5 +474,163 @@ mod tests {
             error.unwrap_err(),
             crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
         ));
+    }
+
+    // Verify-before-uninstall closes the walk→apply TOCTOU window. The walk saw
+    // an EMPTY changeset (stale snapshot), the remote changed `a`, so `a` lands
+    // in the touch-set. But the working-tree file at `a` was edited AFTER the
+    // walk. The verify pass must catch the drift and abort as `PullConflict`
+    // before any file is uninstalled — never silently overwrite the raced edit.
+    #[test(tokio::test)]
+    async fn racing_edit_on_touched_path_aborts_as_conflict() {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        // The raced edit: working-tree content that does NOT match the base row
+        // the classifier assumed for `a`.
+        let edited = b"raced edit after the walk";
+        storage
+            .write_byte_stream(working_dir.join(&path), ByteStream::from_static(edited))
+            .await
+            .unwrap();
+
+        // Base tracks `a` at the v1 hash; the remote changed it to v2, so `a`
+        // is a remote-changed tracked path → it enters the touch-set.
+        let base = manifest_of(vec![row("a", b"v1")]);
+        let latest = manifest_of(vec![row("a", b"v2")]);
+
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                hash: "a".to_string(),
+                ..ManifestUri::default()
+            }),
+            base_hash: "a".to_string(),
+            latest_hash: "b".to_string(),
+            paths: BTreeMap::from([(path.clone(), PathState::default())]),
+            ..PackageLineage::default()
+        };
+        // Stale snapshot: the walk observed NO changes (the edit raced in after).
+        let status = InstalledPackageStatus::default();
+
+        let mut base = base;
+        let error = pull_package(
+            lineage,
+            &mut base,
+            &DomainPaths::default(),
+            &storage,
+            &remote,
+            working_dir.clone(),
+            snapshot_with(status, latest),
+            Namespace::default(),
+        )
+        .await;
+
+        assert!(
+            matches!(
+                error.as_ref().unwrap_err(),
+                crate::Error::PackageOp(PackageOpError::PullConflict(paths)) if paths == &vec![path.clone()]
+            ),
+            "expected PullConflict naming `a`, got: {error:?}"
+        );
+
+        // Nothing was deleted or overwritten — the raced edit is intact.
+        assert_eq!(
+            storage.read_bytes(&working_dir.join(&path)).await.unwrap(),
+            edited
+        );
+    }
+
+    // The happy counterpart: a touched path whose working-tree file still holds
+    // the BASE content the classifier assumed passes the verify pass, so the
+    // pull proceeds through `apply_latest_update` to success. Uses a
+    // remote-REMOVED touched path so the apply only uninstalls (no object
+    // downloads to stage).
+    #[test(tokio::test)]
+    async fn touched_path_matching_base_passes_verify_and_pulls() -> crate::Res {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let bucket = "bkt";
+        let namespace: Namespace = ("f", "b").into();
+        let base_hash = "OLD";
+        let latest_hash = "NEW";
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        let paths = DomainPaths::default();
+        paths.scaffold_for_caching(&storage, bucket).await?;
+
+        // Working-tree file for `a`, and the base row carrying its REAL hash so
+        // the verify pass sees no drift.
+        let content = b"the base content of a";
+        storage
+            .write_byte_stream(working_dir.join(&path), ByteStream::from_static(content))
+            .await?;
+        let file = storage.open_file(&working_dir.join(&path)).await?;
+        let hash: Multihash<256> = Sha256Hash::from_reader(file, content.len() as u64)
+            .await?
+            .into();
+        let base_row = ManifestRow {
+            logical_key: path.clone(),
+            hash: hash.try_into()?,
+            size: content.len() as u64,
+            ..ManifestRow::default()
+        };
+        let base = manifest_of(vec![base_row]);
+
+        // `latest` drops `a` (remote removal): base != latest → CleanUpdate; the
+        // touch-set is {`a`: Removed}; apply only uninstalls it.
+        let latest_manifest = manifest_of(vec![]);
+        let latest_uri = ManifestUri {
+            bucket: bucket.to_string(),
+            namespace: namespace.clone(),
+            hash: latest_hash.to_string(),
+            origin: None,
+        };
+        // The apply re-fetches the `latest` manifest from the remote.
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://{bucket}/.quilt/packages/{latest_hash}").as_str())?,
+                br#"{"version": "v0"}"#.to_vec(),
+            )
+            .await?;
+
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                bucket: bucket.to_string(),
+                namespace: namespace.clone(),
+                hash: base_hash.to_string(),
+                origin: None,
+            }),
+            base_hash: base_hash.to_string(),
+            latest_hash: latest_hash.to_string(),
+            paths: BTreeMap::from([(path.clone(), PathState::default())]),
+            ..PackageLineage::default()
+        };
+        let snapshot = PullSnapshot {
+            status: InstalledPackageStatus::default(),
+            latest: latest_uri,
+            latest_manifest,
+        };
+
+        let mut base = base;
+        let lineage = pull_package(
+            lineage,
+            &mut base,
+            &paths,
+            &storage,
+            &remote,
+            working_dir.clone(),
+            snapshot,
+            namespace,
+        )
+        .await?;
+
+        // Pull advanced to `latest` and uninstalled the remote-removed path.
+        assert_eq!(lineage.base_hash, latest_hash);
+        assert!(!lineage.paths.contains_key(&path));
+        Ok(())
     }
 }
