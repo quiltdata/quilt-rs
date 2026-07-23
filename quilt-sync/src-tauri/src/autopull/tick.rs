@@ -117,6 +117,19 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
     }
 }
 
+// Shared transient-vs-login mapping for the cheap status refresh and the pull
+// dry-run: an expired session surfaces the `LoginRequired` affordance right away
+// instead of one backoff (~2 s) later, while everything else backs off as a
+// `Transient`.
+fn classify_transient_or_login(err: Error) -> WatchError {
+    match &err {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+            WatchError::LoginRequired(host.clone())
+        }
+        _ => WatchError::Transient(err),
+    }
+}
+
 pub(crate) async fn refresh_then_maybe_sync(
     model: &impl QuiltModel,
     namespace: &Namespace,
@@ -140,12 +153,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     let status = model
         .get_installed_package_status(&installed, None)
         .await
-        .map_err(|err| match &err {
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
-                WatchError::LoginRequired(host.clone())
-            }
-            _ => WatchError::Transient(err),
-        })?;
+        .map_err(classify_transient_or_login)?;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // `lineage` comes from `run_once`'s skip-filter read — re-reading it
@@ -185,15 +193,26 @@ pub(crate) async fn refresh_then_maybe_sync(
         // per Behind tick with a race window between them. Have `flow::pull`
         // return the `PullOutcome` it already computes and route on the pull
         // result alone — same outcome-based routing, half the work.
-        //
-        // TODO: the blanket `Transient` mapping below bypasses the
-        // `LoginRequired` classification the status call gets, so an expired
-        // session surfaces the login affordance one backoff (~2 s) later than
-        // it could. Route this error through the same classification.
         let outcome = model
             .package_pull_outcome(&installed)
             .await
-            .map_err(WatchError::Transient)?;
+            .map_err(classify_transient_or_login)?;
+        // Post-pull `has_changes`, read from the dry-run outcome we just
+        // classified — the truth about kept local work, unlike the pre-pull
+        // `has_changes` which is stale-true when the pull trivially resolves
+        // every local change (identical edits, both-removed). `CleanUpdate`
+        // keeps nothing; `KeepsLocalChanges` keeps exactly the listed paths
+        // (all-empty lists ⇒ clean tree after apply). Residual: changes made
+        // DURING the pull are still invisible until the next tick — inherent
+        // to a dry-run-then-apply split, not fixed here.
+        let kept_changes = match &outcome {
+            PullOutcome::KeepsLocalChanges {
+                added,
+                modified,
+                removed,
+            } => !(added.is_empty() && modified.is_empty() && removed.is_empty()),
+            _ => false,
+        };
         match outcome {
             PullOutcome::Blocked { conflicts } => {
                 let files = conflicts.iter().map(|p| p.display().to_string()).collect();
@@ -204,19 +223,17 @@ pub(crate) async fn refresh_then_maybe_sync(
                     Ok(_) => {
                         info!("autosync: pulled namespace={namespace}");
                         // Kept work leaves a dirty tree: `UpToDate` +
-                        // `has_changes` is the intended post-pull state, so
-                        // carry `has_changes` through rather than forcing it
-                        // to `false`.
-                        // TODO: when the pull trivially resolved every local
-                        // change, the pre-pull `has_changes` is stale-true and
-                        // the UI counts phantom pending changes for one tick
-                        // interval. Recompute (or refresh) after the pull.
+                        // `kept_changes` is the intended post-pull state.
+                        // `kept_changes` comes from the outcome (post-pull
+                        // truth), not the pre-pull `has_changes`.
                         Ok(RefreshOutcome {
                             upstream: quilt::lineage::UpstreamState::UpToDate,
-                            has_changes,
+                            has_changes: kept_changes,
                             published: None,
                         })
                     }
+                    // Nothing was applied on the error path, so the pre-pull
+                    // `has_changes` still describes the tree.
                     Err(err) => classify_sync_err(err).map(|()| RefreshOutcome {
                         upstream,
                         has_changes,
