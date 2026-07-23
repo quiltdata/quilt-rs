@@ -769,6 +769,85 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
     Ok(())
 }
 
+/// A package diverged by hash (`remote.hash != base_hash` with a stale
+/// `latest_hash` also differing from `base`) is `UpstreamState::Diverged` from
+/// on-disk state alone — a purely lineage-local fact no tag read can cure.
+/// `pull_outcome` must short-circuit to `UpToDate` WITHOUT any network, rather
+/// than paying a manifest fetch + walk only to discard the result at the
+/// post-walk `!= Behind` check.
+#[test(tokio::test)]
+async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "diverged_hash").into();
+    let bucket = "bkt";
+    let remote_hash = "R_HASH";
+    let base_hash = "B_HASH";
+    let latest_hash = "L_HASH";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // remote.hash != base_hash and latest_hash != base_hash, no commit →
+    // `UpstreamState::from` reports `Diverged` (ahead && behind) from disk.
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/diverged_hash": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/diverged_hash",
+                        "hash": "{remote_hash}",
+                        "catalog": "test.quilt.dev"
+                    }},
+                    "base_hash": "{base_hash}",
+                    "latest_hash": "{latest_hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    // Installed manifest at the current hash so that, WITHOUT the short-circuit,
+    // `pull_outcome` would get past `manifest()` and pay for the tag read below.
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, remote_hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    assert!(matches!(
+        package.pull_outcome(None).await?,
+        PullOutcome::UpToDate
+    ));
+
+    // No `latest` tag was resolved — the divergence was decided from lineage
+    // alone, with zero remote calls.
+    let tag_uri = format!("s3://{bucket}/.quilt/named_packages/test/diverged_hash/latest");
+    assert_eq!(package.remote.get_object_count(&tag_uri), 0);
+
+    Ok(())
+}
+
 /// A package with a remote whose hash was never pushed (empty `hash` and empty
 /// `latest_hash`) is `UpstreamState::Local`: there is no `latest` tag on the
 /// bucket yet. `pull_outcome` must report `UpToDate` without a tag read, rather

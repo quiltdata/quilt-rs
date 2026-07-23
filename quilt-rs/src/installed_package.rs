@@ -515,6 +515,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     ///   is walked, and the outcome is classified. Non-`Behind` upstream states
     ///   (`Ahead`/`Diverged`) report `UpToDate` — there is nothing to pull.
     ///
+    /// [`PullOutcome::UpToDate`] here means "nothing for pull to do" and is
+    /// returned for ALL non-`Behind` states (`Ahead`/`Local`/`Diverged`), not
+    /// only when the package is genuinely current.
+    ///
     /// Network-light — the caller (watcher / UI) uses it for two-phase render
     /// and routing.
     ///
@@ -532,6 +536,24 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // contract. A remote whose local hash is empty but whose `latest` tag has
         // moved classifies as `Diverged` (not `Local`), so it still fetches below.
         if UpstreamState::from(lineage.clone()) == UpstreamState::Local {
+            return Ok(PullOutcome::UpToDate);
+        }
+
+        // Divergence-by-hash is a purely lineage-local fact: `UpstreamState::from`
+        // reports `Diverged` from on-disk state when the local side is BOTH ahead
+        // (`base != current_hash`) and behind (`base != latest_hash`). The
+        // "ahead" component involves only the local commit/remote hash — a moved
+        // `latest` tag can neither cause nor cure it — so no network is needed to
+        // decide it, and this can never mask a genuine `Behind` (which is
+        // ahead-free). Short-circuit before the snapshot constructor, symmetric
+        // with the `Local` return above.
+        //
+        // The OTHER `Diverged` shape — a pending local commit atop a base whose
+        // `latest_hash` is still stale (equal to `base`) on disk — reads as
+        // `Ahead` here, not `Diverged`; it only becomes `Diverged` once the tag
+        // read refreshes `latest_hash`, so it correctly falls through to the
+        // post-walk `!= Behind` check below rather than being caught here.
+        if UpstreamState::from(lineage.clone()) == UpstreamState::Diverged {
             return Ok(PullOutcome::UpToDate);
         }
 
