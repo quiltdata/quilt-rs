@@ -717,3 +717,115 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
 
     Ok(())
 }
+
+/// A local-only package (no `remote` in its lineage) has no `latest` tag to
+/// resolve, so `pull_outcome` must short-circuit to `UpToDate` without touching
+/// the network — never propagating the `NoRemote` error `remote()?` would raise.
+#[test(tokio::test)]
+async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "local_no_remote").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // No `remote` key → `remote_uri` is `None` → `UpstreamState::Local`.
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/local_no_remote": {{
+                    "commit": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    assert!(matches!(
+        package.pull_outcome(None).await?,
+        PullOutcome::UpToDate
+    ));
+
+    Ok(())
+}
+
+/// A package with a remote whose hash was never pushed (empty `hash` and empty
+/// `latest_hash`) is `UpstreamState::Local`: there is no `latest` tag on the
+/// bucket yet. `pull_outcome` must report `UpToDate` without a tag read, rather
+/// than propagating the `NotFound` that resolving the absent tag would raise.
+#[test(tokio::test)]
+async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "never_pushed").into();
+    let bucket = "bkt";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // Remote set but never pushed: empty `hash` + empty `latest_hash` →
+    // `UpstreamState::Local`. No `latest` tag is staged on the mock remote, so
+    // any tag read would 404.
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/never_pushed": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/never_pushed",
+                        "hash": "",
+                        "catalog": "test.quilt.dev"
+                    }},
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    assert!(matches!(
+        package.pull_outcome(None).await?,
+        PullOutcome::UpToDate
+    ));
+
+    Ok(())
+}

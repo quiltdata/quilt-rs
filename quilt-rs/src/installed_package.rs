@@ -500,14 +500,41 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
-    /// Dry-run: what would `pull` do right now? Fetches the `latest` manifest
-    /// (cached by hash) only when `Behind`; otherwise `UpToDate`. Network-light
-    /// — the caller (watcher / UI) uses it for two-phase render and routing.
+    /// Dry-run: what would `pull` do right now, without mutating anything?
+    ///
+    /// Sequence:
+    /// - A **Local** package (no usable remote, per [`UpstreamState::Local`]:
+    ///   `remote_uri` is `None`, a bucket-less remote, or a bucket that has
+    ///   never been pushed) → [`PullOutcome::UpToDate`] with no network. There
+    ///   is no `latest` tag to resolve for these shapes, so the tag read is
+    ///   skipped rather than failing on the missing remote / absent tag.
+    /// - Otherwise the `latest` tag is resolved once; if the resolved tip
+    ///   already equals `base_hash` → `UpToDate` (that single tag read is the
+    ///   only network paid for).
+    /// - Otherwise the `latest` manifest is fetched + cached, the working tree
+    ///   is walked, and the outcome is classified. Non-`Behind` upstream states
+    ///   (`Ahead`/`Diverged`) report `UpToDate` — there is nothing to pull.
+    ///
+    /// Network-light — the caller (watcher / UI) uses it for two-phase render
+    /// and routing.
     ///
     /// # Errors
-    /// Propagates status refresh, manifest read, and remote fetch errors.
+    /// For a package with a real remote, propagates tag-resolution, manifest
+    /// read, and remote fetch errors. The Local early return never touches the
+    /// network, so those shapes cannot produce those errors.
     pub async fn pull_outcome(&self, host_config_opt: Option<HostConfig>) -> Res<PullOutcome> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+
+        // A local-only package has no `latest` tag to resolve: `snapshot_for_pull`
+        // would either error at `remote()?` (no `remote_uri`) or 404 on the
+        // never-created `latest` tag. Mirror `UpstreamState::from`'s Local shape
+        // and report `UpToDate` without any network, restoring the pre-reorder
+        // contract. A remote whose local hash is empty but whose `latest` tag has
+        // moved classifies as `Diverged` (not `Local`), so it still fetches below.
+        if UpstreamState::from(lineage.clone()) == UpstreamState::Local {
+            return Ok(PullOutcome::UpToDate);
+        }
+
         let remote_uri = lineage.remote()?.clone();
         let base = self.manifest().await?;
         let host_config =
