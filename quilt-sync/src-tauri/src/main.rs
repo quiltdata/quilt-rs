@@ -211,6 +211,7 @@ fn main() {
             commands::package_install_paths,
             commands::package_publish,
             commands::package_pull,
+            commands::package_pull_outcome,
             commands::package_push,
             commands::update_publish_settings,
             commands::update_autosync_settings,

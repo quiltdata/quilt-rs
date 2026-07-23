@@ -18,6 +18,7 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
+use crate::quilt::flow::PullOutcome;
 use crate::telemetry::MixpanelEvent;
 
 async fn package_commit_command(
@@ -308,6 +309,33 @@ pub async fn package_pull(
         watcher.clear_paused(ns).await;
     }
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+async fn package_pull_outcome_command(
+    m: &model::Model,
+    namespace: &str,
+) -> Result<PullOutcome, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = m
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    m.package_pull_outcome(&installed).await
+}
+
+/// Dry-run classifier for the two-phase Pull affordance: what would
+/// [`package_pull`] do right now? The UI renders the behind-status banner
+/// immediately from local data, then calls this to fill in the Pull button's
+/// enabled state and copy once `latest` is cached. `PullOutcome` derives
+/// `Serialize`, so it crosses the Tauri boundary directly.
+#[tauri::command]
+pub async fn package_pull_outcome(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+) -> Result<PullOutcome, String> {
+    package_pull_outcome_command(&m, &namespace)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 async fn package_uninstall_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -684,6 +712,41 @@ mod tests {
                 requested_origin: Some("cat.example.com".parse().unwrap()),
                 installed_hash: "bbbb2222".to_string(),
             })
+        );
+    }
+
+    /// The UI mirrors this exact externally-tagged JSON in
+    /// `quilt_sync_ui::commands`'s `pull_outcome_wire_form_is_verbatim`. If the
+    /// two drift, the two-phase Pull affordance silently misreads the dry-run
+    /// outcome at the Tauri boundary.
+    #[test]
+    fn pull_outcome_wire_form_is_verbatim() {
+        use std::path::PathBuf;
+
+        use crate::quilt::flow::PullOutcome;
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::UpToDate).unwrap(),
+            r#""UpToDate""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::CleanUpdate).unwrap(),
+            r#""CleanUpdate""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::KeepsLocalChanges {
+                added: vec![PathBuf::from("a.txt")],
+                modified: vec![],
+                removed: vec![PathBuf::from("c.txt")],
+            })
+            .unwrap(),
+            r#"{"KeepsLocalChanges":{"added":["a.txt"],"modified":[],"removed":["c.txt"]}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from("x.txt")],
+            })
+            .unwrap(),
+            r#"{"Blocked":{"conflicts":["x.txt"]}}"#
         );
     }
 

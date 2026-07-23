@@ -74,7 +74,7 @@ operation mutates*.
 | `flow::commit` | new top hash | unchanged | unchanged | unchanged |
 | `flow::push` | `None` (taken) | new uploaded hash | first push → new hash; certifying push → via `update_latest` | re-resolved from remote mid-push; ← new hash if certified |
 | `flow::certify_latest` | — (cleared by inner push) | already set | ← `latest_hash` (via `update_latest`) | ← new manifest hash |
-| `flow::pull` (fast-forward) | must be `None` | ← `latest_hash` | ← `latest_hash` | already advanced |
+| `flow::pull` (surgical) | must be `None` | ← `latest_hash` | ← `latest_hash` | already advanced |
 | `flow::reset_to_latest` | **`None`** (cleared since #677) | ← `latest.hash` | ← `latest.hash` | ← `latest.hash` |
 | `flow::refresh_latest_hash` | — | — | — | ← `resolve_tag("latest")` |
 

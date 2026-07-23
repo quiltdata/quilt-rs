@@ -8,6 +8,7 @@ use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::flow::PullOutcome;
 use crate::flow::UserMeta;
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
@@ -26,6 +27,7 @@ use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
+use crate::lineage::UpstreamState;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
 use crate::paths;
@@ -462,15 +464,6 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        // `flow::pull`'s `base_hash == latest_hash` guard reads
-        // `latest_hash` from the lineage we pass in. Before the
-        // `Stop writing lineage from InstalledPackage::status` refactor,
-        // a prior `status` call would have refreshed-and-persisted
-        // `latest_hash`, so disk was reliably fresh when `pull` ran.
-        // That implicit persist is gone now, so `pull` must refresh
-        // on its own — otherwise a moved remote always trips the
-        // "already up-to-date" branch and the user sees no pull.
-        let lineage = flow::refresh_latest_hash(lineage, &self.remote).await?;
         let remote_uri = lineage.remote()?.clone();
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
@@ -480,10 +473,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
-        let (lineage, status) = flow::status(
+        // All network (tag resolve + manifest fetch) happens here, before the
+        // status walk — the snapshot is the freshest classification input.
+        let (lineage, snapshot) = flow::snapshot_for_pull(
             lineage,
-            &self.storage,
             &manifest,
+            &self.paths,
+            &self.storage,
+            &self.remote,
             &package_home,
             host_config,
         )
@@ -495,12 +492,109 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &self.storage,
             &self.remote,
             package_home,
-            status,
+            snapshot,
             self.namespace.clone(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
+    }
+
+    /// Dry-run: what would `pull` do right now, without mutating anything?
+    ///
+    /// Sequence:
+    /// - A **Local** package (no usable remote, per [`UpstreamState::Local`]:
+    ///   `remote_uri` is `None`, a bucket-less remote, or a bucket that has
+    ///   never been pushed) → [`PullOutcome::UpToDate`] with no network. There
+    ///   is no `latest` tag to resolve for these shapes, so the tag read is
+    ///   skipped rather than failing on the missing remote / absent tag.
+    /// - Otherwise the `latest` tag is resolved once; if the resolved tip
+    ///   already equals `base_hash` → `UpToDate` (that single tag read is the
+    ///   only network paid for).
+    /// - Otherwise the `latest` manifest is fetched + cached, the working tree
+    ///   is walked, and the outcome is classified. Non-`Behind` upstream states
+    ///   (`Ahead`/`Diverged`) report `UpToDate` — there is nothing to pull.
+    ///
+    /// [`PullOutcome::UpToDate`] here means "nothing for pull to do" and is
+    /// returned for ALL non-`Behind` states (`Ahead`/`Local`/`Diverged`), not
+    /// only when the package is genuinely current.
+    ///
+    /// Network-light — the caller (watcher / UI) uses it for two-phase render
+    /// and routing.
+    ///
+    /// # Errors
+    /// For a package with a real remote, propagates tag-resolution, manifest
+    /// read, and remote fetch errors. The Local early return never touches the
+    /// network, so those shapes cannot produce those errors.
+    pub async fn pull_outcome(&self, host_config_opt: Option<HostConfig>) -> Res<PullOutcome> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+
+        // A local-only package has no `latest` tag to resolve: `snapshot_for_pull`
+        // would either error at `remote()?` (no `remote_uri`) or 404 on the
+        // never-created `latest` tag. Mirror `UpstreamState::from`'s Local shape
+        // and report `UpToDate` without any network, restoring the pre-reorder
+        // contract. A remote whose local hash is empty but whose `latest` tag has
+        // moved classifies as `Diverged` (not `Local`), so it still fetches below.
+        if UpstreamState::from(lineage.clone()) == UpstreamState::Local {
+            return Ok(PullOutcome::UpToDate);
+        }
+
+        // Divergence-by-hash is a purely lineage-local fact: `UpstreamState::from`
+        // reports `Diverged` from on-disk state when the local side is BOTH ahead
+        // (`base != current_hash`) and behind (`base != latest_hash`). The
+        // "ahead" component involves only the local commit/remote hash — a moved
+        // `latest` tag can neither cause nor cure it — so no network is needed to
+        // decide it, and this can never mask a genuine `Behind` (which is
+        // ahead-free). Short-circuit before the snapshot constructor, symmetric
+        // with the `Local` return above.
+        //
+        // The OTHER `Diverged` shape — a pending local commit atop a base whose
+        // `latest_hash` is still stale (equal to `base`) on disk — reads as
+        // `Ahead` here, not `Diverged`; it only becomes `Diverged` once the tag
+        // read refreshes `latest_hash`, so it correctly falls through to the
+        // post-walk `!= Behind` check below rather than being caught here.
+        if UpstreamState::from(lineage.clone()) == UpstreamState::Diverged {
+            return Ok(PullOutcome::UpToDate);
+        }
+
+        let remote_uri = lineage.remote()?.clone();
+        let base = self.manifest().await?;
+        let host_config =
+            host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
+
+        // Build the classification snapshot with the same ctor `pull` uses: one
+        // tag resolution, then the manifest fetch, then the walk. The ctor
+        // short-circuits `base == latest` before any fetch, so `Ahead` (where
+        // `latest == base`) costs no network here.
+        let snapshot = match flow::snapshot_for_pull(
+            lineage,
+            &base,
+            &self.paths,
+            &self.storage,
+            &self.remote,
+            &package_home,
+            host_config,
+        )
+        .await
+        {
+            Ok((_, snapshot)) => snapshot,
+            Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
+                return Ok(PullOutcome::UpToDate);
+            }
+            Err(err) => return Err(err),
+        };
+
+        // `upstream_state` is computed from the ctor-refreshed lineage, so
+        // `Diverged`/`Ahead` still report `UpToDate` (nothing to pull), matching
+        // the previous contract.
+        if snapshot.status.upstream_state != UpstreamState::Behind {
+            return Ok(PullOutcome::UpToDate);
+        }
+        Ok(flow::classify_pull(
+            &snapshot.status,
+            &base,
+            &snapshot.latest_manifest,
+        ))
     }
 
     /// Pushes any pending local commit, then promotes the resulting remote

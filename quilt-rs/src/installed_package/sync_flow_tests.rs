@@ -611,3 +611,300 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
 
     Ok(())
 }
+
+/// `pull_outcome` is the network-light dry-run the watcher/UI call before
+/// routing a pull. A `Behind` package whose `latest` manifest is fetchable and
+/// drops a tracked path (with no local changes) classifies as a clean surgical
+/// update — never `UpToDate`.
+#[test(tokio::test)]
+async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "pull_outcome").into();
+    let bucket = "bkt";
+    let install_hash = "INSTALL_HASH";
+    let new_hash = "NEW_HASH";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    paths.scaffold_for_caching(&storage, bucket).await?;
+
+    // Disk lineage at the install-time hash: latest_hash == base_hash. The
+    // remote `latest` tag (staged below) has moved, so `status`'s refresh
+    // turns this into a `Behind` state.
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/pull_outcome": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/pull_outcome",
+                        "hash": "{install_hash}",
+                        "catalog": "test.quilt.dev"
+                    }},
+                    "base_hash": "{install_hash}",
+                    "latest_hash": "{install_hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    // Installed (base) manifest with one tracked row so the `base → latest`
+    // delta is non-empty.
+    let base_manifest = concat!(
+        "{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n",
+        "{\"logical_key\":\"a.txt\",\"physical_keys\":[\"s3://bkt/a.txt\"],",
+        "\"hash\":{\"type\":\"sha2-256-chunked\",",
+        "\"value\":\"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=\"},",
+        "\"size\":0,\"meta\":null}\n",
+    );
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, install_hash),
+            ByteStream::from(base_manifest.as_bytes().to_vec()),
+        )
+        .await?;
+
+    // Remote `latest` tag has moved past the install → `Behind`.
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(
+                format!("s3://{bucket}/.quilt/named_packages/test/pull_outcome/latest").as_str(),
+            )?,
+            new_hash.as_bytes().to_vec(),
+        )
+        .await?;
+
+    // The `latest` manifest is fetchable and drops `a.txt` (remote removal),
+    // so the delta is non-empty and — with no local changes — resolves to a
+    // clean surgical update.
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(format!("s3://{bucket}/.quilt/packages/{new_hash}").as_str())?,
+            b"{\"version\":\"v0\"}".to_vec(),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    let outcome = package.pull_outcome(None).await?;
+    assert!(
+        matches!(
+            outcome,
+            PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. }
+        ),
+        "expected a non-up-to-date outcome, got: {outcome:?}"
+    );
+
+    Ok(())
+}
+
+/// A local-only package (no `remote` in its lineage) has no `latest` tag to
+/// resolve, so `pull_outcome` must short-circuit to `UpToDate` without touching
+/// the network — never propagating the `NoRemote` error `remote()?` would raise.
+#[test(tokio::test)]
+async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "local_no_remote").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // No `remote` key → `remote_uri` is `None` → `UpstreamState::Local`.
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/local_no_remote": {{
+                    "commit": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    assert!(matches!(
+        package.pull_outcome(None).await?,
+        PullOutcome::UpToDate
+    ));
+
+    Ok(())
+}
+
+/// A package diverged by hash (`remote.hash != base_hash` with a stale
+/// `latest_hash` also differing from `base`) is `UpstreamState::Diverged` from
+/// on-disk state alone — a purely lineage-local fact no tag read can cure.
+/// `pull_outcome` must short-circuit to `UpToDate` WITHOUT any network, rather
+/// than paying a manifest fetch + walk only to discard the result at the
+/// post-walk `!= Behind` check.
+#[test(tokio::test)]
+async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "diverged_hash").into();
+    let bucket = "bkt";
+    let remote_hash = "R_HASH";
+    let base_hash = "B_HASH";
+    let latest_hash = "L_HASH";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // remote.hash != base_hash and latest_hash != base_hash, no commit →
+    // `UpstreamState::from` reports `Diverged` (ahead && behind) from disk.
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/diverged_hash": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/diverged_hash",
+                        "hash": "{remote_hash}",
+                        "catalog": "test.quilt.dev"
+                    }},
+                    "base_hash": "{base_hash}",
+                    "latest_hash": "{latest_hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    // Installed manifest at the current hash so that, WITHOUT the short-circuit,
+    // `pull_outcome` would get past `manifest()` and pay for the tag read below.
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, remote_hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    assert!(matches!(
+        package.pull_outcome(None).await?,
+        PullOutcome::UpToDate
+    ));
+
+    // No `latest` tag was resolved — the divergence was decided from lineage
+    // alone, with zero remote calls.
+    let tag_uri = format!("s3://{bucket}/.quilt/named_packages/test/diverged_hash/latest");
+    assert_eq!(package.remote.get_object_count(&tag_uri), 0);
+
+    Ok(())
+}
+
+/// A package with a remote whose hash was never pushed (empty `hash` and empty
+/// `latest_hash`) is `UpstreamState::Local`: there is no `latest` tag on the
+/// bucket yet. `pull_outcome` must report `UpToDate` without a tag read, rather
+/// than propagating the `NotFound` that resolving the absent tag would raise.
+#[test(tokio::test)]
+async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "never_pushed").into();
+    let bucket = "bkt";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // Remote set but never pushed: empty `hash` + empty `latest_hash` →
+    // `UpstreamState::Local`. No `latest` tag is staged on the mock remote, so
+    // any tag read would 404.
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/never_pushed": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/never_pushed",
+                        "hash": "",
+                        "catalog": "test.quilt.dev"
+                    }},
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote,
+        storage,
+        namespace,
+    };
+
+    assert!(matches!(
+        package.pull_outcome(None).await?,
+        PullOutcome::UpToDate
+    ));
+
+    Ok(())
+}

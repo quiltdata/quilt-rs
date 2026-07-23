@@ -137,7 +137,7 @@ Phase 2 — Heavy (per-package, async)
         |
         v
     RwSignal updates trigger reactive UI changes:
-    buttons appear/disappear, Commit highlights, Pull disables
+    buttons appear/disappear, Commit highlights, Pull's enabled state settles
 ```
 
 While the heavy phase is in flight, each row shows a small spinner

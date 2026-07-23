@@ -82,9 +82,9 @@ fn classify_sync_diverged() {
 
 #[test]
 fn classify_sync_already_up_to_date_is_ok() {
-    let err = Error::from(quilt::Error::PackageOp(quilt::PackageOpError::Package(
-        "package is already up-to-date".to_string(),
-    )));
+    let err = Error::from(quilt::Error::PackageOp(
+        quilt::PackageOpError::AlreadyUpToDate,
+    ));
     assert!(classify_sync_err(err).is_ok());
 }
 
@@ -290,6 +290,11 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
                 BTreeMap::new(),
             ))
         });
+    // Clean tree: the dry-run classifier reports a straight surgical update.
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
     model.expect_package_pull().times(1).returning(|_, _| {
         Ok(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
@@ -324,8 +329,12 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     Ok(())
 }
 
+/// Behind + a non-conflicting local change now auto-pulls (was: fell through
+/// to the publish arm and diverged). The dry-run classifier returns
+/// `KeepsLocalChanges`, so the tick calls `package_pull`, which preserves the
+/// local work — the resulting tree is `UpToDate` **and** still dirty.
 #[tokio::test]
-async fn run_once_pending_changes_pauses_namespace() -> Result<(), Error> {
+async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
     let host: Host = "catalog.dev".parse().unwrap();
     let remote = quilt_uri::ManifestUri {
@@ -354,11 +363,10 @@ async fn run_once_pending_changes_pauses_namespace() -> Result<(), Error> {
                 .unwrap(),
         ))
     });
-    // Status says Behind with a changeset present — refresh_then_maybe_pull
-    // will see has_changes=true and skip the pull, returning Behind.
+    // Behind with a local addition present.
     let mut changes = BTreeMap::new();
     changes.insert(
-        std::path::PathBuf::from("file.txt"),
+        std::path::PathBuf::from("local.txt"),
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
@@ -369,6 +377,23 @@ async fn run_once_pending_changes_pauses_namespace() -> Result<(), Error> {
                 changes,
             ))
         });
+    // Dry run: the surgical update reconciles cleanly, keeping the local add.
+    model.expect_package_pull_outcome().times(1).returning(|_| {
+        Ok(PullOutcome::KeepsLocalChanges {
+            added: vec![std::path::PathBuf::from("local.txt")],
+            modified: Vec::new(),
+            removed: Vec::new(),
+        })
+    });
+    // The pull is actually performed.
+    model.expect_package_pull().times(1).returning(|_, _| {
+        Ok(quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h1".to_string(),
+            origin: None,
+        })
+    });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -384,15 +409,348 @@ async fn run_once_pending_changes_pauses_namespace() -> Result<(), Error> {
 
     run_once(&model, &inner).await?;
 
-    // Behind + changes is the "user must commit before we can pull"
-    // path — pull is not invoked, but the package is not yet paused
-    // either (it stays in Behind until either the user commits/pushes
-    // or actual divergence shows up). The emitted status reflects
-    // the cheap-refresh result.
-    let statuses = reporter.statuses.lock().unwrap();
-    assert_eq!(statuses.len(), 1);
-    assert_eq!(statuses[0].1.status, "behind");
-    assert!(statuses[0].1.has_changes);
+    // Pulled → UpToDate, but the kept local work leaves the tree dirty.
+    {
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1, "expected one status emit");
+        assert_eq!(statuses[0].0, ns);
+        assert_eq!(statuses[0].1.status, "up_to_date");
+        assert!(
+            statuses[0].1.has_changes,
+            "kept local work must leave the tree dirty after pull"
+        );
+    }
+    assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// Behind + a local change that the pull trivially resolves (identical edit /
+/// both-removed) → the dry-run reports `KeepsLocalChanges` with ALL-EMPTY
+/// lists. The pre-pull `has_changes` is true (the tree was dirty), but after
+/// the pull the tree is clean, so the SUCCESS outcome must report
+/// `has_changes == false` — no phantom pending changes for the UI.
+#[tokio::test]
+async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ))
+    });
+    // Pre-pull: the tree is dirty (a local edit is present), so the stale-true
+    // path would report `has_changes == true` if we trusted the pre-pull walk.
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("same.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+    // Dry run: the pull reconciles every local change (e.g. identical edit) →
+    // KeepsLocalChanges with all-empty lists = nothing kept.
+    model.expect_package_pull_outcome().times(1).returning(|_| {
+        Ok(PullOutcome::KeepsLocalChanges {
+            added: Vec::new(),
+            modified: Vec::new(),
+            removed: Vec::new(),
+        })
+    });
+    model.expect_package_pull().times(1).returning(|_, _| {
+        Ok(quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h1".to_string(),
+            origin: None,
+        })
+    });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: reporter.clone(),
+        aggregator: test_aggregator(),
+    };
+
+    run_once(&model, &inner).await?;
+
+    // Pulled → UpToDate, and the trivially-resolved tree is clean: the
+    // post-pull outcome overrides the stale-true pre-pull `has_changes`.
+    {
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1, "expected one status emit");
+        assert_eq!(statuses[0].0, ns);
+        assert_eq!(statuses[0].1.status, "up_to_date");
+        assert!(
+            !statuses[0].1.has_changes,
+            "a trivially-resolved pull must report a clean tree, not phantom changes"
+        );
+    }
+    assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// Behind + a `CleanUpdate` while the pre-pull walk saw local changes. A
+/// `CleanUpdate` keeps nothing, so the success outcome reports
+/// `has_changes == false` regardless of the (stale) pre-pull boolean.
+#[tokio::test]
+async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ))
+    });
+    // Pre-pull walk reports a dirty tree (stale-true source).
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("stale.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    model.expect_package_pull().times(1).returning(|_, _| {
+        Ok(quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h1".to_string(),
+            origin: None,
+        })
+    });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: reporter.clone(),
+        aggregator: test_aggregator(),
+    };
+
+    run_once(&model, &inner).await?;
+
+    {
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1, "expected one status emit");
+        assert_eq!(statuses[0].1.status, "up_to_date");
+        assert!(
+            !statuses[0].1.has_changes,
+            "a CleanUpdate keeps nothing — the tree is clean after pull"
+        );
+    }
+    assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// An expired session surfacing mid-dry-run (from `package_pull_outcome`) must
+/// classify as `LoginRequired`, not back off as a `Transient` — so the login
+/// affordance appears this tick instead of one backoff later.
+#[tokio::test]
+async fn dry_run_login_required_is_classified() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host.clone()),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ))
+    });
+    // Status refresh succeeds and reports Behind, so the pull dry-run runs.
+    model
+        .expect_get_installed_package_status()
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                BTreeMap::new(),
+            ))
+        });
+    // The dry-run itself hits an expired token.
+    let host_for_dry_run = host.clone();
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(move |_| {
+            Err(Error::from(quilt::Error::Login(
+                quilt::LoginError::Required(Some(host_for_dry_run.clone())),
+            )))
+        });
+
+    let result = refresh_then_maybe_sync(
+        &model,
+        &ns,
+        &lineage,
+        &PublishSettings::default(),
+        Duration::from_secs(0),
+        true,
+        true,
+    )
+    .await;
+
+    match result {
+        Err(WatchError::LoginRequired(Some(h))) => assert_eq!(h, host),
+        other => panic!("expected LoginRequired(Some(_)), got {other:?}"),
+    }
+    Ok(())
+}
+
+/// Behind + a real conflict (a tracked path changed on both sides) pauses the
+/// namespace with `PullConflict`. The dry-run classifier returns `Blocked`, so
+/// the tick never calls `package_pull`.
+#[tokio::test]
+async fn behind_blocked_pauses() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ))
+    });
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+    // Dry run: a tracked path changed on both sides → the whole pull blocks.
+    model.expect_package_pull_outcome().times(1).returning(|_| {
+        Ok(PullOutcome::Blocked {
+            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+        })
+    });
+    // The pull itself must never run when the outcome is Blocked.
+    model.expect_package_pull().times(0);
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: reporter.clone(),
+        aggregator: test_aggregator(),
+    };
+
+    run_once(&model, &inner).await?;
+
+    // Namespace is paused with PullConflict carrying the conflicting file.
+    {
+        let paused = inner.paused.read().await;
+        match paused.get(&ns) {
+            Some(PausedReason::PullConflict(files)) => {
+                assert_eq!(files, &vec!["conflict.txt".to_string()]);
+            }
+            other => panic!("expected PullConflict, got {other:?}"),
+        }
+    }
+    // A Conflict does not back off — it waits for the user's action.
+    assert!(inner.backoff.read().await.is_empty());
     Ok(())
 }
 

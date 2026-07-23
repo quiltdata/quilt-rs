@@ -115,7 +115,9 @@ Empty state:
 - Click [+ Create] -> opens **Create Package** popup
 - Click package row -> **Installed Package**
 - Click [Pull] -> runs pull flow, reloads
-  - Disabled with popover hint when package has uncommitted changes
+  - Two-phase: enabled state and copy fill in from a dry-run pull check;
+    disabled only while checking, if the check fails (Retry offered), or
+    when the outcome is a conflict (see the status banner below)
 - Click [Commit and Push] -> commits if needed, then pushes;
   reloads
   - Disabled while the package's status is still refreshing in the
@@ -145,7 +147,7 @@ with checkboxes, status indicator, and a toolbar.
 +---------------------------------------------------------+
 | [status banner: status-dependent action ────────────]   |
 |   ahead        -> [Push]                                |
-|   behind       -> [Pull]   (disabled if local changes)  |
+|   behind       -> [Pull]   (see two-phase note below)   |
 |   diverged     -> [Merge]                               |
 |   local+origin -> [Push]                                |
 |   error        -> [Login]                               |
@@ -174,7 +176,16 @@ with checkboxes, status indicator, and a toolbar.
   Package sync actions (Push / Pull / Merge / Login) live in the status
   banner below it.
 - [Push] -> runs push flow, reloads
-- [Pull] -> disabled with popover hint when package has uncommitted changes
+- [Pull] -> two-phase. The `behind` banner renders immediately with a
+  "Checking for updates…" placeholder and Pull disabled; a dry-run pull
+  check then drives the copy and enabled state:
+  - still loading -> disabled, "Checking for updates…"
+  - check failed -> disabled, "Couldn't check for updates." + [Retry]
+  - clean update -> enabled, "The remote has newer revisions."
+  - keeps local changes -> enabled, "The remote has newer revisions.
+    Your local changes are safe — pulling keeps them."
+  - conflict -> disabled, "Conflicts in {files}. Commit your changes to
+    resolve them on the merge page."
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
 - [Ignore] -> opens **Ignore Popup** (for junk-detected files)
@@ -192,7 +203,8 @@ with checkboxes, status indicator, and a toolbar.
 
 **Autosync paused (variant)**: when the background autopull watcher
 refuses to act for a `PausedReason::Other(_)` reason (workflow
-rejection, persistent push/commit error after backoff, etc.), an
+rejection, persistent push/commit error after backoff, etc.) or for a
+`PausedReason::PullConflict` (autopull hit a two-sided conflict), an
 additional banner stacks above the standard status banner:
 
 ```text
@@ -202,9 +214,13 @@ additional banner stacks above the standard status banner:
 +--------------------------------------------------------+
 ```
 
-- Suppressed for `Diverged` and `Behind` paused reasons — the
-  standard status banner already surfaces those with their own
-  action (`[Merge]` / `[Pull]`).
+- A `PullConflict` pause shows conflict-specific guidance instead of
+  the generic text: "Conflicts in {files}. Commit your changes to
+  resolve them on the merge page." — the same remediation the manual
+  pull's `Blocked` banner gives.
+- Suppressed for `Diverged`, `Behind`, and pending-change/commit paused
+  reasons — the standard status banner already surfaces those with their
+  own action (`[Merge]` / `[Pull]`).
 - Re-hydrated on page mount from `get_autosync_snapshot()`; live
   updated via the `AUTOSYNC_PAUSED_EVENT` Tauri event.
 - `[Dismiss]` only hides the banner locally; the underlying

@@ -50,10 +50,12 @@ pub struct PublishedEvent {
 pub struct PausedEvent {
     pub namespace: String,
     /// Stable category: `"pendingChanges"`, `"pendingCommit"`,
-    /// `"diverged"`, or `"other"`. Kept as a string so the wire format is
-    /// independent of the Rust enum's variant layout.
+    /// `"diverged"`, `"pullConflict"`, or `"other"`. Kept as a string so the
+    /// wire format is independent of the Rust enum's variant layout.
     pub reason: String,
-    /// Free-form description, only populated for `reason = "other"`.
+    /// Free-form description: the raw refusal reason for `reason = "other"`,
+    /// or the comma-joined conflicting file names for `reason =
+    /// "pullConflict"`.
     pub message: Option<String>,
 }
 
@@ -67,6 +69,7 @@ impl PausedEvent {
             PausedReason::PendingChanges => ("pendingChanges", None),
             PausedReason::PendingCommit => ("pendingCommit", None),
             PausedReason::Diverged => ("diverged", None),
+            PausedReason::PullConflict(files) => ("pullConflict", Some(files.join(", "))),
             PausedReason::Other(msg) => ("other", Some(msg.clone())),
         };
         Self {
