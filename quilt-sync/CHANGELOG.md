@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.20.0-alpha1] - 2026-07-23
+
+### Changed
+
+- Pull now preserves non-conflicting local work instead of refusing on any local change: the Pull button shows up front whether pulling is safe or which files conflict (with commit → merge as the way out), and autosync pulls behind packages while keeping local edits, pausing with conflict guidance only on a real conflict (<https://github.com/quiltdata/quilt-rs/pull/800>)
+
 ## [v0.19.1-alpha1] - 2026-07-17
 
 ### Changed
