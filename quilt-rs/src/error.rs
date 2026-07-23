@@ -345,10 +345,21 @@ impl From<crate::workflow::ConfigError> for Error {
 }
 
 impl Error {
-    /// Returns `true` if this error represents an S3 "not found" (`NoSuchKey`) response.
+    /// Returns `true` if this error represents a "not found" — an S3
+    /// `NoSuchKey` response, or a local filesystem miss (a working-tree file
+    /// that was deleted). Lets callers tell an absent object/file apart from a
+    /// genuine I/O failure (permission denied, transient storage error).
     #[must_use]
     pub fn is_not_found(&self) -> bool {
-        matches!(self, Error::S3(s3) if s3.is_not_found())
+        match self {
+            Error::S3(s3) => s3.is_not_found(),
+            Error::Fs(FsError::NotFound { .. }) => true,
+            Error::Fs(FsError::Read { source, .. }) => {
+                source.kind() == std::io::ErrorKind::NotFound
+            }
+            Error::Io(e) => e.kind() == std::io::ErrorKind::NotFound,
+            _ => false,
+        }
     }
 }
 

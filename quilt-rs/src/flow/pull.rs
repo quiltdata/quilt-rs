@@ -188,8 +188,11 @@ pub async fn pull_package(
     // `manifest` (the installed/base manifest), whose self-describing
     // `ObjectHash` (a multihash) picks its own algorithm, so no `host_config`
     // is needed. `refresh_hash` returns `Ok(None)` when the file still matches
-    // the base row; `Ok(Some(_))` (content changed) or `Err(_)` (file missing —
-    // a local delete raced in) both mean drift.
+    // the base row (no drift); `Ok(Some(_))` when the content changed (drift);
+    // a not-found `Err` when the file is gone (a local delete raced in — drift).
+    // Any OTHER `Err` (permission denied, transient storage error) is a real
+    // I/O failure, not drift: propagate it rather than reporting a recurring,
+    // misleading `PullConflict`.
     //
     // This lives HERE, not inside `apply_latest_update`: `reset_to_latest`
     // shares that primitive precisely to DISCARD local drift, so a verify pass
@@ -199,18 +202,20 @@ pub async fn pull_package(
     // never data loss.
     let mut drifted = Vec::new();
     for path in &touched {
-        let matches_base = match manifest.get_record(path) {
-            Some(base_row) => matches!(
-                refresh_hash(storage, &working_dir.join(path), base_row.clone()).await,
-                Ok(None)
-            ),
-            // The touch-set is derived from `remote_delta(manifest, ..)`, whose
-            // keys are all base rows, so this arm is unreachable; treat a
-            // missing base expectation as "nothing to verify against".
-            None => true,
+        // The touch-set is derived from `remote_delta(manifest, ..)`, whose
+        // keys are all base rows, so a missing base row is unreachable; treat
+        // it as "nothing to verify against" and skip.
+        let Some(base_row) = manifest.get_record(path) else {
+            continue;
         };
-        if !matches_base {
-            drifted.push(path.clone());
+        match refresh_hash(storage, &working_dir.join(path), base_row.clone()).await {
+            // File still holds the base content — no drift.
+            Ok(None) => {}
+            // Content changed, or the file is gone (raced local delete) — drift.
+            Ok(Some(_)) => drifted.push(path.clone()),
+            Err(err) if err.is_not_found() => drifted.push(path.clone()),
+            // A genuine I/O failure, not drift — surface it as the real error.
+            Err(err) => return Err(err),
         }
     }
     if !drifted.is_empty() {
@@ -539,6 +544,59 @@ mod tests {
         assert_eq!(
             storage.read_bytes(&working_dir.join(&path)).await.unwrap(),
             edited
+        );
+    }
+
+    // A touched path whose working-tree file is GONE (a local delete raced in
+    // after the walk) is drift, not a real I/O error: `refresh_hash` surfaces a
+    // not-found `Err`, which the verify pass folds into the drifted set and
+    // reports as a retryable `PullConflict` — never a propagated failure.
+    #[test(tokio::test)]
+    async fn missing_touched_path_aborts_as_conflict() {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        // No working-tree file is written for `a`: `refresh_hash` → `open_file`
+        // fails with a not-found error.
+
+        // Base tracks `a`; the remote changed it → `a` enters the touch-set.
+        let base = manifest_of(vec![row("a", b"v1")]);
+        let latest = manifest_of(vec![row("a", b"v2")]);
+
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                hash: "a".to_string(),
+                ..ManifestUri::default()
+            }),
+            base_hash: "a".to_string(),
+            latest_hash: "b".to_string(),
+            paths: BTreeMap::from([(path.clone(), PathState::default())]),
+            ..PackageLineage::default()
+        };
+        // Stale snapshot: the walk observed NO changes (the delete raced in).
+        let status = InstalledPackageStatus::default();
+
+        let mut base = base;
+        let error = pull_package(
+            lineage,
+            &mut base,
+            &DomainPaths::default(),
+            &storage,
+            &remote,
+            working_dir.clone(),
+            snapshot_with(status, latest),
+            Namespace::default(),
+        )
+        .await;
+
+        assert!(
+            matches!(
+                error.as_ref().unwrap_err(),
+                crate::Error::PackageOp(PackageOpError::PullConflict(paths)) if paths == &vec![path.clone()]
+            ),
+            "expected PullConflict naming `a`, got: {error:?}"
         );
     }
 
