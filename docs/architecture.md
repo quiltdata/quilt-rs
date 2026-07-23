@@ -220,9 +220,21 @@ promote does not.
 
 ### Pull
 
-Fast-forward only: pull refuses on working-tree changes, on a pending
-commit, and on divergence. Paths absent from the new revision are removed
-from the working tree and from tracking — logged, not an error.
+Surgical reconcile, not fast-forward: pull updates only the remote-changed
+tracked paths the user did not touch and keeps non-conflicting local work in
+place. It still refuses on a pending commit and on divergence, but no longer
+on any working-tree change — that gate is gone. A dry-run `classify_pull`
+verdict (`PullOutcome`) drives the decision: `CleanUpdate` (no local changes),
+`KeepsLocalChanges` (non-conflicting local work survives), or `Blocked` (a path
+changed on both sides with a different result — the whole pull aborts atomically
+with the conflicting paths named). Immediately before applying, every touched
+path is re-hashed against its base row (verify-before-mutate); any drift — a
+raced edit or delete — aborts the pull as a retryable conflict with zero
+mutation. `snapshot_for_pull` resolves `latest` once (refreshing `latest_hash`
+and naming the fetch), short-circuits when already up to date, caches the latest
+manifest, and takes the status walk last, so no network happens between
+classification and mutation. Paths absent from the new revision are removed from
+the working tree and from tracking — logged, not an error.
 
 ### Refresh Latest
 
@@ -232,9 +244,10 @@ There is no freshness model — the classifier trusts the believed tip as
 of the last refresh, which is why autosync refreshes at the top of every
 tick. Autosync's autopull tick is a state-driven dispatcher over the same
 operations the manual UI buttons invoke: refresh, classify, then route to
-pull (`Behind`, clean tree) or publish (changes or a pending commit,
-quiet tree). `Diverged` pauses the namespace; resolution is user-action
-only.
+pull (`Behind` with a non-conflicting `PullOutcome` — local work is preserved)
+or publish (changes or a pending commit, quiet tree). A `Behind` tree with a
+`Blocked` outcome pauses with `PausedReason::PullConflict`; `Diverged` pauses
+the namespace. Resolution of either is user-action only.
 
 ### Uninstall
 
@@ -250,8 +263,8 @@ sides moved past the merge base. A `Diverged` package leaves that state
 via one of two remediation flows: Certify Latest biases local-wins by
 pushing the local commit (if any) and tagging it as `latest`; Reset Local
 biases remote-wins by discarding the local commit chain and re-installing
-the remote `latest`. Pull is the non-conflict path from `Behind` —
-fast-forward only.
+the remote `latest`. Pull is the non-conflict path from `Behind` — it
+reconciles remote changes surgically and refuses on divergence.
 
 These remediation flows intentionally do **not** implement merge in the
 Git/Mercurial/SVN sense. Users familiar with those tools should expect
@@ -266,7 +279,8 @@ the following gaps:
 - **No per-file granularity.** "Pick file A from mine, file B from
   theirs" is not expressible. The manifest is the unit of choice,
   not the file.
-- **No integrative pull from Diverged.** Pull is fast-forward only.
+- **No integrative pull from Diverged.** Pull reconciles only from
+  `Behind` and refuses on divergence.
   From `Diverged`, the only "remote-wins" path is Reset Local, which
   discards the local commit chain — there is no equivalent of
   `git pull --rebase` that would replay local commits on top of
