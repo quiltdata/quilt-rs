@@ -279,6 +279,26 @@ mod tests {
         Ok(())
     }
 
+    // Mirror direction of the presence conflict above: the remote removed a
+    // path the user modified locally. `same_resulting_content` has no explicit
+    // arm for (Modified, Removed) — the catch-all keeps it a conflict; this
+    // test pins that so an explicit-arms refactor can't silently drop the pair.
+    #[test(tokio::test)]
+    async fn local_modify_vs_remote_remove_blocks() -> Res {
+        let base = manifest_of(vec![row("a", b"1"), row("b", b"2")]);
+        let latest = manifest_of(vec![row("b", b"2")]); // remote removed "a"
+        let mut changes = ChangeSet::new();
+        changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local"))); // local modified "a"
+        let out = classify_pull(&behind(changes), &base, &latest);
+        assert_eq!(
+            out,
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from("a")]
+            }
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn both_removed_is_not_a_conflict() -> Res {
         let base = manifest_of(vec![row("a", b"1"), row("b", b"2")]);
