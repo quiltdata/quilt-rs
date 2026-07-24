@@ -24,6 +24,10 @@ systems that already do it well.
 
 ## Next
 
+- **Better troubleshooting: logs and crash reports** *(M)* — today we log
+  only errors, so a report rarely tells the story that led to the problem
+  and issues are hard to reproduce; log the surrounding activity (recent
+  operations, state changes) and enrich Sentry reports with that context.
 - **Role switcher** *(M)* — switch between the access roles you have, from
   inside the app.
 - **quilt-uri hardening** *(S)* — tighten how the app reads package links, so
