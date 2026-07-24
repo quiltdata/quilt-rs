@@ -18,8 +18,6 @@ systems that already do it well.
 
 ## Now — in flight
 
-- **Gentle pull** *(M)* — updating your local copy no longer wipes work you
-  haven't sent up yet; it pulls in others' changes while keeping yours.
 - **Layered crate split** *(L)* — reorganizing the code into clean layers, so
   the same logic can run in the browser and the storage format can be swapped
   later without a rewrite.
@@ -34,9 +32,15 @@ systems that already do it well.
   push, remote) with plain language a scientist reads without a gloss.
 - **Autopush self-recovery** *(M)* — when a temporary error pauses automatic
   syncing, it should resume on its own instead of staying silently stuck.
-- **Rework the installed-package page** *(M)* — make it unambiguous whether
-  "all files" is the current state ("everything is selected") or an action
-  ("select everything now"); today the two are conflated.
+- **Rework the installed-package page: two meanings of "all files"** *(M)* —
+  split the ambiguous "select all" into two unmistakable intents: **keep
+  everything downloaded** (a standing choice for the package — files
+  teammates add later come down automatically) and **download everything
+  currently listed** (a one-time action, no promise about the future). The
+  split is also the consent answer for auto-syncing new paths: future files
+  arrive only when the standing choice was made explicitly. The new pull
+  engine already sees newly-added remote files, so the mechanics are small
+  once the control says what the user meant.
 - **Default ignores** *(S)* — automatically skip junk system files (like macOS
   `.DS_Store`) so they never get synced into a package.
 - **Simpler delivery & updates** *(M)* — serve downloads and auto-updates from
@@ -50,6 +54,11 @@ systems that already do it well.
   test harnessing alone, without any production code.
 - **Extract S3 operations** — move the S3 operations into their own crate, or at
   least into a mostly-independent module, like `workflow` and `object_hash`.
+
+## Recently shipped
+
+- **Gentle pull** — updating your local copy no longer wipes work you haven't
+  sent up yet; it pulls in others' changes while keeping yours.
 
 ## Later / exploring
 
