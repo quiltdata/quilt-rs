@@ -69,3 +69,7 @@ systems that already do it well.
 - **Iceberg-table manifests** *(L — blocked on Catalog design)* — store a
   package's file list as an Iceberg table instead of a text file, for speed at
   large scale; needs the web side designed first.
+- **Find packages to install — search** *(M)* — let you discover packages from
+  inside the app by borrowing the Web Catalog's existing search API rather than
+  building our own; a new capability, not a change to how sync reads data (which
+  stays direct-from-S3 for an authoritative, offline copy).
