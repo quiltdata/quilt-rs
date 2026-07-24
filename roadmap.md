@@ -18,14 +18,16 @@ systems that already do it well.
 
 ## Now — in flight
 
-- **Gentle pull** *(M)* — updating your local copy no longer wipes work you
-  haven't sent up yet; it pulls in others' changes while keeping yours.
 - **Layered crate split** *(L)* — reorganizing the code into clean layers, so
   the same logic can run in the browser and the storage format can be swapped
   later without a rewrite.
 
 ## Next
 
+- **Better troubleshooting: logs and crash reports** *(M)* — today we log
+  only errors, so a report rarely tells the story that led to the problem
+  and issues are hard to reproduce; log the surrounding activity (recent
+  operations, state changes) and enrich Sentry reports with that context.
 - **Role switcher** *(M)* — switch between the access roles you have, from
   inside the app.
 - **quilt-uri hardening** *(S)* — tighten how the app reads package links, so
@@ -34,11 +36,17 @@ systems that already do it well.
   push, remote) with plain language a scientist reads without a gloss.
 - **Autopush self-recovery** *(M)* — when a temporary error pauses automatic
   syncing, it should resume on its own instead of staying silently stuck.
-- **Rework the installed-package page** *(M)* — make it unambiguous whether
-  "all files" is the current state ("everything is selected") or an action
-  ("select everything now"); today the two are conflated.
+- **Rework the installed-package page** *(M)* — "select all" conflates
+  three things: a state display ("everything is downloaded" — silently
+  false once teammates add files), a one-time *download all listed*
+  action, and the expected-but-missing standing *keep everything
+  downloaded* (new remote files auto-download). Separate all three.
 - **Default ignores** *(S)* — automatically skip junk system files (like macOS
   `.DS_Store`) so they never get synced into a package.
+- **Usage telemetry that can count users** *(S)* — events exist but carry no
+  dimensions: add the catalog host to every event and an anonymous install
+  ID, so "how many people use the pilot, and how" and per-customer usage
+  dashboards become answerable.
 - **Simpler delivery & updates** *(M)* — serve downloads and auto-updates from
   GitHub Releases instead of the marketing site's file host; more reliable,
   with a grace period so existing installs keep updating.
@@ -50,6 +58,11 @@ systems that already do it well.
   test harnessing alone, without any production code.
 - **Extract S3 operations** — move the S3 operations into their own crate, or at
   least into a mostly-independent module, like `workflow` and `object_hash`.
+
+## Recently shipped
+
+- **Gentle pull** — updating your local copy no longer wipes work you haven't
+  sent up yet; it pulls in others' changes while keeping yours.
 
 ## Later / exploring
 
