@@ -32,15 +32,10 @@ systems that already do it well.
   push, remote) with plain language a scientist reads without a gloss.
 - **Autopush self-recovery** *(M)* — when a temporary error pauses automatic
   syncing, it should resume on its own instead of staying silently stuck.
-- **Rework the installed-package page: two meanings of "all files"** *(M)* —
-  split the ambiguous "select all" into two unmistakable intents: **keep
-  everything downloaded** (a standing choice for the package — files
-  teammates add later come down automatically) and **download everything
-  currently listed** (a one-time action, no promise about the future). The
-  split is also the consent answer for auto-syncing new paths: future files
-  arrive only when the standing choice was made explicitly. The new pull
-  engine already sees newly-added remote files, so the mechanics are small
-  once the control says what the user meant.
+- **Rework the installed-package page** *(M)* — split the ambiguous
+  "select all" into two honest intents: *keep everything downloaded*
+  (standing — new remote files auto-download) vs. *download everything
+  listed now* (one-time).
 - **Default ignores** *(S)* — automatically skip junk system files (like macOS
   `.DS_Store`) so they never get synced into a package.
 - **Simpler delivery & updates** *(M)* — serve downloads and auto-updates from
