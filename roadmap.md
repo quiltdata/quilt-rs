@@ -39,6 +39,10 @@ systems that already do it well.
   downloaded* (new remote files auto-download). Separate all three.
 - **Default ignores** *(S)* — automatically skip junk system files (like macOS
   `.DS_Store`) so they never get synced into a package.
+- **Usage telemetry that can count users** *(S)* — events exist but carry no
+  dimensions: add the catalog host to every event and an anonymous install
+  ID, so "how many people use the pilot, and how" and per-customer usage
+  dashboards become answerable.
 - **Simpler delivery & updates** *(M)* — serve downloads and auto-updates from
   GitHub Releases instead of the marketing site's file host; more reliable,
   with a grace period so existing installs keep updating.
