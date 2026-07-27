@@ -773,7 +773,10 @@ mod tests {
         ) -> Res<T> {
             unimplemented!("post_json not used")
         }
-        async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        async fn post_json_auth<
+            T: serde::de::DeserializeOwned,
+            B: serde::Serialize + Send + Sync,
+        >(
             &self,
             _url: &str,
             _body: &B,
