@@ -405,6 +405,13 @@ impl Remote for RemoteS3 {
                 info!("ℹ️ Object not found: {}", s3_uri);
                 Err(e)
             }
+            // Pass the typed denial straight through: re-wrapping it as a
+            // generic stream failure would erase the one bit callers branch
+            // on — that the active role, not the session, is the problem.
+            Err(e) if e.is_access_denied() => {
+                warn!("❌ Access denied reading {}: {}", s3_uri, e);
+                Err(e)
+            }
             Err(e) => {
                 warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
                 Err(Error::S3(S3Error {
@@ -682,6 +689,89 @@ mod tests {
             err,
             S3ErrorKind::Raw("HTTP 500 (no error body)".to_string())
         );
+    }
+
+    /// Answer every connection with the same canned HTTP response, so an
+    /// `aws_sdk_s3::Client` pointed at the returned address gets a real S3
+    /// error document off the wire instead of a hand-built `SdkError`.
+    async fn spawn_canned_s3_endpoint(response: Vec<u8>) -> std::net::SocketAddr {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let response = response.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let _ = stream.read(&mut buf).await;
+                    let _ = stream.write_all(&response).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// The typed denial has to survive the `Remote` **method**, not just the
+    /// free helper underneath it: the method re-wraps anything it does not
+    /// recognise, so without the passthrough arm a locked bucket surfaces as
+    /// a generic stream failure and `is_access_denied()` answers `false`.
+    ///
+    /// Both caches are pre-seeded so the call resolves to the stub endpoint
+    /// without a live region lookup or a credential vend.
+    #[test(tokio::test)]
+    async fn get_object_stream_method_preserves_access_denied() -> Res<()> {
+        let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <Error><Code>AccessDenied</Code><Message>Access Denied</Message>\
+             <RequestId>REQ</RequestId><HostId>HID</HostId></Error>";
+        let addr = spawn_canned_s3_endpoint(
+            format!(
+                "HTTP/1.1 403 Forbidden\r\n\
+                 Content-Type: application/xml\r\n\
+                 Content-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_bytes(),
+        )
+        .await;
+
+        let region = Region::new("us-east-1");
+        let denied_client = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(region.clone())
+                .credentials_provider(Credentials::new("AK", "SK", None, None, "test"))
+                .endpoint_url(format!("http://{addr}"))
+                .force_path_style(true)
+                .build(),
+        );
+
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        remote
+            .regions
+            .write()
+            .unwrap()
+            .insert("locked".to_string(), region.clone());
+        remote
+            .s3
+            .write()
+            .unwrap()
+            .insert(CredsRef { region, host: None }, denied_client);
+
+        let Err(err) =
+            Remote::get_object_stream(&remote, None, &S3Uri::try_from("s3://locked/x")?).await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the method must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
     }
 
     /// Building a real, offline `aws_sdk_s3::Client` for a region so the

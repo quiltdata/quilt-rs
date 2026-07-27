@@ -387,6 +387,18 @@ impl Error {
             _ => false,
         }
     }
+
+    /// Returns `true` if S3 refused the call with the `AccessDenied` code.
+    ///
+    /// The mirror of [`Error::is_not_found`] for the role dimension: callers
+    /// that only ever see an [`enum@Error`] need this to tell "the active role
+    /// cannot reach this object" apart from a generic storage failure, so
+    /// every layer that re-wraps an S3 error must let this variant through
+    /// unchanged.
+    #[must_use]
+    pub fn is_access_denied(&self) -> bool {
+        matches!(self, Error::S3(s3) if s3.is_access_denied())
+    }
 }
 
 // Compose `?` across two From hops: external error → focused enum → Error.
