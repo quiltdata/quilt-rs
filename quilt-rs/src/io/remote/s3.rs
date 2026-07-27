@@ -61,11 +61,39 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
 /// Map an AWS error code onto a typed kind. Keyed on the *code*, never the
 /// HTTP status: `ExpiredToken` and `InvalidAccessKeyId` are also 403 but
 /// call for a credential re-vend, not a role switch.
-fn classify_s3_error_code(code: Option<&str>, described: &str) -> S3ErrorKind {
+///
+/// Only a genuine denial changes the kind. Every other code is handed to
+/// `fallback`, so a call site keeps the operation-specific kind it would
+/// have produced anyway — a failed put stays [`S3ErrorKind::PutObject`]
+/// rather than collapsing into an undiagnosable [`S3ErrorKind::Raw`].
+pub(super) fn classify_s3_error_code(
+    code: Option<&str>,
+    described: &str,
+    fallback: fn(String) -> S3ErrorKind,
+) -> S3ErrorKind {
     match code {
         Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
-        _ => S3ErrorKind::Raw(described.to_string()),
+        _ => fallback(described.to_string()),
     }
+}
+
+/// Classify an `SdkError` straight off an AWS call.
+///
+/// [`describe_sdk_error`] consumes the error, so the code has to be lifted
+/// out first; doing it here keeps every call site from repeating that
+/// ordering constraint (and from getting it wrong).
+pub(super) fn classify_sdk_error<E>(
+    err: SdkError<E>,
+    fallback: fn(String) -> S3ErrorKind,
+) -> S3ErrorKind
+where
+    E: ProvideErrorMetadata + std::error::Error + Send + Sync + 'static,
+{
+    let code = err
+        .as_service_error()
+        .and_then(ProvideErrorMetadata::code)
+        .map(str::to_owned);
+    classify_s3_error_code(code.as_deref(), &describe_sdk_error(err), fallback)
 }
 
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
@@ -79,16 +107,7 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
         SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
             Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
         }
-        _ => {
-            let code = err
-                .as_service_error()
-                .and_then(ProvideErrorMetadata::code)
-                .map(str::to_owned);
-            Error::S3(S3Error::new(classify_s3_error_code(
-                code.as_deref(),
-                &describe_sdk_error(err),
-            )))
-        }
+        _ => Error::S3(S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw))),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -436,10 +455,12 @@ impl Remote for RemoteS3 {
             .body(contents.into())
             .send()
             .await
+            // A denial is typed distinctly so the push path can say "this role
+            // cannot write here"; anything else stays a plain put failure.
             .map_err(|err| {
                 Error::S3(S3Error {
                     host: host.cloned(),
-                    kind: S3ErrorKind::PutObject(describe_sdk_error(err)),
+                    kind: classify_sdk_error(err, S3ErrorKind::PutObject),
                 })
             })?;
 
@@ -655,7 +676,11 @@ mod tests {
     /// into a generic error that reads as "sign in again".
     #[test]
     fn access_denied_code_classifies_as_access_denied() {
-        let err = classify_s3_error_code(Some("AccessDenied"), "AccessDenied: forbidden");
+        let err = classify_s3_error_code(
+            Some("AccessDenied"),
+            "AccessDenied: forbidden",
+            S3ErrorKind::Raw,
+        );
         assert_eq!(
             err,
             S3ErrorKind::AccessDenied("AccessDenied: forbidden".to_string())
@@ -663,12 +688,48 @@ mod tests {
         assert!(S3Error::new(err).is_access_denied());
     }
 
+    /// A denial outranks the caller's fallback: the upload sites ask for
+    /// `PutObject`/`UploadFile`, but the one code the push path branches on
+    /// still has to come through typed.
+    #[test]
+    fn upload_denial_classifies_as_access_denied() {
+        let err = classify_s3_error_code(
+            Some("AccessDenied"),
+            "AccessDenied: forbidden",
+            S3ErrorKind::PutObject,
+        );
+        assert_eq!(
+            err,
+            S3ErrorKind::AccessDenied("AccessDenied: forbidden".to_string())
+        );
+    }
+
+    /// The mirror image: everything that is *not* a denial keeps the kind the
+    /// call site would have produced on its own. Flattening these to `Raw`
+    /// would cost every upload failure its "which operation broke" detail.
+    #[test]
+    fn non_denial_codes_keep_the_callers_fallback_kind() {
+        assert_eq!(
+            classify_s3_error_code(
+                Some("SlowDown"),
+                "SlowDown: throttled",
+                S3ErrorKind::PutObject
+            ),
+            S3ErrorKind::PutObject("SlowDown: throttled".to_string())
+        );
+        assert_eq!(
+            classify_s3_error_code(None, "HTTP 500 (no error body)", S3ErrorKind::UploadFile),
+            S3ErrorKind::UploadFile("HTTP 500 (no error body)".to_string())
+        );
+    }
+
     /// Both of these are also HTTP 403, which is exactly why we key on the
     /// code: they mean "re-vend credentials", not "wrong role".
     #[test]
     fn expired_credential_codes_do_not_classify_as_access_denied() {
         for code in ["ExpiredToken", "InvalidAccessKeyId"] {
-            let err = classify_s3_error_code(Some(code), &format!("{code}: nope"));
+            let err =
+                classify_s3_error_code(Some(code), &format!("{code}: nope"), S3ErrorKind::Raw);
             assert!(
                 !S3Error::new(err).is_access_denied(),
                 "{code} must not be read as a role denial"
@@ -678,13 +739,13 @@ mod tests {
 
     #[test]
     fn unknown_codes_stay_raw() {
-        let err = classify_s3_error_code(Some("SlowDown"), "SlowDown: throttled");
+        let err = classify_s3_error_code(Some("SlowDown"), "SlowDown: throttled", S3ErrorKind::Raw);
         assert_eq!(err, S3ErrorKind::Raw("SlowDown: throttled".to_string()));
     }
 
     #[test]
     fn missing_code_stays_raw() {
-        let err = classify_s3_error_code(None, "HTTP 500 (no error body)");
+        let err = classify_s3_error_code(None, "HTTP 500 (no error body)", S3ErrorKind::Raw);
         assert_eq!(
             err,
             S3ErrorKind::Raw("HTTP 500 (no error body)".to_string())
@@ -714,15 +775,15 @@ mod tests {
         addr
     }
 
-    /// The typed denial has to survive the `Remote` **method**, not just the
-    /// free helper underneath it: the method re-wraps anything it does not
-    /// recognise, so without the passthrough arm a locked bucket surfaces as
-    /// a generic stream failure and `is_access_denied()` answers `false`.
-    ///
-    /// Both caches are pre-seeded so the call resolves to the stub endpoint
-    /// without a live region lookup or a credential vend.
-    #[test(tokio::test)]
-    async fn get_object_stream_method_preserves_access_denied() -> Res<()> {
+    /// The bucket every access-denied test addresses; the stub endpoint
+    /// refuses each request regardless of operation, bucket or key.
+    const DENIED_BUCKET: &str = "locked";
+
+    /// A [`RemoteS3`] whose region and client caches are pre-seeded with a
+    /// client aimed at a stub endpoint that answers every request with S3's
+    /// 403 `AccessDenied` document — so calls resolve without a live region
+    /// lookup or a credential vend, and every operation comes back denied.
+    async fn access_denied_remote() -> RemoteS3 {
         let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
              <Error><Code>AccessDenied</Code><Message>Access Denied</Message>\
              <RequestId>REQ</RequestId><HostId>HID</HostId></Error>";
@@ -754,12 +815,22 @@ mod tests {
             .regions
             .write()
             .unwrap()
-            .insert("locked".to_string(), region.clone());
+            .insert(DENIED_BUCKET.to_string(), region.clone());
         remote
             .s3
             .write()
             .unwrap()
             .insert(CredsRef { region, host: None }, denied_client);
+        remote
+    }
+
+    /// The typed denial has to survive the `Remote` **method**, not just the
+    /// free helper underneath it: the method re-wraps anything it does not
+    /// recognise, so without the passthrough arm a locked bucket surfaces as
+    /// a generic stream failure and `is_access_denied()` answers `false`.
+    #[test(tokio::test)]
+    async fn get_object_stream_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
 
         let Err(err) =
             Remote::get_object_stream(&remote, None, &S3Uri::try_from("s3://locked/x")?).await
@@ -770,6 +841,94 @@ mod tests {
         assert!(
             err.is_access_denied(),
             "the method must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// Drives the real `put_object` method against a canned 403, so the
+    /// wiring is covered and not just the classifier: a write denial has to
+    /// reach the push path typed, or the user is told to sign in again when
+    /// the real problem is that their role cannot write here.
+    #[test(tokio::test)]
+    async fn put_object_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+
+        let Err(err) = Remote::put_object(
+            &remote,
+            None,
+            &S3Uri::try_from("s3://locked/x")?,
+            ByteStream::from_static(b"payload"),
+        )
+        .await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the upload path must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// Same guarantee for the single-shot upload path, which builds its own
+    /// error with an `UploadFile` kind rather than going through `put_object`.
+    #[test(tokio::test)]
+    async fn upload_file_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(b"payload")?;
+
+        let host_config = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+        let Err(err) = remote
+            .upload_file(
+                &host_config,
+                temp_file.path(),
+                &S3Uri::try_from("s3://locked/x")?,
+                7,
+            )
+            .await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the upload path must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// And for the multipart path, whose first call — `CreateMultipartUpload`
+    /// — is where a write denial shows up.
+    #[test(tokio::test)]
+    async fn multipart_upload_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(b"payload")?;
+
+        let host_config = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+        let Err(err) = remote
+            .upload_file(
+                &host_config,
+                temp_file.path(),
+                &S3Uri::try_from("s3://locked/x")?,
+                7,
+            )
+            .await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the multipart path must not re-wrap the denial, got: {err}"
         );
         Ok(())
     }

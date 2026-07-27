@@ -11,7 +11,7 @@ use crate::error::S3Error;
 use crate::error::S3ErrorKind;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
-use crate::io::remote::describe_sdk_error;
+use crate::io::remote::s3::classify_sdk_error;
 use crate::object_hash::Crc64Hash;
 use crate::object_hash::ObjectHash;
 use crate::object_hash::Sha256ChunkedHash;
@@ -57,7 +57,7 @@ pub async fn put_and_request_checksum(
         .map_err(|err| {
             Error::S3(S3Error {
                 host: host_config.host.clone(),
-                kind: S3ErrorKind::UploadFile(describe_sdk_error(err)),
+                kind: classify_sdk_error(err, S3ErrorKind::UploadFile),
             })
         })?;
     let checksum = match host_config.checksums {
