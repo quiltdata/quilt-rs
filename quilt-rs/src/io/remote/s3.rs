@@ -253,7 +253,11 @@ impl RemoteS3 {
     }
 
     /// Expire the host's cached STS credentials, keeping the login token.
-    /// Not sufficient alone — see [`RemoteS3::switch_role`].
+    ///
+    /// **Not sufficient on its own.** An already-built `aws_sdk_s3::Client`
+    /// holds its own resolved credentials in the SDK's lazy identity cache,
+    /// so the old role keeps signing until they expire (~1h) — call
+    /// [`RemoteS3::clear_client_cache`] for the same host afterwards.
     pub async fn expire_credentials(&self, host: &Host) -> Res {
         self.auth.expire_credentials(host).await
     }
