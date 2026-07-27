@@ -447,13 +447,22 @@ impl HttpClient for CountingCredsClient {
         unimplemented!()
     }
 
+    /// Serves `switchRole` so a role switch can be raced against a vend on
+    /// one client. Tokens are fresh, so no OAuth leg fires here either.
     async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
         &self,
-        _: &str,
+        url: &str,
         _: &B,
         _: &str,
     ) -> Res<T> {
-        unimplemented!()
+        assert_eq!(url, format!("https://{}/graphql", get_registry()));
+        Ok(serde_json::from_value(serde_json::json!({
+            "data": {"switchRole": {
+                "__typename": "Me",
+                "role": {"name": "ReadOnly"},
+                "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
+            }},
+        }))?)
     }
 }
 
@@ -518,6 +527,65 @@ async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
         assert_eq!(creds.expires_at, first.expires_at);
     }
     assert_eq!(first.access_key, "refreshed-key");
+    Ok(())
+}
+
+/// Switching a role while a sync is mid-vend. The vend writes old-role
+/// credentials when it completes, so the switch's flush must be serialized
+/// behind it — otherwise the flush lands first and the vend restores the
+/// stale credentials over the top of it, with nothing left to notice.
+#[test(tokio::test)]
+async fn switch_role_waits_for_an_in_flight_vend_before_flushing() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = get_host();
+
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+    seed_expired_creds_fresh_tokens(&auth_io).await?;
+
+    let gate = Arc::new(Gate::default());
+    let client = CountingCredsClient {
+        cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        sleep_ms: 0,
+        gate: Some(gate.clone()),
+    };
+
+    // Park a vend inside the credentials handler, holding the host's lock.
+    let vend = tokio::spawn({
+        let (auth, client, host) = (auth.clone(), client.clone(), host.clone());
+        async move { auth.get_credentials_or_refresh(&client, &host).await }
+    });
+    gate.entered.notified().await;
+
+    let switch = tokio::spawn({
+        let (auth, client, host) = (auth.clone(), client.clone(), host.clone());
+        async move { auth.switch_role(&client, &host, "ReadOnly").await }
+    });
+
+    // The switch must not overtake the parked vend. Yield generously so a
+    // genuinely unserialized switch would have finished by now.
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !switch.is_finished(),
+        "switch_role must wait behind the in-flight vend's lock"
+    );
+
+    gate.release.notify_one();
+    let creds = vend.await.unwrap()?;
+    assert_eq!(creds.access_key, "refreshed-key", "the vend did write");
+    let roles = tokio::time::timeout(std::time::Duration::from_secs(5), switch)
+        .await
+        .expect("switch_role must not deadlock behind the vend")
+        .unwrap()?;
+
+    assert_eq!(roles.current, "ReadOnly");
+    assert!(
+        auth_io.read_credentials().await?.is_none(),
+        "the switch must flush the credentials the vend wrote, not race them"
+    );
     Ok(())
 }
 
@@ -699,6 +767,69 @@ async fn second_refresh_roles_with_an_unchanged_role_does_not_flush() -> Res {
         .await?
         .expect("an unchanged role must not flush");
     assert_eq!(creds.access_key, "revended");
+    Ok(())
+}
+
+/// The central rule: a role that changed out-of-band mid-session must
+/// flush, not just the first observation. The second `me` reports a
+/// different active role, standing in for a switch made in the web catalog.
+#[test(tokio::test)]
+async fn refresh_roles_flushes_when_the_role_changed_mid_session() -> Res {
+    let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+
+    // First observation establishes the baseline (and flushes, as always).
+    auth.refresh_roles(&GraphQlTestHttpClient::default(), &host)
+        .await?;
+    auth_io
+        .write_credentials(&Credentials {
+            access_key: "readwrite-creds".to_string(),
+            secret_key: "readwrite-creds".to_string(),
+            token: "readwrite-creds".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+    let switched = GraphQlTestHttpClient {
+        me_role: "ReadOnly",
+        ..GraphQlTestHttpClient::default()
+    };
+    let roles = auth.refresh_roles(&switched, &host).await?;
+
+    assert_eq!(roles.current, "ReadOnly");
+    assert!(
+        auth_io.read_credentials().await?.is_none(),
+        "a role that changed under us must flush the old role's credentials"
+    );
+    Ok(())
+}
+
+/// A flush that fails must not leave the session claiming the new role —
+/// otherwise every later observation reports "unchanged" and the stale
+/// credentials survive the whole session. After a failure the host drops
+/// back to role-unknown, so the next call retries the flush.
+#[test(tokio::test)]
+async fn a_failed_flush_leaves_the_role_unknown_so_the_next_call_retries() -> Res {
+    let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+
+    // Simulate the flush failing by rolling back directly: reconcile_role's
+    // recovery path is what we are pinning, not the filesystem fault itself.
+    assert!(
+        auth.observe_role(&host, "ReadWrite"),
+        "first observation must report a change"
+    );
+    auth.forget_role(&host);
+
+    // Because the baseline was rolled back, this must flush again rather
+    // than concluding the role is unchanged.
+    auth.refresh_roles(&GraphQlTestHttpClient::default(), &host)
+        .await?;
+
+    assert!(
+        auth_io.read_credentials().await?.is_none(),
+        "after a rolled-back flush the next observation must retry it"
+    );
     Ok(())
 }
 

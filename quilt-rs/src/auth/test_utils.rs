@@ -39,6 +39,9 @@ pub(super) fn get_registry_host() -> url::Host {
 /// flips one response into a failure mode so the decoding paths can be
 /// exercised without a live registry.
 pub(super) struct GraphQlTestHttpClient {
+    /// Active role reported by `me`. Settable so a second call can report a
+    /// different role than the first, standing in for an out-of-band switch.
+    pub(super) me_role: &'static str,
     pub(super) me_is_null: bool,
     pub(super) top_level_error: Option<String>,
     pub(super) switch_result: serde_json::Value,
@@ -48,6 +51,7 @@ pub(super) struct GraphQlTestHttpClient {
 impl Default for GraphQlTestHttpClient {
     fn default() -> Self {
         Self {
+            me_role: "ReadWrite",
             me_is_null: false,
             top_level_error: None,
             switch_result: serde_json::json!({
@@ -66,7 +70,7 @@ impl GraphQlTestHttpClient {
             return serde_json::Value::Null;
         }
         serde_json::json!({
-            "role": {"name": "ReadWrite"},
+            "role": {"name": self.me_role},
             "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
         })
     }

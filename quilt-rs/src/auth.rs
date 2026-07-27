@@ -451,8 +451,54 @@ impl<S: Storage + Send + Sync> Auth<S> {
         !matches!(roles.insert(host.clone(), role.to_owned()), Some(prev) if prev == role)
     }
 
+    /// Return this host to the role-*unknown* state, so the next observation
+    /// flushes no matter what role it sees. Used both to roll back a failed
+    /// flush and to force one on an explicit switch.
+    fn forget_role(&self, host: &Host) {
+        self.session_roles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(host);
+    }
+
+    /// Reconcile the session's role baseline with `role`, flushing the
+    /// credential cache if the role changed (or was never observed).
+    ///
+    /// The baseline is only allowed to stand once the flush has actually
+    /// succeeded. Recording it first would let a failed flush convince every
+    /// later observation that nothing had changed, stranding old-role
+    /// credentials for the rest of the session with no way to recover; so on
+    /// failure we drop back to role-unknown and the next call retries.
+    ///
+    /// Callers must hold this host's refresh lock: the delete has to be
+    /// serialized against an in-flight vend, which would otherwise write
+    /// old-role credentials to disk after we removed them.
+    async fn reconcile_role(&self, host: &Host, role: &str) -> Res {
+        if !self.observe_role(host, role) {
+            return Ok(());
+        }
+
+        info!(
+            "⚠️ Active role for {} is {}, flushing credentials",
+            host, role
+        );
+        self.expire_credentials(host).await.inspect_err(|_| {
+            warn!(
+                "❌ Flush for {} failed; keeping the role unknown so the next \
+                 observation retries",
+                host
+            );
+            self.forget_role(host);
+        })
+    }
+
     /// A currently-valid access token for `host`, refreshing it first if it
     /// is inside the 60s expiry window.
+    ///
+    /// Rotates and persists the refresh token when it does refresh, so every
+    /// caller must already hold this host's refresh lock. Deliberately does
+    /// not take the lock itself — `get_credentials_or_refresh` calls this
+    /// while holding the guard, and the lock is not reentrant.
     async fn valid_access_token<T: HttpClient>(&self, http_client: &T, host: &Host) -> Res<String> {
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         let tokens = auth_io
@@ -473,22 +519,24 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// Read the active role from the registry and reconcile the local
     /// credential cache with it. Any observed change expires this host's
     /// credentials so the next operation re-vends under the current role.
+    ///
+    /// Runs under this host's refresh lock, which buys two things: the token
+    /// refresh cannot race a concurrent vend into rotating the stored refresh
+    /// token twice, and the flush cannot land in the middle of a vend that
+    /// would then write old-role credentials over the gap.
     pub async fn refresh_roles<T: HttpClient>(
         &self,
         http_client: &T,
         host: &Host,
     ) -> Res<RoleInfo> {
+        let lock = self.refresh_lock_for(host);
+        let _guard = lock.lock().await;
+
         let access_token = self.valid_access_token(http_client, host).await?;
         let registry = get_registry_url(http_client, host).await?;
         let me = query_me(http_client, &registry, host, &access_token).await?;
 
-        if self.observe_role(host, &me.role.name) {
-            info!(
-                "⚠️ Active role for {} is {}, flushing credentials",
-                host, me.role.name
-            );
-            self.expire_credentials(host).await?;
-        }
+        self.reconcile_role(host, &me.role.name).await?;
 
         Ok(RoleInfo::from(me))
     }
@@ -496,6 +544,11 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// Make `role_name` the user's primary role. The change is server-side
     /// and global across all of that user's sessions; locally we only have
     /// to expire the cached credentials so the next vend re-scopes.
+    ///
+    /// Holds this host's refresh lock for the same reasons as
+    /// [`Auth::refresh_roles`] — most of all so a sync already vending
+    /// credentials cannot write the old role's credentials back after the
+    /// switch has flushed them.
     pub async fn switch_role<T: HttpClient>(
         &self,
         http_client: &T,
@@ -503,12 +556,18 @@ impl<S: Storage + Send + Sync> Auth<S> {
         role_name: &str,
     ) -> Res<RoleInfo> {
         info!("⏳ Switching role on {} to {}", host, role_name);
+        let lock = self.refresh_lock_for(host);
+        let _guard = lock.lock().await;
+
         let access_token = self.valid_access_token(http_client, host).await?;
         let registry = get_registry_url(http_client, host).await?;
         let me = mutate_switch_role(http_client, &registry, role_name, &access_token).await?;
 
-        self.observe_role(host, &me.role.name);
-        self.expire_credentials(host).await?;
+        // A switch always invalidates, even when the server reports the role
+        // we were already on: dropping the baseline first makes the
+        // reconcile below see an unknown role and flush unconditionally.
+        self.forget_role(host);
+        self.reconcile_role(host, &me.role.name).await?;
 
         info!("✔️ Switched role on {} to {}", host, me.role.name);
         Ok(RoleInfo::from(me))
@@ -516,11 +575,17 @@ impl<S: Storage + Send + Sync> Auth<S> {
 
     /// The buckets the active role can read. An optimistic hint, not an
     /// authoritative answer — see the doc comment on the `buckets` query.
+    ///
+    /// Takes the refresh lock only because [`Auth::valid_access_token`] may
+    /// rotate the persisted refresh token; it flushes nothing itself.
     pub async fn readable_buckets<T: HttpClient>(
         &self,
         http_client: &T,
         host: &Host,
     ) -> Res<Vec<String>> {
+        let lock = self.refresh_lock_for(host);
+        let _guard = lock.lock().await;
+
         let access_token = self.valid_access_token(http_client, host).await?;
         let registry = get_registry_url(http_client, host).await?;
         query_buckets(http_client, &registry, &access_token).await
