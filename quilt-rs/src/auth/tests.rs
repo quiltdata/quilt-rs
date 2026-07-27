@@ -607,3 +607,34 @@ async fn test_refresh_lock_map_sweeps_dead_entries() -> Res {
     );
     Ok(())
 }
+
+#[test(tokio::test)]
+async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = get_host();
+
+    let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
+    auth_io
+        .write_tokens(&Tokens {
+            access_token: ACCESS_TOKEN.to_string(),
+            refresh_token: REFRESH_TOKEN.to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
+    auth_io
+        .write_credentials(&Credentials {
+            access_key: "stale".to_string(),
+            secret_key: "stale".to_string(),
+            token: "stale".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+    auth.expire_credentials(&host).await?;
+
+    assert!(auth_io.read_credentials().await?.is_none());
+    assert!(auth_io.read_tokens().await?.is_some());
+    Ok(())
+}

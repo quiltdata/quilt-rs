@@ -397,6 +397,18 @@ impl<S: Storage + Send + Sync> Auth<S> {
         Ok(credentials)
     }
 
+    /// Expire this host's cached STS credentials once, keeping the login
+    /// token. Narrower than logout: the session survives and the next
+    /// operation re-vends, picking up whatever role the server now
+    /// considers primary.
+    pub async fn expire_credentials(&self, host: &Host) -> Res {
+        info!("⏳ Expiring cached credentials for {}", host);
+        let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
+        auth_io.delete_credentials().await?;
+        info!("✔️ Cached credentials expired for {}", host);
+        Ok(())
+    }
+
     pub async fn get_credentials_or_refresh<T: HttpClient>(
         &self,
         http_client: &T,
