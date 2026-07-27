@@ -6,11 +6,6 @@
 //! the auth layer stays on the REST endpoints. Deliberately a few typed
 //! documents over the existing `HttpClient` rather than a generated client.
 
-// The documents below are exercised by this module's tests but have no
-// non-test caller yet — the `Auth` methods that drive role switching arrive
-// with the public role API. Drop this attribute once they do.
-#![allow(dead_code)]
-
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;

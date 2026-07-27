@@ -112,6 +112,28 @@ async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
     Ok(())
 }
 
+/// `get_credentials_or_refresh` classifies an absent token file as
+/// "login required" rather than letting it surface as a storage error.
+/// Guards the token-read arm, which the shared `valid_access_token`
+/// helper must not be allowed to short-circuit.
+#[test(tokio::test)]
+async fn test_get_credentials_or_refresh_without_tokens_requires_login() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths, storage);
+    let host = get_host();
+
+    let result = auth
+        .get_credentials_or_refresh(&OAuthTestHttpClient::default(), &host)
+        .await;
+
+    assert!(
+        matches!(result, Err(Error::Login(LoginError::Required(Some(ref h)))) if *h == host),
+        "expected LoginRequired naming the host, got: {result:?}"
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_get_or_register_client() -> Res {
     let storage = Arc::new(MockStorage::default());
@@ -605,6 +627,108 @@ async fn test_refresh_lock_map_sweeps_dead_entries() -> Res {
             .len(),
         1,
     );
+    Ok(())
+}
+
+/// Build an `Auth` with tokens and credentials already on disk, so the
+/// role calls have something to flush.
+async fn auth_with_cached_credentials()
+-> Res<(Auth<MockStorage>, Arc<MockStorage>, DomainPaths, Host)> {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = get_host();
+
+    let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
+    auth_io
+        .write_tokens(&Tokens {
+            access_token: ACCESS_TOKEN.to_string(),
+            refresh_token: REFRESH_TOKEN.to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
+    auth_io
+        .write_credentials(&Credentials {
+            access_key: "cached".to_string(),
+            secret_key: "cached".to_string(),
+            token: "cached".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+    Ok((auth, storage, paths, host))
+}
+
+#[test(tokio::test)]
+async fn first_refresh_roles_of_a_session_flushes_role_unknown_credentials() -> Res {
+    let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient::default();
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+
+    let roles = auth.refresh_roles(&client, &host).await?;
+
+    assert_eq!(roles.current, "ReadWrite");
+    assert_eq!(roles.available, vec!["ReadWrite", "ReadOnly"]);
+    assert!(
+        auth_io.read_credentials().await?.is_none(),
+        "disk-loaded credentials are role-unknown, so the first me must flush"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn second_refresh_roles_with_an_unchanged_role_does_not_flush() -> Res {
+    let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient::default();
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+
+    auth.refresh_roles(&client, &host).await?;
+    auth_io
+        .write_credentials(&Credentials {
+            access_key: "revended".to_string(),
+            secret_key: "revended".to_string(),
+            token: "revended".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+    auth.refresh_roles(&client, &host).await?;
+
+    let creds = auth_io
+        .read_credentials()
+        .await?
+        .expect("an unchanged role must not flush");
+    assert_eq!(creds.access_key, "revended");
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn switch_role_flushes_credentials_and_reports_the_new_role() -> Res {
+    let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient::default();
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+
+    let roles = auth.switch_role(&client, &host, "ReadOnly").await?;
+
+    assert_eq!(roles.current, "ReadOnly");
+    assert!(
+        auth_io.read_credentials().await?.is_none(),
+        "a switch must expire the old role's credentials"
+    );
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn readable_buckets_returns_the_role_scoped_list() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        buckets: vec!["only-this-one"],
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let buckets = auth.readable_buckets(&client, &host).await?;
+
+    assert_eq!(buckets, vec!["only-this-one"]);
     Ok(())
 }
 

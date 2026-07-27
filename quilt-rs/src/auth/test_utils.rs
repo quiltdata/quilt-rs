@@ -34,9 +34,10 @@ pub(super) fn get_registry_host() -> url::Host {
     url::Host::Domain(get_registry())
 }
 
-/// Serves the three role GraphQL operations. Each flag flips one response
-/// into a failure mode so the decoding paths can be exercised without a
-/// live registry.
+/// Serves the three role GraphQL operations, plus the `config.json` lookup
+/// the `Auth` role methods make to resolve the registry host. Each flag
+/// flips one response into a failure mode so the decoding paths can be
+/// exercised without a live registry.
 pub(super) struct GraphQlTestHttpClient {
     pub(super) me_is_null: bool,
     pub(super) top_level_error: Option<String>,
@@ -75,10 +76,14 @@ impl GraphQlTestHttpClient {
 impl HttpClient for GraphQlTestHttpClient {
     async fn get<T: serde::de::DeserializeOwned>(
         &self,
-        _url: &str,
+        url: &str,
         _auth_token: Option<&str>,
     ) -> Res<T> {
-        unimplemented!("get is not used in this test")
+        assert_eq!(url, format!("https://{}/config.json", get_host()));
+        let config = QuiltStackConfig {
+            registry_url: format!("https://{}", get_registry()).parse()?,
+        };
+        Ok(serde_json::from_value(serde_json::to_value(config)?)?)
     }
 
     async fn head(&self, _url: &str) -> Res<HeaderMap> {

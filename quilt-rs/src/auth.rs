@@ -45,10 +45,14 @@ pub use oauth::pkce_challenge;
 pub use oauth::random_state;
 pub use registry::RemoteTokens;
 
+use graphql::mutate_switch_role;
+use graphql::query_buckets;
+use graphql::query_me;
 use oauth::exchange_oauth_code;
 use oauth::refresh_oauth_tokens;
 use oauth::register_client;
 use registry::get_auth_tokens;
+use registry::get_registry_url;
 use registry::refresh_credentials;
 use retry::classify_retry_outcome;
 use retry::http_status;
@@ -74,11 +78,35 @@ mod tests;
 /// that may authenticate against many distinct hosts.
 type RefreshLocks = Arc<StdMutex<HashMap<Host, Weak<AsyncMutex<()>>>>>;
 
+/// Per-host record of the active role observed *this session*. Purely
+/// in-memory and never persisted: its absence for a host is meaningful —
+/// it means any credentials on disk were vended by an unknown role, which
+/// is why the first observation of a session always flushes.
+type SessionRoles = Arc<StdMutex<HashMap<Host, String>>>;
+
+/// The active role plus every role the user holds, as the switcher needs
+/// them. `available` includes `current`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleInfo {
+    pub current: String,
+    pub available: Vec<String>,
+}
+
+impl From<graphql::Me> for RoleInfo {
+    fn from(me: graphql::Me) -> Self {
+        Self {
+            current: me.role.name,
+            available: me.roles.into_iter().map(|r| r.name).collect(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Auth<S: Storage = LocalStorage> {
     pub paths: DomainPaths,
     pub storage: Arc<S>,
     refresh_locks: RefreshLocks,
+    session_roles: SessionRoles,
 }
 
 impl<S: Storage> Clone for Auth<S> {
@@ -87,6 +115,7 @@ impl<S: Storage> Clone for Auth<S> {
             paths: self.paths.clone(),
             storage: Arc::clone(&self.storage),
             refresh_locks: Arc::clone(&self.refresh_locks),
+            session_roles: Arc::clone(&self.session_roles),
         }
     }
 }
@@ -97,6 +126,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
             paths,
             storage,
             refresh_locks: Arc::new(StdMutex::new(HashMap::new())),
+            session_roles: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -409,6 +439,93 @@ impl<S: Storage + Send + Sync> Auth<S> {
         Ok(())
     }
 
+    /// Record the role just observed for this host and report whether the
+    /// credential cache is now stale. `insert` returns the previous value:
+    /// `None` means this is the session's first observation (disk creds are
+    /// role-unknown), `Some(prev)` differing means the role changed under us.
+    fn observe_role(&self, host: &Host, role: &str) -> bool {
+        let mut roles = self
+            .session_roles
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !matches!(roles.insert(host.clone(), role.to_owned()), Some(prev) if prev == role)
+    }
+
+    /// A currently-valid access token for `host`, refreshing it first if it
+    /// is inside the 60s expiry window.
+    async fn valid_access_token<T: HttpClient>(&self, http_client: &T, host: &Host) -> Res<String> {
+        let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
+        let tokens = auth_io
+            .read_tokens()
+            .await?
+            .ok_or_else(|| LoginError::Required(Some(host.to_owned())))?;
+
+        if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
+            info!("⏳ Access token expired for {}, refreshing", host);
+            let refreshed = self
+                .refresh_tokens_with_retry(http_client, &auth_io, host, &tokens)
+                .await?;
+            return Ok(refreshed.access_token);
+        }
+        Ok(tokens.access_token)
+    }
+
+    /// Read the active role from the registry and reconcile the local
+    /// credential cache with it. Any observed change expires this host's
+    /// credentials so the next operation re-vends under the current role.
+    pub async fn refresh_roles<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+    ) -> Res<RoleInfo> {
+        let access_token = self.valid_access_token(http_client, host).await?;
+        let registry = get_registry_url(http_client, host).await?;
+        let me = query_me(http_client, &registry, host, &access_token).await?;
+
+        if self.observe_role(host, &me.role.name) {
+            info!(
+                "⚠️ Active role for {} is {}, flushing credentials",
+                host, me.role.name
+            );
+            self.expire_credentials(host).await?;
+        }
+
+        Ok(RoleInfo::from(me))
+    }
+
+    /// Make `role_name` the user's primary role. The change is server-side
+    /// and global across all of that user's sessions; locally we only have
+    /// to expire the cached credentials so the next vend re-scopes.
+    pub async fn switch_role<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        role_name: &str,
+    ) -> Res<RoleInfo> {
+        info!("⏳ Switching role on {} to {}", host, role_name);
+        let access_token = self.valid_access_token(http_client, host).await?;
+        let registry = get_registry_url(http_client, host).await?;
+        let me = mutate_switch_role(http_client, &registry, role_name, &access_token).await?;
+
+        self.observe_role(host, &me.role.name);
+        self.expire_credentials(host).await?;
+
+        info!("✔️ Switched role on {} to {}", host, me.role.name);
+        Ok(RoleInfo::from(me))
+    }
+
+    /// The buckets the active role can read. An optimistic hint, not an
+    /// authoritative answer — see the doc comment on the `buckets` query.
+    pub async fn readable_buckets<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+    ) -> Res<Vec<String>> {
+        let access_token = self.valid_access_token(http_client, host).await?;
+        let registry = get_registry_url(http_client, host).await?;
+        query_buckets(http_client, &registry, &access_token).await
+    }
+
     pub async fn get_credentials_or_refresh<T: HttpClient>(
         &self,
         http_client: &T,
@@ -456,8 +573,12 @@ impl<S: Storage + Send + Sync> Auth<S> {
             }
         }
 
-        let tokens = match auth_io.read_tokens().await {
-            Ok(Some(tokens)) => tokens,
+        // Read the tokens up front purely to classify the two failure modes
+        // this path promises: a missing token file means login is required,
+        // an unreadable one is a storage fault. `valid_access_token` re-reads
+        // them for the value itself.
+        match auth_io.read_tokens().await {
+            Ok(Some(_)) => {}
             Ok(None) => {
                 warn!("❌ No tokens found for {}, login required", host);
                 return Err(LoginError::Required(Some(host.to_owned())).into());
@@ -469,21 +590,9 @@ impl<S: Storage + Send + Sync> Auth<S> {
                     AuthError::TokensRead(e.to_string()),
                 ));
             }
-        };
+        }
 
-        // If the access token is expired, try to refresh it using the refresh token.
-        let access_token =
-            if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
-                info!(
-                    "⏳ Access token expired for {}, refreshing via refresh token",
-                    host
-                );
-                self.refresh_tokens_with_retry(http_client, &auth_io, host, &tokens)
-                    .await?
-                    .access_token
-            } else {
-                tokens.access_token
-            };
+        let access_token = self.valid_access_token(http_client, host).await?;
 
         info!("⏳ Refreshing credentials using access token for {}", host);
         let creds = self

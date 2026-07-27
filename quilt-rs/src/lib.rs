@@ -33,6 +33,7 @@ pub mod workflow;
 #[cfg(test)]
 pub mod fixtures;
 
+pub use auth::RoleInfo;
 pub use error::AuthError;
 pub use error::ChecksumError;
 pub use error::Error;
