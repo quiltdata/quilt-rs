@@ -806,29 +806,51 @@ async fn refresh_roles_flushes_when_the_role_changed_mid_session() -> Res {
 
 /// A flush that fails must not leave the session claiming the new role —
 /// otherwise every later observation reports "unchanged" and the stale
-/// credentials survive the whole session. After a failure the host drops
-/// back to role-unknown, so the next call retries the flush.
+/// credentials survive the whole session with no way back.
+///
+/// The fault is injected by putting a *directory* where the credentials
+/// file belongs: `delete_credentials` tolerates `NotFound` but propagates
+/// anything else, so `remove_file` on a directory drives the one fallible
+/// branch the rollback exists to guard. Both `refresh_roles` calls observe
+/// the same role, so only a genuine rollback — not the changed-role
+/// branch — can make the second one flush.
 #[test(tokio::test)]
 async fn a_failed_flush_leaves_the_role_unknown_so_the_next_call_retries() -> Res {
     let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
-    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+    let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
+    let creds_path = paths.auth_host(&host).join(crate::paths::AUTH_CREDENTIALS);
 
-    // Simulate the flush failing by rolling back directly: reconcile_role's
-    // recovery path is what we are pinning, not the filesystem fault itself.
+    // Replace the credentials file with a directory so the delete fails.
+    storage.remove_file(&creds_path).await?;
+    storage.create_dir_all(&creds_path).await?;
+
+    let failed = auth
+        .refresh_roles(&GraphQlTestHttpClient::default(), &host)
+        .await;
     assert!(
-        auth.observe_role(&host, "ReadWrite"),
-        "first observation must report a change"
+        failed.is_err(),
+        "the flush must fail and surface, got: {failed:?}"
     );
-    auth.forget_role(&host);
 
-    // Because the baseline was rolled back, this must flush again rather
-    // than concluding the role is unchanged.
+    // Clear the fault and leave real old-role credentials behind.
+    storage.remove_dir_all(&creds_path).await?;
+    auth_io
+        .write_credentials(&Credentials {
+            access_key: "stale-old-role".to_string(),
+            secret_key: "stale-old-role".to_string(),
+            token: "stale-old-role".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+    // Same role as before: without the rollback the baseline still claims
+    // it, this reports "unchanged", and the stale credentials survive.
     auth.refresh_roles(&GraphQlTestHttpClient::default(), &host)
         .await?;
 
     assert!(
         auth_io.read_credentials().await?.is_none(),
-        "after a rolled-back flush the next observation must retry it"
+        "a failed flush must roll the role back so the next call retries it"
     );
     Ok(())
 }
