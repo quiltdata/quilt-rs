@@ -13,7 +13,7 @@
 
 ### Added
 
-- Role support on `Auth`: read the available roles and the active one, switch it, and list the buckets it can read, with cached S3 credentials expiring on any observed role change so the next operation re-vends under the current role while the signed-in session is kept, and S3 access denials now surfacing distinctly from other storage failures (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+- Role support on `Auth`: read the available roles and the active one, switch it, and list the buckets it can read, with the on-disk S3 credentials expiring on any observed role change — so a caller that also drops its cached S3 clients re-vends under the current role while the signed-in session is kept — and object reads now reporting an access denial distinctly from other storage failures (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
 
 ## [v0.34.0-alpha3] - 2026-07-22
 
