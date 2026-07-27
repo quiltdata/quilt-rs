@@ -12,6 +12,7 @@ use crate::error::Error;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
+use quilt_rs::RoleInfo;
 use quilt_rs::flow::PullOutcome;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
@@ -447,6 +448,71 @@ impl Model {
             .await
             .get_remote()
             .clear_client_cache(host);
+    }
+
+    /// Read the active role for `host`.
+    #[expect(
+        dead_code,
+        reason = "plumbing for the role UI; drop this attribute with the first caller"
+    )]
+    pub async fn refresh_roles(&self, host: &Host) -> Result<RoleInfo, Error> {
+        Ok(self
+            .quilt
+            .lock()
+            .await
+            .get_remote()
+            .refresh_roles(host)
+            .await?)
+    }
+
+    /// Switch the primary role. The caller **must** follow this with
+    /// [`Model::clear_remote_client_cache`] for the same host — expiring
+    /// the stored credentials does not touch a cached client's own
+    /// in-memory copy, so without it the old role keeps signing.
+    #[expect(
+        dead_code,
+        reason = "plumbing for the role UI; drop this attribute with the first caller"
+    )]
+    pub async fn switch_role(&self, host: &Host, role_name: &str) -> Result<RoleInfo, Error> {
+        Ok(self
+            .quilt
+            .lock()
+            .await
+            .get_remote()
+            .switch_role(host, role_name)
+            .await?)
+    }
+
+    /// Buckets the active role can read; an optimistic hint, not an
+    /// authoritative answer.
+    #[expect(
+        dead_code,
+        reason = "plumbing for the role UI; drop this attribute with the first caller"
+    )]
+    pub async fn readable_buckets(&self, host: &Host) -> Result<Vec<String>, Error> {
+        Ok(self
+            .quilt
+            .lock()
+            .await
+            .get_remote()
+            .readable_buckets(host)
+            .await?)
+    }
+
+    /// Expire `host`'s cached STS credentials without logging out. Pair it
+    /// with [`Model::clear_remote_client_cache`] — see [`Model::switch_role`].
+    #[expect(
+        dead_code,
+        reason = "plumbing for the role UI; drop this attribute with the first caller"
+    )]
+    pub async fn expire_credentials(&self, host: &Host) -> Result<(), Error> {
+        Ok(self
+            .quilt
+            .lock()
+            .await
+            .get_remote()
+            .expire_credentials(host)
+            .await?)
     }
 }
 

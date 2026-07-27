@@ -21,6 +21,7 @@ use crate::Error;
 use crate::Res;
 use crate::auth;
 use crate::auth::OAuthParams;
+use crate::auth::RoleInfo;
 use crate::error::LoginError;
 use crate::error::RemoteCatalogError;
 use crate::error::S3Error;
@@ -221,6 +222,40 @@ impl RemoteS3 {
         self.auth
             .get_or_register_client(&self.http, host, redirect_uri)
             .await
+    }
+
+    /// Read the active role and reconcile the credential cache.
+    ///
+    /// See [`Auth::refresh_roles`] for the flush contract — in particular
+    /// that expiring credentials does not invalidate this remote's cached
+    /// S3 clients. Callers that hold a client cache must clear it too.
+    ///
+    /// [`Auth::refresh_roles`]: crate::auth::Auth::refresh_roles
+    pub async fn refresh_roles(&self, host: &Host) -> Res<RoleInfo> {
+        self.auth.refresh_roles(&self.http, host).await
+    }
+
+    /// Make `role_name` the user's primary role.
+    ///
+    /// The change is server-side and global. Locally this expires the
+    /// host's cached credentials, but **not** this remote's cached S3
+    /// clients — call [`RemoteS3::clear_client_cache`] for `host`
+    /// afterwards or the old role keeps signing until its own expiry.
+    pub async fn switch_role(&self, host: &Host, role_name: &str) -> Res<RoleInfo> {
+        self.auth.switch_role(&self.http, host, role_name).await
+    }
+
+    /// The buckets the active role can read. An optimistic hint: it
+    /// over-reports for unmanaged roles and anonymous-access stacks, and
+    /// never distinguishes read from write.
+    pub async fn readable_buckets(&self, host: &Host) -> Res<Vec<String>> {
+        self.auth.readable_buckets(&self.http, host).await
+    }
+
+    /// Expire the host's cached STS credentials, keeping the login token.
+    /// Not sufficient alone — see [`RemoteS3::switch_role`].
+    pub async fn expire_credentials(&self, host: &Host) -> Res {
+        self.auth.expire_credentials(host).await
     }
 
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
@@ -991,6 +1026,39 @@ mod tests {
         // Clearing None empties everything.
         remote.clear_client_cache(None);
         assert!(remote.s3.read().unwrap().is_empty());
+    }
+
+    /// Never called: compiling these calls is the proof that the three
+    /// networked role delegations exist on `RemoteS3` with these shapes.
+    /// They cannot be driven here — each one talks to a registry.
+    async fn role_api_shapes(remote: &RemoteS3, host: &Host) -> Res<()> {
+        let _: RoleInfo = remote.refresh_roles(host).await?;
+        let _: RoleInfo = remote.switch_role(host, "ReadOnly").await?;
+        let _: Vec<String> = remote.readable_buckets(host).await?;
+        Ok(())
+    }
+
+    /// The delegations must pass the remote's own http client through to
+    /// `Auth`, the same way `login` does — otherwise the role calls cannot
+    /// reach the registry at all. `expire_credentials` needs no network, so
+    /// it is the one we can actually drive.
+    #[test(tokio::test)]
+    async fn remote_exposes_the_role_api() -> Res<()> {
+        use std::str::FromStr;
+
+        use tempfile::TempDir;
+
+        let _ = role_api_shapes;
+
+        let temp = TempDir::new()?;
+        let remote = RemoteS3::new(
+            DomainPaths::new(temp.path().to_path_buf()),
+            LocalStorage::new(),
+        );
+        let host = Host::from_str("catalog.example.com").unwrap();
+
+        remote.expire_credentials(&host).await?;
+        Ok(())
     }
 
     /// When storage holds valid credentials, the provider must surface them
