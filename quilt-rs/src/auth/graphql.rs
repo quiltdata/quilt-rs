@@ -22,6 +22,15 @@ use quilt_uri::Host;
 
 const ME_QUERY: &str = "query { me { role { name } roles { name } } }";
 
+const SWITCH_ROLE_MUTATION: &str = "\
+mutation($roleName: String!) { \
+switchRole(roleName: $roleName) { \
+__typename \
+... on Me { role { name } roles { name } } \
+... on InvalidInput { errors { message } } \
+... on OperationError { message } \
+} }";
+
 #[derive(Serialize)]
 struct GraphQlRequest<'a, V: Serialize> {
     query: &'a str,
@@ -105,6 +114,68 @@ pub(super) async fn query_me(
         .map_err(Into::into)
 }
 
+#[derive(Serialize)]
+struct SwitchRoleVariables<'a> {
+    #[serde(rename = "roleName")]
+    role_name: &'a str,
+}
+
+/// `union SwitchRoleResult = Me | InvalidInput | OperationError`, discriminated
+/// on `__typename`. Both failure arms collapse to one client-facing error —
+/// the distinction between "bad role name" and "server refused" is not
+/// actionable differently in the UI.
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum SwitchRoleResult {
+    Me(Me),
+    InvalidInput { errors: Vec<InputError> },
+    OperationError { message: String },
+}
+
+#[derive(Deserialize)]
+struct InputError {
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct SwitchRoleData {
+    #[serde(rename = "switchRole")]
+    switch_role: SwitchRoleResult,
+}
+
+/// Unlike [`query_me`], no `host` param: the result is non-null and the union
+/// has no unauthenticated arm, so there is no catalog host to name.
+pub(super) async fn mutate_switch_role(
+    http_client: &impl HttpClient,
+    registry: &url::Host,
+    role_name: &str,
+    access_token: &str,
+) -> Res<Me> {
+    let data: SwitchRoleData = execute(
+        http_client,
+        registry,
+        SWITCH_ROLE_MUTATION,
+        SwitchRoleVariables { role_name },
+        access_token,
+    )
+    .await?;
+
+    match data.switch_role {
+        SwitchRoleResult::Me(me) => Ok(me),
+        SwitchRoleResult::InvalidInput { errors } => {
+            let joined = errors
+                .into_iter()
+                .map(|e| e.message)
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(RoleError::SwitchRejected(joined).into())
+        }
+        SwitchRoleResult::OperationError { message } => {
+            Err(RoleError::SwitchRejected(message).into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +230,55 @@ mod tests {
         assert!(
             matches!(&err, Error::Role(RoleError::GraphQl(m)) if m.contains("deprecated")),
             "expected GraphQl error, got {err:?}"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn switch_role_returns_the_new_active_role() -> Res {
+        let client = GraphQlTestHttpClient::default();
+        let me =
+            mutate_switch_role(&client, &get_registry_host(), "ReadOnly", ACCESS_TOKEN).await?;
+
+        assert_eq!(me.role.name, "ReadOnly");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn switch_role_maps_invalid_input_to_switch_rejected() {
+        let client = GraphQlTestHttpClient {
+            switch_result: serde_json::json!({
+                "__typename": "InvalidInput",
+                "errors": [{"message": "no such role", "name": "InvalidRole"}],
+            }),
+            ..GraphQlTestHttpClient::default()
+        };
+        let err = mutate_switch_role(&client, &get_registry_host(), "Nope", ACCESS_TOKEN)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Role(RoleError::SwitchRejected(m)) if m.contains("no such role")),
+            "expected SwitchRejected, got {err:?}"
+        );
+    }
+
+    #[test(tokio::test)]
+    async fn switch_role_maps_operation_error_to_switch_rejected() {
+        let client = GraphQlTestHttpClient {
+            switch_result: serde_json::json!({
+                "__typename": "OperationError",
+                "message": "role is locked by SSO",
+                "name": "RoleLocked",
+            }),
+            ..GraphQlTestHttpClient::default()
+        };
+        let err = mutate_switch_role(&client, &get_registry_host(), "ReadWrite", ACCESS_TOKEN)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Role(RoleError::SwitchRejected(m)) if m.contains("locked")),
+            "expected SwitchRejected, got {err:?}"
         );
     }
 }
