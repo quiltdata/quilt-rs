@@ -478,6 +478,9 @@ mod tests {
     use test_log::test;
 
     use std::io::Write;
+
+    use async_trait::async_trait;
+    use reqwest::header::HeaderMap;
     use tempfile::NamedTempFile;
 
     use crate::fixtures::objects::LESS_THAN_8MB_HASH_B64;
@@ -720,76 +723,79 @@ mod tests {
         Ok(())
     }
 
+    /// Serves a stack config plus freshly minted STS credentials, so the
+    /// credentials-refresh path can be exercised without a live registry.
+    #[derive(Clone, Debug)]
+    struct RefreshMock {
+        refreshed_access_key: String,
+    }
+
+    #[async_trait]
+    impl HttpClient for RefreshMock {
+        async fn get<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            auth_token: Option<&str>,
+        ) -> Res<T> {
+            if url.ends_with("/config.json") {
+                let body = serde_json::json!({
+                    "registryUrl": "https://registry.example.com",
+                });
+                return Ok(serde_json::from_value(body)?);
+            }
+            if url.contains("/api/auth/get_credentials") {
+                assert_eq!(auth_token, Some("fresh-access-token"));
+                let body = serde_json::json!({
+                    "AccessKeyId": self.refreshed_access_key,
+                    "SecretAccessKey": "refreshed-secret",
+                    "SessionToken": "refreshed-session",
+                    "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
+                        .to_rfc3339(),
+                });
+                return Ok(serde_json::from_value(body)?);
+            }
+            panic!("unexpected GET: {url}");
+        }
+        async fn head(&self, _url: &str) -> Res<HeaderMap> {
+            unimplemented!("head not used")
+        }
+        async fn post<T: serde::de::DeserializeOwned>(
+            &self,
+            _url: &str,
+            _form_data: &HashMap<String, String>,
+        ) -> Res<T> {
+            unimplemented!("fresh tokens → no token refresh")
+        }
+        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+        ) -> Res<T> {
+            unimplemented!("post_json not used")
+        }
+        async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+            _auth_token: &str,
+        ) -> Res<T> {
+            unimplemented!("post_json_auth not used")
+        }
+    }
+
     /// The core of the `ExpiredToken` fix: when on-disk credentials are
     /// expired but the access token is still fresh, `provide_credentials`
     /// must call the registry to mint new STS creds and return *those*,
     /// not the stale on-disk ones.
     #[test(tokio::test)]
     async fn test_quilt_credentials_provider_refreshes_when_expired() -> Res<()> {
-        use std::collections::HashMap;
         use std::str::FromStr;
 
-        use async_trait::async_trait;
-        use reqwest::header::HeaderMap;
         use tempfile::TempDir;
 
-        use crate::io::remote::HttpClient;
         use crate::io::storage::auth::AuthIo;
         use crate::io::storage::auth::Credentials as QuiltCreds;
         use crate::io::storage::auth::Tokens;
-
-        #[derive(Clone, Debug)]
-        struct RefreshMock {
-            refreshed_access_key: String,
-        }
-
-        #[async_trait]
-        impl HttpClient for RefreshMock {
-            async fn get<T: serde::de::DeserializeOwned>(
-                &self,
-                url: &str,
-                auth_token: Option<&str>,
-            ) -> Res<T> {
-                if url.ends_with("/config.json") {
-                    let body = serde_json::json!({
-                        "registryUrl": "https://registry.example.com",
-                    });
-                    return Ok(serde_json::from_value(body)?);
-                }
-                if url.contains("/api/auth/get_credentials") {
-                    assert_eq!(auth_token, Some("fresh-access-token"));
-                    let body = serde_json::json!({
-                        "AccessKeyId": self.refreshed_access_key,
-                        "SecretAccessKey": "refreshed-secret",
-                        "SessionToken": "refreshed-session",
-                        "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
-                            .to_rfc3339(),
-                    });
-                    return Ok(serde_json::from_value(body)?);
-                }
-                panic!("unexpected GET: {url}");
-            }
-            async fn head(&self, _url: &str) -> Res<HeaderMap> {
-                unimplemented!("head not used")
-            }
-            async fn post<T: serde::de::DeserializeOwned>(
-                &self,
-                _url: &str,
-                _form_data: &HashMap<String, String>,
-            ) -> Res<T> {
-                unimplemented!("fresh tokens → no token refresh")
-            }
-            async fn post_json<
-                T: serde::de::DeserializeOwned,
-                B: serde::Serialize + Send + Sync,
-            >(
-                &self,
-                _url: &str,
-                _body: &B,
-            ) -> Res<T> {
-                unimplemented!("post_json not used")
-            }
-        }
 
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());

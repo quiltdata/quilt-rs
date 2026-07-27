@@ -35,6 +35,12 @@ pub trait HttpClient: Send + Sync {
         url: &str,
         body: &B,
     ) -> Res<T>;
+    async fn post_json_auth<T: DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        body: &B,
+        auth_token: &str,
+    ) -> Res<T>;
 }
 
 #[derive(Clone, Debug)]
@@ -220,6 +226,25 @@ impl HttpClient for ReqwestClient {
         .await?;
         Ok(response.json().await?)
     }
+
+    async fn post_json_auth<T: DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        body: &B,
+        auth_token: &str,
+    ) -> Res<T> {
+        let response = ensure_success(
+            self.client
+                .post(url)
+                .header("User-Agent", USER_AGENT)
+                .bearer_auth(auth_token)
+                .json(body)
+                .send()
+                .await?,
+        )
+        .await?;
+        Ok(response.json().await?)
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +272,59 @@ mod tests {
         // Check that the config.js contains the QUILT_CATALOG_CONFIG string
         assert_eq!(response.mode, "OPEN");
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn post_json_auth_sends_bearer_token_and_json_body() -> Res {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let captured = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            let body = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                         Content-Length: 14\r\nConnection: close\r\n\r\n{\"ok\":\"yes\"}\n\n";
+            stream.write_all(&body[..]).await.unwrap();
+            stream.shutdown().await.unwrap();
+            request
+        });
+
+        #[derive(Deserialize)]
+        struct Reply {
+            ok: String,
+        }
+
+        #[derive(Serialize)]
+        struct Body {
+            query: String,
+        }
+
+        let client = ReqwestClient::new();
+        let reply: Reply = client
+            .post_json_auth(
+                &format!("http://{addr}/graphql"),
+                &Body {
+                    query: "{ me { name } }".to_string(),
+                },
+                "test-token",
+            )
+            .await?;
+
+        assert_eq!(reply.ok, "yes");
+        let request = captured.await.unwrap().to_lowercase();
+        assert!(
+            request.contains("authorization: bearer test-token"),
+            "bearer token missing from request: {request}"
+        );
+        assert!(
+            request.contains("content-type: application/json"),
+            "json content-type missing from request: {request}"
+        );
         Ok(())
     }
 

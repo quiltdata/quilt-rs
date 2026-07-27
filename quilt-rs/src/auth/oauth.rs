@@ -398,6 +398,17 @@ mod tests {
             ) -> Res<T> {
                 unimplemented!()
             }
+            async fn post_json_auth<
+                T: serde::de::DeserializeOwned,
+                B: serde::Serialize + Send + Sync,
+            >(
+                &self,
+                _: &str,
+                _: &B,
+                _: &str,
+            ) -> Res<T> {
+                unimplemented!()
+            }
         }
 
         let tokens =
@@ -446,6 +457,17 @@ mod tests {
                 &self,
                 _: &str,
                 _: &B,
+            ) -> Res<T> {
+                unimplemented!()
+            }
+            async fn post_json_auth<
+                T: serde::de::DeserializeOwned,
+                B: serde::Serialize + Send + Sync,
+            >(
+                &self,
+                _: &str,
+                _: &B,
+                _: &str,
             ) -> Res<T> {
                 unimplemented!()
             }

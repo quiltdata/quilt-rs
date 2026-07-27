@@ -98,6 +98,15 @@ impl HttpClient for TestHttpClient {
     ) -> Res<T> {
         unimplemented!("post_json is not used in this test")
     }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _url: &str,
+        _body: &B,
+        _auth_token: &str,
+    ) -> Res<T> {
+        unimplemented!("post_json_auth is not used in this test")
+    }
 }
 
 pub(super) struct OAuthTestHttpClient {
@@ -200,6 +209,15 @@ impl HttpClient for OAuthTestHttpClient {
         Ok(serde_json::from_value(serde_json::json!({
             "client_id": "test-dcr-client-id"
         }))?)
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _url: &str,
+        _body: &B,
+        _auth_token: &str,
+    ) -> Res<T> {
+        unimplemented!("post_json_auth is not used in this test")
     }
 }
 

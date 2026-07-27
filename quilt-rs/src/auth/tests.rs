@@ -226,6 +226,15 @@ impl HttpClient for RetryMockClient {
     ) -> Res<T> {
         unimplemented!()
     }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _url: &str,
+        _body: &B,
+        _auth_token: &str,
+    ) -> Res<T> {
+        unimplemented!()
+    }
 }
 
 async fn seed_fresh_tokens(storage: &Arc<MockStorage>, paths: &DomainPaths, host: &Host) {
@@ -412,6 +421,15 @@ impl HttpClient for CountingCredsClient {
         &self,
         _: &str,
         _: &B,
+    ) -> Res<T> {
+        unimplemented!()
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _: &str,
+        _: &B,
+        _: &str,
     ) -> Res<T> {
         unimplemented!()
     }
