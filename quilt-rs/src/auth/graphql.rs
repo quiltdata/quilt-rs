@@ -176,6 +176,33 @@ pub(super) async fn mutate_switch_role(
     }
 }
 
+/// `buckets` — the role-scoped list. Deliberately **not** `bucketConfigs`,
+/// which is the admin-bypass list and would report buckets the active role
+/// cannot reach. Read-presence only: it never distinguishes READ from
+/// `READ_WRITE`, and on `ALLOW_ANONYMOUS_ACCESS` stacks or under an unmanaged
+/// role it returns every in-stack bucket, so callers must treat it as an
+/// optimistic hint rather than an authoritative access answer.
+const BUCKETS_QUERY: &str = "query { buckets { name } }";
+
+#[derive(Deserialize)]
+struct BucketName {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct BucketsData {
+    buckets: Vec<BucketName>,
+}
+
+pub(super) async fn query_buckets(
+    http_client: &impl HttpClient,
+    registry: &url::Host,
+    access_token: &str,
+) -> Res<Vec<String>> {
+    let data: BucketsData = execute(http_client, registry, BUCKETS_QUERY, (), access_token).await?;
+    Ok(data.buckets.into_iter().map(|b| b.name).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +307,29 @@ mod tests {
             matches!(&err, Error::Role(RoleError::SwitchRejected(m)) if m.contains("locked")),
             "expected SwitchRejected, got {err:?}"
         );
+    }
+
+    #[test(tokio::test)]
+    async fn query_buckets_returns_role_scoped_bucket_names() -> Res {
+        let client = GraphQlTestHttpClient {
+            buckets: vec!["readable-one", "readable-two"],
+            ..GraphQlTestHttpClient::default()
+        };
+        let buckets = query_buckets(&client, &get_registry_host(), ACCESS_TOKEN).await?;
+
+        assert_eq!(buckets, vec!["readable-one", "readable-two"]);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn query_buckets_returns_empty_when_the_role_reaches_nothing() -> Res {
+        let client = GraphQlTestHttpClient {
+            buckets: vec![],
+            ..GraphQlTestHttpClient::default()
+        };
+        let buckets = query_buckets(&client, &get_registry_host(), ACCESS_TOKEN).await?;
+
+        assert!(buckets.is_empty());
+        Ok(())
     }
 }
