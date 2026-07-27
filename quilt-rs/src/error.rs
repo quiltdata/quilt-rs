@@ -100,6 +100,18 @@ pub enum AuthError {
 }
 
 #[derive(Error, Debug, PartialEq)]
+pub enum RoleError {
+    #[error("Not authenticated with {0}")]
+    NotAuthenticated(Host),
+
+    #[error("Registry rejected the request: {0}")]
+    GraphQl(String),
+
+    #[error("Role switch rejected: {0}")]
+    SwitchRejected(String),
+}
+
+#[derive(Error, Debug, PartialEq)]
 pub enum InstallPackageError {
     #[error("The package {0} is already installed")]
     AlreadyInstalled(Namespace),
@@ -294,6 +306,9 @@ pub enum Error {
 
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
+
+    #[error(transparent)]
+    Role(#[from] RoleError),
 
     #[error(transparent)]
     RemoteCatalog(#[from] RemoteCatalogError),

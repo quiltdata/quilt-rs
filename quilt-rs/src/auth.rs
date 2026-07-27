@@ -32,6 +32,7 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+mod graphql;
 mod oauth;
 mod registry;
 mod retry;

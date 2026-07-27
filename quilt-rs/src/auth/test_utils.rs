@@ -30,6 +30,115 @@ pub(super) fn get_registry() -> String {
     "registry-test.quilt.dev".to_string()
 }
 
+pub(super) fn get_registry_host() -> url::Host {
+    url::Host::Domain(get_registry())
+}
+
+/// Serves the three role GraphQL operations. Each flag flips one response
+/// into a failure mode so the decoding paths can be exercised without a
+/// live registry.
+pub(super) struct GraphQlTestHttpClient {
+    pub(super) me_is_null: bool,
+    pub(super) top_level_error: Option<String>,
+    pub(super) switch_result: serde_json::Value,
+    pub(super) buckets: Vec<&'static str>,
+}
+
+impl Default for GraphQlTestHttpClient {
+    fn default() -> Self {
+        Self {
+            me_is_null: false,
+            top_level_error: None,
+            switch_result: serde_json::json!({
+                "__typename": "Me",
+                "role": {"name": "ReadOnly"},
+                "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
+            }),
+            buckets: vec!["bucket-a", "bucket-b"],
+        }
+    }
+}
+
+impl GraphQlTestHttpClient {
+    fn me_payload(&self) -> serde_json::Value {
+        if self.me_is_null {
+            return serde_json::Value::Null;
+        }
+        serde_json::json!({
+            "role": {"name": "ReadWrite"},
+            "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
+        })
+    }
+}
+
+#[async_trait]
+impl HttpClient for GraphQlTestHttpClient {
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        _url: &str,
+        _auth_token: Option<&str>,
+    ) -> Res<T> {
+        unimplemented!("get is not used in this test")
+    }
+
+    async fn head(&self, _url: &str) -> Res<HeaderMap> {
+        unimplemented!("head is not used in this test")
+    }
+
+    async fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        _url: &str,
+        _form_data: &HashMap<String, String>,
+    ) -> Res<T> {
+        unimplemented!("post is not used in this test")
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _url: &str,
+        _body: &B,
+    ) -> Res<T> {
+        unimplemented!("post_json is not used in this test")
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        body: &B,
+        auth_token: &str,
+    ) -> Res<T> {
+        assert_eq!(url, format!("https://{}/graphql", get_registry()));
+        assert_eq!(auth_token, ACCESS_TOKEN);
+
+        if let Some(message) = &self.top_level_error {
+            return Ok(serde_json::from_value(serde_json::json!({
+                "errors": [{"message": message}],
+            }))?);
+        }
+
+        let query = serde_json::to_value(body)?["query"]
+            .as_str()
+            .expect("query field")
+            .to_string();
+
+        let data = if query.contains("switchRole") {
+            serde_json::json!({"switchRole": self.switch_result})
+        } else if query.contains("buckets") {
+            serde_json::json!({
+                "buckets": self
+                    .buckets
+                    .iter()
+                    .map(|name| serde_json::json!({"name": name}))
+                    .collect::<Vec<_>>(),
+            })
+        } else {
+            serde_json::json!({"me": self.me_payload()})
+        };
+
+        Ok(serde_json::from_value(serde_json::json!({"data": data}))?)
+    }
+}
+
 pub(super) const AUTH_CODE: &str = "test-auth-code";
 pub(super) const CODE_VERIFIER: &str = "test-code-verifier-that-is-at-least-43-characters-long";
 pub(super) const CLIENT_ID: &str = "test-client-id";

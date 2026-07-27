@@ -44,6 +44,7 @@ pub use error::LoginError;
 pub use error::ManifestError;
 pub use error::PackageOpError;
 pub use error::RemoteCatalogError;
+pub use error::RoleError;
 pub use error::S3Error;
 pub use error::S3ErrorKind;
 pub use installed_package::InstalledPackage;
