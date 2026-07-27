@@ -57,6 +57,7 @@ use registry::refresh_credentials;
 use retry::classify_retry_outcome;
 use retry::http_status;
 use retry::is_credentials_auth_error;
+use retry::is_role_auth_error;
 use retry::is_token_auth_error;
 
 #[cfg(test)]
@@ -77,6 +78,10 @@ mod tests;
 /// on the next lookup. This matters for long-running server contexts
 /// that may authenticate against many distinct hosts.
 type RefreshLocks = Arc<StdMutex<HashMap<Host, Weak<AsyncMutex<()>>>>>;
+
+/// Endpoint label for the role-surface retry logs. All three role calls
+/// share one registry endpoint, so they share one name.
+const ROLE_ENDPOINT: &str = "registry GraphQL endpoint";
 
 /// Per-host record of the active role observed *this session*. Purely
 /// in-memory and never persisted: its absence for a host is meaningful —
@@ -390,7 +395,32 @@ impl<S: Storage + Send + Sync> Auth<S> {
             host, first_err
         );
 
-        // Force-refresh the access token, bypassing the 60s proactive check.
+        let access_token = self
+            .force_refresh_access_token(http_client, auth_io, host)
+            .await?;
+
+        classify_retry_outcome(
+            self.refresh_credentials(http_client, host, &access_token)
+                .await,
+            is_credentials_auth_error,
+            "credentials endpoint",
+            host,
+        )
+    }
+
+    /// Mint a new access token unconditionally, bypassing the 60s proactive
+    /// window [`Auth::valid_access_token`] checks.
+    ///
+    /// Used on the retry leg of an auth failure: the server has already told
+    /// us it does not accept the token we hold, so re-reading the same one
+    /// would only reproduce the failure. Rotates and persists the refresh
+    /// token, so callers must already hold this host's refresh lock.
+    async fn force_refresh_access_token<T: HttpClient>(
+        &self,
+        http_client: &T,
+        auth_io: &AuthIo<Arc<S>>,
+        host: &Host,
+    ) -> Res<String> {
         let tokens = auth_io
             .read_tokens()
             .await?
@@ -398,14 +428,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let new_tokens = self
             .refresh_tokens_with_retry(http_client, auth_io, host, &tokens)
             .await?;
-
-        classify_retry_outcome(
-            self.refresh_credentials(http_client, host, &new_tokens.access_token)
-                .await,
-            is_credentials_auth_error,
-            "credentials endpoint",
-            host,
-        )
+        Ok(new_tokens.access_token)
     }
 
     async fn refresh_credentials<T: HttpClient>(
@@ -428,10 +451,44 @@ impl<S: Storage + Send + Sync> Auth<S> {
     }
 
     /// Expire this host's cached STS credentials once, keeping the login
-    /// token. Narrower than logout: the session survives and the next
-    /// operation re-vends, picking up whatever role the server now
-    /// considers primary.
+    /// token. Narrower than logout: the session survives, and once the
+    /// caller has done its half of the contract below, the next operation
+    /// re-vends under whatever role the server now considers primary.
+    ///
+    /// # This is only half of a credential flush
+    ///
+    /// Deleting the on-disk credentials is **not sufficient on its own**.
+    /// Any `aws_sdk_s3::Client` that was already built holds its own
+    /// in-memory identity cache (`IdentityCache::lazy()`, installed by
+    /// `aws_config::defaults`), which keeps the *previously vended* STS
+    /// credentials until they approach their own expiry — up to about an
+    /// hour. Such a client never re-reads this file, so it keeps signing
+    /// under the old role no matter what happens on disk.
+    ///
+    /// Callers **must** therefore also call
+    /// [`RemoteS3::clear_client_cache(Some(host))`] for the same host, or
+    /// the old role stays in force until its natural expiry. `Auth` cannot
+    /// do this itself: it does not own the S3 client cache, and the two are
+    /// composed a layer up.
+    ///
+    /// [`RemoteS3::clear_client_cache(Some(host))`]: crate::io::remote::RemoteS3::clear_client_cache
+    ///
+    /// # Locking
+    ///
+    /// Takes this host's refresh lock, so a vend already in flight cannot
+    /// write old-role credentials back over the gap. Internal callers that
+    /// already hold the lock use the private `expire_credentials_locked`
+    /// instead — the lock is not reentrant.
     pub async fn expire_credentials(&self, host: &Host) -> Res {
+        let lock = self.refresh_lock_for(host);
+        let _guard = lock.lock().await;
+        self.expire_credentials_locked(host).await
+    }
+
+    /// [`Auth::expire_credentials`] without the lock, for callers already
+    /// holding this host's refresh lock. Carries the same "clear the S3
+    /// client cache too" obligation — see that method's docs.
+    async fn expire_credentials_locked(&self, host: &Host) -> Res {
         info!("⏳ Expiring cached credentials for {}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.delete_credentials().await?;
@@ -472,7 +529,9 @@ impl<S: Storage + Send + Sync> Auth<S> {
     ///
     /// Callers must hold this host's refresh lock: the delete has to be
     /// serialized against an in-flight vend, which would otherwise write
-    /// old-role credentials to disk after we removed them.
+    /// old-role credentials to disk after we removed them. That is also why
+    /// this calls [`Auth::expire_credentials_locked`] and not the public,
+    /// self-locking [`Auth::expire_credentials`] — the lock is not reentrant.
     async fn reconcile_role(&self, host: &Host, role: &str) -> Res {
         if !self.observe_role(host, role) {
             return Ok(());
@@ -482,7 +541,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
             "⚠️ Active role for {} is {}, flushing credentials",
             host, role
         );
-        self.expire_credentials(host).await.inspect_err(|_| {
+        self.expire_credentials_locked(host).await.inspect_err(|_| {
             warn!(
                 "❌ Flush for {} failed; keeping the role unknown so the next \
                  observation retries",
@@ -516,9 +575,74 @@ impl<S: Storage + Send + Sync> Auth<S> {
         Ok(tokens.access_token)
     }
 
+    /// Everything a role-surface call needs before it can be made: the
+    /// registry host to talk to, and a locally-valid access token.
+    ///
+    /// Callers must already hold this host's refresh lock — resolving the
+    /// token may rotate and persist the refresh token.
+    async fn role_call_context<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+    ) -> Res<(url::Host, String)> {
+        let access_token = self.valid_access_token(http_client, host).await?;
+        let registry = get_registry_url(http_client, host).await?;
+        Ok((registry, access_token))
+    }
+
+    /// Second half of the role-surface retry policy: given the error a role
+    /// call just failed with, either mint a fresh access token to retry with
+    /// or hand the error straight back.
+    ///
+    /// Locally-valid-but-revoked tokens are the case this exists for. The
+    /// 60s proactive window in [`Auth::valid_access_token`] cannot see a
+    /// session dropped server-side, so without a forced refresh the role
+    /// surface would report a bare transport error and never self-heal —
+    /// the same reasoning as [`Auth::refresh_credentials_with_retry`], whose
+    /// machinery ([`classify_retry_outcome`]) the callers reuse for the
+    /// second attempt.
+    ///
+    /// Callers must already hold this host's refresh lock; the lock is not
+    /// reentrant.
+    async fn role_retry_token<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        first_err: Error,
+    ) -> Res<String> {
+        if !is_role_auth_error(&first_err) {
+            return Err(first_err);
+        }
+
+        info!(
+            status = ?http_status(&first_err),
+            "⚠️ Auth error on the role surface for {}, \
+             force-refreshing token and retrying: {}",
+            host, first_err
+        );
+
+        let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
+        self.force_refresh_access_token(http_client, &auth_io, host)
+            .await
+    }
+
     /// Read the active role from the registry and reconcile the local
     /// credential cache with it. Any observed change expires this host's
-    /// credentials so the next operation re-vends under the current role.
+    /// on-disk credentials.
+    ///
+    /// # The flush is only half done when this returns
+    ///
+    /// Expiring the on-disk credentials is **not sufficient on its own** to
+    /// put the new role into force: an `aws_sdk_s3::Client` that already
+    /// exists keeps its own in-memory identity cache and goes on signing
+    /// with the old role's STS credentials for up to about an hour. The
+    /// caller **must** also call [`RemoteS3::clear_client_cache(Some(host))`]
+    /// whenever the returned role differs from the one it last saw — only
+    /// then does the next operation actually re-vend under the current role.
+    ///
+    /// [`RemoteS3::clear_client_cache(Some(host))`]: crate::io::remote::RemoteS3::clear_client_cache
+    ///
+    /// # Locking
     ///
     /// Runs under this host's refresh lock, which buys two things: the token
     /// refresh cannot race a concurrent vend into rotating the stored refresh
@@ -532,9 +656,19 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let lock = self.refresh_lock_for(host);
         let _guard = lock.lock().await;
 
-        let access_token = self.valid_access_token(http_client, host).await?;
-        let registry = get_registry_url(http_client, host).await?;
-        let me = query_me(http_client, &registry, host, &access_token).await?;
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        let me = match query_me(http_client, &registry, host, &access_token).await {
+            Ok(me) => me,
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    query_me(http_client, &registry, host, &retry_token).await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )?
+            }
+        };
 
         self.reconcile_role(host, &me.role.name).await?;
 
@@ -542,8 +676,25 @@ impl<S: Storage + Send + Sync> Auth<S> {
     }
 
     /// Make `role_name` the user's primary role. The change is server-side
-    /// and global across all of that user's sessions; locally we only have
-    /// to expire the cached credentials so the next vend re-scopes.
+    /// and global across all of that user's sessions; locally we expire the
+    /// cached credentials so the next vend re-scopes.
+    ///
+    /// # The flush is only half done when this returns
+    ///
+    /// As with [`Auth::refresh_roles`], deleting the on-disk credentials is
+    /// **not sufficient on its own**: an already-built `aws_sdk_s3::Client`
+    /// holds its own in-memory identity cache and keeps signing under the
+    /// role that was active when it last vended — for up to about an hour,
+    /// no matter what this method removed from disk. Every caller of
+    /// `switch_role` **must** also call
+    /// [`RemoteS3::clear_client_cache(Some(host))`] for the same host;
+    /// otherwise the switch returns `Ok` while every subsequent S3 call
+    /// still runs as the old role. `Auth` cannot do it for you — it does
+    /// not own the client cache.
+    ///
+    /// [`RemoteS3::clear_client_cache(Some(host))`]: crate::io::remote::RemoteS3::clear_client_cache
+    ///
+    /// # Locking
     ///
     /// Holds this host's refresh lock for the same reasons as
     /// [`Auth::refresh_roles`] — most of all so a sync already vending
@@ -559,9 +710,19 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let lock = self.refresh_lock_for(host);
         let _guard = lock.lock().await;
 
-        let access_token = self.valid_access_token(http_client, host).await?;
-        let registry = get_registry_url(http_client, host).await?;
-        let me = mutate_switch_role(http_client, &registry, role_name, &access_token).await?;
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        let me = match mutate_switch_role(http_client, &registry, role_name, &access_token).await {
+            Ok(me) => me,
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    mutate_switch_role(http_client, &registry, role_name, &retry_token).await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )?
+            }
+        };
 
         // A switch always invalidates, even when the server reports the role
         // we were already on: dropping the baseline first makes the
@@ -576,8 +737,9 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// The buckets the active role can read. An optimistic hint, not an
     /// authoritative answer — see the doc comment on the `buckets` query.
     ///
-    /// Takes the refresh lock only because [`Auth::valid_access_token`] may
-    /// rotate the persisted refresh token; it flushes nothing itself.
+    /// Takes the refresh lock only because resolving the access token, and
+    /// the retry leg behind it, may rotate the persisted refresh token; it
+    /// flushes nothing itself.
     pub async fn readable_buckets<T: HttpClient>(
         &self,
         http_client: &T,
@@ -586,9 +748,19 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let lock = self.refresh_lock_for(host);
         let _guard = lock.lock().await;
 
-        let access_token = self.valid_access_token(http_client, host).await?;
-        let registry = get_registry_url(http_client, host).await?;
-        query_buckets(http_client, &registry, &access_token).await
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        match query_buckets(http_client, &registry, &access_token).await {
+            Ok(buckets) => Ok(buckets),
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    query_buckets(http_client, &registry, &retry_token).await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )
+            }
+        }
     }
 
     pub async fn get_credentials_or_refresh<T: HttpClient>(

@@ -699,7 +699,9 @@ async fn test_refresh_lock_map_sweeps_dead_entries() -> Res {
 }
 
 /// Build an `Auth` with tokens and credentials already on disk, so the
-/// role calls have something to flush.
+/// role calls have something to flush. The OAuth client is seeded too, so
+/// the retry path can force a token refresh instead of tripping over
+/// missing registration state.
 async fn auth_with_cached_credentials()
 -> Res<(Auth<MockStorage>, Arc<MockStorage>, DomainPaths, Host)> {
     let storage = Arc::new(MockStorage::default());
@@ -713,6 +715,12 @@ async fn auth_with_cached_credentials()
             access_token: ACCESS_TOKEN.to_string(),
             refresh_token: REFRESH_TOKEN.to_string(),
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
+    auth_io
+        .write_client(&OAuthClient {
+            client_id: CLIENT_ID.to_string(),
+            redirect_uri: REDIRECT_URI.to_string(),
         })
         .await?;
     auth_io
@@ -855,18 +863,213 @@ async fn a_failed_flush_leaves_the_role_unknown_so_the_next_call_retries() -> Re
     Ok(())
 }
 
+/// Observe a role first, so the switch — not the session's very first
+/// observation — is what does the flushing. Without the baseline this test
+/// would pass on the role-unknown rule alone and could not tell the two
+/// apart.
 #[test(tokio::test)]
 async fn switch_role_flushes_credentials_and_reports_the_new_role() -> Res {
     let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
-    let client = GraphQlTestHttpClient::default();
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
 
-    let roles = auth.switch_role(&client, &host, "ReadOnly").await?;
+    // Establish "ReadWrite" as the session baseline, then put credentials
+    // back so the switch has something of its own to flush.
+    auth.refresh_roles(&GraphQlTestHttpClient::default(), &host)
+        .await?;
+    auth_io
+        .write_credentials(&Credentials {
+            access_key: "readwrite-creds".to_string(),
+            secret_key: "readwrite-creds".to_string(),
+            token: "readwrite-creds".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+    let roles = auth
+        .switch_role(&GraphQlTestHttpClient::default(), &host, "ReadOnly")
+        .await?;
 
     assert_eq!(roles.current, "ReadOnly");
     assert!(
         auth_io.read_credentials().await?.is_none(),
         "a switch must expire the old role's credentials"
+    );
+    Ok(())
+}
+
+/// Re-asserting the role we are already on is the recovery move after a
+/// permissions change server-side, so it must flush like any other switch.
+/// `observe_role` alone reports "unchanged" here — only the deliberate
+/// baseline drop inside `switch_role` makes the flush happen.
+#[test(tokio::test)]
+async fn switch_role_to_the_role_already_active_still_flushes() -> Res {
+    let (auth, storage, paths, host) = auth_with_cached_credentials().await?;
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+
+    // Baseline: the session has observed "ReadWrite".
+    auth.refresh_roles(&GraphQlTestHttpClient::default(), &host)
+        .await?;
+    auth_io
+        .write_credentials(&Credentials {
+            access_key: "readwrite-creds".to_string(),
+            secret_key: "readwrite-creds".to_string(),
+            token: "readwrite-creds".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+    // The server reports the very same role back from the switch.
+    let same_role = GraphQlTestHttpClient {
+        switch_result: serde_json::json!({
+            "__typename": "Me",
+            "role": {"name": "ReadWrite"},
+            "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
+        }),
+        ..GraphQlTestHttpClient::default()
+    };
+    let roles = auth.switch_role(&same_role, &host, "ReadWrite").await?;
+
+    assert_eq!(roles.current, "ReadWrite");
+    assert!(
+        auth_io.read_credentials().await?.is_none(),
+        "a switch must invalidate even when the role did not change"
+    );
+    Ok(())
+}
+
+/// A session revoked server-side while the access token is still unexpired
+/// locally: nothing would think to refresh, so the role surface has to force
+/// it itself and retry, exactly as the credentials path does.
+#[test(tokio::test)]
+async fn refresh_roles_recovers_from_a_revoked_token_by_forcing_a_refresh() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        graphql_fail_first_n: 1,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let roles = auth.refresh_roles(&client, &host).await?;
+
+    assert_eq!(roles.current, "ReadWrite");
+    assert_eq!(
+        client.token_calls.load(Ordering::SeqCst),
+        1,
+        "the retry must force exactly one token refresh"
+    );
+    let tokens_seen = client
+        .tokens_seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    assert_eq!(
+        tokens_seen,
+        vec![ACCESS_TOKEN, REFRESHED_ACCESS_TOKEN],
+        "the retry must present the freshly minted token, not the rejected one"
+    );
+    Ok(())
+}
+
+/// When the refreshed token is refused too, the switcher must be told to log
+/// in again rather than handed a bare transport error it cannot act on.
+#[test(tokio::test)]
+async fn refresh_roles_maps_a_persistent_401_to_login_required() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        graphql_fail_first_n: usize::MAX,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let result = auth.refresh_roles(&client, &host).await;
+
+    assert!(
+        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        "expected LoginRequired after a persistent 401, got: {result:?}"
+    );
+    assert_eq!(
+        client
+            .tokens_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len(),
+        2,
+        "the retry must be bounded to one extra attempt"
+    );
+    Ok(())
+}
+
+/// Same contract on the mutation: a switch attempted against a dead session
+/// reports "login required", not a raw HTTP failure.
+#[test(tokio::test)]
+async fn switch_role_maps_a_persistent_401_to_login_required() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        graphql_fail_first_n: usize::MAX,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let result = auth.switch_role(&client, &host, "ReadOnly").await;
+
+    assert!(
+        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        "expected LoginRequired after a persistent 401, got: {result:?}"
+    );
+    Ok(())
+}
+
+/// The public `expire_credentials` is reachable from outside the module, so
+/// it must serialize against an in-flight vend on its own. Unserialized, the
+/// delete lands while the vend is parked and the vend then writes old-role
+/// credentials back over the gap — the flush silently undone.
+#[test(tokio::test)]
+async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = get_host();
+
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+    seed_expired_creds_fresh_tokens(&auth_io).await?;
+
+    let gate = Arc::new(Gate::default());
+    let client = CountingCredsClient {
+        cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        sleep_ms: 0,
+        gate: Some(gate.clone()),
+    };
+
+    // Park a vend inside the credentials handler, holding the host's lock.
+    let vend = tokio::spawn({
+        let (auth, client, host) = (auth.clone(), client.clone(), host.clone());
+        async move { auth.get_credentials_or_refresh(&client, &host).await }
+    });
+    gate.entered.notified().await;
+
+    let expire = tokio::spawn({
+        let (auth, host) = (auth.clone(), host.clone());
+        async move { auth.expire_credentials(&host).await }
+    });
+
+    // Yield generously: an unlocked `expire_credentials` would have deleted
+    // and returned long before the parked vend gets to write.
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !expire.is_finished(),
+        "expire_credentials must wait behind the in-flight vend's lock"
+    );
+
+    gate.release.notify_one();
+    let creds = vend.await.unwrap()?;
+    assert_eq!(creds.access_key, "refreshed-key", "the vend did write");
+    tokio::time::timeout(std::time::Duration::from_secs(5), expire)
+        .await
+        .expect("expire_credentials must not deadlock behind the vend")
+        .unwrap()?;
+
+    assert!(
+        auth_io.read_credentials().await?.is_none(),
+        "the flush must outlive the vend it was serialized behind"
     );
     Ok(())
 }

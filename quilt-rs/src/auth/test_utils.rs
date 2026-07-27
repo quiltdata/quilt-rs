@@ -1,6 +1,9 @@
 //! Shared constants and mock HTTP clients for the auth test modules.
 
 use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
@@ -46,6 +49,16 @@ pub(super) struct GraphQlTestHttpClient {
     pub(super) top_level_error: Option<String>,
     pub(super) switch_result: serde_json::Value,
     pub(super) buckets: Vec<&'static str>,
+    /// How many leading `/graphql` calls answer HTTP 401 before the endpoint
+    /// starts working. Stands in for a session revoked server-side while the
+    /// access token is still unexpired locally, so nothing on the client
+    /// side would think to refresh it.
+    pub(super) graphql_fail_first_n: usize,
+    /// Every bearer token the `/graphql` endpoint was called with, in order,
+    /// so a test can prove the retry presented a *freshly minted* one.
+    pub(super) tokens_seen: StdMutex<Vec<String>>,
+    /// Calls to the Connect token endpoint, i.e. forced token refreshes.
+    pub(super) token_calls: AtomicUsize,
 }
 
 impl Default for GraphQlTestHttpClient {
@@ -60,6 +73,9 @@ impl Default for GraphQlTestHttpClient {
                 "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
             }),
             buckets: vec!["bucket-a", "bucket-b"],
+            graphql_fail_first_n: 0,
+            tokens_seen: StdMutex::new(Vec::new()),
+            token_calls: AtomicUsize::new(0),
         }
     }
 }
@@ -94,12 +110,23 @@ impl HttpClient for GraphQlTestHttpClient {
         unimplemented!("head is not used in this test")
     }
 
+    /// The Connect token endpoint, reached only when a role call has been
+    /// refused and the retry path force-refreshes the access token.
     async fn post<T: serde::de::DeserializeOwned>(
         &self,
-        _url: &str,
-        _form_data: &HashMap<String, String>,
+        url: &str,
+        form_data: &HashMap<String, String>,
     ) -> Res<T> {
-        unimplemented!("post is not used in this test")
+        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
+        self.token_calls.fetch_add(1, Ordering::SeqCst);
+
+        let tokens = OAuthTokenResponse {
+            access_token: REFRESHED_ACCESS_TOKEN.to_string(),
+            refresh_token: Some("new-refresh-token".to_string()),
+            expires_in: 3600,
+        };
+        Ok(serde_json::from_value(serde_json::to_value(&tokens)?)?)
     }
 
     async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
@@ -117,7 +144,21 @@ impl HttpClient for GraphQlTestHttpClient {
         auth_token: &str,
     ) -> Res<T> {
         assert_eq!(url, format!("https://{}/graphql", get_registry()));
-        assert_eq!(auth_token, ACCESS_TOKEN);
+
+        let call = {
+            let mut seen = self
+                .tokens_seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            seen.push(auth_token.to_string());
+            seen.len() - 1
+        };
+        if call < self.graphql_fail_first_n {
+            return Err(reqwest_error_with_status(401).await);
+        }
+        if self.graphql_fail_first_n == 0 {
+            assert_eq!(auth_token, ACCESS_TOKEN);
+        }
 
         if let Some(message) = &self.top_level_error {
             return Ok(serde_json::from_value(serde_json::json!({

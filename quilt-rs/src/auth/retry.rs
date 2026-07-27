@@ -8,16 +8,22 @@ use crate::Res;
 use crate::error::LoginError;
 use quilt_uri::Host;
 
+/// Shared shape of every predicate below: a wire-level failure that carried
+/// an HTTP response whose status the caller recognizes as an auth refusal.
+fn has_status(e: &Error, accept: fn(u16) -> bool) -> bool {
+    matches!(
+        e,
+        Error::Reqwest(re) if re.status().is_some_and(|s| accept(s.as_u16()))
+    )
+}
+
 /// Returns true when an error from the Connect **token endpoint** means the
 /// user must log in again.
 ///
 /// Includes HTTP 400 because RFC 6749 §5.2 specifies that a revoked or
 /// expired refresh token produces `400 invalid_grant`, not 401.
 pub(super) fn is_token_auth_error(e: &Error) -> bool {
-    matches!(
-        e,
-        Error::Reqwest(re) if re.status().is_some_and(|s| s == 400 || s == 401 || s == 403)
-    )
+    has_status(e, |s| matches!(s, 400 | 401 | 403))
 }
 
 /// Returns true when an error from the registry **credentials endpoint** means
@@ -26,10 +32,19 @@ pub(super) fn is_token_auth_error(e: &Error) -> bool {
 /// Only 401/403 — a 400 from the registry means a malformed request (client
 /// bug), not an auth failure, so it should propagate rather than prompt login.
 pub(super) fn is_credentials_auth_error(e: &Error) -> bool {
-    matches!(
-        e,
-        Error::Reqwest(re) if re.status().is_some_and(|s| s == 401 || s == 403)
-    )
+    has_status(e, |s| matches!(s, 401 | 403))
+}
+
+/// Returns true when an error from the registry **GraphQL endpoint** (the
+/// role surface: `me`, `switchRole`, `buckets`) means the access token is no
+/// longer accepted.
+///
+/// Same 401/403 shape as the credentials endpoint and for the same reason —
+/// a 400 there is a malformed document, i.e. a client bug — but kept as its
+/// own predicate because it classifies a different endpoint, and the two are
+/// free to diverge as the registry's GraphQL error mapping evolves.
+pub(super) fn is_role_auth_error(e: &Error) -> bool {
+    has_status(e, |s| matches!(s, 401 | 403))
 }
 
 /// Extracts the HTTP status code from an `Error::Reqwest`, if the wire-level
