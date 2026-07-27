@@ -9,6 +9,7 @@ use aws_credential_types::Credentials;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
 use aws_credential_types::provider::future;
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
@@ -57,6 +58,16 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     Ok(region.to_str()?.into())
 }
 
+/// Map an AWS error code onto a typed kind. Keyed on the *code*, never the
+/// HTTP status: `ExpiredToken` and `InvalidAccessKeyId` are also 403 but
+/// call for a credential re-vend, not a role switch.
+fn classify_s3_error_code(code: Option<&str>, described: &str) -> S3ErrorKind {
+    match code {
+        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+        _ => S3ErrorKind::Raw(described.to_string()),
+    }
+}
+
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
@@ -68,7 +79,16 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
         SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
             Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
         }
-        _ => Error::S3(S3Error::new(S3ErrorKind::Raw(describe_sdk_error(err)))),
+        _ => {
+            let code = err
+                .as_service_error()
+                .and_then(ProvideErrorMetadata::code)
+                .map(str::to_owned);
+            Error::S3(S3Error::new(classify_s3_error_code(
+                code.as_deref(),
+                &describe_sdk_error(err),
+            )))
+        }
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -621,6 +641,47 @@ mod tests {
         assert_eq!(object_hash.to_string(), "LZmmpqbBItw=");
 
         Ok(())
+    }
+
+    /// `AccessDenied` must be typed distinctly so the roster and autosync can
+    /// branch on "this role can't reach the bucket" instead of collapsing it
+    /// into a generic error that reads as "sign in again".
+    #[test]
+    fn access_denied_code_classifies_as_access_denied() {
+        let err = classify_s3_error_code(Some("AccessDenied"), "AccessDenied: forbidden");
+        assert_eq!(
+            err,
+            S3ErrorKind::AccessDenied("AccessDenied: forbidden".to_string())
+        );
+        assert!(S3Error::new(err).is_access_denied());
+    }
+
+    /// Both of these are also HTTP 403, which is exactly why we key on the
+    /// code: they mean "re-vend credentials", not "wrong role".
+    #[test]
+    fn expired_credential_codes_do_not_classify_as_access_denied() {
+        for code in ["ExpiredToken", "InvalidAccessKeyId"] {
+            let err = classify_s3_error_code(Some(code), &format!("{code}: nope"));
+            assert!(
+                !S3Error::new(err).is_access_denied(),
+                "{code} must not be read as a role denial"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_codes_stay_raw() {
+        let err = classify_s3_error_code(Some("SlowDown"), "SlowDown: throttled");
+        assert_eq!(err, S3ErrorKind::Raw("SlowDown: throttled".to_string()));
+    }
+
+    #[test]
+    fn missing_code_stays_raw() {
+        let err = classify_s3_error_code(None, "HTTP 500 (no error body)");
+        assert_eq!(
+            err,
+            S3ErrorKind::Raw("HTTP 500 (no error body)".to_string())
+        );
     }
 
     /// Building a real, offline `aws_sdk_s3::Client` for a region so the

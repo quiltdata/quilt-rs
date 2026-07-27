@@ -31,6 +31,14 @@ impl S3Error {
     pub fn is_not_found(&self) -> bool {
         matches!(self.kind, S3ErrorKind::NotFound(_))
     }
+
+    /// True when S3 refused the call with the `AccessDenied` code — under a
+    /// vended credential that proves the session is healthy, this means the
+    /// active role cannot reach the object, not that the user is logged out.
+    #[must_use]
+    pub fn is_access_denied(&self) -> bool {
+        matches!(self.kind, S3ErrorKind::AccessDenied(_))
+    }
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -64,6 +72,9 @@ pub enum S3ErrorKind {
 
     #[error("S3 not found: {0}")]
     NotFound(String),
+
+    #[error("S3 access denied: {0}")]
+    AccessDenied(String),
 
     #[error("S3 error: {0}")]
     Raw(String),
