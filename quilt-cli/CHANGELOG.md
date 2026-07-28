@@ -13,11 +13,11 @@
 
 ### Added
 
-- `quilt role --host HOST` lists the roles you hold and marks the active one; `--set ROLE` switches it, which is server-side and so applies to every Quilt client signed in as you (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+- `quilt role --host HOST` lists the roles you hold and marks the active one; `--set ROLE` switches it, which is server-side and so applies to every Quilt client signed in as you (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
 ### Changed
 
-- `quilt status` now exits non-zero with the reason when the active role cannot read the package's bucket, instead of printing stale state from the last successful refresh (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+- `quilt status` now exits non-zero with the reason when the active role cannot read the package's bucket, instead of printing stale state from the last successful refresh (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
 ## [v0.28.0] - 2026-07-14
 

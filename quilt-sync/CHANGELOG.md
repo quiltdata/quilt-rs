@@ -13,11 +13,11 @@
 
 ### Added
 
-- Settings → Auth lets you switch your active role per host (shown only when you hold more than one), and the new role applies immediately to reads and writes — including a role you switched in the web catalog, which takes effect as soon as the app reads it — instead of waiting for the previous role's credentials to expire (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+- Settings → Auth lets you switch your active role per host (shown only when you hold more than one), and the new role applies immediately to reads and writes — including a role you switched in the web catalog, which takes effect as soon as the app reads it — instead of waiting for the previous role's credentials to expire (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
 ### Changed
 
-- A refused read or write now names the role instead of surfacing a raw storage error: the packages list marks rows the active role cannot read with the reason and a shortcut to switch, a denied push says the role cannot write there, and autosync pauses the package with the same guidance instead of retrying forever — releasing that pause when you switch role (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+- A refused read or write now names the role instead of surfacing a raw storage error: the packages list marks rows the active role cannot read with the reason and a shortcut to switch, a denied push says the role cannot write there, and autosync pauses the package with the same guidance instead of retrying forever — releasing that pause when you switch role (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
 ## [v0.20.0-alpha1] - 2026-07-23
 
