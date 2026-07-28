@@ -38,6 +38,7 @@ pub enum MixpanelEvent {
     LocalReset,
     RemoteSet,
     OAuthLoginInitiated { host: String },
+    RoleSwitched { host: String },
     UserLoggedIn { host: String, flow: LoginFlow },
     SetupCompleted,
     CrashReportSent,

@@ -460,6 +460,126 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     }
 }
 
+/// A remote that refuses every read with `AccessDenied`, simulating a role
+/// that cannot reach the bucket. Distinct from [`LoggedOutRemote`]: the
+/// credentials are valid, the request arrived, and it was refused.
+struct DeniedRemote;
+
+impl crate::io::remote::Remote for DeniedRemote {
+    async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
+        Err(denied(s3_uri))
+    }
+    async fn get_object_stream(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> Res<crate::io::remote::RemoteObjectStream> {
+        Err(denied(s3_uri))
+    }
+    async fn resolve_url(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
+        Err(denied(s3_uri))
+    }
+    async fn put_object(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+    ) -> Res {
+        Err(denied(s3_uri))
+    }
+    async fn upload_file(
+        &self,
+        _host_config: &crate::io::remote::HostConfig,
+        _source_path: impl AsRef<std::path::Path>,
+        dest_uri: &S3Uri,
+        _size: u64,
+    ) -> Res<(S3Uri, ObjectHash)> {
+        Err(denied(dest_uri))
+    }
+    async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
+        Ok(crate::io::remote::HostConfig::default())
+    }
+    async fn verify_bucket(&self, _bucket: &str) -> Res {
+        Ok(())
+    }
+}
+
+fn denied(s3_uri: &S3Uri) -> Error {
+    crate::error::S3Error::new(crate::error::S3ErrorKind::AccessDenied(s3_uri.to_string())).into()
+}
+
+/// The latest-hash pointer read is the *first* thing a narrow role hits, so
+/// it is the most common shape of a denial in practice. `status` swallows
+/// every other refresh failure by design — that is what lets the app work
+/// offline on stale lineage — but swallowing this one leaves the UI unable
+/// to tell the user why the row will not sync, and sends it looking for an
+/// auth problem that does not exist.
+#[test(tokio::test)]
+async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "denied").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // An installed package with a remote and a manifest already on disk, so
+    // the only remote read `status` needs is the latest-hash pointer.
+    let installed_hash = "abcdef";
+    let lineage_json = format!(
+        r#"{{
+        "packages": {{
+            "test/denied": {{
+                "commit": null,
+                "remote": {{
+                    "bucket": "locked",
+                    "namespace": "test/denied",
+                    "hash": "{installed_hash}",
+                    "origin": "nightly.quilttest.com"
+                }},
+                "base_hash": "{installed_hash}",
+                "latest_hash": "{installed_hash}",
+                "paths": {{}}
+            }}
+        }},
+        "home": "/tmp/working_dir"
+    }}"#
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    storage
+        .write_byte_stream(
+            &paths.installed_manifest(&namespace, installed_hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: DeniedRemote,
+        storage,
+        namespace,
+    };
+
+    let result = package.status(None).await;
+
+    let Err(err) = result else {
+        panic!("a denied latest-hash read must not report a healthy status");
+    };
+    assert!(
+        err.is_access_denied(),
+        "the denial must survive as a typed denial, not a warning: {err}"
+    );
+
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_status_propagates_login_required() -> Res {
     let (home, _temp_dir1) = Home::from_temp_dir()?;

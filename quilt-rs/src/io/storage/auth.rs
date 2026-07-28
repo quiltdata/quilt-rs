@@ -1,4 +1,5 @@
 use std::fmt;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -143,6 +144,27 @@ impl<S: Storage + Sync> AuthIo<S> {
         Ok(())
     }
 
+    /// Remove the cached STS credentials, leaving tokens and the OAuth
+    /// client untouched. The next credential read misses and re-vends —
+    /// which is how a role change takes effect without logging the user out.
+    /// Absent file is success: the goal is "no cached credentials", and
+    /// the flush fires on the first observation of every session.
+    pub async fn delete_credentials(&self) -> Res {
+        let credentials_path = self.credentials_path();
+        debug!("⏳ Deleting credentials at {:?}", credentials_path);
+
+        match self.storage.remove_file(&credentials_path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                debug!("No credentials file to delete");
+            }
+            Err(e) => return Err(e.into()),
+        }
+
+        debug!("✔️ Credentials deleted");
+        Ok(())
+    }
+
     pub async fn read_client(&self) -> Res<Option<OAuthClient>> {
         let path = self.client_path();
         debug!("⏳ Reading OAuth client from {:?}", path);
@@ -255,6 +277,47 @@ mod tests {
         assert_eq!(read_creds.token, valid_creds.token);
         assert_eq!(read_creds.expires_at, valid_creds.expires_at);
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn delete_credentials_removes_creds_and_keeps_tokens() -> Res {
+        let storage = MockStorage::default();
+        let dir = storage.temp_dir.path().to_path_buf();
+        let auth = AuthIo::new(storage, dir);
+
+        auth.write_tokens(&Tokens {
+            access_token: "keep_access".to_string(),
+            refresh_token: "keep_refresh".to_string(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
+        auth.write_credentials(&Credentials {
+            access_key: "drop_key".to_string(),
+            secret_key: "drop_secret".to_string(),
+            token: "drop_token".to_string(),
+            expires_at: Utc::now() + chrono::Duration::minutes(30),
+        })
+        .await?;
+
+        auth.delete_credentials().await?;
+
+        assert!(auth.read_credentials().await?.is_none());
+        let tokens = auth.read_tokens().await?.expect("tokens survive the flush");
+        assert_eq!(tokens.access_token, "keep_access");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn delete_credentials_is_idempotent_when_no_file_exists() -> Res {
+        let storage = MockStorage::default();
+        let dir = storage.temp_dir.path().to_path_buf();
+        let auth = AuthIo::new(storage, dir);
+
+        auth.delete_credentials().await?;
+        auth.delete_credentials().await?;
+
+        assert!(auth.read_credentials().await?.is_none());
         Ok(())
     }
 

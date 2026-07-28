@@ -57,15 +57,29 @@ fn pull_conflict_hint(files: Option<&str>) -> String {
 /// the generic guidance line followed by the raw refusal reason (when one is
 /// known); an `error` row shows a sign-in or no-remote hint depending on
 /// whether a remote host exists.
+///
+/// `no_access_reason` outranks the error hint. A row the active role cannot
+/// reach is not a broken session, and telling the user to sign in again puts
+/// them in a loop that cannot end: the re-vend returns the same denied role.
 fn hint_lines(
     status: &str,
     has_host: bool,
     paused_kind: Option<&str>,
     paused_message: Option<&str>,
+    no_access_reason: Option<&str>,
 ) -> Vec<String> {
+    if let Some(reason) = no_access_reason {
+        return vec![reason.to_string()];
+    }
     if status == "paused" || paused_message.is_some() {
         if paused_kind == Some("pullConflict") {
             return vec![pull_conflict_hint(paused_message)];
+        }
+        // Same reasoning as the pull conflict: the generic guidance names an
+        // action that cannot work. A manual push is signed by the role that
+        // was just refused.
+        if paused_kind == Some("roleDenied") {
+            return vec![util::role_denied_hint(paused_message)];
         }
         let mut lines = vec![PAUSED_GUIDANCE.to_string()];
         lines.extend(paused_message.map(str::to_string));
@@ -83,14 +97,19 @@ fn hint_lines(
 
 /// The autosync-paused toast for a namespace, or `None` when the pause needs
 /// no toast. The classic refusals (pendingChanges/pendingCommit/diverged) are
-/// already legible from the row's status string, so they stay silent; `other`
-/// and `pullConflict` carry information the status string drops, so both toast
-/// — the pull conflict with its file names and merge-page remediation.
+/// already legible from the row's status string, so they stay silent; `other`,
+/// `pullConflict` and `roleDenied` carry information the status string drops,
+/// so all three toast — the pull conflict with its file names and merge-page
+/// remediation, the denial with the role and the switch.
 fn paused_toast(reason: &str, namespace: &str, message: Option<&str>) -> Option<String> {
     match reason {
         "pullConflict" => Some(format!(
             "Autosync paused {namespace} — {}",
             pull_conflict_hint(message)
+        )),
+        "roleDenied" => Some(format!(
+            "Autosync paused {namespace} — {}",
+            util::role_denied_hint(message)
         )),
         "other" => {
             let msg = message.unwrap_or("Autosync paused");
@@ -114,6 +133,24 @@ fn pull_popover(check: &PullCheck) -> Option<String> {
         )),
         _ => None,
     }
+}
+
+/// Whether the row's Commit and Push affordance should render.
+///
+/// `has_changes` stays honest on a denied row — it is real local state, and
+/// hiding it misrepresents the package. But the *action* is a different
+/// question: a push always starts with an S3 read (the push gate's workflow
+/// config check), so a role the row cannot read for can never complete one.
+/// The state flag (`has_changes`) and the affordance gate (`no_access`) are
+/// kept as separate terms for exactly this reason — deriving one from the
+/// other collapses a case where they must disagree.
+fn publish_affordance(status: &str, has_changes: bool, has_origin: bool, no_access: bool) -> bool {
+    if no_access {
+        return false;
+    }
+    let publishable_status = status == "ahead" || (status == "local" && has_origin);
+    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_origin;
+    publishable_status || up_to_date_with_changes
 }
 
 // ── Installed Packages List page ──
@@ -332,6 +369,14 @@ fn PackageItem(
     let has_changes = RwSignal::new(data.has_changes);
     let refreshing = RwSignal::new(true);
     let refresh_error = RwSignal::new(None::<String>);
+    // Seeded from the light phase's readable-bucket pre-filter, then
+    // replaced wholesale by the heavy phase — see `AccessSignals::apply`.
+    let access = AccessSignals {
+        no_access: RwSignal::new(data.no_access),
+        reason: RwSignal::new(data.no_access_reason.clone()),
+        role_switch_host: RwSignal::new(data.role_switch_host.clone()),
+    };
+    let no_access_reason = access.reason;
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_flag = cancelled.clone();
@@ -347,6 +392,11 @@ fn PackageItem(
             Ok(fresh) => {
                 status.set(fresh.status);
                 has_changes.set(fresh.has_changes);
+                access.apply(
+                    fresh.no_access,
+                    fresh.no_access_reason,
+                    fresh.role_switch_host,
+                );
             }
             Err(err) => refresh_error.set(Some(err)),
         }
@@ -385,13 +435,16 @@ fn PackageItem(
     let paused_reason = data.paused_reason.clone();
     let paused_kind = data.paused_kind.clone();
     let hint = Signal::derive(move || {
-        status.with(|s| {
-            hint_lines(
-                s,
-                has_host,
-                paused_kind.as_deref(),
-                paused_reason.as_deref(),
-            )
+        no_access_reason.with(|reason| {
+            status.with(|s| {
+                hint_lines(
+                    s,
+                    has_host,
+                    paused_kind.as_deref(),
+                    paused_reason.as_deref(),
+                    reason.as_deref(),
+                )
+            })
         })
     });
 
@@ -426,6 +479,7 @@ fn PackageItem(
         &data,
         status,
         has_changes,
+        access,
         pull_check,
         pull_retry,
         refreshing,
@@ -482,6 +536,34 @@ fn PackageItem(
     }
 }
 
+/// The row's live access state, threaded into the menu so the error
+/// affordances can tell a denied role from a broken session.
+#[derive(Clone, Copy)]
+struct AccessSignals {
+    no_access: RwSignal<bool>,
+    reason: RwSignal<Option<String>>,
+    role_switch_host: RwSignal<Option<String>>,
+}
+
+impl AccessSignals {
+    /// Replace the light phase's guess with the heavy phase's answer — in
+    /// both directions.
+    ///
+    /// The pre-filter that seeds these signals is an optimistic hint drawn
+    /// from the registry's readable-bucket list, and that list only knows
+    /// the buckets registered with the stack while `set_remote` accepts any
+    /// S3 bucket. Only ever *adding* the mark made such a false positive
+    /// permanent for the life of the page — and since the mark suppresses
+    /// the Login affordance, it also left a genuinely broken row with no
+    /// remedy at all. The refresh is the real call, so it gets the last
+    /// word either way.
+    fn apply(self, no_access: bool, reason: Option<String>, role_switch_host: Option<String>) {
+        self.no_access.set(no_access);
+        self.reason.set(reason);
+        self.role_switch_host.set(role_switch_host);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(
     clippy::too_many_lines,
@@ -491,6 +573,7 @@ fn build_package_menu(
     data: &PackageItemData,
     status: RwSignal<String>,
     has_changes: RwSignal<bool>,
+    access: AccessSignals,
     pull_check: Signal<PullCheck>,
     pull_retry: Trigger,
     refreshing: RwSignal<bool>,
@@ -609,10 +692,7 @@ fn build_package_menu(
         // Gated on having a remote origin, and on there being something to ship
         // (either uncommitted changes or a pending commit).
         <Show when=move || {
-            let s = status.get();
-            let publishable_status = s == "ahead" || (s == "local" && has_origin);
-            let up_to_date_with_changes = s == "up_to_date" && has_changes.get() && has_origin;
-            publishable_status || up_to_date_with_changes
+            publish_affordance(&status.get(), has_changes.get(), has_origin, access.no_access.get())
         }>
             <li class="menu-item">
                 <buttons::Publish
@@ -624,8 +704,10 @@ fn build_package_menu(
             </li>
         </Show>
 
-        // Pull (behind)
-        <Show when=move || status.get() == "behind">
+        // Pull (behind). Gated on access too: a denied role can never fetch
+        // the objects a pull would write, so the row falls back to the
+        // Switch-role remedy instead of an action that cannot succeed.
+        <Show when=move || status.get() == "behind" && !access.no_access.get()>
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
                 <div class="qui-popover">
@@ -649,8 +731,10 @@ fn build_package_menu(
             </li>
         </Show>
 
-        // Merge (diverged)
-        <Show when=move || status.get() == "diverged">
+        // Merge (diverged). Same access gate: the merge page's own actions
+        // (certify, reset-to-remote) both start with an S3 read, so sending
+        // a denied role there just relocates the failure.
+        <Show when=move || status.get() == "diverged" && !access.no_access.get()>
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
                 <buttons::Merge namespace=ns_for_merge.clone() small=true />
@@ -674,15 +758,27 @@ fn build_package_menu(
                 />
             </li>
         })}
-        // Has origin but error → Login (reactive on status)
+        // Has origin but error → Login (reactive on status).
+        // Suppressed for a role denial: the session is healthy, so signing
+        // in again re-vends the same denied role — the loop the original
+        // bug report was stuck in.
         {login_href.map(|href| view! {
-            <Show when=move || status.get() == "error">
+            <Show when=move || status.get() == "error" && !access.no_access.get()>
                 <li class="menu-item menu-divider"></li>
                 <li class="menu-item">
                     <buttons::Login href=href.clone() small=true />
                 </li>
             </Show>
         })}
+        // Denied by the active role → point at the role switcher, but only
+        // when another role is actually held. A single-role user gets the
+        // reason line and no dead-end button.
+        <Show when=move || access.no_access.get() && access.role_switch_host.with(Option::is_some)>
+            <li class="menu-item menu-divider"></li>
+            <li class="menu-item">
+                <buttons::SwitchRole small=true />
+            </li>
+        </Show>
 
         <li class="menu-item menu-divider"></li>
 
@@ -794,10 +890,82 @@ fn CreatePackagePopup(
 
 #[cfg(test)]
 mod tests {
+    use leptos::prelude::*;
+
     use super::{
-        PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast, pull_conflict_hint,
-        pull_popover,
+        AccessSignals, PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast,
+        publish_affordance, pull_conflict_hint, pull_popover,
     };
+
+    /// A row seeded by the pre-filter as denied.
+    fn pre_marked_row() -> AccessSignals {
+        AccessSignals {
+            no_access: RwSignal::new(true),
+            reason: RwSignal::new(Some(
+                "Current role ReadOnly has no access to this bucket".to_string(),
+            )),
+            role_switch_host: RwSignal::new(Some("acme.quilt.dev".to_string())),
+        }
+    }
+
+    /// The pre-filter reads the registry's readable-bucket list, which does
+    /// not know about buckets outside the stack — but `set_remote` accepts
+    /// them. When the real call then succeeds, the mark must go: left in
+    /// place it greys a working row for the life of the page, and it takes
+    /// the row's Login remedy with it.
+    #[test]
+    fn a_refresh_that_does_not_deny_clears_the_pre_filter_mark() {
+        let access = pre_marked_row();
+
+        access.apply(false, None, None);
+
+        assert!(!access.no_access.get_untracked());
+        assert!(access.reason.get_untracked().is_none());
+        assert!(
+            access.role_switch_host.get_untracked().is_none(),
+            "an unmarked row must get its error affordances back"
+        );
+    }
+
+    /// The other direction still works: the real call is authoritative when
+    /// it denies a bucket the pre-filter listed as readable.
+    #[test]
+    fn a_refresh_that_denies_marks_a_row_the_pre_filter_cleared() {
+        let access = AccessSignals {
+            no_access: RwSignal::new(false),
+            reason: RwSignal::new(None),
+            role_switch_host: RwSignal::new(None),
+        };
+
+        access.apply(
+            true,
+            Some("Current role ReadOnly has no access to this bucket".to_string()),
+            Some("acme.quilt.dev".to_string()),
+        );
+
+        assert!(access.no_access.get_untracked());
+        assert_eq!(
+            access.reason.get_untracked().as_deref(),
+            Some("Current role ReadOnly has no access to this bucket")
+        );
+    }
+
+    /// A denied row keeps `has_changes` honest but must not offer Commit and
+    /// Push: the push gate's first S3 call reads the workflow config, and a
+    /// role that cannot read the bucket can never get there. A readable row
+    /// with the identical local changes is the contrast that proves the gate
+    /// is on access, not on the changes themselves.
+    #[test]
+    fn denied_row_hides_publish_that_a_readable_row_with_the_same_changes_offers() {
+        assert!(
+            !publish_affordance("up_to_date", true, true, true),
+            "a denied row must not offer Commit and Push"
+        );
+        assert!(
+            publish_affordance("up_to_date", true, true, false),
+            "a readable row with the same local changes must still offer it"
+        );
+    }
 
     #[test]
     fn blocked_popover_names_conflicts_and_resolution_path() {
@@ -844,7 +1012,8 @@ mod tests {
                 "paused",
                 true,
                 Some("other"),
-                Some("workflow rejected metadata")
+                Some("workflow rejected metadata"),
+                None
             ),
             vec![
                 PAUSED_GUIDANCE.to_string(),
@@ -854,7 +1023,13 @@ mod tests {
         // A snapshot-seeded pause carries its reason even when the row's
         // own status string was refreshed to something else on mount.
         assert_eq!(
-            hint_lines("up_to_date", false, Some("other"), Some("hash mismatch")),
+            hint_lines(
+                "up_to_date",
+                false,
+                Some("other"),
+                Some("hash mismatch"),
+                None
+            ),
             vec![PAUSED_GUIDANCE.to_string(), "hash mismatch".to_string()]
         );
     }
@@ -865,7 +1040,13 @@ mod tests {
         // "push manually to resume" guidance for the merge-page remediation,
         // naming the conflicting files (which arrive as the pause message).
         assert_eq!(
-            hint_lines("paused", true, Some("pullConflict"), Some("a.txt, b.txt")),
+            hint_lines(
+                "paused",
+                true,
+                Some("pullConflict"),
+                Some("a.txt, b.txt"),
+                None
+            ),
             vec![
                 "Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
                     .to_string()
@@ -888,7 +1069,7 @@ mod tests {
     #[test]
     fn paused_without_reason_shows_guidance_only() {
         assert_eq!(
-            hint_lines("paused", true, None, None),
+            hint_lines("paused", true, None, None, None),
             vec![PAUSED_GUIDANCE.to_string()]
         );
     }
@@ -902,7 +1083,8 @@ mod tests {
                 "error",
                 true,
                 Some("other"),
-                Some("workflow rejected metadata")
+                Some("workflow rejected metadata"),
+                None
             ),
             vec![
                 PAUSED_GUIDANCE.to_string(),
@@ -914,23 +1096,132 @@ mod tests {
     #[test]
     fn error_with_host_prompts_sign_in() {
         assert_eq!(
-            hint_lines("error", true, None, None),
+            hint_lines("error", true, None, None, None),
             vec!["Unable to check remote status — sign in again".to_string()]
+        );
+    }
+
+    /// The bug this whole change exists to fix: a row the active role
+    /// cannot read used to arrive as `error`, which renders "sign in
+    /// again" — advice that cannot work, because the re-vend returns the
+    /// same denied role. The access reason must replace it.
+    #[test]
+    fn a_denied_row_never_tells_the_user_to_sign_in_again() {
+        let reason = "Current role ReadOnly has no access to this bucket";
+
+        assert_eq!(
+            hint_lines("error", true, None, None, Some(reason)),
+            vec![reason.to_string()],
+            "a denial must not be dressed up as a broken session"
+        );
+    }
+
+    /// The mark travels with the row whatever the status string says, so a
+    /// pre-greyed row explains itself before any per-row call lands.
+    #[test]
+    fn a_denied_row_explains_itself_whatever_its_status() {
+        let reason = "Current role ReadOnly has no access to this bucket";
+
+        for status in ["up_to_date", "behind", "ahead", "error"] {
+            assert_eq!(
+                hint_lines(status, true, None, None, Some(reason)),
+                vec![reason.to_string()],
+                "status {status} must not shadow the access reason"
+            );
+        }
+    }
+
+    /// A denied row that is *also* paused shows the denial, including over
+    /// a pull conflict's merge-page remediation. Deliberate, and pinned
+    /// here: the pause is downstream of the denial — no amount of merging
+    /// makes a bucket readable — so leading with the conflict would send
+    /// the user to a page that cannot help. With autosync now pausing *for*
+    /// a denial too, the two say the same thing, so the precedence only ever
+    /// picks between agreeing messages.
+    #[test]
+    fn a_denial_outranks_a_pause_even_a_pull_conflict() {
+        let reason = "Current role ReadOnly has no access to this bucket";
+
+        assert_eq!(
+            hint_lines(
+                "paused",
+                true,
+                Some("pullConflict"),
+                Some("a.txt, b.txt"),
+                Some(reason)
+            ),
+            vec![reason.to_string()],
+        );
+        assert_eq!(
+            hint_lines(
+                "paused",
+                true,
+                Some("other"),
+                Some("workflow rejected metadata"),
+                Some(reason)
+            ),
+            vec![reason.to_string()],
+        );
+        assert_eq!(
+            hint_lines(
+                "paused",
+                true,
+                Some("roleDenied"),
+                Some("ReadOnly"),
+                Some(reason)
+            ),
+            vec![reason.to_string()],
+        );
+    }
+
+    /// A role-denied pause on a row the roster did *not* pre-mark — a
+    /// write-only denial, which the read-presence bucket list cannot see.
+    /// The generic "push manually to resume" guidance would be a dead end
+    /// here, so the row names the role and the switch instead.
+    #[test]
+    fn role_denied_paused_row_points_at_the_role_switch() {
+        assert_eq!(
+            hint_lines("paused", true, Some("roleDenied"), Some("ReadOnly"), None),
+            vec![
+                "Current role ReadOnly has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string()
+            ]
+        );
+        assert_eq!(
+            hint_lines("paused", true, Some("roleDenied"), None, None),
+            vec![
+                "The active role has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string()
+            ]
         );
     }
 
     #[test]
     fn error_without_host_reports_no_remote() {
         assert_eq!(
-            hint_lines("error", false, None, None),
+            hint_lines("error", false, None, None, None),
             vec!["No remote configured".to_string()]
         );
     }
 
     #[test]
     fn healthy_row_has_no_hint() {
-        assert!(hint_lines("up_to_date", true, None, None).is_empty());
-        assert!(hint_lines("ahead", false, None, None).is_empty());
+        assert!(hint_lines("up_to_date", true, None, None, None).is_empty());
+        assert!(hint_lines("ahead", false, None, None, None).is_empty());
+    }
+
+    #[test]
+    fn paused_toast_carries_the_role_denial() {
+        assert_eq!(
+            paused_toast("roleDenied", "acme/demo", Some("ReadOnly")),
+            Some(
+                "Autosync paused acme/demo — Current role ReadOnly has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string()
+            )
+        );
     }
 
     #[test]

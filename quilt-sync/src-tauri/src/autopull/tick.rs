@@ -11,6 +11,7 @@ use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
 use crate::autopull::reporter::PackageStatusEvent;
+use crate::commands::RoleCache;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
@@ -107,6 +108,16 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         Error::Quilt(quilt::Error::RemoteCatalog(
             inner @ quilt::RemoteCatalogError::InvalidWorkflowsConfig(_),
         )) => Err(WatchError::Conflict(PausedReason::Other(inner.to_string()))),
+        // Must stay **above** the S3 arm below: a denial arrives as
+        // `quilt::Error::S3(AccessDenied)` and that arm's wildcard would
+        // swallow it into the transient bucket, where the capped backoff
+        // retries a call that can never succeed — silently, forever. The
+        // role has to change first, so pause and say so. The role *name* is
+        // filled in by `name_denied_role` at the pause site: this function
+        // is sync and naming the role is a network call.
+        _ if err.is_access_denied() => Err(WatchError::Conflict(PausedReason::RoleDenied {
+            role: String::new(),
+        })),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
@@ -126,7 +137,55 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
             WatchError::LoginRequired(host.clone())
         }
+        // A denial is neither a broken session nor a blip: the credentials
+        // vended fine and the role simply cannot read this bucket. It must
+        // stay **above** the default arm, which would otherwise back it off
+        // forever. Same reasoning as in `classify_sync_err`; this is the
+        // read side (the cheap status refresh and the pull dry-run).
+        _ if err.is_access_denied() => WatchError::Conflict(PausedReason::RoleDenied {
+            role: String::new(),
+        }),
         _ => WatchError::Transient(err),
+    }
+}
+
+/// Name the active role in a [`PausedReason::RoleDenied`]; every other reason
+/// passes through untouched.
+///
+/// The classifiers cannot do this — they are sync, and the answer is a
+/// network call. Going through the [`RoleCache`] keeps it to one `/me` per
+/// host: it is the same cell the roster and the role switcher share, so a
+/// switch invalidates it and the banner can never quote a role the user has
+/// already left. A failed lookup degrades to the unnamed wording rather than
+/// dropping the pause — the denial is known either way.
+async fn name_denied_role(
+    model: &impl QuiltModel,
+    roles: &RoleCache,
+    host: Option<&Host>,
+    reason: PausedReason,
+) -> PausedReason {
+    if !matches!(reason, PausedReason::RoleDenied { .. }) {
+        return reason;
+    }
+    let Some(host) = host else {
+        return reason;
+    };
+    match roles.get(model, host).await {
+        Ok(info) => PausedReason::RoleDenied { role: info.current },
+        Err(err) => {
+            warn!("autosync: could not name the active role on {host}: {err}");
+            reason
+        }
+    }
+}
+
+/// Tray/tooltip summary for a role denial. Short and lowercase like the other
+/// aggregator messages; names the role when we know it.
+fn role_denied_summary(role: &str) -> String {
+    if role.is_empty() {
+        "the active role has no access to this bucket".to_string()
+    } else {
+        format!("role {role} has no access to this bucket")
     }
 }
 
@@ -327,7 +386,11 @@ fn bump_backoff(
 }
 
 #[allow(clippy::too_many_lines, reason = "cohesive autosync tick sequence")]
-pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> Result<(), Error> {
+pub(crate) async fn run_once(
+    model: &impl QuiltModel,
+    roles: &RoleCache,
+    inner: &WatcherInner,
+) -> Result<(), Error> {
     // Cheap pre-check: if both directions are off we have nothing to
     // do. Per-direction gating lives inside `refresh_then_maybe_sync`
     // so a single-direction config (pull only / push only) still
@@ -441,6 +504,11 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                 inner.aggregator.note_login_required(&namespace, host);
             }
             Err(WatchError::Conflict(reason)) => {
+                // Only a `RoleDenied` needs this, and only it pays for it:
+                // the lookup is cached per host and the namespace is about
+                // to be paused, so a denied host costs at most one `/me`
+                // per role switch — not one per tick.
+                let reason = name_denied_role(model, roles, remote.origin.as_ref(), reason).await;
                 inner
                     .paused
                     .write()
@@ -463,6 +531,12 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                         warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
                         ("paused", true)
                     }
+                    PausedReason::RoleDenied { ref role } => {
+                        warn!(
+                            "autosync: paused namespace={namespace} access denied for role={role}"
+                        );
+                        ("paused", false)
+                    }
                     PausedReason::Other(ref msg) => {
                         warn!("autosync: paused namespace={namespace} error={msg}");
                         ("paused", false)
@@ -477,13 +551,16 @@ pub(crate) async fn run_once(model: &impl QuiltModel, inner: &WatcherInner) -> R
                     },
                 );
                 let aggregator_message = match &reason {
-                    PausedReason::PendingChanges => "pending changes",
-                    PausedReason::PendingCommit => "pending commits",
-                    PausedReason::Diverged => "diverged",
-                    PausedReason::PullConflict(_) => "pull conflict",
-                    PausedReason::Other(msg) => msg.as_str(),
+                    PausedReason::PendingChanges => "pending changes".to_string(),
+                    PausedReason::PendingCommit => "pending commits".to_string(),
+                    PausedReason::Diverged => "diverged".to_string(),
+                    PausedReason::PullConflict(_) => "pull conflict".to_string(),
+                    PausedReason::RoleDenied { role } => role_denied_summary(role),
+                    PausedReason::Other(msg) => msg.clone(),
                 };
-                inner.aggregator.note_paused(&namespace, aggregator_message);
+                inner
+                    .aggregator
+                    .note_paused(&namespace, &aggregator_message);
                 inner.aggregator.note_status(&namespace, has_changes);
             }
             Err(WatchError::Transient(err)) => {

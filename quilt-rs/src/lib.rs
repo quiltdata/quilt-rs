@@ -33,6 +33,7 @@ pub mod workflow;
 #[cfg(test)]
 pub mod fixtures;
 
+pub use auth::RoleInfo;
 pub use error::AuthError;
 pub use error::ChecksumError;
 pub use error::Error;
@@ -44,6 +45,7 @@ pub use error::LoginError;
 pub use error::ManifestError;
 pub use error::PackageOpError;
 pub use error::RemoteCatalogError;
+pub use error::RoleError;
 pub use error::S3Error;
 pub use error::S3ErrorKind;
 pub use installed_package::InstalledPackage;

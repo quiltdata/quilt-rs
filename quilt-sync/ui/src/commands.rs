@@ -26,6 +26,11 @@ pub struct InstalledPackageData {
     /// a new revision) when there is one, so the Set-remote notice is gated
     /// on this.
     pub has_local_commit: bool,
+    /// The active role cannot reach this package's bucket, worded as the
+    /// roster words it. The status banner states this instead of the
+    /// "unable to check remote status" copy, and must not offer Login: the
+    /// session is healthy, so signing in again re-vends the same role.
+    pub no_access_reason: Option<String>,
     pub entries: Vec<EntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
@@ -287,6 +292,17 @@ pub struct PackageItemData {
     /// `paused_reason` is; lets the row pick conflict- vs. generic guidance
     /// without re-parsing the message.
     pub paused_kind: Option<String>,
+    /// The active role cannot reach this row's bucket. The row explains
+    /// itself with `no_access_reason` and must **not** offer Login: the
+    /// session is fine, so signing in again re-vends the same denied role.
+    pub no_access: bool,
+    /// Why the row is marked, naming the active role. `Some` exactly when
+    /// `no_access` is.
+    pub no_access_reason: Option<String>,
+    /// The host whose role selector the switch affordance opens. `Some`
+    /// only when the user holds more than one role there, so a single-role
+    /// user never gets a dead-end button.
+    pub role_switch_host: Option<String>,
 }
 
 /// A deep-link banner to surface on the installed-package page after
@@ -466,6 +482,12 @@ pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListD
 pub struct RefreshedPackageStatus {
     pub status: String,
     pub has_changes: bool,
+    /// See [`PackageItemData::no_access`]. Carried here too, so a denial
+    /// the heavy phase discovers reaches a row the light phase's bucket
+    /// list had cleared.
+    pub no_access: bool,
+    pub no_access_reason: Option<String>,
+    pub role_switch_host: Option<String>,
 }
 
 /// Payload of the `package-status-changed` Tauri event. Same shape as
@@ -922,6 +944,42 @@ pub async fn erase_auth(host: String) -> Result<String, String> {
     tauri::invoke("erase_auth", &Args { host }).await
 }
 
+/// The roles a host's stack grants the logged-in user. UI-side mirror of the
+/// backend `quilt_sync::commands::auth::RolesData`; the serde attributes MUST
+/// match so the payload crosses the Tauri boundary unchanged. `available`
+/// includes `current`, so a single-element list means there is nothing to
+/// switch to.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RolesData {
+    pub current: String,
+    pub available: Vec<String>,
+}
+
+/// Fetch the host's roles. Takes that host's credential single-flight lock, so
+/// call it lazily — never as part of a bulk page load.
+pub async fn get_roles(host: String) -> Result<RolesData, String> {
+    #[derive(Serialize)]
+    struct Args {
+        host: String,
+    }
+    tauri::invoke("get_roles", &Args { host }).await
+}
+
+/// Switch the host's primary role. The backend expires the stored credentials
+/// and clears the host's cached S3 clients, so the UI has no cache work to do.
+/// Returns the roles as confirmed by the stack — the confirmed `current` can
+/// differ from the requested role, so render what comes back, not what was
+/// asked for.
+pub async fn switch_role(host: String, role: String) -> Result<RolesData, String> {
+    #[derive(Serialize)]
+    struct Args {
+        host: String,
+        role: String,
+    }
+    tauri::invoke("switch_role", &Args { host, role }).await
+}
+
 // ── Setup ───────────────────────────────────────────────────
 
 pub async fn setup(directory: String) -> Result<String, String> {
@@ -1029,7 +1087,7 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, ViolationField,
+        CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, RolesData, ViolationField,
         WorkflowInfo, WorkflowIntent,
     };
 
@@ -1043,7 +1101,7 @@ mod tests {
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
         let item = serde_json::from_str::<PackageItemData>(
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other"}"#,
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"acme.quilt.dev"}"#,
         )
         .unwrap();
         assert_eq!(item.namespace, "acme/data");
@@ -1057,6 +1115,12 @@ mod tests {
             Some("workflow rejected metadata")
         );
         assert_eq!(item.paused_kind.as_deref(), Some("other"));
+        assert!(item.no_access);
+        assert_eq!(
+            item.no_access_reason.as_deref(),
+            Some("Current role ReadOnly has no access to this bucket")
+        );
+        assert_eq!(item.role_switch_host.as_deref(), Some("acme.quilt.dev"));
     }
 
     /// The mirror types must deserialize the exact tagged JSON the backend
@@ -1186,6 +1250,23 @@ mod tests {
                 conflicts: vec!["x.txt".to_string()],
             }
             .is_pullable()
+        );
+    }
+
+    /// The mirror struct must deserialize the exact JSON the backend
+    /// (`quilt_sync::commands::auth::RolesData`) serializes. If the two drift,
+    /// the Settings role switcher silently sees one role and hides itself.
+    #[test]
+    fn roles_data_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<RolesData>(
+                r#"{"current":"ReadWrite","available":["ReadOnly","ReadWrite"]}"#
+            )
+            .unwrap(),
+            RolesData {
+                current: "ReadWrite".to_string(),
+                available: vec!["ReadOnly".to_string(), "ReadWrite".to_string()],
+            }
         );
     }
 

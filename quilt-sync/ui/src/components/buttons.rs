@@ -37,6 +37,7 @@ pub mod send_to_sentry;
 pub mod set_remote;
 pub mod settings;
 pub mod submit_login;
+pub mod switch_role;
 pub mod unignore;
 
 pub use browse::Browse;
@@ -77,6 +78,7 @@ pub use send_to_sentry::SendToSentry;
 pub use set_remote::SetRemote;
 pub use settings::Settings;
 pub use submit_login::SubmitLogin;
+pub use switch_role::SwitchRole;
 pub use unignore::Unignore;
 
 use base::icon::IconButton;
@@ -109,6 +111,7 @@ pub enum ButtonKind {
     Settings,
     SetRemote,
     SubmitLogin,
+    SwitchRole,
     Unignore,
 }
 
@@ -142,6 +145,7 @@ impl ButtonKind {
             Self::Settings => "/assets/img/icons/gear.svg",
             Self::SetRemote => "/assets/img/icons/link.svg",
             Self::SubmitLogin => "/assets/img/icons/done.svg",
+            Self::SwitchRole => "/assets/img/icons/gear.svg",
             Self::Unignore => "/assets/img/icons/visibility.svg",
         }
     }
@@ -175,6 +179,7 @@ impl ButtonKind {
             Self::Settings => "Settings",
             Self::SetRemote => "Set remote",
             Self::SubmitLogin => "Submit code and Log in",
+            Self::SwitchRole => "Switch role",
             Self::Unignore => "Unignore",
         }
     }

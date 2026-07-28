@@ -120,6 +120,7 @@ fn main() {
 
             app.manage(Model::create(data_dir));
             app.manage(commands::WorkflowRulesCache::default());
+            app.manage(commands::RoleCache::default());
             app.manage(sync::Mutex::new(app.handle().clone()));
             app.manage(App::new(package_info, logs_dir));
             app.manage(telemetry);
@@ -190,6 +191,8 @@ fn main() {
             commands::get_login_data,
             commands::get_login_error_data,
             commands::get_merge_data,
+            commands::get_roles,
+            commands::switch_role,
             commands::load_workflow_rules,
             commands::validate_commit_candidate,
             commands::get_settings_data,

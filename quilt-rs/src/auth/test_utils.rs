@@ -1,6 +1,9 @@
 //! Shared constants and mock HTTP clients for the auth test modules.
 
 use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
@@ -28,6 +31,165 @@ pub(super) fn get_host() -> Host {
 
 pub(super) fn get_registry() -> String {
     "registry-test.quilt.dev".to_string()
+}
+
+pub(super) fn get_registry_host() -> url::Host {
+    url::Host::Domain(get_registry())
+}
+
+/// Serves the three role GraphQL operations, plus the `config.json` lookup
+/// the `Auth` role methods make to resolve the registry host. Each flag
+/// flips one response into a failure mode so the decoding paths can be
+/// exercised without a live registry.
+pub(super) struct GraphQlTestHttpClient {
+    /// Active role reported by `me`. Settable so a second call can report a
+    /// different role than the first, standing in for an out-of-band switch.
+    pub(super) me_role: &'static str,
+    pub(super) me_is_null: bool,
+    pub(super) top_level_error: Option<String>,
+    pub(super) switch_result: serde_json::Value,
+    pub(super) buckets: Vec<&'static str>,
+    /// How many leading `/graphql` calls answer HTTP 401 before the endpoint
+    /// starts working. Stands in for a session revoked server-side while the
+    /// access token is still unexpired locally, so nothing on the client
+    /// side would think to refresh it.
+    pub(super) graphql_fail_first_n: usize,
+    /// Every bearer token the `/graphql` endpoint was called with, in order,
+    /// so a test can prove the retry presented a *freshly minted* one.
+    pub(super) tokens_seen: StdMutex<Vec<String>>,
+    /// Calls to the Connect token endpoint, i.e. forced token refreshes.
+    pub(super) token_calls: AtomicUsize,
+}
+
+impl Default for GraphQlTestHttpClient {
+    fn default() -> Self {
+        Self {
+            me_role: "ReadWrite",
+            me_is_null: false,
+            top_level_error: None,
+            switch_result: serde_json::json!({
+                "__typename": "Me",
+                "role": {"name": "ReadOnly"},
+                "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
+            }),
+            buckets: vec!["bucket-a", "bucket-b"],
+            graphql_fail_first_n: 0,
+            tokens_seen: StdMutex::new(Vec::new()),
+            token_calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl GraphQlTestHttpClient {
+    fn me_payload(&self) -> serde_json::Value {
+        if self.me_is_null {
+            return serde_json::Value::Null;
+        }
+        serde_json::json!({
+            "role": {"name": self.me_role},
+            "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
+        })
+    }
+}
+
+#[async_trait]
+impl HttpClient for GraphQlTestHttpClient {
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        _auth_token: Option<&str>,
+    ) -> Res<T> {
+        assert_eq!(url, format!("https://{}/config.json", get_host()));
+        let config = QuiltStackConfig {
+            registry_url: format!("https://{}", get_registry()).parse()?,
+        };
+        Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+    }
+
+    async fn head(&self, _url: &str) -> Res<HeaderMap> {
+        unimplemented!("head is not used in this test")
+    }
+
+    /// The Connect token endpoint, reached only when a role call has been
+    /// refused and the retry path force-refreshes the access token.
+    async fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        form_data: &HashMap<String, String>,
+    ) -> Res<T> {
+        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
+        self.token_calls.fetch_add(1, Ordering::SeqCst);
+
+        let tokens = OAuthTokenResponse {
+            access_token: REFRESHED_ACCESS_TOKEN.to_string(),
+            refresh_token: Some("new-refresh-token".to_string()),
+            expires_in: 3600,
+        };
+        Ok(serde_json::from_value(serde_json::to_value(&tokens)?)?)
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _url: &str,
+        _body: &B,
+    ) -> Res<T> {
+        unimplemented!("post_json is not used in this test")
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        body: &B,
+        auth_token: &str,
+    ) -> Res<T> {
+        assert_eq!(url, format!("https://{}/graphql", get_registry()));
+
+        let call = {
+            let mut seen = self
+                .tokens_seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            seen.push(auth_token.to_string());
+            seen.len() - 1
+        };
+        if call < self.graphql_fail_first_n {
+            return Err(reqwest_error_with_status(401).await);
+        }
+        // Only the *first* call is pinned to the cached token: a body-level
+        // refusal (`me: null`) also triggers the force-refresh retry, and
+        // that second call is expected to present the freshly minted one.
+        if call == 0 && self.graphql_fail_first_n == 0 {
+            assert_eq!(auth_token, ACCESS_TOKEN);
+        }
+
+        if let Some(message) = &self.top_level_error {
+            return Ok(serde_json::from_value(serde_json::json!({
+                "errors": [{"message": message}],
+            }))?);
+        }
+
+        let query = serde_json::to_value(body)?["query"]
+            .as_str()
+            .expect("query field")
+            .to_string();
+
+        let data = if query.contains("switchRole") {
+            serde_json::json!({"switchRole": self.switch_result})
+        } else if query.contains("buckets") {
+            serde_json::json!({
+                "buckets": self
+                    .buckets
+                    .iter()
+                    .map(|name| serde_json::json!({"name": name}))
+                    .collect::<Vec<_>>(),
+            })
+        } else {
+            serde_json::json!({"me": self.me_payload()})
+        };
+
+        Ok(serde_json::from_value(serde_json::json!({"data": data}))?)
+    }
 }
 
 pub(super) const AUTH_CODE: &str = "test-auth-code";
@@ -97,6 +259,15 @@ impl HttpClient for TestHttpClient {
         _body: &B,
     ) -> Res<T> {
         unimplemented!("post_json is not used in this test")
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _url: &str,
+        _body: &B,
+        _auth_token: &str,
+    ) -> Res<T> {
+        unimplemented!("post_json_auth is not used in this test")
     }
 }
 
@@ -200,6 +371,15 @@ impl HttpClient for OAuthTestHttpClient {
         Ok(serde_json::from_value(serde_json::json!({
             "client_id": "test-dcr-client-id"
         }))?)
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        _url: &str,
+        _body: &B,
+        _auth_token: &str,
+    ) -> Res<T> {
+        unimplemented!("post_json_auth is not used in this test")
     }
 }
 

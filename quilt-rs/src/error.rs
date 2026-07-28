@@ -31,6 +31,14 @@ impl S3Error {
     pub fn is_not_found(&self) -> bool {
         matches!(self.kind, S3ErrorKind::NotFound(_))
     }
+
+    /// True when S3 refused the call with the `AccessDenied` code — under a
+    /// vended credential that proves the session is healthy, this means the
+    /// active role cannot reach the object, not that the user is logged out.
+    #[must_use]
+    pub fn is_access_denied(&self) -> bool {
+        matches!(self.kind, S3ErrorKind::AccessDenied(_))
+    }
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -65,6 +73,9 @@ pub enum S3ErrorKind {
     #[error("S3 not found: {0}")]
     NotFound(String),
 
+    #[error("S3 access denied: {0}")]
+    AccessDenied(String),
+
     #[error("S3 error: {0}")]
     Raw(String),
 
@@ -97,6 +108,18 @@ pub enum AuthError {
 
     #[error("Failed to exchange authorization code for tokens: {0}")]
     TokensExchange(String),
+}
+
+#[derive(Error, Debug, PartialEq)]
+pub enum RoleError {
+    #[error("Not authenticated with {0}")]
+    NotAuthenticated(Host),
+
+    #[error("Registry rejected the request: {0}")]
+    GraphQl(String),
+
+    #[error("Role switch rejected: {0}")]
+    SwitchRejected(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -296,6 +319,9 @@ pub enum Error {
     Reqwest(#[from] reqwest::Error),
 
     #[error(transparent)]
+    Role(#[from] RoleError),
+
+    #[error(transparent)]
     RemoteCatalog(#[from] RemoteCatalogError),
 
     #[error(transparent)]
@@ -360,6 +386,18 @@ impl Error {
             Error::Io(e) => e.kind() == std::io::ErrorKind::NotFound,
             _ => false,
         }
+    }
+
+    /// Returns `true` if S3 refused the call with the `AccessDenied` code.
+    ///
+    /// The mirror of [`Error::is_not_found`] for the role dimension: callers
+    /// that only ever see an [`enum@Error`] need this to tell "the active role
+    /// cannot reach this object" apart from a generic storage failure, so
+    /// every layer that re-wraps an S3 error must let this variant through
+    /// unchanged.
+    #[must_use]
+    pub fn is_access_denied(&self) -> bool {
+        matches!(self, Error::S3(s3) if s3.is_access_denied())
     }
 }
 

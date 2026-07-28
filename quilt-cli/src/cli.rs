@@ -22,6 +22,7 @@ mod model;
 mod output;
 mod pull;
 mod push;
+mod role;
 mod status;
 mod uninstall;
 
@@ -185,6 +186,20 @@ enum Commands {
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
+    /// Show or switch your active role on a Quilt stack
+    ///
+    /// The active role is server-side and global: it decides what every Quilt
+    /// client signed in as you can read and write, this CLI and the desktop
+    /// app alike. Listing marks the active role with a leading asterisk.
+    Role {
+        /// Quilt stack to read the role from.
+        /// Ex. open.quiltdata.com
+        #[arg(long)]
+        host: Host,
+        /// Switch to this role instead of listing the roles you hold
+        #[arg(long, value_name = "ROLE")]
+        set: Option<String>,
+    },
     /// Status of the package: modified, up-to-date, outdated
     Status {
         /// Namespace of the package. Ex. foo/bar
@@ -346,6 +361,12 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Pushing {args:?}");
             Ok(push::command(m, args).await)
         }
+        Commands::Role { host, set } => {
+            let args = role::Input { host, set };
+
+            log::info!("Role {args:?}");
+            Ok(role::command(m, args).await)
+        }
         Commands::Status { namespace } => {
             let args = status::Input {
                 namespace: namespace.try_into()?,
@@ -462,6 +483,29 @@ mod tests {
             commit_workflow_intent(Some("   "), false),
             Err(Error::WorkflowEmpty)
         ));
+    }
+
+    /// `--set` is what separates switching from listing, and dropping it
+    /// would silently degrade `quilt role --set X` into a plain listing.
+    #[test]
+    fn role_set_flag_is_parsed() {
+        let listing = Args::try_parse_from(["quilt", "role", "--host", "example.com"]).unwrap();
+        assert!(matches!(listing.command, Commands::Role { set: None, .. }));
+
+        let switching = Args::try_parse_from([
+            "quilt",
+            "role",
+            "--host",
+            "example.com",
+            "--set",
+            "ReadOnly",
+        ])
+        .unwrap();
+        let Commands::Role { host, set } = switching.command else {
+            panic!("expected the role command");
+        };
+        assert_eq!(host.to_string(), "example.com");
+        assert_eq!(set.as_deref(), Some("ReadOnly"));
     }
 
     #[test]

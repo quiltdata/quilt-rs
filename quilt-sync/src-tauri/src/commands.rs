@@ -19,4 +19,6 @@ pub use settings::*;
 pub use system::*;
 
 #[cfg(test)]
+mod role_switch_chain;
+#[cfg(test)]
 mod test_support;

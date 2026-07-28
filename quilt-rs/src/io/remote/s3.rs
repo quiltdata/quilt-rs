@@ -9,6 +9,7 @@ use aws_credential_types::Credentials;
 use aws_credential_types::provider::ProvideCredentials;
 use aws_credential_types::provider::error::CredentialsError;
 use aws_credential_types::provider::future;
+use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
@@ -20,6 +21,7 @@ use crate::Error;
 use crate::Res;
 use crate::auth;
 use crate::auth::OAuthParams;
+use crate::auth::RoleInfo;
 use crate::error::LoginError;
 use crate::error::RemoteCatalogError;
 use crate::error::S3Error;
@@ -57,6 +59,56 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     Ok(region.to_str()?.into())
 }
 
+/// Map an AWS error onto a typed kind. Keyed on the *code* wherever there is
+/// one, never on the HTTP status alone: `ExpiredToken` and
+/// `InvalidAccessKeyId` are also 403 but call for a credential re-vend, not a
+/// role switch.
+///
+/// The one exception is a 403 that names no code at all. `HeadObject` is why
+/// that case exists: a HEAD response carries no body, so S3 has nowhere to
+/// put the `<Code>AccessDenied</Code>` document every other operation
+/// returns, and the SDK has no code to hand us. Reading the status is safe
+/// *because* the code is absent — a 403 that did name itself never reaches
+/// that arm.
+///
+/// Only a genuine denial changes the kind. Everything else is handed to
+/// `fallback`, so a call site keeps the operation-specific kind it would
+/// have produced anyway — a failed put stays [`S3ErrorKind::PutObject`]
+/// rather than collapsing into an undiagnosable [`S3ErrorKind::Raw`].
+pub(super) fn classify_s3_error(
+    code: Option<&str>,
+    status: Option<u16>,
+    described: &str,
+    fallback: fn(String) -> S3ErrorKind,
+) -> S3ErrorKind {
+    match (code, status) {
+        (Some("AccessDenied"), _) | (None, Some(403)) => {
+            S3ErrorKind::AccessDenied(described.to_string())
+        }
+        _ => fallback(described.to_string()),
+    }
+}
+
+/// Classify an `SdkError` straight off an AWS call.
+///
+/// [`describe_sdk_error`] consumes the error, so the code and status have to
+/// be lifted out first; doing it here keeps every call site from repeating
+/// that ordering constraint (and from getting it wrong).
+pub(super) fn classify_sdk_error<E>(
+    err: SdkError<E>,
+    fallback: fn(String) -> S3ErrorKind,
+) -> S3ErrorKind
+where
+    E: ProvideErrorMetadata + std::error::Error + Send + Sync + 'static,
+{
+    let code = err
+        .as_service_error()
+        .and_then(ProvideErrorMetadata::code)
+        .map(str::to_owned);
+    let status = err.raw_response().map(|raw| raw.status().as_u16());
+    classify_s3_error(code.as_deref(), status, &describe_sdk_error(err), fallback)
+}
+
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
@@ -68,7 +120,7 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
         SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
             Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
         }
-        _ => Error::S3(S3Error::new(S3ErrorKind::Raw(describe_sdk_error(err)))),
+        _ => Error::S3(S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw))),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -182,6 +234,44 @@ impl RemoteS3 {
         self.auth
             .get_or_register_client(&self.http, host, redirect_uri)
             .await
+    }
+
+    /// Read the active role and reconcile the credential cache.
+    ///
+    /// See [`Auth::refresh_roles`] for the flush contract — in particular
+    /// that expiring credentials does not invalidate this remote's cached
+    /// S3 clients. Callers that hold a client cache must clear it too.
+    ///
+    /// [`Auth::refresh_roles`]: crate::auth::Auth::refresh_roles
+    pub async fn refresh_roles(&self, host: &Host) -> Res<RoleInfo> {
+        self.auth.refresh_roles(&self.http, host).await
+    }
+
+    /// Make `role_name` the user's primary role.
+    ///
+    /// The change is server-side and global. Locally this expires the
+    /// host's cached credentials, but **not** this remote's cached S3
+    /// clients — call [`RemoteS3::clear_client_cache`] for `host`
+    /// afterwards or the old role keeps signing until its own expiry.
+    pub async fn switch_role(&self, host: &Host, role_name: &str) -> Res<RoleInfo> {
+        self.auth.switch_role(&self.http, host, role_name).await
+    }
+
+    /// The buckets the active role can read. An optimistic hint: it
+    /// over-reports for unmanaged roles and anonymous-access stacks, and
+    /// never distinguishes read from write.
+    pub async fn readable_buckets(&self, host: &Host) -> Res<Vec<String>> {
+        self.auth.readable_buckets(&self.http, host).await
+    }
+
+    /// Expire the host's cached STS credentials, keeping the login token.
+    ///
+    /// **Not sufficient on its own.** An already-built `aws_sdk_s3::Client`
+    /// holds its own resolved credentials in the SDK's lazy identity cache,
+    /// so the old role keeps signing until they expire (~1h) — call
+    /// [`RemoteS3::clear_client_cache`] for the same host afterwards.
+    pub async fn expire_credentials(&self, host: &Host) -> Res {
+        self.auth.expire_credentials(host).await
     }
 
     async fn get_region_for_bucket(&self, bucket: &str) -> Res<Region> {
@@ -356,11 +446,16 @@ impl Remote for RemoteS3 {
                 info!("ℹ️ Object does not exist at {}", s3_uri);
                 Ok(false)
             }
+            // A denial is typed distinctly — this is the push gate's first S3
+            // call (`.quilt/workflows/config.yml`), so collapsing it into a
+            // generic existence failure is what makes a no-read role's Push
+            // read as an unexplained S3 error instead of a role problem.
+            // Anything else stays a plain existence failure.
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
                 Err(Error::S3(S3Error {
                     host: host.cloned(),
-                    kind: S3ErrorKind::Exists(describe_sdk_error(err)),
+                    kind: classify_sdk_error(err, S3ErrorKind::Exists),
                 }))
             }
         }
@@ -383,6 +478,13 @@ impl Remote for RemoteS3 {
             }
             Err(e) if e.is_not_found() => {
                 info!("ℹ️ Object not found: {}", s3_uri);
+                Err(e)
+            }
+            // Pass the typed denial straight through: re-wrapping it as a
+            // generic stream failure would erase the one bit callers branch
+            // on — that the active role, not the session, is the problem.
+            Err(e) if e.is_access_denied() => {
+                warn!("❌ Access denied reading {}: {}", s3_uri, e);
                 Err(e)
             }
             Err(e) => {
@@ -409,10 +511,12 @@ impl Remote for RemoteS3 {
             .body(contents.into())
             .send()
             .await
+            // A denial is typed distinctly so the push path can say "this role
+            // cannot write here"; anything else stays a plain put failure.
             .map_err(|err| {
                 Error::S3(S3Error {
                     host: host.cloned(),
-                    kind: S3ErrorKind::PutObject(describe_sdk_error(err)),
+                    kind: classify_sdk_error(err, S3ErrorKind::PutObject),
                 })
             })?;
 
@@ -431,9 +535,11 @@ impl Remote for RemoteS3 {
                 version: head.version_id,
                 ..s3_uri.clone()
             }),
+            // Same reasoning as [`Remote::exists`]: only a genuine denial
+            // changes the kind, everything else stays a resolve failure.
             Err(err) => Err(Error::S3(S3Error {
                 host: host.cloned(),
-                kind: S3ErrorKind::ResolveUrl(describe_sdk_error(err)),
+                kind: classify_sdk_error(err, S3ErrorKind::ResolveUrl),
             })),
         }
     }
@@ -478,6 +584,9 @@ mod tests {
     use test_log::test;
 
     use std::io::Write;
+
+    use async_trait::async_trait;
+    use reqwest::header::HeaderMap;
     use tempfile::NamedTempFile;
 
     use crate::fixtures::objects::LESS_THAN_8MB_HASH_B64;
@@ -620,6 +729,362 @@ mod tests {
         Ok(())
     }
 
+    /// `AccessDenied` must be typed distinctly so the roster and autosync can
+    /// branch on "this role can't reach the bucket" instead of collapsing it
+    /// into a generic error that reads as "sign in again".
+    #[test]
+    fn access_denied_code_classifies_as_access_denied() {
+        let err = classify_s3_error(
+            Some("AccessDenied"),
+            Some(403),
+            "AccessDenied: forbidden",
+            S3ErrorKind::Raw,
+        );
+        assert_eq!(
+            err,
+            S3ErrorKind::AccessDenied("AccessDenied: forbidden".to_string())
+        );
+        assert!(S3Error::new(err).is_access_denied());
+    }
+
+    /// A denial outranks the caller's fallback: the upload sites ask for
+    /// `PutObject`/`UploadFile`, but the one code the push path branches on
+    /// still has to come through typed.
+    #[test]
+    fn upload_denial_classifies_as_access_denied() {
+        let err = classify_s3_error(
+            Some("AccessDenied"),
+            Some(403),
+            "AccessDenied: forbidden",
+            S3ErrorKind::PutObject,
+        );
+        assert_eq!(
+            err,
+            S3ErrorKind::AccessDenied("AccessDenied: forbidden".to_string())
+        );
+    }
+
+    /// The mirror image: everything that is *not* a denial keeps the kind the
+    /// call site would have produced on its own. Flattening these to `Raw`
+    /// would cost every upload failure its "which operation broke" detail.
+    #[test]
+    fn non_denial_codes_keep_the_callers_fallback_kind() {
+        assert_eq!(
+            classify_s3_error(
+                Some("SlowDown"),
+                Some(503),
+                "SlowDown: throttled",
+                S3ErrorKind::PutObject
+            ),
+            S3ErrorKind::PutObject("SlowDown: throttled".to_string())
+        );
+        assert_eq!(
+            classify_s3_error(
+                None,
+                Some(500),
+                "HTTP 500 (no error body)",
+                S3ErrorKind::UploadFile
+            ),
+            S3ErrorKind::UploadFile("HTTP 500 (no error body)".to_string())
+        );
+    }
+
+    /// Both of these are also HTTP 403, which is exactly why we key on the
+    /// code: they mean "re-vend credentials", not "wrong role".
+    #[test]
+    fn expired_credential_codes_do_not_classify_as_access_denied() {
+        for code in ["ExpiredToken", "InvalidAccessKeyId"] {
+            let err = classify_s3_error(
+                Some(code),
+                Some(403),
+                &format!("{code}: nope"),
+                S3ErrorKind::Raw,
+            );
+            assert!(
+                !S3Error::new(err).is_access_denied(),
+                "{code} must not be read as a role denial"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_codes_stay_raw() {
+        let err = classify_s3_error(
+            Some("SlowDown"),
+            Some(503),
+            "SlowDown: throttled",
+            S3ErrorKind::Raw,
+        );
+        assert_eq!(err, S3ErrorKind::Raw("SlowDown: throttled".to_string()));
+    }
+
+    #[test]
+    fn missing_code_stays_raw() {
+        let err = classify_s3_error(
+            None,
+            Some(500),
+            "HTTP 500 (no error body)",
+            S3ErrorKind::Raw,
+        );
+        assert_eq!(
+            err,
+            S3ErrorKind::Raw("HTTP 500 (no error body)".to_string())
+        );
+    }
+
+    /// A `HeadObject` refusal is a bodyless 403: HEAD responses carry no
+    /// payload, so S3 cannot send the `<Code>AccessDenied</Code>` document.
+    /// Without the status arm the `exists` gate on the push path — the first
+    /// S3 call a push makes — reports an untyped error and the user is told
+    /// to sign in again for a bucket their role simply cannot read.
+    #[test]
+    fn a_bodyless_403_classifies_as_access_denied() {
+        let err = classify_s3_error(
+            None,
+            Some(403),
+            "HTTP 403 (no error body)",
+            S3ErrorKind::Exists,
+        );
+        assert_eq!(
+            err,
+            S3ErrorKind::AccessDenied("HTTP 403 (no error body)".to_string())
+        );
+    }
+
+    /// The status arm is narrow on purpose: only 403, and only when nothing
+    /// named itself. A bodyless 404 or 500 keeps the call site's own kind.
+    #[test]
+    fn other_bodyless_statuses_keep_the_callers_fallback_kind() {
+        for status in [404u16, 500, 503] {
+            let described = format!("HTTP {status} (no error body)");
+            assert_eq!(
+                classify_s3_error(None, Some(status), &described, S3ErrorKind::ResolveUrl),
+                S3ErrorKind::ResolveUrl(described.clone()),
+                "HTTP {status} is not a denial"
+            );
+        }
+    }
+
+    /// Answer every connection with the same canned HTTP response, so an
+    /// `aws_sdk_s3::Client` pointed at the returned address gets a real S3
+    /// error document off the wire instead of a hand-built `SdkError`.
+    async fn spawn_canned_s3_endpoint(response: Vec<u8>) -> std::net::SocketAddr {
+        use tokio::io::AsyncReadExt;
+        use tokio::io::AsyncWriteExt;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let response = response.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let _ = stream.read(&mut buf).await;
+                    let _ = stream.write_all(&response).await;
+                    let _ = stream.shutdown().await;
+                });
+            }
+        });
+        addr
+    }
+
+    /// The bucket every access-denied test addresses; the stub endpoint
+    /// refuses each request regardless of operation, bucket or key.
+    const DENIED_BUCKET: &str = "locked";
+
+    /// A [`RemoteS3`] whose region and client caches are pre-seeded with a
+    /// client aimed at a stub endpoint that answers every request with S3's
+    /// 403 `AccessDenied` document — so calls resolve without a live region
+    /// lookup or a credential vend, and every operation comes back denied.
+    async fn access_denied_remote() -> RemoteS3 {
+        let body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <Error><Code>AccessDenied</Code><Message>Access Denied</Message>\
+             <RequestId>REQ</RequestId><HostId>HID</HostId></Error>";
+        let addr = spawn_canned_s3_endpoint(
+            format!(
+                "HTTP/1.1 403 Forbidden\r\n\
+                 Content-Type: application/xml\r\n\
+                 Content-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_bytes(),
+        )
+        .await;
+
+        let region = Region::new("us-east-1");
+        let denied_client = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(BehaviorVersion::latest())
+                .region(region.clone())
+                .credentials_provider(Credentials::new("AK", "SK", None, None, "test"))
+                .endpoint_url(format!("http://{addr}"))
+                .force_path_style(true)
+                .build(),
+        );
+
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        remote
+            .regions
+            .write()
+            .unwrap()
+            .insert(DENIED_BUCKET.to_string(), region.clone());
+        remote
+            .s3
+            .write()
+            .unwrap()
+            .insert(CredsRef { region, host: None }, denied_client);
+        remote
+    }
+
+    /// The typed denial has to survive the `Remote` **method**, not just the
+    /// free helper underneath it: the method re-wraps anything it does not
+    /// recognise, so without the passthrough arm a locked bucket surfaces as
+    /// a generic stream failure and `is_access_denied()` answers `false`.
+    #[test(tokio::test)]
+    async fn get_object_stream_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+
+        let Err(err) =
+            Remote::get_object_stream(&remote, None, &S3Uri::try_from("s3://locked/x")?).await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the method must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// `exists` is the push gate's **first** S3 call: `fetch_workflows_config`
+    /// heads `.quilt/workflows/config.yml` before a single byte is uploaded.
+    /// A role that cannot read the bucket is refused right there, so if this
+    /// method swallows the denial the user is shown a raw S3 error on a row
+    /// the roster has already marked as out of reach.
+    #[test(tokio::test)]
+    async fn exists_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+
+        let Err(err) = Remote::exists(&remote, None, &S3Uri::try_from("s3://locked/x")?).await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the existence check must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// `resolve_url` heads the same way `exists` does, and is reached while
+    /// resolving a manifest entry, so it has the same obligation.
+    #[test(tokio::test)]
+    async fn resolve_url_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+
+        let Err(err) = Remote::resolve_url(&remote, None, &S3Uri::try_from("s3://locked/x")?).await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the resolve path must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// Drives the real `put_object` method against a canned 403, so the
+    /// wiring is covered and not just the classifier: a write denial has to
+    /// reach the push path typed, or the user is told to sign in again when
+    /// the real problem is that their role cannot write here.
+    #[test(tokio::test)]
+    async fn put_object_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+
+        let Err(err) = Remote::put_object(
+            &remote,
+            None,
+            &S3Uri::try_from("s3://locked/x")?,
+            ByteStream::from_static(b"payload"),
+        )
+        .await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the upload path must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// Same guarantee for the single-shot upload path, which builds its own
+    /// error with an `UploadFile` kind rather than going through `put_object`.
+    #[test(tokio::test)]
+    async fn upload_file_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(b"payload")?;
+
+        let host_config = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+        let Err(err) = remote
+            .upload_file(
+                &host_config,
+                temp_file.path(),
+                &S3Uri::try_from("s3://locked/x")?,
+                7,
+            )
+            .await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the upload path must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// And for the multipart path, whose first call — `CreateMultipartUpload`
+    /// — is where a write denial shows up.
+    #[test(tokio::test)]
+    async fn multipart_upload_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+        let mut temp_file = NamedTempFile::new()?;
+        temp_file.write_all(b"payload")?;
+
+        let host_config = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+        let Err(err) = remote
+            .upload_file(
+                &host_config,
+                temp_file.path(),
+                &S3Uri::try_from("s3://locked/x")?,
+                7,
+            )
+            .await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the multipart path must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
     /// Building a real, offline `aws_sdk_s3::Client` for a region so the
     /// cache-clearing test exercises the actual `s3` map, not a stand-in.
     fn dummy_client(region: &str) -> aws_sdk_s3::Client {
@@ -680,6 +1145,39 @@ mod tests {
         assert!(remote.s3.read().unwrap().is_empty());
     }
 
+    /// Never called: compiling these calls is the proof that the three
+    /// networked role delegations exist on `RemoteS3` with these shapes.
+    /// They cannot be driven here — each one talks to a registry.
+    async fn role_api_shapes(remote: &RemoteS3, host: &Host) -> Res<()> {
+        let _: RoleInfo = remote.refresh_roles(host).await?;
+        let _: RoleInfo = remote.switch_role(host, "ReadOnly").await?;
+        let _: Vec<String> = remote.readable_buckets(host).await?;
+        Ok(())
+    }
+
+    /// The delegations must pass the remote's own http client through to
+    /// `Auth`, the same way `login` does — otherwise the role calls cannot
+    /// reach the registry at all. `expire_credentials` needs no network, so
+    /// it is the one we can actually drive.
+    #[test(tokio::test)]
+    async fn remote_exposes_the_role_api() -> Res<()> {
+        use std::str::FromStr;
+
+        use tempfile::TempDir;
+
+        let _ = role_api_shapes;
+
+        let temp = TempDir::new()?;
+        let remote = RemoteS3::new(
+            DomainPaths::new(temp.path().to_path_buf()),
+            LocalStorage::new(),
+        );
+        let host = Host::from_str("catalog.example.com").unwrap();
+
+        remote.expire_credentials(&host).await?;
+        Ok(())
+    }
+
     /// When storage holds valid credentials, the provider must surface them
     /// as `aws_credential_types::Credentials` on every call. This proves
     /// the async plumbing compiles and runs, and that the quilt-side
@@ -720,76 +1218,82 @@ mod tests {
         Ok(())
     }
 
+    /// Serves a stack config plus freshly minted STS credentials, so the
+    /// credentials-refresh path can be exercised without a live registry.
+    #[derive(Clone, Debug)]
+    struct RefreshMock {
+        refreshed_access_key: String,
+    }
+
+    #[async_trait]
+    impl HttpClient for RefreshMock {
+        async fn get<T: serde::de::DeserializeOwned>(
+            &self,
+            url: &str,
+            auth_token: Option<&str>,
+        ) -> Res<T> {
+            if url.ends_with("/config.json") {
+                let body = serde_json::json!({
+                    "registryUrl": "https://registry.example.com",
+                });
+                return Ok(serde_json::from_value(body)?);
+            }
+            if url.contains("/api/auth/get_credentials") {
+                assert_eq!(auth_token, Some("fresh-access-token"));
+                let body = serde_json::json!({
+                    "AccessKeyId": self.refreshed_access_key,
+                    "SecretAccessKey": "refreshed-secret",
+                    "SessionToken": "refreshed-session",
+                    "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
+                        .to_rfc3339(),
+                });
+                return Ok(serde_json::from_value(body)?);
+            }
+            panic!("unexpected GET: {url}");
+        }
+        async fn head(&self, _url: &str) -> Res<HeaderMap> {
+            unimplemented!("head not used")
+        }
+        async fn post<T: serde::de::DeserializeOwned>(
+            &self,
+            _url: &str,
+            _form_data: &HashMap<String, String>,
+        ) -> Res<T> {
+            unimplemented!("fresh tokens → no token refresh")
+        }
+        async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+        ) -> Res<T> {
+            unimplemented!("post_json not used")
+        }
+        async fn post_json_auth<
+            T: serde::de::DeserializeOwned,
+            B: serde::Serialize + Send + Sync,
+        >(
+            &self,
+            _url: &str,
+            _body: &B,
+            _auth_token: &str,
+        ) -> Res<T> {
+            unimplemented!("post_json_auth not used")
+        }
+    }
+
     /// The core of the `ExpiredToken` fix: when on-disk credentials are
     /// expired but the access token is still fresh, `provide_credentials`
     /// must call the registry to mint new STS creds and return *those*,
     /// not the stale on-disk ones.
     #[test(tokio::test)]
     async fn test_quilt_credentials_provider_refreshes_when_expired() -> Res<()> {
-        use std::collections::HashMap;
         use std::str::FromStr;
 
-        use async_trait::async_trait;
-        use reqwest::header::HeaderMap;
         use tempfile::TempDir;
 
-        use crate::io::remote::HttpClient;
         use crate::io::storage::auth::AuthIo;
         use crate::io::storage::auth::Credentials as QuiltCreds;
         use crate::io::storage::auth::Tokens;
-
-        #[derive(Clone, Debug)]
-        struct RefreshMock {
-            refreshed_access_key: String,
-        }
-
-        #[async_trait]
-        impl HttpClient for RefreshMock {
-            async fn get<T: serde::de::DeserializeOwned>(
-                &self,
-                url: &str,
-                auth_token: Option<&str>,
-            ) -> Res<T> {
-                if url.ends_with("/config.json") {
-                    let body = serde_json::json!({
-                        "registryUrl": "https://registry.example.com",
-                    });
-                    return Ok(serde_json::from_value(body)?);
-                }
-                if url.contains("/api/auth/get_credentials") {
-                    assert_eq!(auth_token, Some("fresh-access-token"));
-                    let body = serde_json::json!({
-                        "AccessKeyId": self.refreshed_access_key,
-                        "SecretAccessKey": "refreshed-secret",
-                        "SessionToken": "refreshed-session",
-                        "Expiration": (chrono::Utc::now() + chrono::Duration::hours(1))
-                            .to_rfc3339(),
-                    });
-                    return Ok(serde_json::from_value(body)?);
-                }
-                panic!("unexpected GET: {url}");
-            }
-            async fn head(&self, _url: &str) -> Res<HeaderMap> {
-                unimplemented!("head not used")
-            }
-            async fn post<T: serde::de::DeserializeOwned>(
-                &self,
-                _url: &str,
-                _form_data: &HashMap<String, String>,
-            ) -> Res<T> {
-                unimplemented!("fresh tokens → no token refresh")
-            }
-            async fn post_json<
-                T: serde::de::DeserializeOwned,
-                B: serde::Serialize + Send + Sync,
-            >(
-                &self,
-                _url: &str,
-                _body: &B,
-            ) -> Res<T> {
-                unimplemented!("post_json not used")
-            }
-        }
 
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());

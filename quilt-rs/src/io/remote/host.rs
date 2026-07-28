@@ -183,6 +183,15 @@ mod tests {
         ) -> Res<T> {
             unimplemented!("post_json not needed for host config tests")
         }
+
+        async fn post_json_auth<T: DeserializeOwned, B: serde::Serialize + Send + Sync>(
+            &self,
+            _url: &str,
+            _body: &B,
+            _auth_token: &str,
+        ) -> Res<T> {
+            unimplemented!("post_json_auth not needed for host config tests")
+        }
     }
 
     #[test(tokio::test)]

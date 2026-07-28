@@ -53,6 +53,21 @@
     cursor: pointer;
   }
 
+  /* Per-host role picker in the Auth rows. Sits inline with the row's
+     buttons, so it borrows their border and compact metrics rather than the
+     full-width look of the workflow selector. */
+  .role-switcher {
+    appearance: auto;
+    background: transparent;
+    border: 1px solid var(--q-ui-palette-border);
+    border-radius: 4px;
+    color: inherit;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.875rem;
+    padding: 4px 8px;
+  }
+
   .path {
     overflow: hidden;
     text-overflow: ellipsis;

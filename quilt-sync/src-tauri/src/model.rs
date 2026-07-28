@@ -12,6 +12,7 @@ use crate::error::Error;
 use crate::quilt;
 use crate::telemetry::prelude::*;
 
+use quilt_rs::RoleInfo;
 use quilt_rs::flow::PullOutcome;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
@@ -413,6 +414,66 @@ pub trait QuiltModel {
         )
         .await?)
     }
+
+    /// Drop the remote's cached S3 clients (and their in-memory
+    /// credentials) for `host`, or for all hosts when `None`. Invoked on
+    /// logout and on a role switch so credentials stop working immediately
+    /// rather than lingering in a cached client until STS expiry. It lives
+    /// on the trait so a `MockQuiltModel` can record the flush — the one
+    /// step that makes either operation take effect in-process.
+    ///
+    /// The host is owned, not `Option<&Host>`, because `#[automock]` cannot
+    /// build an expectation for a reference nested inside another type
+    /// (same reason as [`QuiltModel::get_bucket_workflows_config`]).
+    async fn clear_remote_client_cache(&self, host: Option<Host>) {
+        self.get_quilt()
+            .lock()
+            .await
+            .get_remote()
+            .clear_client_cache(host.as_ref());
+    }
+
+    /// Buckets the active role can read on `host`.
+    ///
+    /// An optimistic hint, not an authoritative answer: it over-reports for
+    /// unmanaged roles and anonymous-access stacks (the registry returns
+    /// every in-stack bucket when it cannot introspect the role) and is
+    /// read-presence only — it never distinguishes read from write. A
+    /// listed bucket can still deny, so callers must keep treating an
+    /// `AccessDenied` from the real call as the authority.
+    ///
+    /// Takes a [`LocalDomain::remote_handle`] and releases the domain lock
+    /// before the round trip. This one runs on the roster's first paint, so
+    /// holding the lock across it would stall every other Tauri command and
+    /// the autopull tick behind a registry call.
+    async fn readable_buckets(&self, host: &Host) -> Result<Vec<String>, Error> {
+        let remote = self.get_quilt().lock().await.remote_handle();
+        Ok(remote.readable_buckets(host).await?)
+    }
+
+    /// Read the active role for `host`. Releases the domain lock before the
+    /// round trip, for the same reason as
+    /// [`QuiltModel::readable_buckets`] — the roster reaches this one too.
+    async fn refresh_roles(&self, host: &Host) -> Result<RoleInfo, Error> {
+        let remote = self.get_quilt().lock().await.remote_handle();
+        Ok(remote.refresh_roles(host).await?)
+    }
+
+    /// Switch the primary role. The caller **must** follow this with
+    /// [`QuiltModel::clear_remote_client_cache`] for the same host —
+    /// expiring the stored credentials does not touch a cached client's own
+    /// in-memory copy, so without it the old role keeps signing.
+    ///
+    /// Releases the domain lock before the round trip, for the same reason as
+    /// [`QuiltModel::readable_buckets`]. This one is worse than the reads:
+    /// it resolves the registry URL, runs a GraphQL mutation and may refresh
+    /// the access token in between, so holding the lock would park every
+    /// other Tauri command and the autopull tick behind a slow registry for
+    /// as long as the switch takes.
+    async fn switch_role(&self, host: &Host, role_name: &str) -> Result<RoleInfo, Error> {
+        let remote = self.get_quilt().lock().await.remote_handle();
+        Ok(remote.switch_role(host, role_name).await?)
+    }
 }
 
 impl QuiltModel for Model {
@@ -437,16 +498,19 @@ impl Model {
         Ok(self.get_quilt().lock().await.set_home(directory).await?)
     }
 
-    /// Drop the remote's cached S3 clients (and their in-memory
-    /// credentials) for `host`, or for all hosts when `None`. Invoked on
-    /// logout so credentials stop working immediately rather than
-    /// lingering in a cached client until STS expiry.
-    pub async fn clear_remote_client_cache(&self, host: Option<&Host>) {
-        self.quilt
-            .lock()
-            .await
-            .get_remote()
-            .clear_client_cache(host);
+    /// Expire `host`'s cached STS credentials without logging out. Pair it
+    /// with [`QuiltModel::clear_remote_client_cache`] — see
+    /// [`QuiltModel::switch_role`].
+    #[expect(
+        dead_code,
+        reason = "plumbing for the role UI; drop this attribute with the first caller"
+    )]
+    pub async fn expire_credentials(&self, host: &Host) -> Result<(), Error> {
+        // Takes a handle and drops the domain lock first: the expiry waits on
+        // this host's refresh lock, which an in-flight vend can hold across a
+        // network round trip. Same rule as [`QuiltModel::switch_role`].
+        let remote = self.quilt.lock().await.remote_handle();
+        Ok(remote.expire_credentials(host).await?)
     }
 }
 
@@ -455,3 +519,114 @@ pub use ops::*;
 
 #[cfg(test)]
 pub mod mocks;
+
+/// Does a role call keep the domain mutex while it works?
+///
+/// `lock().await.get_remote().call().await` keeps the guard alive to the end
+/// of the *statement*, so the domain stays locked for the whole round trip and
+/// every other Tauri command — and the autopull tick — parks behind it.
+/// Taking a [`quilt::LocalDomain::remote_handle`] and letting the guard drop
+/// first is the shape these tests pin.
+///
+/// The suspension observed here is the token-file read rather than the
+/// registry call, because a test cannot make a registry call hang on demand.
+/// It stands in for it: the question is only whether the lock is still held
+/// while the call is waiting on something, and the first thing every one of
+/// these calls waits on is that file.
+///
+/// Making the suspension *certain* is the reason for the hand-built runtime.
+/// `tokio::fs` dispatches to the blocking pool, and a pool with a free thread
+/// can finish the read before the future is first polled — which would make
+/// the assertion vanish rather than fail. These tests run on a pool of
+/// exactly one thread and occupy it, so the read is guaranteed to queue and
+/// the call is guaranteed to suspend.
+#[cfg(test)]
+mod domain_lock_tests {
+    use std::future::Future;
+    use std::future::poll_fn;
+    use std::pin::pin;
+    use std::str::FromStr;
+    use std::task::Poll;
+
+    use tempfile::TempDir;
+    use tokio::runtime::Runtime;
+    use tokio::sync::oneshot;
+
+    use super::Model;
+    use super::QuiltModel;
+    use quilt_uri::Host;
+
+    /// A runtime whose blocking pool is a single thread, so a test can hold
+    /// it and starve every file read the call under test issues.
+    fn runtime_with_one_blocking_thread() -> Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .enable_all()
+            .build()
+            .expect("runtime")
+    }
+
+    /// Take the pool's only thread. Dropping the returned sender gives it
+    /// back, letting the starved read — and the call waiting on it — finish.
+    fn occupy_the_blocking_pool() -> oneshot::Sender<()> {
+        let (release, wait) = oneshot::channel::<()>();
+        tokio::task::spawn_blocking(move || {
+            let _ = wait.blocking_recv();
+        });
+        release
+    }
+
+    /// Drive `call` to its first suspension and assert the domain mutex is
+    /// free at that moment, then let it finish.
+    async fn assert_domain_lock_is_free_while_awaiting<F: Future>(model: &Model, call: F) {
+        let release = occupy_the_blocking_pool();
+        let mut call = pin!(call);
+
+        let first = poll_fn(|cx| Poll::Ready(call.as_mut().poll(cx))).await;
+        assert!(
+            first.is_pending(),
+            "the call must suspend on the starved file read, or this proves nothing"
+        );
+        assert!(
+            model.get_quilt().try_lock().is_ok(),
+            "the domain lock must be free while the call is awaiting, \
+             or every other command blocks behind it"
+        );
+
+        drop(release);
+        let _ = call.await;
+    }
+
+    /// A switch resolves the registry URL, runs a GraphQL mutation and may
+    /// refresh the access token in between. Holding the domain mutex across
+    /// that means picking a role freezes the app for as long as the registry
+    /// takes to answer.
+    #[test]
+    fn switch_role_releases_the_domain_lock_before_it_awaits() {
+        runtime_with_one_blocking_thread().block_on(async {
+            let temp = TempDir::new().expect("temp dir");
+            let model = Model::create(temp.path());
+            let host = Host::from_str("test.quilt.dev").expect("host");
+
+            assert_domain_lock_is_free_while_awaiting(
+                &model,
+                model.switch_role(&host, "ReadWrite"),
+            )
+            .await;
+        });
+    }
+
+    /// The same for the two reads, so an edit that folds either back into a
+    /// single locked statement fails here too.
+    #[test]
+    fn the_role_reads_release_the_domain_lock_before_they_await() {
+        runtime_with_one_blocking_thread().block_on(async {
+            let temp = TempDir::new().expect("temp dir");
+            let model = Model::create(temp.path());
+            let host = Host::from_str("test.quilt.dev").expect("host");
+
+            assert_domain_lock_is_free_while_awaiting(&model, model.refresh_roles(&host)).await;
+            assert_domain_lock_is_free_while_awaiting(&model, model.readable_buckets(&host)).await;
+        });
+    }
+}

@@ -267,9 +267,27 @@ async fn get_commit_data_from_model(
         ))
     })?;
 
-    let status = m
+    // Committing is local work: the remote round trip inside `status` only
+    // refreshes `upstream_state`, which this page reports but does not act
+    // on. A denial there must therefore not keep the page shut — the user
+    // can still commit a package in a bucket the active role cannot read.
+    // Recomputing against the cached manifest gives the same answer the
+    // engine used to hand back when it swallowed the refresh error, minus
+    // the upstream freshness nobody here needs.
+    let status = match m
         .get_installed_package_status(&installed_package, None)
-        .await?;
+        .await
+    {
+        Ok(status) => status,
+        Err(err) if err.is_access_denied() => {
+            tracing::info!(
+                "No read access to the remote of {}; committing on cached lineage",
+                installed_package.namespace,
+            );
+            m.recompute_local_status(&installed_package, None).await?
+        }
+        Err(err) => return Err(err),
+    };
 
     let pkg_status_str = match status.upstream_state {
         quilt::lineage::UpstreamState::UpToDate => "up_to_date",
@@ -777,6 +795,59 @@ mod tests {
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
             Some("test.quilt.dev")
+        );
+        Ok(())
+    }
+
+    /// Committing is local work. A role that cannot read the remote bucket
+    /// can still have local edits worth committing, so a denial on the
+    /// status refresh must not keep the Commit page from opening — the
+    /// entries come from the local recompute instead.
+    #[tokio::test]
+    async fn commit_data_opens_when_the_role_cannot_read_the_remote() -> Result<(), String> {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Err(access_denied_error()));
+        // The installed revision's manifest is already in the local cache,
+        // so reading it back needs no remote round trip and no read access.
+        model
+            .expect_browse_remote_manifest()
+            .returning(|_| Ok(mocks::create_remote_manifest()));
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
+        model.expect_recompute_local_status().returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::UpToDate,
+                one_local_change(),
+            ))
+        });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.namespace, "foo/bar");
+        assert!(
+            data.entries.iter().any(|e| e.filename == "file.txt"),
+            "the locally-computed change must still be offered for commit"
         );
         Ok(())
     }

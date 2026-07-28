@@ -50,12 +50,14 @@ pub struct PublishedEvent {
 pub struct PausedEvent {
     pub namespace: String,
     /// Stable category: `"pendingChanges"`, `"pendingCommit"`,
-    /// `"diverged"`, `"pullConflict"`, or `"other"`. Kept as a string so the
-    /// wire format is independent of the Rust enum's variant layout.
+    /// `"diverged"`, `"pullConflict"`, `"roleDenied"`, or `"other"`. Kept as
+    /// a string so the wire format is independent of the Rust enum's variant
+    /// layout.
     pub reason: String,
     /// Free-form description: the raw refusal reason for `reason = "other"`,
-    /// or the comma-joined conflicting file names for `reason =
-    /// "pullConflict"`.
+    /// the comma-joined conflicting file names for `reason =
+    /// "pullConflict"`, or the active role's name for `reason =
+    /// "roleDenied"` (absent when the name could not be resolved).
     pub message: Option<String>,
 }
 
@@ -70,6 +72,14 @@ impl PausedEvent {
             PausedReason::PendingCommit => ("pendingCommit", None),
             PausedReason::Diverged => ("diverged", None),
             PausedReason::PullConflict(files) => ("pullConflict", Some(files.join(", "))),
+            // The message is the role *name*, not a sentence: the wording
+            // ("switch role to resume") is presentation and lives in the UI,
+            // the same split `pullConflict` uses for its file list. An
+            // unresolved name sends no message, so the UI falls back to the
+            // role-less phrasing.
+            PausedReason::RoleDenied { role } => {
+                ("roleDenied", (!role.is_empty()).then(|| role.clone()))
+            }
             PausedReason::Other(msg) => ("other", Some(msg.clone())),
         };
         Self {
@@ -265,6 +275,37 @@ mod tests {
             PausedEvent::from_reason(&ns, &PausedReason::Diverged).reason,
             "diverged"
         );
+    }
+
+    /// The banner needs the role name to say which role to switch away from,
+    /// so it rides in `message` — the same data-not-copy split `pullConflict`
+    /// uses for its file list.
+    #[test]
+    fn paused_event_role_denied_carries_the_role_name() {
+        let ns = quilt_uri::Namespace::from(("acme", "demo"));
+        let ev = PausedEvent::from_reason(
+            &ns,
+            &PausedReason::RoleDenied {
+                role: "ReadOnly".to_string(),
+            },
+        );
+        assert_eq!(ev.reason, "roleDenied");
+        assert_eq!(ev.message.as_deref(), Some("ReadOnly"));
+    }
+
+    /// An unresolved role name sends no message at all, so the UI picks its
+    /// role-less phrasing instead of rendering an empty name.
+    #[test]
+    fn paused_event_role_denied_without_a_name_sends_no_message() {
+        let ns = quilt_uri::Namespace::from(("acme", "demo"));
+        let ev = PausedEvent::from_reason(
+            &ns,
+            &PausedReason::RoleDenied {
+                role: String::new(),
+            },
+        );
+        assert_eq!(ev.reason, "roleDenied");
+        assert!(ev.message.is_none(), "got: {:?}", ev.message);
     }
 
     #[test]

@@ -209,6 +209,69 @@ fn classify_io_is_transient() {
     }
 }
 
+/// An S3 refusal carrying the `AccessDenied` code, as it reaches the
+/// classifiers from a publish, a pull, or the cheap status refresh.
+fn access_denied_error() -> Error {
+    Error::from(quilt::Error::S3(quilt::S3Error::new(
+        quilt::S3ErrorKind::AccessDenied("s3://bucket/key".to_string()),
+    )))
+}
+
+/// A role denial can never succeed on retry — the role must change first.
+/// Leaving it in the transient bucket means autosync retries forever (capped
+/// at 64 s) and the user is never told why nothing is syncing.
+#[test]
+fn access_denied_pauses_rather_than_retrying_forever() {
+    let classified = classify_sync_err(access_denied_error()).unwrap_err();
+
+    assert!(
+        matches!(
+            classified,
+            WatchError::Conflict(PausedReason::RoleDenied { .. })
+        ),
+        "expected a role-denial pause, got: {classified:?}"
+    );
+}
+
+/// The role name is *not* filled in by the classifier: it is a network call
+/// and `classify_sync_err` is sync. `name_denied_role` fills it at the pause
+/// site, where an await is available.
+#[test]
+fn classified_denial_leaves_the_role_unnamed() {
+    match classify_sync_err(access_denied_error()).unwrap_err() {
+        WatchError::Conflict(PausedReason::RoleDenied { role }) => {
+            assert!(role.is_empty(), "classifier must not name the role: {role}");
+        }
+        other => panic!("expected Conflict(RoleDenied), got {other:?}"),
+    }
+}
+
+/// The read side: Task 5 made `InstalledPackage::status` propagate a denial
+/// instead of swallowing it, so the cheap status refresh now hits this
+/// classifier too. Its default arm would otherwise back the denial off
+/// forever, exactly like the publish side did.
+#[test]
+fn access_denied_on_status_refresh_pauses() {
+    match classify_transient_or_login(access_denied_error()) {
+        WatchError::Conflict(PausedReason::RoleDenied { .. }) => {}
+        other => panic!("expected Conflict(RoleDenied), got {other:?}"),
+    }
+}
+
+/// The counterweight to the arm above: only a denial pauses the status
+/// refresh. A blip, a 5xx, or throttling must keep backing off, or a single
+/// bad minute would park every package until the user intervenes.
+#[test]
+fn non_denial_s3_on_status_refresh_stays_transient() {
+    let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
+        quilt::S3ErrorKind::ListObjects("connection reset by peer".to_string()),
+    )));
+    match classify_transient_or_login(err) {
+        WatchError::Transient(_) => {}
+        other => panic!("expected Transient(_), got {other:?}"),
+    }
+}
+
 #[test]
 fn classify_s3_is_transient() {
     // Greptile P1 regression: `quilt::Error::S3(_)` is a peer
@@ -219,6 +282,10 @@ fn classify_s3_is_transient() {
     // pause the namespace — pausing on a single transient S3
     // hiccup would silently break autopush at the rate AWS hiccups
     // in real workloads.
+    //
+    // Also the counterweight to the `AccessDenied` arm above it: that arm
+    // must catch denials *only*. A classifier that paused on every S3 error
+    // would be a worse bug than the retry loop it replaced.
     let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
         quilt::S3ErrorKind::PutObject("connection reset by peer".to_string()),
     )));
@@ -245,7 +312,7 @@ fn backoff_curve() {
 async fn run_once_disabled_is_a_noop() -> Result<(), Error> {
     let model = MockQuiltModel::new();
     let inner = make_inner(AutosyncSettings::default());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
     Ok(())
 }
 
@@ -316,7 +383,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         aggregator: test_aggregator(),
     };
 
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     {
         let statuses = reporter.statuses.lock().unwrap();
@@ -407,7 +474,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         aggregator: test_aggregator(),
     };
 
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     // Pulled → UpToDate, but the kept local work leaves the tree dirty.
     {
@@ -504,7 +571,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         aggregator: test_aggregator(),
     };
 
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     // Pulled → UpToDate, and the trivially-resolved tree is clean: the
     // post-pull outcome overrides the stale-true pre-pull `has_changes`.
@@ -594,7 +661,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         aggregator: test_aggregator(),
     };
 
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     {
         let statuses = reporter.statuses.lock().unwrap();
@@ -737,7 +804,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         aggregator: test_aggregator(),
     };
 
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     // Namespace is paused with PullConflict carrying the conflicting file.
     {
@@ -808,7 +875,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         aggregator: test_aggregator(),
     };
 
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     // No `report_status` emit — login required surfaces through its
     // own reporter method, and the namespace is not marked paused
