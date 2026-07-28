@@ -21,6 +21,10 @@ pub(super) fn StatusBanner(
     namespace: String,
     status: String,
     origin_host: Option<String>,
+    /// Why the active role cannot reach this package's bucket, when it
+    /// cannot. Outranks every status-driven banner — see
+    /// [`remote_state_banner`].
+    no_access_reason: Option<String>,
     /// The dry-run pull check for the two-phase Pull affordance, filled in
     /// asynchronously by the parent. `Loading` = still resolving (Pull disabled,
     /// "Checking…"); `Failed` = the dry-run errored (Pull disabled, with a retry
@@ -37,6 +41,39 @@ pub(super) fn StatusBanner(
 ) -> impl IntoView {
     let ns = namespace;
     let host = origin_host;
+
+    // A denial and the "unable to check" state are both answers about the
+    // remote's reachability rather than about its contents, so one function
+    // decides between them — and decides which of the two may offer Login.
+    if let Some((description, offers_login)) =
+        remote_state_banner(&status, host.is_some(), no_access_reason.as_deref())
+    {
+        let login_href = offers_login.then(|| {
+            let back = format!(
+                "/installed-package?namespace={}&filter=unmodified",
+                urlencoding::encode(&ns)
+            );
+            format!(
+                "/login?host={}&back={}",
+                host.as_deref().unwrap_or_default(),
+                urlencoding::encode(&back)
+            )
+        });
+        return with_paused_banner(
+            paused_event,
+            view! {
+                <div class="qui-status">
+                    <div class="root">
+                        <h2 class="description">{description}</h2>
+                        <div class="action">
+                            {login_href.map(|href| view! { <buttons::Login href=href /> })}
+                        </div>
+                    </div>
+                </div>
+            }
+            .into_any(),
+        );
+    }
 
     let content = match status.as_str() {
         "ahead" => {
@@ -111,31 +148,6 @@ pub(super) fn StatusBanner(
             }
             .into_any(),
         ),
-        "error" => match host {
-            Some(ref h) => {
-                let back = format!(
-                    "/installed-package?namespace={}&filter=unmodified",
-                    urlencoding::encode(&ns)
-                );
-                let login_href = format!("/login?host={}&back={}", h, urlencoding::encode(&back));
-                Some(
-                    view! {
-                        <StatusBannerInner description="Unable to check remote status">
-                            <buttons::Login href=login_href />
-                        </StatusBannerInner>
-                    }
-                    .into_any(),
-                )
-            }
-            None => Some(
-                view! {
-                    <StatusBannerInner description="No remote configured">
-                        <span></span>
-                    </StatusBannerInner>
-                }
-                .into_any(),
-            ),
-        },
         "local" if host.is_some() => {
             let ns_for_push = ns.clone();
             let (push_busy, on_push) = make_action(
@@ -159,11 +171,15 @@ pub(super) fn StatusBanner(
         _ => None,
     };
 
-    // Autosync `paused` is rendered *in addition to* the
-    // upstream-state banner so we can show a reason message the
-    // status string alone cannot carry (workflow rejection text, hash
-    // mismatch, etc.). When the next non-paused status emit comes in,
-    // `paused_event` clears and only the upstream banner remains.
+    with_paused_banner(paused_event, content.into_any())
+}
+
+/// Autosync `paused` is rendered *in addition to* the upstream-state banner
+/// so we can show a reason message the status string alone cannot carry
+/// (workflow rejection text, hash mismatch, etc.). When the next non-paused
+/// status emit comes in, `paused_event` clears and only the upstream banner
+/// remains.
+fn with_paused_banner(paused_event: RwSignal<Option<PausedEvent>>, content: AnyView) -> AnyView {
     view! {
         <Show when=move || paused_event.get().is_some()>
             {move || paused_event.get().map(|ev| {
@@ -191,6 +207,35 @@ pub(super) fn StatusBanner(
         </Show>
         {content}
     }
+    .into_any()
+}
+
+/// The banner for what we know about the remote's *reachability*, or `None`
+/// when the status says nothing about it and the status-driven banners apply.
+///
+/// Returns the description and whether Login is the remedy on offer. The two
+/// cases used to be one: every status failure, denials included, collapsed
+/// into `error`, whose "Unable to check remote status" copy comes with a
+/// Login button. For a denial that button is a loop with no exit — the
+/// session is healthy, so the re-vend hands back the very role that was
+/// refused. So a known denial outranks the error state, states the fact in
+/// the roster's words, and offers nothing.
+fn remote_state_banner(
+    status: &str,
+    has_host: bool,
+    no_access_reason: Option<&str>,
+) -> Option<(String, bool)> {
+    if let Some(reason) = no_access_reason {
+        return Some((reason.to_string(), false));
+    }
+    if status != "error" {
+        return None;
+    }
+    Some(if has_host {
+        ("Unable to check remote status".to_string(), true)
+    } else {
+        ("No remote configured".to_string(), false)
+    })
 }
 
 /// Headline + optional detail line for the autosync paused banner, keyed on the
@@ -265,8 +310,54 @@ fn StatusBannerInner(description: &'static str, children: Children) -> impl Into
 
 #[cfg(test)]
 mod tests {
-    use super::{behind_description, paused_banner_copy};
+    use super::{behind_description, paused_banner_copy, remote_state_banner};
     use crate::commands::{PullCheck, PullOutcome};
+
+    const DENIED: &str = "Current role ReadOnly has no access to this bucket";
+
+    /// The regression this replaces: a denial arrived as the `error` status,
+    /// and the page told the user to sign in again. The re-vend returns the
+    /// same refused role, so that button is a loop with no exit.
+    #[test]
+    fn a_denial_states_the_fact_and_offers_no_login() {
+        assert_eq!(
+            remote_state_banner("error", true, Some(DENIED)),
+            Some((DENIED.to_string(), false))
+        );
+    }
+
+    /// The mark can arrive on a row whose cached status is perfectly fine —
+    /// the page still has to explain why the remote state is not being
+    /// refreshed.
+    #[test]
+    fn a_denial_outranks_a_healthy_status_too() {
+        assert_eq!(
+            remote_state_banner("up_to_date", true, Some(DENIED)),
+            Some((DENIED.to_string(), false))
+        );
+    }
+
+    /// A genuine failure keeps its Login route — only a denial loses it.
+    #[test]
+    fn an_unexplained_error_still_offers_login() {
+        assert_eq!(
+            remote_state_banner("error", true, None),
+            Some(("Unable to check remote status".to_string(), true))
+        );
+    }
+
+    #[test]
+    fn an_error_without_a_host_has_no_remote_to_sign_in_to() {
+        assert_eq!(
+            remote_state_banner("error", false, None),
+            Some(("No remote configured".to_string(), false))
+        );
+    }
+
+    #[test]
+    fn a_healthy_status_leaves_the_banner_to_the_status_arms() {
+        assert_eq!(remote_state_banner("behind", true, None), None);
+    }
 
     #[test]
     fn paused_other_shows_generic_guidance_and_raw_reason_detail() {

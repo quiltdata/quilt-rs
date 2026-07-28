@@ -26,6 +26,11 @@ pub struct InstalledPackageData {
     /// a new revision) when there is one, so the Set-remote notice is gated
     /// on this.
     pub has_local_commit: bool,
+    /// The active role cannot reach this package's bucket, worded as the
+    /// roster words it. The status banner states this instead of the
+    /// "unable to check remote status" copy, and must not offer Login: the
+    /// session is healthy, so signing in again re-vends the same role.
+    pub no_access_reason: Option<String>,
     pub entries: Vec<EntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,

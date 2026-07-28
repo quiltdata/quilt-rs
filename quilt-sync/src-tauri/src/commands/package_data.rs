@@ -3,9 +3,12 @@
 use serde::Serialize;
 
 use crate::Error;
+use crate::commands::RoleCache;
 use crate::model;
 use crate::quilt;
 use crate::routes;
+
+use super::package_list::denied_mark;
 
 // ── Installed Package data for Leptos UI ──
 
@@ -43,6 +46,13 @@ pub struct InstalledPackageData {
     /// re-commits (creating a new revision) when there is a commit to
     /// re-commit, so the UI gates the "creates a new revision" notice on this.
     pub has_local_commit: bool,
+    /// Why the active role cannot reach this package's bucket, worded exactly
+    /// as the roster words it. `Some` only on a denial.
+    ///
+    /// It is not an auth failure — the credentials vended fine — so the page
+    /// must state the fact and must **not** offer Login: signing in again
+    /// re-vends the same denied role, which is the loop this replaces.
+    pub no_access_reason: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
@@ -60,6 +70,7 @@ fn manifest_message(manifest: &quilt::manifest::Manifest) -> Option<String> {
 #[allow(clippy::too_many_lines, reason = "cohesive package-data assembly")]
 async fn get_installed_package_data_from_model(
     m: &impl model::QuiltModel,
+    roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
     filter: routes::EntriesFilter,
@@ -90,12 +101,30 @@ async fn get_installed_package_data_from_model(
         tracing.add_host(host);
     }
 
+    let mut no_access_reason = None;
     let pkg_status = if lineage.remote_uri.is_none() || origin_host.is_some() {
         match m
             .get_installed_package_status(&installed_package, None)
             .await
         {
             Ok(s) => s,
+            // A denial is not a broken session: the credentials vended, and
+            // the active role simply cannot read this bucket. Collapsing it
+            // into the synthetic error status makes the page say "sign in
+            // again", and the re-vend hands back the same denied role — the
+            // unrecoverable loop this page must not reproduce. State the
+            // fact instead, and keep the entries: they come from the cached
+            // manifest and the working tree, neither of which was refused.
+            Err(err) if err.is_access_denied() => {
+                no_access_reason = denied_mark(m, roles, origin_host).await.reason;
+                match m.recompute_local_status(&installed_package, None).await {
+                    Ok(status) => status,
+                    Err(err) => {
+                        tracing::warn!("Failed to recompute local status: {err}");
+                        quilt::lineage::InstalledPackageStatus::error()
+                    }
+                }
+            }
             Err(err) => {
                 tracing::warn!("Failed to get package status: {err}");
                 quilt::lineage::InstalledPackageStatus::error()
@@ -223,6 +252,7 @@ async fn get_installed_package_data_from_model(
         installed_message,
         remote_locked,
         has_local_commit,
+        no_access_reason,
         entries: entries_list,
         has_remote_entries,
         ignored_count,
@@ -235,6 +265,7 @@ async fn get_installed_package_data_from_model(
 #[tauri::command]
 pub async fn get_installed_package_data(
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
     filter: Option<String>,
@@ -246,7 +277,7 @@ pub async fn get_installed_package_data(
         .map(|f| routes::EntriesFilter::from_filter_str(&f))
         .unwrap_or_default();
 
-    get_installed_package_data_from_model(&*m, &tracing, &namespace, filter)
+    get_installed_package_data_from_model(&*m, &roles, &tracing, &namespace, filter)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -272,6 +303,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),
@@ -302,6 +334,7 @@ mod tests {
 
         let result = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),
@@ -335,6 +368,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),
@@ -379,6 +413,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),
@@ -390,6 +425,76 @@ mod tests {
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
             Some("test.quilt.dev")
+        );
+        Ok(())
+    }
+
+    /// The detail page used to map *every* status failure onto the synthetic
+    /// error status, which the banner renders as "Unable to check remote
+    /// status" plus a Login button. On a denial that is the re-login loop:
+    /// the re-vend hands back the same role that was just refused. The page
+    /// must state the fact and name the role instead.
+    #[tokio::test]
+    async fn a_denial_states_the_role_instead_of_asking_for_a_new_login() -> Result<(), String> {
+        let mut model = mocks::create();
+
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri,
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Err(access_denied_error()));
+        model.expect_recompute_local_status().returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::UpToDate,
+                one_local_change(),
+            ))
+        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_refresh_roles().returning(|_| {
+            Ok(quilt_rs::RoleInfo {
+                current: "ReadOnly".to_string(),
+                available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
+            })
+        });
+        model.expect_clear_remote_client_cache().returning(|_| ());
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_installed_package_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &namespace,
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        assert_ne!(
+            data.status, "error",
+            "the error status is what puts a Login button on the page"
+        );
+        assert_eq!(
+            data.no_access_reason.as_deref(),
+            Some("Current role ReadOnly has no access to this bucket"),
+            "the page must say the same thing the roster says"
+        );
+        assert!(
+            data.entries.iter().any(|e| e.filename == "file.txt"),
+            "the working tree was not refused, so the entries survive"
         );
         Ok(())
     }
@@ -417,6 +522,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),
@@ -462,6 +568,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),
@@ -528,6 +635,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),
@@ -556,6 +664,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &RoleCache::default(),
             &tracing,
             &namespace,
             routes::EntriesFilter::default(),

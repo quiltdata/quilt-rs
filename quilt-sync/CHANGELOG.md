@@ -17,7 +17,7 @@
 
 ### Changed
 
-- A refused read or write now names the role instead of surfacing a raw storage error: the packages list marks rows the active role cannot read with the reason and a shortcut to switch, a denied push says the role cannot write there, and autosync pauses the package with the same guidance instead of retrying forever — releasing that pause when you switch role (<https://github.com/quiltdata/quilt-rs/pull/807>)
+- A refused read or write now names the role instead of surfacing a raw storage error: the packages list marks rows the active role cannot read with the reason and a shortcut to switch, the package page states the same reason instead of asking you to sign in again, a denied push says the role cannot write there, and autosync pauses the package with the same guidance instead of retrying forever — releasing that pause when you switch role (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
 ## [v0.20.0-alpha1] - 2026-07-23
 

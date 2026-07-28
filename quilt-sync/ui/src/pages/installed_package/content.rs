@@ -46,6 +46,10 @@ pub(super) fn InstalledPackageContent(
     let current_host = origin_host.clone();
     let current_bucket = uri.as_ref().and_then(util::bucket_str);
     let remote_locked = data.remote_locked;
+    // Why the active role cannot reach this bucket, when it cannot. Outranks
+    // the status-driven banner — see `remote_state_banner`.
+    let no_access_reason = data.no_access_reason.clone();
+    let banner_no_access_reason = no_access_reason.clone();
     let entries = data.entries;
     let has_remote_entries = data.has_remote_entries;
     let ignored_count = data.ignored_count;
@@ -290,6 +294,7 @@ pub(super) fn InstalledPackageContent(
                     namespace=ns_for_status
                     status=status_clone
                     origin_host=origin_host_for_status
+                    no_access_reason=banner_no_access_reason
                     pull_check=pull_check
                     pull_retry=pull_retry
                     paused_event=paused_event
@@ -313,6 +318,7 @@ pub(super) fn InstalledPackageContent(
                             ignored_count=ignored_count
                             unmodified_count=unmodified_count
                             with_status=matches!(data.status.as_str(), "ahead" | "behind" | "diverged" | "error")
+                                || no_access_reason.is_some()
                         />
                     </Show>
 
