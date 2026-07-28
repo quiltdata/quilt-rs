@@ -235,6 +235,15 @@ impl Watcher {
         reporter::WatcherSnapshot { paused }
     }
 
+    /// The shared state the tick loop reads. Lets a test drive
+    /// [`tick::run_once`] against the very same watcher a command handler
+    /// holds — the two halves of the role-denial pause path, which is
+    /// created by a tick and released by the switch command.
+    #[cfg(test)]
+    pub(crate) fn inner_for_test(&self) -> &WatcherInner {
+        &self.inner
+    }
+
     #[cfg(test)]
     pub(crate) fn new_for_test(reporter: Arc<dyn StatusReporter>) -> Self {
         let (tx, _) = watch::channel(SyncTrayStatus::default());

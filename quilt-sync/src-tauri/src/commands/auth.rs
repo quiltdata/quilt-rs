@@ -223,7 +223,7 @@ pub async fn get_roles(
 ///
 /// Clear the caches only **after** the switch succeeds — clearing first
 /// would let an in-flight vend repopulate them under the old role.
-async fn switch_role_command(
+pub(super) async fn switch_role_command(
     m: &impl QuiltModel,
     roles: &RoleCache,
     watcher: &Watcher,

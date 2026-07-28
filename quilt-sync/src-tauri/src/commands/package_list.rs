@@ -143,7 +143,7 @@ pub struct PausedRow {
     pub message: String,
 }
 
-async fn get_installed_packages_list_data_from_model(
+pub(super) async fn get_installed_packages_list_data_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
@@ -375,7 +375,7 @@ impl RefreshedPackageStatus {
     }
 }
 
-async fn refresh_package_status_from_model(
+pub(super) async fn refresh_package_status_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
