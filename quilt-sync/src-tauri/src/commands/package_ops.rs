@@ -114,6 +114,24 @@ pub async fn reset_local(
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
+/// The user-visible text for a failed write, given the action that failed
+/// (`"push package"`, `"publish package"`) and the error it failed with.
+///
+/// Write permission is invisible until the write happens: the role-scoped
+/// bucket list is read-presence only and never tells `READ` apart from
+/// `READ_WRITE`, so a role that can read a bucket but not write it looks
+/// perfectly healthy right up to the push. When storage refuses with
+/// `AccessDenied`, name the role as the cause and the remedy — a raw
+/// storage error gives the user nothing to connect the failure back to the
+/// role they picked.
+fn write_failure_message(action: &str, err: &Error) -> String {
+    if err.is_access_denied() {
+        "Current role can't write here — switch role".to_string()
+    } else {
+        format!("Failed to {action}: {err}")
+    }
+}
+
 async fn package_push_command(
     m: &model::Model,
     namespace: &str,
@@ -150,7 +168,7 @@ pub async fn package_push(
         }
         _ => String::new(),
     };
-    let msg_err = |err: &Error| format!("Failed to push package: {err}");
+    let msg_err = |err: &Error| write_failure_message("push package", err);
 
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
@@ -214,7 +232,7 @@ pub async fn package_publish(
     // instead of surfacing as a plain toast. This requires `make_action` to
     // parse the JSON envelope (or the Tauri command to bypass `Notify` for
     // these variants); both are out of scope here.
-    let msg_err = |err: &Error| format!("Failed to publish package: {err}");
+    let msg_err = |err: &Error| write_failure_message("publish package", err);
 
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
@@ -277,7 +295,7 @@ pub async fn package_commit_and_push(
         }
         _ => String::new(),
     };
-    let msg_err = |err: &Error| format!("Failed to publish package: {err}");
+    let msg_err = |err: &Error| write_failure_message("publish package", err);
 
     Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
@@ -668,6 +686,85 @@ pub async fn get_revision_message(
 
 #[cfg(test)]
 mod tests {
+    use crate::Error;
+    use crate::quilt;
+
+    /// The error S3 returns when the active role cannot write a bucket. The
+    /// upload path types the `AccessDenied` code distinctly instead of
+    /// folding it into a generic put failure, which is what lets the push
+    /// message tell a role problem apart from a broken upload.
+    fn access_denied_error() -> Error {
+        Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
+        )))
+    }
+
+    /// A denied push must say the role cannot write here, not surface a raw
+    /// storage error. Write denial is invisible until the push — the
+    /// readable bucket list never distinguishes read from write.
+    #[test]
+    fn push_denial_reports_a_write_permission_problem() {
+        let msg = super::write_failure_message("push package", &access_denied_error());
+
+        assert!(msg.contains("can't write"), "got: {msg}");
+        assert!(
+            msg.contains("switch role"),
+            "must name the remedy, got: {msg}"
+        );
+    }
+
+    /// The denial message replaces the storage error rather than appending
+    /// to it: an `AccessDenied` in a toast reads as a bug, not as a role the
+    /// user can change.
+    #[test]
+    fn push_denial_does_not_leak_the_raw_storage_error() {
+        let msg = super::write_failure_message("push package", &access_denied_error());
+
+        assert!(!msg.contains("AccessDenied"), "got: {msg}");
+        assert!(!msg.contains("S3 error"), "got: {msg}");
+    }
+
+    /// Publish shares the denial wording with push — both are writes, and
+    /// the remedy is the same regardless of which button was pressed.
+    #[test]
+    fn publish_denial_reports_the_same_write_permission_problem() {
+        assert_eq!(
+            super::write_failure_message("publish package", &access_denied_error()),
+            super::write_failure_message("push package", &access_denied_error()),
+        );
+    }
+
+    /// Every failure that is not a denial keeps its pre-existing text, so
+    /// the new branch narrows the message set rather than replacing it.
+    #[test]
+    fn non_denial_failures_keep_their_original_message() {
+        let err = Error::Commit("Message is required".to_string());
+
+        assert_eq!(
+            super::write_failure_message("push package", &err),
+            "Failed to push package: Commit error: Message is required",
+        );
+        assert_eq!(
+            super::write_failure_message("publish package", &err),
+            "Failed to publish package: Commit error: Message is required",
+        );
+    }
+
+    /// A storage failure that is *not* a denial must not be swept into the
+    /// role message — the user would go switch roles over a transient
+    /// upload error.
+    #[test]
+    fn non_denial_storage_failure_is_not_reported_as_a_role_problem() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::PutObject("SlowDown: throttled".to_string()),
+        )));
+
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(!msg.contains("switch role"), "got: {msg}");
+        assert!(msg.contains("SlowDown"), "got: {msg}");
+    }
+
     /// The requested revision's deep-link URI — its own bucket + catalog,
     /// deliberately different from anything installed.
     fn requested_uri() -> quilt_uri::S3PackageUri {
