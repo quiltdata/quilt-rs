@@ -310,9 +310,10 @@ pub async fn get_installed_packages_list_data(
 ) -> Result<InstalledPackagesListData, String> {
     // Read the watcher's paused map — the single source of truth — the
     // same way `get_autosync_snapshot` does. Only message-bearing pauses
-    // (`other`, `pullConflict`) surface on a row; the status string alone
-    // carries the rest. The reason discriminant rides along so the UI can
-    // pick conflict- vs. generic guidance.
+    // (`other`, `pullConflict`, and `roleDenied` when the role could be
+    // named) surface on a row; the status string alone carries the rest. The
+    // reason discriminant rides along so the UI can pick conflict-,
+    // role- or generic guidance.
     let paused_reasons: HashMap<String, PausedRow> = watcher
         .snapshot()
         .await

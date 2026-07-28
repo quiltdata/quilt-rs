@@ -26,16 +26,37 @@
 //! the flush from `switch_role_command` fails these tests rather than
 //! leaving them green.
 //!
+//! **Which surface reads which role is not arbitrary — it is the point.**
+//! On this feature, knowing exactly which cache holds what has repeatedly
+//! been the difference between working and silently fake, so the fake follows
+//! production exactly:
+//!
+//! | Surface | Production path | Reads |
+//! | --- | --- | --- |
+//! | `readable_buckets` | GraphQL over the HTTP client, bearer token | `role` |
+//! | `refresh_roles` | GraphQL over the HTTP client, bearer token | `role` |
+//! | `get_installed_package_status` | a real S3 GET through the cached client | `signing_role` |
+//!
+//! So the roster's **light** phase (the bucket-list pre-filter) follows a
+//! switch whether or not the clients were flushed — it never touched them.
+//! Only the **heavy** phase and the autosync tick, which issue real S3 calls,
+//! depend on the flush. Wiring the bucket list to `signing_role` would make
+//! test 1's light-phase assertion fail on a missing flush too, which sounds
+//! stricter but sends the next reader debugging the roster when the actual
+//! breakage is in the heavy phase and autosync.
+//!
 //! It models the hazard; it does not prove the fix at the SDK level. Whether
 //! dropping the client from `quilt-rs`'s map really releases the AWS SDK's
 //! lazily-cached identity is unpinned on both sides of the seam and stays
 //! that way — see the manual checklist.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
+use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
 use super::auth::RoleCache;
@@ -69,10 +90,12 @@ const LOCKED_ROW: (&str, &str) = ("team", "locked");
 ///
 /// See the module docs for why `role` and `signing_role` are separate.
 struct FakeStack {
-    /// What `/me` reports. A switch changes this immediately.
+    /// What the registry answers — `/me` and the readable-bucket query, both
+    /// GraphQL calls carrying a bearer token. A switch changes this
+    /// immediately; no cache stands in the way.
     role: Mutex<String>,
     /// What the cached S3 clients are still signing as. Only a client-cache
-    /// flush moves it.
+    /// flush moves it, and only real S3 calls read it.
     signing_role: Mutex<String>,
     /// Buckets each role may read, in the order the stack lists the roles.
     readable: Vec<(String, Vec<String>)>,
@@ -118,19 +141,27 @@ impl FakeStack {
         }
     }
 
-    /// What S3 currently answers, which is the *signing* role — stale until
-    /// the client cache is dropped.
-    fn readable_buckets(&self) -> Vec<String> {
-        let signing = self.signing_role.lock().expect("signing role").clone();
+    fn buckets_of(&self, role: &str) -> Vec<String> {
         self.readable
             .iter()
-            .find(|(role, _)| *role == signing)
+            .find(|(held, _)| held == role)
             .map(|(_, buckets)| buckets.clone())
             .unwrap_or_default()
     }
 
+    /// The registry's readable-bucket list. A GraphQL call in production, so
+    /// it answers for the role the user has switched to — the cached S3
+    /// clients are not on this path at all.
+    fn readable_buckets(&self) -> Vec<String> {
+        self.buckets_of(&self.role.lock().expect("role"))
+    }
+
+    /// What a real S3 call gets, which is what the *signing* role may reach —
+    /// stale until the client cache is dropped.
     fn can_read(&self, bucket: &str) -> bool {
-        self.readable_buckets().iter().any(|b| b == bucket)
+        self.buckets_of(&self.signing_role.lock().expect("signing role"))
+            .iter()
+            .any(|b| b == bucket)
     }
 
     /// Server-side switch. Deliberately leaves `signing_role` alone.
@@ -166,8 +197,8 @@ fn bucket_for(namespace: &Namespace) -> &'static str {
     }
 }
 
-fn manifest_uri_for(namespace: &Namespace) -> quilt_uri::ManifestUri {
-    quilt_uri::ManifestUri {
+fn manifest_uri_for(namespace: &Namespace) -> ManifestUri {
+    ManifestUri {
         origin: Some(HOST.parse().expect("host")),
         bucket: bucket_for(namespace).to_string(),
         namespace: namespace.clone(),
@@ -265,12 +296,16 @@ fn row<'a>(
 }
 
 /// Fetch the roster the way the Tauri command does, with no pauses to show.
+///
+/// The empty paused map means the `#[tauri::command]` wrapper's projection of
+/// `watcher.snapshot().paused` into `paused_reasons` is **not** exercised
+/// here; these tests enter one level below it.
 async fn roster(model: &MockQuiltModel, roles: &RoleCache) -> Vec<InstalledPackageListItem> {
     get_installed_packages_list_data_from_model(
         model,
         roles,
         &Telemetry::default(),
-        &std::collections::HashMap::new(),
+        &HashMap::new(),
     )
     .await
     .expect("roster")
@@ -293,9 +328,13 @@ async fn switch_to(
 /// it; the next roster fetch — light phase and heavy phase both — comes back
 /// clean.
 ///
-/// Deleting the `clear_remote_client_cache` call from `switch_role_command`
-/// fails this test, because the fake keeps answering as the old role until
-/// the flush lands.
+/// The two phases are sensitive to different things, and the difference is
+/// worth knowing before debugging a failure here. The **light** phase reads
+/// the registry's bucket list, so it follows the switch on its own; it fails
+/// only if the switch itself did not land. The **heavy** phase issues a real
+/// S3 call, so it is the assertion that fails when
+/// `clear_remote_client_cache` is missing or runs before the switch — the
+/// cached client would still be signing as the old role.
 #[tokio::test]
 async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
     let stack = FakeStack::new(&[(READ_ONLY, &[OPEN]), (READ_WRITE, &[OPEN, LOCKED])]);
@@ -333,7 +372,8 @@ async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
         "the row that was always readable must stay unmarked"
     );
 
-    // The heavy phase is the authoritative answer, and it has to agree.
+    // The heavy phase is the authoritative answer, and the only one here that
+    // goes through a cached S3 client. This is the flush's assertion.
     let refreshed = refresh_package_status_from_model(
         &model,
         &roles,
