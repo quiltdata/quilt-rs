@@ -433,6 +433,24 @@ pub trait QuiltModel {
             .clear_client_cache(host.as_ref());
     }
 
+    /// Buckets the active role can read on `host`.
+    ///
+    /// An optimistic hint, not an authoritative answer: it over-reports for
+    /// unmanaged roles and anonymous-access stacks (the registry returns
+    /// every in-stack bucket when it cannot introspect the role) and is
+    /// read-presence only — it never distinguishes read from write. A
+    /// listed bucket can still deny, so callers must keep treating an
+    /// `AccessDenied` from the real call as the authority.
+    async fn readable_buckets(&self, host: &Host) -> Result<Vec<String>, Error> {
+        Ok(self
+            .get_quilt()
+            .lock()
+            .await
+            .get_remote()
+            .readable_buckets(host)
+            .await?)
+    }
+
     /// Read the active role for `host`.
     async fn refresh_roles(&self, host: &Host) -> Result<RoleInfo, Error> {
         Ok(self
@@ -479,22 +497,6 @@ impl Model {
         directory: impl AsRef<Path>,
     ) -> Result<quilt::lineage::Home, Error> {
         Ok(self.get_quilt().lock().await.set_home(directory).await?)
-    }
-
-    /// Buckets the active role can read; an optimistic hint, not an
-    /// authoritative answer.
-    #[expect(
-        dead_code,
-        reason = "plumbing for the role UI; drop this attribute with the first caller"
-    )]
-    pub async fn readable_buckets(&self, host: &Host) -> Result<Vec<String>, Error> {
-        Ok(self
-            .quilt
-            .lock()
-            .await
-            .get_remote()
-            .readable_buckets(host)
-            .await?)
     }
 
     /// Expire `host`'s cached STS credentials without logging out. Pair it

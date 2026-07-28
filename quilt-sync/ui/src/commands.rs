@@ -287,6 +287,17 @@ pub struct PackageItemData {
     /// `paused_reason` is; lets the row pick conflict- vs. generic guidance
     /// without re-parsing the message.
     pub paused_kind: Option<String>,
+    /// The active role cannot reach this row's bucket. The row explains
+    /// itself with `no_access_reason` and must **not** offer Login: the
+    /// session is fine, so signing in again re-vends the same denied role.
+    pub no_access: bool,
+    /// Why the row is marked, naming the active role. `Some` exactly when
+    /// `no_access` is.
+    pub no_access_reason: Option<String>,
+    /// The host whose role selector the switch affordance opens. `Some`
+    /// only when the user holds more than one role there, so a single-role
+    /// user never gets a dead-end button.
+    pub role_switch_host: Option<String>,
 }
 
 /// A deep-link banner to surface on the installed-package page after
@@ -466,6 +477,12 @@ pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListD
 pub struct RefreshedPackageStatus {
     pub status: String,
     pub has_changes: bool,
+    /// See [`PackageItemData::no_access`]. Carried here too, so a denial
+    /// the heavy phase discovers reaches a row the light phase's bucket
+    /// list had cleared.
+    pub no_access: bool,
+    pub no_access_reason: Option<String>,
+    pub role_switch_host: Option<String>,
 }
 
 /// Payload of the `package-status-changed` Tauri event. Same shape as
@@ -1079,7 +1096,7 @@ mod tests {
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
         let item = serde_json::from_str::<PackageItemData>(
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other"}"#,
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"acme.quilt.dev"}"#,
         )
         .unwrap();
         assert_eq!(item.namespace, "acme/data");
@@ -1093,6 +1110,12 @@ mod tests {
             Some("workflow rejected metadata")
         );
         assert_eq!(item.paused_kind.as_deref(), Some("other"));
+        assert!(item.no_access);
+        assert_eq!(
+            item.no_access_reason.as_deref(),
+            Some("Current role ReadOnly has no access to this bucket")
+        );
+        assert_eq!(item.role_switch_host.as_deref(), Some("acme.quilt.dev"));
     }
 
     /// The mirror types must deserialize the exact tagged JSON the backend

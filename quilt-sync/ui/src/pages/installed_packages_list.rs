@@ -57,12 +57,20 @@ fn pull_conflict_hint(files: Option<&str>) -> String {
 /// the generic guidance line followed by the raw refusal reason (when one is
 /// known); an `error` row shows a sign-in or no-remote hint depending on
 /// whether a remote host exists.
+///
+/// `no_access_reason` outranks the error hint. A row the active role cannot
+/// reach is not a broken session, and telling the user to sign in again puts
+/// them in a loop that cannot end: the re-vend returns the same denied role.
 fn hint_lines(
     status: &str,
     has_host: bool,
     paused_kind: Option<&str>,
     paused_message: Option<&str>,
+    no_access_reason: Option<&str>,
 ) -> Vec<String> {
+    if let Some(reason) = no_access_reason {
+        return vec![reason.to_string()];
+    }
     if status == "paused" || paused_message.is_some() {
         if paused_kind == Some("pullConflict") {
             return vec![pull_conflict_hint(paused_message)];
@@ -332,6 +340,15 @@ fn PackageItem(
     let has_changes = RwSignal::new(data.has_changes);
     let refreshing = RwSignal::new(true);
     let refresh_error = RwSignal::new(None::<String>);
+    // Seeded from the light phase's readable-bucket pre-filter, then
+    // refined by the heavy phase. A denial from the real call is
+    // authoritative, but a *successful* call is not evidence of access
+    // (the status can come from cached lineage), so the refresh only ever
+    // adds the mark — never clears one the pre-filter set. A role switch
+    // re-runs the light phase, which is what clears it.
+    let no_access = RwSignal::new(data.no_access);
+    let no_access_reason = RwSignal::new(data.no_access_reason.clone());
+    let role_switch_host = RwSignal::new(data.role_switch_host.clone());
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_flag = cancelled.clone();
@@ -347,6 +364,11 @@ fn PackageItem(
             Ok(fresh) => {
                 status.set(fresh.status);
                 has_changes.set(fresh.has_changes);
+                if fresh.no_access {
+                    no_access.set(true);
+                    no_access_reason.set(fresh.no_access_reason);
+                    role_switch_host.set(fresh.role_switch_host);
+                }
             }
             Err(err) => refresh_error.set(Some(err)),
         }
@@ -385,13 +407,16 @@ fn PackageItem(
     let paused_reason = data.paused_reason.clone();
     let paused_kind = data.paused_kind.clone();
     let hint = Signal::derive(move || {
-        status.with(|s| {
-            hint_lines(
-                s,
-                has_host,
-                paused_kind.as_deref(),
-                paused_reason.as_deref(),
-            )
+        no_access_reason.with(|reason| {
+            status.with(|s| {
+                hint_lines(
+                    s,
+                    has_host,
+                    paused_kind.as_deref(),
+                    paused_reason.as_deref(),
+                    reason.as_deref(),
+                )
+            })
         })
     });
 
@@ -426,6 +451,10 @@ fn PackageItem(
         &data,
         status,
         has_changes,
+        AccessSignals {
+            no_access,
+            role_switch_host,
+        },
         pull_check,
         pull_retry,
         refreshing,
@@ -482,6 +511,14 @@ fn PackageItem(
     }
 }
 
+/// The row's live access state, threaded into the menu so the error
+/// affordances can tell a denied role from a broken session.
+#[derive(Clone, Copy)]
+struct AccessSignals {
+    no_access: RwSignal<bool>,
+    role_switch_host: RwSignal<Option<String>>,
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(
     clippy::too_many_lines,
@@ -491,6 +528,7 @@ fn build_package_menu(
     data: &PackageItemData,
     status: RwSignal<String>,
     has_changes: RwSignal<bool>,
+    access: AccessSignals,
     pull_check: Signal<PullCheck>,
     pull_retry: Trigger,
     refreshing: RwSignal<bool>,
@@ -674,15 +712,27 @@ fn build_package_menu(
                 />
             </li>
         })}
-        // Has origin but error → Login (reactive on status)
+        // Has origin but error → Login (reactive on status).
+        // Suppressed for a role denial: the session is healthy, so signing
+        // in again re-vends the same denied role — the loop the original
+        // bug report was stuck in.
         {login_href.map(|href| view! {
-            <Show when=move || status.get() == "error">
+            <Show when=move || status.get() == "error" && !access.no_access.get()>
                 <li class="menu-item menu-divider"></li>
                 <li class="menu-item">
                     <buttons::Login href=href.clone() small=true />
                 </li>
             </Show>
         })}
+        // Denied by the active role → point at the role switcher, but only
+        // when another role is actually held. A single-role user gets the
+        // reason line and no dead-end button.
+        <Show when=move || access.no_access.get() && access.role_switch_host.with(Option::is_some)>
+            <li class="menu-item menu-divider"></li>
+            <li class="menu-item">
+                <buttons::SwitchRole small=true />
+            </li>
+        </Show>
 
         <li class="menu-item menu-divider"></li>
 
@@ -844,7 +894,8 @@ mod tests {
                 "paused",
                 true,
                 Some("other"),
-                Some("workflow rejected metadata")
+                Some("workflow rejected metadata"),
+                None
             ),
             vec![
                 PAUSED_GUIDANCE.to_string(),
@@ -854,7 +905,13 @@ mod tests {
         // A snapshot-seeded pause carries its reason even when the row's
         // own status string was refreshed to something else on mount.
         assert_eq!(
-            hint_lines("up_to_date", false, Some("other"), Some("hash mismatch")),
+            hint_lines(
+                "up_to_date",
+                false,
+                Some("other"),
+                Some("hash mismatch"),
+                None
+            ),
             vec![PAUSED_GUIDANCE.to_string(), "hash mismatch".to_string()]
         );
     }
@@ -865,7 +922,13 @@ mod tests {
         // "push manually to resume" guidance for the merge-page remediation,
         // naming the conflicting files (which arrive as the pause message).
         assert_eq!(
-            hint_lines("paused", true, Some("pullConflict"), Some("a.txt, b.txt")),
+            hint_lines(
+                "paused",
+                true,
+                Some("pullConflict"),
+                Some("a.txt, b.txt"),
+                None
+            ),
             vec![
                 "Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
                     .to_string()
@@ -888,7 +951,7 @@ mod tests {
     #[test]
     fn paused_without_reason_shows_guidance_only() {
         assert_eq!(
-            hint_lines("paused", true, None, None),
+            hint_lines("paused", true, None, None, None),
             vec![PAUSED_GUIDANCE.to_string()]
         );
     }
@@ -902,7 +965,8 @@ mod tests {
                 "error",
                 true,
                 Some("other"),
-                Some("workflow rejected metadata")
+                Some("workflow rejected metadata"),
+                None
             ),
             vec![
                 PAUSED_GUIDANCE.to_string(),
@@ -914,23 +978,53 @@ mod tests {
     #[test]
     fn error_with_host_prompts_sign_in() {
         assert_eq!(
-            hint_lines("error", true, None, None),
+            hint_lines("error", true, None, None, None),
             vec!["Unable to check remote status — sign in again".to_string()]
         );
+    }
+
+    /// The bug this whole change exists to fix: a row the active role
+    /// cannot read used to arrive as `error`, which renders "sign in
+    /// again" — advice that cannot work, because the re-vend returns the
+    /// same denied role. The access reason must replace it.
+    #[test]
+    fn a_denied_row_never_tells_the_user_to_sign_in_again() {
+        let reason = "Current role ReadOnly has no access to this bucket";
+
+        assert_eq!(
+            hint_lines("error", true, None, None, Some(reason)),
+            vec![reason.to_string()],
+            "a denial must not be dressed up as a broken session"
+        );
+    }
+
+    /// The mark travels with the row whatever the status string says, so a
+    /// pre-greyed row explains itself before any per-row call lands.
+    #[test]
+    fn a_denied_row_explains_itself_whatever_its_status() {
+        let reason = "Current role ReadOnly has no access to this bucket";
+
+        for status in ["up_to_date", "behind", "ahead", "error"] {
+            assert_eq!(
+                hint_lines(status, true, None, None, Some(reason)),
+                vec![reason.to_string()],
+                "status {status} must not shadow the access reason"
+            );
+        }
     }
 
     #[test]
     fn error_without_host_reports_no_remote() {
         assert_eq!(
-            hint_lines("error", false, None, None),
+            hint_lines("error", false, None, None, None),
             vec!["No remote configured".to_string()]
         );
     }
 
     #[test]
     fn healthy_row_has_no_hint() {
-        assert!(hint_lines("up_to_date", true, None, None).is_empty());
-        assert!(hint_lines("ahead", false, None, None).is_empty());
+        assert!(hint_lines("up_to_date", true, None, None, None).is_empty());
+        assert!(hint_lines("ahead", false, None, None, None).is_empty());
     }
 
     #[test]

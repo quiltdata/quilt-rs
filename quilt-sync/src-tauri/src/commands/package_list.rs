@@ -2,8 +2,12 @@
 //! (heavy phase) for the Leptos UI.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use serde::Serialize;
+
+use quilt_rs::RoleInfo;
+use quilt_uri::Host;
 
 use crate::Error;
 use crate::autopull::Watcher;
@@ -46,6 +50,77 @@ pub struct InstalledPackageListItem {
     /// `paused_reason` is; lets the UI pick conflict- vs. generic guidance
     /// without re-parsing the message.
     pub paused_kind: Option<String>,
+    /// True when the active role cannot reach this row's bucket.
+    ///
+    /// A GUI-only mark, which is why it rides here as its own boolean
+    /// rather than as an [`quilt::lineage::UpstreamState`] variant: the
+    /// scriptable commands must not grow an access dimension. Set
+    /// proactively from the role's readable-bucket list, and reactively
+    /// from an `AccessDenied` on the status call. It is *not* an auth
+    /// failure — signing in again re-vends the same denied role — so the
+    /// row must not offer the Login route.
+    pub no_access: bool,
+    /// Why the row is marked, naming the active role. `Some` exactly when
+    /// `no_access` is.
+    pub no_access_reason: Option<String>,
+    /// The host whose role selector the row's switch affordance opens.
+    /// `Some` only when the user holds more than one role there, so the
+    /// affordance is never a dead end: a single-role user gets the reason
+    /// and no button.
+    pub role_switch_host: Option<String>,
+}
+
+/// Whether the active role can reach a row's bucket, and how to say so.
+///
+/// The default is unmarked: no evidence of denial, so the row renders as
+/// it always has. Shared by both detection paths so they word the mark
+/// identically.
+#[derive(Clone, Debug, Default)]
+struct AccessMark {
+    no_access: bool,
+    reason: Option<String>,
+    role_switch_host: Option<String>,
+}
+
+impl AccessMark {
+    /// A denial, stated as a neutral fact — it is equally true when the
+    /// user deliberately switched to a narrow role, so the wording never
+    /// implies the role is wrong.
+    ///
+    /// `roles` is `None` when the role query itself failed. The mark still
+    /// stands (the denial is known either way); it just cannot name the
+    /// role, and it offers no switch affordance because we cannot tell
+    /// whether another role is held.
+    fn denied(host: Option<&Host>, roles: Option<&RoleInfo>) -> Self {
+        let reason = roles.map_or_else(
+            || "The active role has no access to this bucket".to_string(),
+            |roles| {
+                format!(
+                    "Current role {} has no access to this bucket",
+                    roles.current
+                )
+            },
+        );
+        let holds_another_role = roles.is_some_and(|roles| roles.available.len() > 1);
+        Self {
+            no_access: true,
+            reason: Some(reason),
+            role_switch_host: host
+                .filter(|_| holds_another_role)
+                .map(std::string::ToString::to_string),
+        }
+    }
+}
+
+/// Ask `host` who the active role is, so a denial can name it. A failed
+/// query is not fatal: [`AccessMark::denied`] degrades to the unnamed
+/// wording rather than dropping the mark.
+async fn denied_mark(m: &impl model::QuiltModel, host: Option<&Host>) -> AccessMark {
+    let roles = match host {
+        Some(host) => m.refresh_roles(host).await.ok(),
+        None => None,
+    };
+    AccessMark::denied(host, roles.as_ref())
 }
 
 /// A message-bearing autosync pause for a namespace: the stable reason
@@ -76,7 +151,70 @@ async fn get_installed_packages_list_data_from_model(
             }
         }
     }
+    mark_unreadable_buckets(m, &mut packages).await;
     Ok(InstalledPackagesListData { packages })
+}
+
+/// The host a row's remote lives on, if it has one.
+fn row_host(item: &InstalledPackageListItem) -> Option<&Host> {
+    item.uri.as_ref().and_then(|uri| uri.catalog.as_ref())
+}
+
+/// Pre-mark the rows whose bucket is outside what the active role can read.
+///
+/// One query per host, not per package: the roster asks each host once and
+/// intersects the answer with the buckets its rows live in. The answer is
+/// an optimistic hint — it over-reports for unmanaged roles and
+/// anonymous-access stacks, and says nothing about writes — so a miss only
+/// greys the row; the authoritative answer still comes from the per-row
+/// status call.
+///
+/// A failed query degrades to reactive-only marking. It must never be read
+/// as "nothing is readable": an empty set would grey the entire roster.
+async fn mark_unreadable_buckets(
+    m: &impl model::QuiltModel,
+    packages: &mut [InstalledPackageListItem],
+) {
+    let mut hosts: Vec<Host> = Vec::new();
+    for host in packages.iter().filter_map(row_host) {
+        if !hosts.contains(host) {
+            hosts.push(host.clone());
+        }
+    }
+
+    for host in hosts {
+        let readable: HashSet<String> = match m.readable_buckets(&host).await {
+            Ok(buckets) => buckets.into_iter().collect(),
+            Err(err) => {
+                tracing::debug!("No readable-bucket list for {host}: {err}");
+                continue;
+            }
+        };
+
+        let unreadable: Vec<usize> = packages
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| row_host(item) == Some(&host))
+            .filter(|(_, item)| {
+                item.uri
+                    .as_ref()
+                    .is_some_and(|uri| !readable.contains(&uri.bucket))
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if unreadable.is_empty() {
+            // A host the role can fully read costs one query, not two.
+            continue;
+        }
+
+        let mark = denied_mark(m, Some(&host)).await;
+        for index in unreadable {
+            let item = &mut packages[index];
+            item.no_access = mark.no_access;
+            item.no_access_reason.clone_from(&mark.reason);
+            item.role_switch_host.clone_from(&mark.role_switch_host);
+        }
+    }
 }
 
 async fn load_package_item(
@@ -103,6 +241,9 @@ async fn load_package_item(
             remote_display: None,
             paused_reason,
             paused_kind,
+            no_access: false,
+            no_access_reason: None,
+            role_switch_host: None,
         });
     };
 
@@ -118,6 +259,9 @@ async fn load_package_item(
             remote_display: Some(remote_uri.to_string()),
             paused_reason,
             paused_kind,
+            no_access: false,
+            no_access_reason: None,
+            role_switch_host: None,
         });
     }
 
@@ -137,6 +281,11 @@ async fn load_package_item(
         remote_display: Some(remote_display),
         paused_reason,
         paused_kind,
+        // Filled in by the roster-wide access pass, which needs the whole
+        // list to query each host once instead of once per row.
+        no_access: false,
+        no_access_reason: None,
+        role_switch_host: None,
     })
 }
 
@@ -181,6 +330,36 @@ pub async fn get_installed_packages_list_data(
 pub struct RefreshedPackageStatus {
     pub status: String,
     pub has_changes: bool,
+    /// See [`InstalledPackageListItem::no_access`]. The heavy phase carries
+    /// it too, so a denial discovered by the real call reaches a row the
+    /// light phase's bucket list cleared.
+    pub no_access: bool,
+    pub no_access_reason: Option<String>,
+    pub role_switch_host: Option<String>,
+}
+
+impl RefreshedPackageStatus {
+    /// A refreshed row with no access question attached.
+    fn new(status: String, has_changes: bool) -> Self {
+        Self {
+            status,
+            has_changes,
+            no_access: false,
+            no_access_reason: None,
+            role_switch_host: None,
+        }
+    }
+
+    /// A refreshed row the active role may not reach.
+    fn marked(status: String, has_changes: bool, mark: AccessMark) -> Self {
+        Self {
+            status,
+            has_changes,
+            no_access: mark.no_access,
+            no_access_reason: mark.reason,
+            role_switch_host: mark.role_switch_host,
+        }
+    }
 }
 
 async fn refresh_package_status_from_model(
@@ -210,40 +389,59 @@ async fn refresh_package_status_from_model(
                 false
             }
         };
-        return Ok(RefreshedPackageStatus {
-            status: "local".to_string(),
+        return Ok(RefreshedPackageStatus::new(
+            "local".to_string(),
             has_changes,
-        });
+        ));
     };
     if remote_uri.origin.is_none() {
-        return Ok(RefreshedPackageStatus {
-            status: "error".to_string(),
-            has_changes: false,
-        });
+        return Ok(RefreshedPackageStatus::new("error".to_string(), false));
     }
 
-    if let Some(host) = remote_uri.origin.as_ref() {
+    let host = remote_uri.origin.clone();
+    if let Some(host) = host.as_ref() {
         tracing.add_host(host);
     }
+    // What lineage alone already knows. A row we are not allowed to
+    // re-check keeps this instead of being downgraded to `Error`, which is
+    // the state the UI renders as "sign in again".
+    let cached_state: quilt::lineage::UpstreamState = lineage.into();
 
-    let (upstream_state, has_changes) = match m
+    let (upstream_state, has_changes, denied) = match m
         .get_installed_package_status(&installed_package, None)
         .await
     {
-        Ok(s) => (s.upstream_state, !s.changes.is_empty()),
+        Ok(s) => (s.upstream_state, !s.changes.is_empty(), false),
+        Err(err) if err.is_access_denied() => {
+            // Not an auth failure: credential vending succeeded, so the
+            // session is healthy and the active role simply cannot reach
+            // this bucket. Rendering "sign in again" here is what sent the
+            // original bug reporter into an unrecoverable re-login loop —
+            // the re-vend hands back the same denied role.
+            (cached_state, false, true)
+        }
         Err(err) => {
             tracing::warn!(
                 "Failed to get status for {}: {err}",
                 installed_package.namespace,
             );
-            (quilt::lineage::UpstreamState::Error, false)
+            (quilt::lineage::UpstreamState::Error, false, false)
         }
     };
 
-    Ok(RefreshedPackageStatus {
-        status: upstream_state.to_string(),
+    if denied {
+        let mark = denied_mark(m, host.as_ref()).await;
+        return Ok(RefreshedPackageStatus::marked(
+            upstream_state.to_string(),
+            has_changes,
+            mark,
+        ));
+    }
+
+    Ok(RefreshedPackageStatus::new(
+        upstream_state.to_string(),
         has_changes,
-    })
+    ))
 }
 
 #[tauri::command]
@@ -265,8 +463,339 @@ pub async fn refresh_package_status(
 mod tests {
     use super::*;
 
+    use quilt_rs::RoleInfo;
+
     use crate::commands::test_support::*;
+    use crate::model::MockQuiltModel;
     use crate::model::mocks;
+
+    // ── Access-marking fixtures ──
+
+    /// The error S3 returns when the active role cannot reach a bucket.
+    /// Distinct from a broken session: the credentials were vended fine.
+    fn access_denied_error() -> Error {
+        Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
+        )))
+    }
+
+    /// A `ManifestUri` in an explicit bucket, so a test can put two rows on
+    /// the same host in different buckets — the shape the readable-bucket
+    /// intersection is about.
+    fn make_manifest_uri_in_bucket(bucket: &str, namespace: &str) -> quilt_uri::ManifestUri {
+        quilt_uri::ManifestUri {
+            origin: Some("test.quilt.dev".parse().unwrap()),
+            bucket: bucket.to_string(),
+            namespace: namespace.try_into().unwrap(),
+            hash: "abcdef".to_string(),
+        }
+    }
+
+    /// Every roster fetch now asks each host what the active role can read.
+    /// Tests that are not about access declare the query unavailable, which
+    /// is the degrade-to-reactive path: no row is marked either way.
+    fn without_bucket_list(model: &mut MockQuiltModel) {
+        model
+            .expect_readable_buckets()
+            .returning(|_| Err(Error::General("bucket list unavailable".to_string())));
+    }
+
+    /// A user holding two roles, the second of which is active.
+    fn two_roles() -> RoleInfo {
+        RoleInfo {
+            current: "ReadOnly".to_string(),
+            available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
+        }
+    }
+
+    /// A roster of two packages on one host — `team/open` in `reachable`,
+    /// `team/locked` in `locked` — with the role's readable set and role
+    /// list under the test's control.
+    fn mock_two_bucket_roster(
+        readable: Result<Vec<String>, ()>,
+        roles: Option<RoleInfo>,
+    ) -> MockQuiltModel {
+        let mut model = mocks::create();
+
+        let pkgs = vec![
+            make_installed_package(("team", "open")),
+            make_installed_package(("team", "locked")),
+        ];
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(pkgs));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let ns = pkg.namespace.to_string();
+                let bucket = if ns == "team/locked" {
+                    "locked"
+                } else {
+                    "reachable"
+                };
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri_in_bucket(bucket, &ns),
+                    "abcdef".to_string(),
+                ))
+            });
+        model.expect_readable_buckets().returning(move |_| {
+            readable
+                .clone()
+                .map_err(|()| Error::General("bucket list unavailable".to_string()))
+        });
+        if let Some(roles) = roles {
+            model
+                .expect_refresh_roles()
+                .returning(move |_| Ok(roles.clone()));
+        } else {
+            model
+                .expect_refresh_roles()
+                .returning(|_| Err(Error::General("role query unavailable".to_string())));
+        }
+        model
+    }
+
+    /// A single package on `test.quilt.dev` whose status call fails with
+    /// `err`, with the host's roles under the test's control.
+    fn mock_model_with_status_error(err: Error, roles: Option<RoleInfo>) -> MockQuiltModel {
+        let mut model = mocks::create();
+        let pkg = make_installed_package(("test", "denied"));
+        model
+            .expect_get_installed_package()
+            .return_once(move |_| Ok(Some(pkg)));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| Err(err));
+        if let Some(roles) = roles {
+            model
+                .expect_refresh_roles()
+                .returning(move |_| Ok(roles.clone()));
+        } else {
+            model.expect_refresh_roles().never();
+        }
+        model
+    }
+
+    /// An access denial is NOT an auth failure. Rendering it as one sends
+    /// the user into a re-login loop that cannot succeed, because the
+    /// re-vend returns the same denied role.
+    #[tokio::test]
+    async fn access_denied_status_is_not_reported_as_a_login_error() {
+        let m = mock_model_with_status_error(access_denied_error(), Some(two_roles()));
+
+        let item = refresh_package_status_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &("test", "denied").into(),
+        )
+        .await
+        .expect("refresh");
+
+        assert!(
+            item.no_access,
+            "a denial must set the roster's no-access mark"
+        );
+        assert_ne!(
+            item.status, "error",
+            "must not collapse into the sign-in-again state"
+        );
+    }
+
+    /// A genuine failure keeps its `error` status and its Login route —
+    /// only a denial is rerouted.
+    #[tokio::test]
+    async fn a_generic_status_failure_is_still_reported_as_an_error() {
+        let m = mock_model_with_status_error(Error::General("network error".to_string()), None);
+
+        let item = refresh_package_status_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &("test", "denied").into(),
+        )
+        .await
+        .expect("refresh");
+
+        assert_eq!(item.status, "error");
+        assert!(!item.no_access, "a network blip is not a denial");
+    }
+
+    /// The mark states a fact and names the role, so the user can tell
+    /// whether the narrow role is the one they chose. Not a judgement: it
+    /// reads the same whether the switch was deliberate or not.
+    #[tokio::test]
+    async fn the_mark_names_the_active_role() {
+        let m = mock_model_with_status_error(access_denied_error(), Some(two_roles()));
+
+        let item = refresh_package_status_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &("test", "denied").into(),
+        )
+        .await
+        .expect("refresh");
+
+        assert_eq!(
+            item.no_access_reason.as_deref(),
+            Some("Current role ReadOnly has no access to this bucket")
+        );
+        assert_eq!(
+            item.role_switch_host.as_deref(),
+            Some("test.quilt.dev"),
+            "a user holding two roles gets the switch affordance, pointed at the row's host"
+        );
+    }
+
+    /// A single-role user has nowhere to switch to, so the affordance would
+    /// be a dead end. They still get the reason.
+    #[tokio::test]
+    async fn a_single_role_user_gets_the_reason_without_a_switch_affordance() {
+        let only_role = RoleInfo {
+            current: "ReadOnly".to_string(),
+            available: vec!["ReadOnly".to_string()],
+        };
+        let m = mock_model_with_status_error(access_denied_error(), Some(only_role));
+
+        let item = refresh_package_status_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &("test", "denied").into(),
+        )
+        .await
+        .expect("refresh");
+
+        assert!(item.no_access);
+        assert!(
+            item.role_switch_host.is_none(),
+            "one role means the switch button leads nowhere"
+        );
+    }
+
+    /// A package whose bucket is outside the role's readable set is greyed
+    /// before any per-row network call.
+    #[tokio::test]
+    async fn packages_outside_the_readable_bucket_set_are_pre_greyed() {
+        let m = mock_two_bucket_roster(Ok(vec!["reachable".to_string()]), Some(two_roles()));
+
+        let data = get_installed_packages_list_data_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+
+        let find = |ns: &str| {
+            data.packages
+                .iter()
+                .find(|p| p.namespace == ns)
+                .unwrap_or_else(|| panic!("{ns} in roster"))
+        };
+        let unreachable = find("team/locked");
+        assert!(
+            unreachable.no_access,
+            "a bucket outside the readable set must be marked"
+        );
+        assert_eq!(
+            unreachable.no_access_reason.as_deref(),
+            Some("Current role ReadOnly has no access to this bucket")
+        );
+        assert!(
+            !find("team/open").no_access,
+            "a readable bucket must not be marked"
+        );
+    }
+
+    /// The bucket list over-reports for unmanaged roles and anonymous-access
+    /// stacks, so a listed bucket can still deny. The reactive path is the
+    /// authority: the row is marked even though the pre-filter cleared it.
+    #[tokio::test]
+    async fn a_listed_bucket_that_denies_is_still_greyed() {
+        // The pre-filter sees the bucket as readable...
+        let m = mock_two_bucket_roster(Ok(vec!["reachable".to_string()]), Some(two_roles()));
+        let data = get_installed_packages_list_data_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+        let listed = data
+            .packages
+            .iter()
+            .find(|p| p.namespace == "team/open")
+            .expect("team/open in roster");
+        assert!(!listed.no_access, "the pre-filter clears a listed bucket");
+
+        // ...and the real call denies anyway.
+        let m = mock_model_with_status_error(access_denied_error(), Some(two_roles()));
+        let refreshed = refresh_package_status_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &("test", "denied").into(),
+        )
+        .await
+        .expect("refresh");
+
+        assert!(
+            refreshed.no_access,
+            "the reactive path is authoritative over the list"
+        );
+    }
+
+    /// A failed bucket query is not evidence that nothing is readable.
+    /// Treating it as an empty set would grey every row in the roster; the
+    /// only safe degrade is to reactive-only marking.
+    #[tokio::test]
+    async fn a_failed_bucket_query_leaves_every_row_unmarked() {
+        let m = mock_two_bucket_roster(Err(()), Some(two_roles()));
+
+        let data = get_installed_packages_list_data_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+
+        assert_eq!(data.packages.len(), 2);
+        assert!(
+            data.packages.iter().all(|p| !p.no_access),
+            "an unanswerable bucket query must not grey the whole roster"
+        );
+    }
+
+    /// A denial is known even when the role query behind the wording fails,
+    /// so the row is still marked — just unnamed, and with no switch
+    /// affordance, since we cannot tell whether another role is held.
+    #[tokio::test]
+    async fn a_denial_is_marked_even_when_the_role_cannot_be_named() {
+        let m = mock_two_bucket_roster(Ok(vec!["reachable".to_string()]), None);
+
+        let data = get_installed_packages_list_data_from_model(
+            &m,
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+
+        let locked = data
+            .packages
+            .iter()
+            .find(|p| p.namespace == "team/locked")
+            .expect("team/locked in roster");
+        assert!(locked.no_access);
+        assert!(locked.no_access_reason.is_some(), "still says why");
+        assert!(locked.role_switch_host.is_none());
+    }
 
     #[tokio::test]
     async fn test_get_installed_packages_list_data_empty() -> Result<(), String> {
@@ -336,6 +865,9 @@ mod tests {
                 Ok(lineage)
             });
 
+        // Not an access test: the roster's bucket query is unavailable,
+        // which degrades to reactive-only marking and leaves rows untouched.
+        without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
         let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
             .await
@@ -389,6 +921,9 @@ mod tests {
                 ))
             });
 
+        // Not an access test: the roster's bucket query is unavailable,
+        // which degrades to reactive-only marking and leaves rows untouched.
+        without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
         let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
             .await
@@ -502,6 +1037,9 @@ mod tests {
                 ))
             });
 
+        // Not an access test: the roster's bucket query is unavailable,
+        // which degrades to reactive-only marking and leaves rows untouched.
+        without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
         let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
             .await
@@ -758,6 +1296,9 @@ mod tests {
             },
         );
 
+        // Not an access test: the roster's bucket query is unavailable,
+        // which degrades to reactive-only marking and leaves rows untouched.
+        without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
         let data = get_installed_packages_list_data_from_model(&model, &tracing, &paused_reasons)
             .await
@@ -788,10 +1329,15 @@ mod tests {
             remote_display: None,
             paused_reason: Some("workflow rejected metadata".to_string()),
             paused_kind: Some("other".to_string()),
+            no_access: true,
+            no_access_reason: Some(
+                "Current role ReadOnly has no access to this bucket".to_string(),
+            ),
+            role_switch_host: Some("acme.quilt.dev".to_string()),
         };
         assert_eq!(
             serde_json::to_string(&item).unwrap(),
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other"}"#
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"acme.quilt.dev"}"#
         );
     }
 }

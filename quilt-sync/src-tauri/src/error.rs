@@ -172,6 +172,19 @@ impl From<mixpanel_rs::error::Error> for Error {
 }
 
 impl Error {
+    /// True when storage refused the call with `AccessDenied`.
+    ///
+    /// Forwards to [`quilt::Error::is_access_denied`] so callers holding
+    /// only a UI-level [`enum@Error`] can still tell "the active role cannot
+    /// reach this bucket" apart from a broken session. The distinction
+    /// matters because a denial is *not* an auth failure: credential
+    /// vending succeeded, and signing in again re-vends the same denied
+    /// role.
+    #[must_use]
+    pub fn is_access_denied(&self) -> bool {
+        matches!(self, Error::Quilt(err) if err.is_access_denied())
+    }
+
     /// Serialize actionable errors as JSON so the frontend can parse and react
     /// (e.g. redirect to `/login` or `/setup`). Falls back to `Display` for
     /// all other errors.
