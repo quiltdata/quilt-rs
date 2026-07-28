@@ -120,6 +120,7 @@ fn main() {
 
             app.manage(Model::create(data_dir));
             app.manage(commands::WorkflowRulesCache::default());
+            app.manage(commands::RoleCache::default());
             app.manage(sync::Mutex::new(app.handle().clone()));
             app.manage(App::new(package_info, logs_dir));
             app.manage(telemetry);

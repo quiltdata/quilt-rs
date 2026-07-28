@@ -1,10 +1,13 @@
 //! Login, login-error, OAuth, and auth-erase commands.
 
+use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::Manager;
 use tokio::sync;
+use tokio::sync::OnceCell;
 
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
@@ -139,6 +142,55 @@ impl From<RoleInfo> for RolesData {
     }
 }
 
+/// Per-host [`RoleInfo`], resolved once and shared by everything that needs
+/// to *name* the active role.
+///
+/// The roster is why this exists. Its two access-marking phases both want
+/// the role, and the heavy phase runs as one Tauri command invocation per
+/// row, concurrently — 50 denied rows on one host would otherwise queue 50
+/// `/me` round trips behind `Auth::refresh_lock_for(host)`, the same mutex
+/// credential vending takes, all re-answering a question the light phase
+/// already answered.
+///
+/// Each key maps to an `Arc<OnceCell<..>>` rather than the value, so
+/// concurrent misses on a host single-flight: the map lock is held only long
+/// enough to get-or-insert the cell, and the fetch runs with it released.
+/// A failed fetch leaves the cell uninitialised, so the next caller retries
+/// rather than inheriting the failure. Same shape as
+/// [`crate::commands::WorkflowRulesCache`].
+#[derive(Default)]
+pub struct RoleCache {
+    roles: sync::Mutex<HashMap<Host, RoleCell>>,
+}
+
+type RoleCell = Arc<OnceCell<RoleInfo>>;
+
+impl RoleCache {
+    /// The active role on `host`, fetching it at most once per host.
+    pub async fn get(&self, m: &impl QuiltModel, host: &Host) -> Result<RoleInfo, Error> {
+        let cell = {
+            let mut guard = self.roles.lock().await;
+            Arc::clone(guard.entry(host.clone()).or_default())
+        };
+        let roles = cell.get_or_try_init(|| m.refresh_roles(host)).await?;
+        Ok(roles.clone())
+    }
+
+    /// Forget `host`'s cached role, or every host's when `None`.
+    ///
+    /// A switch makes the cached name wrong, and a wrong role name in the
+    /// roster's reason line is worse than no cache at all.
+    pub async fn invalidate(&self, host: Option<&Host>) {
+        let mut guard = self.roles.lock().await;
+        match host {
+            Some(host) => {
+                guard.remove(host);
+            }
+            None => guard.clear(),
+        }
+    }
+}
+
 async fn get_roles_command(m: &impl QuiltModel, host: &str) -> Result<RolesData, Error> {
     let host = Host::from_str(host)?;
     Ok(RolesData::from(m.refresh_roles(&host).await?))
@@ -156,15 +208,18 @@ pub async fn get_roles(
 
 /// Switch the primary role, then make it take effect locally.
 ///
-/// Two caches must go, not one. `switch_role` expires the stored STS
+/// Several caches must go, not one. `switch_role` expires the stored STS
 /// credentials, but an already-built S3 client holds its own copy in the
 /// SDK's identity cache and would keep signing as the old role for up to
-/// an hour. `erase_auth` has the same two-step for logout.
+/// an hour. `erase_auth` has the same two-step for logout. The
+/// [`RoleCache`] goes too, or the roster keeps quoting the previous role
+/// back at the user.
 ///
 /// Clear the cache only **after** the switch succeeds — clearing first
 /// would let an in-flight vend repopulate it under the old role.
 async fn switch_role_command(
     m: &impl QuiltModel,
+    roles: &RoleCache,
     tracing: &Telemetry,
     host: &str,
     role: &str,
@@ -172,6 +227,10 @@ async fn switch_role_command(
     let host = Host::from_str(host)?;
     let info = m.switch_role(&host, role).await?;
     let host_name = host.to_string();
+    // Three caches, not two: the stored credentials (expired by the switch),
+    // the S3 clients holding their own copy, and the role name the roster
+    // quotes back at the user.
+    roles.invalidate(Some(&host)).await;
     m.clear_remote_client_cache(Some(host)).await;
 
     tracing
@@ -184,11 +243,12 @@ async fn switch_role_command(
 #[tauri::command]
 pub async fn switch_role(
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, Telemetry>,
     host: String,
     role: String,
 ) -> Result<RolesData, String> {
-    switch_role_command(&*m, &tracing, &host, &role)
+    switch_role_command(&*m, &roles, &tracing, &host, &role)
         .await
         .map_err(|e| e.to_string())
 }
@@ -339,9 +399,15 @@ mod tests {
         let recording = mock_model_recording_cache_clears("ReadOnly");
         let host = "test.quilt.dev";
 
-        switch_role_command(&recording.model, &Telemetry::default(), host, "ReadOnly")
-            .await
-            .expect("switch");
+        switch_role_command(
+            &recording.model,
+            &RoleCache::default(),
+            &Telemetry::default(),
+            host,
+            "ReadOnly",
+        )
+        .await
+        .expect("switch");
 
         assert_eq!(
             recording.cache_clears_for_host(),
@@ -362,6 +428,7 @@ mod tests {
 
         let data = switch_role_command(
             &recording.model,
+            &RoleCache::default(),
             &Telemetry::default(),
             "test.quilt.dev",
             "readonly",
@@ -396,8 +463,14 @@ mod tests {
                     .push(host.map(|h| h.to_string()).unwrap_or_default());
             });
 
-        let result =
-            switch_role_command(&model, &Telemetry::default(), "test.quilt.dev", "ReadOnly").await;
+        let result = switch_role_command(
+            &model,
+            &RoleCache::default(),
+            &Telemetry::default(),
+            "test.quilt.dev",
+            "ReadOnly",
+        )
+        .await;
 
         assert!(result.is_err(), "a rejected switch must surface the error");
         assert!(
@@ -446,7 +519,14 @@ mod tests {
         model.expect_switch_role().never();
         model.expect_clear_remote_client_cache().never();
 
-        let result = switch_role_command(&model, &Telemetry::default(), "", "ReadOnly").await;
+        let result = switch_role_command(
+            &model,
+            &RoleCache::default(),
+            &Telemetry::default(),
+            "",
+            "ReadOnly",
+        )
+        .await;
 
         assert!(result.is_err(), "an empty host is not a switchable host");
     }

@@ -441,25 +441,22 @@ pub trait QuiltModel {
     /// read-presence only — it never distinguishes read from write. A
     /// listed bucket can still deny, so callers must keep treating an
     /// `AccessDenied` from the real call as the authority.
+    ///
+    /// Takes a [`LocalDomain::remote_handle`] and releases the domain lock
+    /// before the round trip. This one runs on the roster's first paint, so
+    /// holding the lock across it would stall every other Tauri command and
+    /// the autopull tick behind a registry call.
     async fn readable_buckets(&self, host: &Host) -> Result<Vec<String>, Error> {
-        Ok(self
-            .get_quilt()
-            .lock()
-            .await
-            .get_remote()
-            .readable_buckets(host)
-            .await?)
+        let remote = self.get_quilt().lock().await.remote_handle();
+        Ok(remote.readable_buckets(host).await?)
     }
 
-    /// Read the active role for `host`.
+    /// Read the active role for `host`. Releases the domain lock before the
+    /// round trip, for the same reason as
+    /// [`QuiltModel::readable_buckets`] — the roster reaches this one too.
     async fn refresh_roles(&self, host: &Host) -> Result<RoleInfo, Error> {
-        Ok(self
-            .get_quilt()
-            .lock()
-            .await
-            .get_remote()
-            .refresh_roles(host)
-            .await?)
+        let remote = self.get_quilt().lock().await.remote_handle();
+        Ok(remote.refresh_roles(host).await?)
     }
 
     /// Switch the primary role. The caller **must** follow this with

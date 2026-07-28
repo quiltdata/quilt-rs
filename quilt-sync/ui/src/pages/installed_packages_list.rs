@@ -1013,6 +1013,38 @@ mod tests {
         }
     }
 
+    /// A denied row that is *also* paused shows the denial, including over
+    /// a pull conflict's merge-page remediation. Deliberate, and pinned
+    /// here: the pause is downstream of the denial — no amount of merging
+    /// makes a bucket readable — so leading with the conflict would send
+    /// the user to a page that cannot help. Revisit when autosync learns to
+    /// pause *for* a role denial, at which point the two agree.
+    #[test]
+    fn a_denial_outranks_a_pause_even_a_pull_conflict() {
+        let reason = "Current role ReadOnly has no access to this bucket";
+
+        assert_eq!(
+            hint_lines(
+                "paused",
+                true,
+                Some("pullConflict"),
+                Some("a.txt, b.txt"),
+                Some(reason)
+            ),
+            vec![reason.to_string()],
+        );
+        assert_eq!(
+            hint_lines(
+                "paused",
+                true,
+                Some("other"),
+                Some("workflow rejected metadata"),
+                Some(reason)
+            ),
+            vec![reason.to_string()],
+        );
+    }
+
     #[test]
     fn error_without_host_reports_no_remote() {
         assert_eq!(

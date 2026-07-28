@@ -11,6 +11,7 @@ use quilt_uri::Host;
 
 use crate::Error;
 use crate::autopull::Watcher;
+use crate::commands::RoleCache;
 use crate::model;
 use crate::quilt;
 
@@ -112,15 +113,24 @@ impl AccessMark {
     }
 }
 
-/// Ask `host` who the active role is, so a denial can name it. A failed
-/// query is not fatal: [`AccessMark::denied`] degrades to the unnamed
-/// wording rather than dropping the mark.
-async fn denied_mark(m: &impl model::QuiltModel, host: Option<&Host>) -> AccessMark {
-    let roles = match host {
-        Some(host) => m.refresh_roles(host).await.ok(),
+/// Ask who the active role on `host` is, so a denial can name it.
+///
+/// Goes through the [`RoleCache`], so the answer is fetched once per host
+/// no matter how many rows deny — the heavy phase runs one command
+/// invocation per row, concurrently, and they all land here.
+///
+/// A failed query is not fatal: [`AccessMark::denied`] degrades to the
+/// unnamed wording rather than dropping the mark.
+async fn denied_mark(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    host: Option<&Host>,
+) -> AccessMark {
+    let info = match host {
+        Some(host) => roles.get(m, host).await.ok(),
         None => None,
     };
-    AccessMark::denied(host, roles.as_ref())
+    AccessMark::denied(host, info.as_ref())
 }
 
 /// A message-bearing autosync pause for a namespace: the stable reason
@@ -135,6 +145,7 @@ pub struct PausedRow {
 
 async fn get_installed_packages_list_data_from_model(
     m: &impl model::QuiltModel,
+    roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
     paused_reasons: &HashMap<String, PausedRow>,
 ) -> Result<InstalledPackagesListData, Error> {
@@ -151,7 +162,7 @@ async fn get_installed_packages_list_data_from_model(
             }
         }
     }
-    mark_unreadable_buckets(m, &mut packages).await;
+    mark_unreadable_buckets(m, roles, &mut packages).await;
     Ok(InstalledPackagesListData { packages })
 }
 
@@ -173,6 +184,7 @@ fn row_host(item: &InstalledPackageListItem) -> Option<&Host> {
 /// as "nothing is readable": an empty set would grey the entire roster.
 async fn mark_unreadable_buckets(
     m: &impl model::QuiltModel,
+    roles: &RoleCache,
     packages: &mut [InstalledPackageListItem],
 ) {
     let mut hosts: Vec<Host> = Vec::new();
@@ -207,7 +219,7 @@ async fn mark_unreadable_buckets(
             continue;
         }
 
-        let mark = denied_mark(m, Some(&host)).await;
+        let mark = denied_mark(m, roles, Some(&host)).await;
         for index in unreadable {
             let item = &mut packages[index];
             item.no_access = mark.no_access;
@@ -292,6 +304,7 @@ async fn load_package_item(
 #[tauri::command]
 pub async fn get_installed_packages_list_data(
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
 ) -> Result<InstalledPackagesListData, String> {
@@ -318,7 +331,7 @@ pub async fn get_installed_packages_list_data(
         })
         .collect();
 
-    get_installed_packages_list_data_from_model(&*m, &tracing, &paused_reasons)
+    get_installed_packages_list_data_from_model(&*m, &roles, &tracing, &paused_reasons)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -364,6 +377,7 @@ impl RefreshedPackageStatus {
 
 async fn refresh_package_status_from_model(
     m: &impl model::QuiltModel,
+    roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
 ) -> Result<RefreshedPackageStatus, Error> {
@@ -430,7 +444,7 @@ async fn refresh_package_status_from_model(
     };
 
     if denied {
-        let mark = denied_mark(m, host.as_ref()).await;
+        let mark = denied_mark(m, roles, host.as_ref()).await;
         return Ok(RefreshedPackageStatus::marked(
             upstream_state.to_string(),
             has_changes,
@@ -447,6 +461,7 @@ async fn refresh_package_status_from_model(
 #[tauri::command]
 pub async fn refresh_package_status(
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<RefreshedPackageStatus, String> {
@@ -454,7 +469,7 @@ pub async fn refresh_package_status(
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    refresh_package_status_from_model(&*m, &tracing, &namespace)
+    refresh_package_status_from_model(&*m, &roles, &tracing, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -593,6 +608,7 @@ mod tests {
 
         let item = refresh_package_status_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &("test", "denied").into(),
         )
@@ -617,6 +633,7 @@ mod tests {
 
         let item = refresh_package_status_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &("test", "denied").into(),
         )
@@ -636,6 +653,7 @@ mod tests {
 
         let item = refresh_package_status_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &("test", "denied").into(),
         )
@@ -665,6 +683,7 @@ mod tests {
 
         let item = refresh_package_status_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &("test", "denied").into(),
         )
@@ -686,6 +705,7 @@ mod tests {
 
         let data = get_installed_packages_list_data_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &HashMap::new(),
         )
@@ -722,6 +742,7 @@ mod tests {
         let m = mock_two_bucket_roster(Ok(vec!["reachable".to_string()]), Some(two_roles()));
         let data = get_installed_packages_list_data_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &HashMap::new(),
         )
@@ -738,6 +759,7 @@ mod tests {
         let m = mock_model_with_status_error(access_denied_error(), Some(two_roles()));
         let refreshed = refresh_package_status_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &("test", "denied").into(),
         )
@@ -759,6 +781,7 @@ mod tests {
 
         let data = get_installed_packages_list_data_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &HashMap::new(),
         )
@@ -781,6 +804,7 @@ mod tests {
 
         let data = get_installed_packages_list_data_from_model(
             &m,
+            &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &HashMap::new(),
         )
@@ -797,15 +821,97 @@ mod tests {
         assert!(locked.role_switch_host.is_none());
     }
 
+    /// The heavy phase runs once per row, concurrently. Asking the host who
+    /// the active role is on every denied row would queue one `/me` round
+    /// trip per row behind `refresh_lock_for(host)` — the same mutex
+    /// credential vending takes — so a roster of 50 denied rows would make
+    /// 50 calls to re-answer one question. `times(1)` across two refreshes
+    /// is what pins that; mockall fails the test on the second call.
+    #[tokio::test]
+    async fn the_role_behind_a_denial_is_fetched_once_per_host() {
+        let mut m = mocks::create();
+        m.expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("test", "denied")))));
+        m.expect_get_installed_package_lineage().returning(|pkg| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri(&pkg.namespace.to_string()),
+                "abcdef".to_string(),
+            ))
+        });
+        m.expect_get_installed_package_status()
+            .returning(|_, _| Err(access_denied_error()));
+        m.expect_refresh_roles()
+            .times(1)
+            .returning(|_| Ok(two_roles()));
+
+        // Two rows on the same host, each its own command invocation,
+        // sharing the app-lifetime cache.
+        let roles = RoleCache::default();
+        for _ in 0..2 {
+            let item = refresh_package_status_from_model(
+                &m,
+                &roles,
+                &crate::telemetry::Telemetry::default(),
+                &("test", "denied").into(),
+            )
+            .await
+            .expect("refresh");
+
+            assert_eq!(
+                item.no_access_reason.as_deref(),
+                Some("Current role ReadOnly has no access to this bucket"),
+                "a cached role must name the row exactly as a fresh fetch would"
+            );
+        }
+    }
+
+    /// A switch makes the cached role name wrong. Quoting the previous role
+    /// back at the user is worse than not caching at all.
+    #[tokio::test]
+    async fn a_switch_drops_the_cached_role() {
+        let roles = RoleCache::default();
+        let host: quilt_uri::Host = "test.quilt.dev".parse().expect("host");
+
+        let mut first = MockQuiltModel::new();
+        first
+            .expect_refresh_roles()
+            .times(1)
+            .returning(|_| Ok(two_roles()));
+        assert_eq!(
+            roles.get(&first, &host).await.expect("roles").current,
+            "ReadOnly"
+        );
+
+        roles.invalidate(Some(&host)).await;
+
+        let mut after = MockQuiltModel::new();
+        after.expect_refresh_roles().times(1).returning(|_| {
+            Ok(RoleInfo {
+                current: "ReadWrite".to_string(),
+                available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
+            })
+        });
+        assert_eq!(
+            roles.get(&after, &host).await.expect("roles").current,
+            "ReadWrite",
+            "an invalidated host must be re-fetched, not served the old role"
+        );
+    }
+
     #[tokio::test]
     async fn test_get_installed_packages_list_data_empty() -> Result<(), String> {
         let mut model = mocks::create();
         mocks::mock_installed_packages_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
 
-        let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_installed_packages_list_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &HashMap::new(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(data.packages.is_empty());
         Ok(())
@@ -869,9 +975,14 @@ mod tests {
         // which degrades to reactive-only marking and leaves rows untouched.
         without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
-        let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_installed_packages_list_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &HashMap::new(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.packages.len(), 4);
 
@@ -925,9 +1036,14 @@ mod tests {
         // which degrades to reactive-only marking and leaves rows untouched.
         without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
-        let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_installed_packages_list_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &HashMap::new(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
@@ -964,9 +1080,14 @@ mod tests {
             });
 
         let tracing = crate::telemetry::Telemetry::default();
-        let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_installed_packages_list_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &HashMap::new(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
@@ -998,9 +1119,14 @@ mod tests {
             .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
 
         let tracing = crate::telemetry::Telemetry::default();
-        let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_installed_packages_list_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &HashMap::new(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
@@ -1041,9 +1167,14 @@ mod tests {
         // which degrades to reactive-only marking and leaves rows untouched.
         without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
-        let data = get_installed_packages_list_data_from_model(&model, &tracing, &HashMap::new())
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_installed_packages_list_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &HashMap::new(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
@@ -1082,9 +1213,10 @@ mod tests {
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "local").into();
-        let result = refresh_package_status_from_model(&model, &tracing, &ns)
-            .await
-            .map_err(|e| e.to_string())?;
+        let result =
+            refresh_package_status_from_model(&model, &RoleCache::default(), &tracing, &ns)
+                .await
+                .map_err(|e| e.to_string())?;
 
         assert_eq!(result.status, "local");
         assert!(!result.has_changes);
@@ -1117,9 +1249,10 @@ mod tests {
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "local").into();
-        let result = refresh_package_status_from_model(&model, &tracing, &ns)
-            .await
-            .map_err(|e| e.to_string())?;
+        let result =
+            refresh_package_status_from_model(&model, &RoleCache::default(), &tracing, &ns)
+                .await
+                .map_err(|e| e.to_string())?;
 
         assert_eq!(result.status, "local");
         assert!(result.has_changes);
@@ -1145,9 +1278,10 @@ mod tests {
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "noorigin").into();
-        let result = refresh_package_status_from_model(&model, &tracing, &ns)
-            .await
-            .map_err(|e| e.to_string())?;
+        let result =
+            refresh_package_status_from_model(&model, &RoleCache::default(), &tracing, &ns)
+                .await
+                .map_err(|e| e.to_string())?;
 
         assert_eq!(result.status, "error");
         assert!(!result.has_changes);
@@ -1186,9 +1320,10 @@ mod tests {
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "changed").into();
-        let result = refresh_package_status_from_model(&model, &tracing, &ns)
-            .await
-            .map_err(|e| e.to_string())?;
+        let result =
+            refresh_package_status_from_model(&model, &RoleCache::default(), &tracing, &ns)
+                .await
+                .map_err(|e| e.to_string())?;
 
         assert_eq!(result.status, "up_to_date");
         assert!(result.has_changes);
@@ -1222,9 +1357,10 @@ mod tests {
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "clean").into();
-        let result = refresh_package_status_from_model(&model, &tracing, &ns)
-            .await
-            .map_err(|e| e.to_string())?;
+        let result =
+            refresh_package_status_from_model(&model, &RoleCache::default(), &tracing, &ns)
+                .await
+                .map_err(|e| e.to_string())?;
 
         assert_eq!(result.status, "behind");
         assert!(!result.has_changes);
@@ -1253,9 +1389,10 @@ mod tests {
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "broken").into();
-        let result = refresh_package_status_from_model(&model, &tracing, &ns)
-            .await
-            .map_err(|e| e.to_string())?;
+        let result =
+            refresh_package_status_from_model(&model, &RoleCache::default(), &tracing, &ns)
+                .await
+                .map_err(|e| e.to_string())?;
 
         assert_eq!(result.status, "error");
         assert!(!result.has_changes);
@@ -1300,9 +1437,14 @@ mod tests {
         // which degrades to reactive-only marking and leaves rows untouched.
         without_bucket_list(&mut model);
         let tracing = crate::telemetry::Telemetry::default();
-        let data = get_installed_packages_list_data_from_model(&model, &tracing, &paused_reasons)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_installed_packages_list_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &paused_reasons,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         let find = |ns: &str| data.packages.iter().find(|p| p.namespace == ns).unwrap();
         assert_eq!(

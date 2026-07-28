@@ -186,6 +186,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                         lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
                     )));
                 }
+                // A denial is not a degradable failure. Every other error
+                // here means "the remote is unreachable right now", and
+                // continuing on stale lineage is exactly right — it is what
+                // lets the app work offline. A denial means the request
+                // arrived and was refused: the answer will not change until
+                // the role does, and swallowing it leaves the caller unable
+                // to tell the user why. Callers distinguish it with
+                // [`Error::is_access_denied`].
+                Err(err) if err.is_access_denied() => return Err(err),
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
                     lineage

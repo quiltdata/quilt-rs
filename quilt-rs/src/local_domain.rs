@@ -1,6 +1,7 @@
 use std::marker::Unpin;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use tracing::{debug, info, warn};
 
@@ -29,19 +30,39 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
     lineage: lineage::DomainLineageIo,
     storage: S,
-    remote: R,
+    /// Shared so a caller holding the domain behind a mutex can take a
+    /// handle, release the mutex, and only then await a network round trip.
+    /// See [`LocalDomain::remote_handle`].
+    remote: Arc<R>,
 }
 
 impl LocalDomain {
+    #[must_use]
     pub fn get_remote(&self) -> &RemoteS3 {
         &self.remote
+    }
+
+    /// A handle to *this* remote — the same client and credential caches,
+    /// not a snapshot — that outlives a borrow of the domain.
+    ///
+    /// Callers that reach the domain through a mutex (the desktop app holds
+    /// one around it) must use this for anything that awaits the network:
+    /// `lock().await.get_remote().call().await` keeps the domain locked for
+    /// the whole round trip, blocking every other command behind it.
+    ///
+    /// Deliberately not [`RemoteS3::try_clone`], which snapshots the client
+    /// cache into a separate `RemoteS3`: a role switch clears the original's
+    /// cache and the snapshot would keep signing as the old role.
+    #[must_use]
+    pub fn remote_handle(&self) -> Arc<RemoteS3> {
+        Arc::clone(&self.remote)
     }
 
     pub fn new(root_dir: impl AsRef<Path>) -> Self {
         let paths = paths::DomainPaths::new(root_dir.as_ref().to_path_buf());
         let lineage = lineage::DomainLineageIo::new(paths.lineage());
         let storage = LocalStorage::new();
-        let remote = RemoteS3::new(paths.clone(), storage.clone());
+        let remote = Arc::new(RemoteS3::new(paths.clone(), storage.clone()));
         Self {
             paths,
             lineage,
@@ -80,7 +101,7 @@ impl LocalDomain {
         self.scaffold_paths_for_caching(&uri.bucket).await?;
 
         debug!("Initiating browse flow for manifest {}", uri.hash);
-        flow::browse(&self.paths, &self.storage, &self.remote, uri)
+        flow::browse(&self.paths, &self.storage, &*self.remote, uri)
             .await
             .inspect(|_| debug!("Successfully browsed manifest {}", uri.hash))
             .inspect_err(|e| warn!("Failed to browse manifest {}: {}", uri.hash, e))
@@ -115,7 +136,7 @@ impl LocalDomain {
             lineage,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             manifest_uri,
         )
         .await?;
