@@ -31,11 +31,22 @@
 //! been the difference between working and silently fake, so the fake follows
 //! production exactly:
 //!
-//! | Surface | Production path | Reads |
-//! | --- | --- | --- |
-//! | `readable_buckets` | GraphQL over the HTTP client, bearer token | `role` |
-//! | `refresh_roles` | GraphQL over the HTTP client, bearer token | `role` |
-//! | `get_installed_package_status` | a real S3 GET through the cached client | `signing_role` |
+//! | Surface | Production path | Reads | Writes |
+//! | --- | --- | --- | --- |
+//! | `readable_buckets` | GraphQL over the HTTP client, bearer token | `role` | — |
+//! | `refresh_roles` | GraphQL over the HTTP client, bearer token | `role` | **expires the stored credentials on any change it sees** |
+//! | `switch_role` | GraphQL mutation, same transport | sets `role` | expires the stored credentials |
+//! | `get_installed_package_status` | a real S3 GET through the cached client | `signing_role` | — |
+//!
+//! The `refresh_roles` row is the one that has already cost this feature a
+//! bug. It looks like a read and is not: the engine holds a per-session
+//! baseline of the role it last saw per host, and the moment the registry
+//! answers with a different one it deletes that host's stored STS
+//! credentials — half a flush, leaving the caller to drop the S3 clients that
+//! are still signing as the old role. Modelling it as a pure read is what let
+//! `get_roles` ship observing an out-of-band switch and doing nothing about
+//! it. `model_for` therefore expects `clear_remote_client_cache` on the read
+//! paths too, and the catalog-switch test below fails without it.
 //!
 //! So the roster's **light** phase (the bucket-list pre-filter) follows a
 //! switch whether or not the clients were flushed — it never touched them.
@@ -60,6 +71,7 @@ use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
 use super::auth::RoleCache;
+use super::auth::get_roles_command;
 use super::auth::switch_role_command;
 use super::package_list::InstalledPackageListItem;
 use super::package_list::get_installed_packages_list_data_from_model;
@@ -185,6 +197,13 @@ impl FakeStack {
 
     fn cache_clears(&self) -> Vec<String> {
         self.cache_clears.lock().expect("cache clears").clone()
+    }
+
+    /// Flushes recorded after the first `since`, so a test can attribute
+    /// them to one step. Reading the role flushes too (see the module docs),
+    /// so the total is never a clean signal on its own.
+    fn cache_clears_since(&self, since: usize) -> Vec<String> {
+        self.cache_clears().split_off(since)
     }
 }
 
@@ -352,12 +371,13 @@ async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
         "a bucket it can read must not be"
     );
 
+    let before_switch = stack.cache_clears().len();
     switch_to(&model, &roles, &watcher, READ_WRITE)
         .await
         .expect("switch");
 
     assert_eq!(
-        stack.cache_clears(),
+        stack.cache_clears_since(before_switch),
         vec![HOST.to_string()],
         "the switch must drop the host's cached S3 clients, or they keep signing as the old role"
     );
@@ -387,6 +407,72 @@ async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
         "the per-row status call must succeed under the new role"
     );
     assert_eq!(refreshed.status, "up_to_date");
+}
+
+/// A switch made in the **web catalog** has to reach S3 as well as the UI.
+///
+/// This is not an edge case: the feature's own premise is that a switch is
+/// server-side and global, so the desktop app can only ever *observe* one
+/// made elsewhere. It observes it on a read — `get_roles`, when Settings
+/// opens — and that read is not free of consequences. The engine deletes the
+/// host's stored credentials the moment it sees a role it did not last see,
+/// which is half a flush; the other half is dropping the S3 clients still
+/// holding the old role's credentials in the SDK's identity cache.
+///
+/// Stopping halfway is the worst state available. The selector shows the new
+/// role and the registry-backed surfaces agree with it, while every real S3
+/// call is still the old role for up to an hour — so the roster reads
+/// "Current role `ReadOnly` has no access" next to a switcher displaying
+/// `ReadWrite`, and re-picking that same `ReadWrite` is a no-op because it is
+/// already selected. Only a restart recovers.
+#[tokio::test]
+async fn a_switch_made_in_the_catalog_reaches_s3_when_settings_reads_the_role() {
+    let stack = FakeStack::new(&[(READ_ONLY, &[OPEN]), (READ_WRITE, &[OPEN, LOCKED])]);
+    let model = model_for(&stack);
+    let roles = RoleCache::default();
+
+    let before = roster(&model, &roles).await;
+    assert!(
+        row(&before, "team/locked").no_access,
+        "ReadOnly cannot reach this bucket, so the row starts marked"
+    );
+
+    // The user switches role in the web catalog. Nothing tells the app.
+    stack.switch(READ_WRITE).expect("catalog switch");
+    let before_settings = stack.cache_clears().len();
+
+    // They open Settings, which reads the role afresh — the observation.
+    let data = get_roles_command(&model, &roles, HOST)
+        .await
+        .expect("roles");
+    assert_eq!(
+        data.current, READ_WRITE,
+        "the selector must show the role that is now active"
+    );
+    assert_eq!(
+        stack.cache_clears_since(before_settings),
+        vec![HOST.to_string()],
+        "observing the switch must also drop the clients still signing as the old role"
+    );
+
+    // The authoritative surface: a real S3 call, which is what the clients
+    // sign. This is what a display-only fix leaves broken.
+    let refreshed = refresh_package_status_from_model(
+        &model,
+        &roles,
+        &Telemetry::default(),
+        &Namespace::from(LOCKED_ROW),
+    )
+    .await
+    .expect("refresh");
+    assert!(
+        !refreshed.no_access,
+        "the role Settings just showed must be the role S3 signs as"
+    );
+    assert_eq!(
+        refreshed.role_switch_host, None,
+        "a readable row carries no switch affordance"
+    );
 }
 
 /// A switch into a role that is *also* denied keeps the mark — and renames
@@ -493,13 +579,14 @@ async fn a_refused_switch_leaves_every_surface_as_it_was() {
     let before = roster(&model, &roles).await;
     assert!(row(&before, "team/locked").no_access);
 
+    let before_switch = stack.cache_clears().len();
     let result = switch_to(&model, &roles, &watcher, READ_WRITE).await;
     assert!(
         result.is_err(),
         "switching to a role the user does not hold must fail"
     );
     assert!(
-        stack.cache_clears().is_empty(),
+        stack.cache_clears_since(before_switch).is_empty(),
         "a refused switch must not drop clients that are still valid"
     );
 

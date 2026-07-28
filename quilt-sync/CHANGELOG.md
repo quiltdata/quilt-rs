@@ -13,7 +13,7 @@
 
 ### Added
 
-- Settings → Auth lets you switch your active role per host (shown only when you hold more than one), and the new role applies immediately to reads and writes instead of waiting for the previous role's credentials to expire (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+- Settings → Auth lets you switch your active role per host (shown only when you hold more than one), and the new role applies immediately to reads and writes — including a role you switched in the web catalog, which takes effect as soon as the app reads it — instead of waiting for the previous role's credentials to expire (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
 
 ### Changed
 

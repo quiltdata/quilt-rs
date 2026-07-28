@@ -568,6 +568,9 @@ mod tests {
                 .expect_refresh_roles()
                 .returning(|_| Err(Error::General("role query unavailable".to_string())));
         }
+        // Reading the role can expire the stored credentials, so the cache
+        // finishes the flush by dropping the clients. See `RoleCache::get`.
+        model.expect_clear_remote_client_cache().returning(|_| ());
         model
     }
 
@@ -594,8 +597,10 @@ mod tests {
             model
                 .expect_refresh_roles()
                 .returning(move |_| Ok(roles.clone()));
+            model.expect_clear_remote_client_cache().returning(|_| ());
         } else {
             model.expect_refresh_roles().never();
+            model.expect_clear_remote_client_cache().never();
         }
         model
     }
@@ -844,6 +849,10 @@ mod tests {
         m.expect_refresh_roles()
             .times(1)
             .returning(|_| Ok(two_roles()));
+        // Once per fetch, not once per row: the flush rides with the fetch.
+        m.expect_clear_remote_client_cache()
+            .times(1)
+            .returning(|_| ());
 
         // Two rows on the same host, each its own command invocation,
         // sharing the app-lifetime cache.
@@ -878,6 +887,7 @@ mod tests {
             .expect_refresh_roles()
             .times(1)
             .returning(|_| Ok(two_roles()));
+        first.expect_clear_remote_client_cache().returning(|_| ());
         assert_eq!(
             roles.get(&first, &host).await.expect("roles").current,
             "ReadOnly"
@@ -886,6 +896,7 @@ mod tests {
         roles.invalidate(Some(&host)).await;
 
         let mut after = MockQuiltModel::new();
+        after.expect_clear_remote_client_cache().returning(|_| ());
         after.expect_refresh_roles().times(1).returning(|_| {
             Ok(RoleInfo {
                 current: "ReadWrite".to_string(),

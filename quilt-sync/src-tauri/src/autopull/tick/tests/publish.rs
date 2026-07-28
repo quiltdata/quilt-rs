@@ -527,6 +527,9 @@ async fn run_once_pauses_and_names_the_role_on_denied_publish() -> Result<(), Er
             available: vec!["ReadOnly".to_string(), "ReadWriteQuiltV2".to_string()],
         })
     });
+    // Reading the role is not a pure read — the engine may have expired the
+    // stored credentials, so the cache completes the flush. See `RoleCache`.
+    model.expect_clear_remote_client_cache().returning(|_| ());
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());

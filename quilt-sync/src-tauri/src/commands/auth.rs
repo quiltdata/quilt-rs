@@ -93,6 +93,7 @@ fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<(), E
 pub async fn erase_auth(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, Telemetry>,
     host: String,
 ) -> Result<String, String> {
@@ -104,25 +105,38 @@ pub async fn erase_auth(
     let msg_ok = format!("Successfully erased auth for {host}");
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    // Delete the on-disk token first, then invalidate the in-memory S3
-    // client cache. A cached client holds STS credentials minted before
-    // logout (valid ~1h), so without this the running app keeps serving
-    // reads/writes until they expire.
     let result = erase_auth_command(&app_handle, &host);
     if result.is_ok() {
-        // Global logout (empty host) clears every cached client; a per-host
-        // logout clears only that host's. An unparseable non-empty host can
-        // have no client keyed under it (cache keys are valid `Host`s), so
-        // there is nothing to clear — and we must NOT fall back to clearing
-        // everything, which would drop unrelated hosts' clients.
-        if host.is_empty() {
-            m.clear_remote_client_cache(None).await;
-        } else if let Ok(host) = Host::from_str(&host) {
-            m.clear_remote_client_cache(Some(host)).await;
-        }
+        erase_role_state(&*m, &roles, &host).await;
     }
 
     Notify::new(msg_init).map(result, msg_ok, msg_err)
+}
+
+/// Drop everything a logged-out session left behind that names or empowers a
+/// role, once the tokens are already off disk.
+///
+/// Two caches, for two different failure modes. The S3 clients hold STS
+/// credentials minted *before* the logout and valid for about an hour, so
+/// without dropping them the app keeps serving reads and writes to someone
+/// who has signed out. The [`RoleCache`] holds the role's *name* and the list
+/// of roles that user held; it outlives the process's login, so logging back
+/// in as a different person leaves the roster quoting a stranger's role and
+/// offering the switch affordance on their entitlements.
+///
+/// Global logout (empty host) clears every host; a per-host logout clears
+/// only that host's. An unparseable non-empty host can have nothing keyed
+/// under it — both caches key on a valid [`Host`] — so there is nothing to
+/// clear, and we must NOT fall back to clearing everything, which would drop
+/// unrelated hosts.
+async fn erase_role_state(m: &impl QuiltModel, roles: &RoleCache, host: &str) {
+    if host.is_empty() {
+        roles.invalidate(None).await;
+        m.clear_remote_client_cache(None).await;
+    } else if let Ok(host) = Host::from_str(host) {
+        roles.invalidate(Some(&host)).await;
+        m.clear_remote_client_cache(Some(host)).await;
+    }
 }
 
 // ── Role data for Leptos UI ──
@@ -168,19 +182,42 @@ type RoleCell = Arc<OnceCell<RoleInfo>>;
 
 impl RoleCache {
     /// The active role on `host`, fetching it at most once per host.
+    ///
+    /// The fetch goes through [`observe_role`], because reading the role is
+    /// not a read: whenever the registry names a role this session has not
+    /// seen, the engine expires the host's stored credentials, and finishing
+    /// that flush is the caller's half of the contract. This is a real
+    /// observation path — a role switched in the web catalog first shows up
+    /// here, on the roster's mark for a bucket that just started denying.
     pub async fn get(&self, m: &impl QuiltModel, host: &Host) -> Result<RoleInfo, Error> {
         let cell = {
             let mut guard = self.roles.lock().await;
             Arc::clone(guard.entry(host.clone()).or_default())
         };
-        let roles = cell.get_or_try_init(|| m.refresh_roles(host)).await?;
+        // Not `adopt_role`: the cell being initialised *is* this host's cache
+        // entry, so publishing the value is `get_or_try_init`'s own job.
+        let roles = cell.get_or_try_init(|| observe_role(m, host)).await?;
         Ok(roles.clone())
+    }
+
+    /// Publish `info` as `host`'s role, replacing whatever was cached.
+    ///
+    /// Used when a caller has just been told the role by the registry, so the
+    /// next reader gets the new name without another round trip.
+    async fn set(&self, host: &Host, info: RoleInfo) {
+        self.roles
+            .lock()
+            .await
+            .insert(host.clone(), Arc::new(OnceCell::new_with(Some(info))));
     }
 
     /// Forget `host`'s cached role, or every host's when `None`.
     ///
     /// A switch makes the cached name wrong, and a wrong role name in the
-    /// roster's reason line is worse than no cache at all.
+    /// roster's reason line is worse than no cache at all. Logout goes
+    /// further: the next user is a different person, and quoting the previous
+    /// one's role — or gating the switch affordance on their `available` list
+    /// — would outlive the session that earned it.
     pub async fn invalidate(&self, host: Option<&Host>) {
         let mut guard = self.roles.lock().await;
         match host {
@@ -192,17 +229,66 @@ impl RoleCache {
     }
 }
 
-async fn get_roles_command(m: &impl QuiltModel, host: &str) -> Result<RolesData, Error> {
+/// Read the active role for `host`, completing the flush the read starts.
+///
+/// `refresh_roles` is **not a pure read**. The engine keeps a per-session
+/// baseline of the role it last saw on each host, and whenever the registry
+/// answers with a different one — the user switched in the web catalog, say,
+/// which is legitimate because a switch is server-side and global — it
+/// deletes that host's stored STS credentials. That is only half a flush:
+/// an `aws_sdk_s3::Client` that already exists holds its own copy of the old
+/// role's credentials in the SDK's identity cache, never re-reads the file,
+/// and goes on signing as the old role for up to an hour. Dropping those
+/// clients is the other half, and only this layer owns them.
+///
+/// Skipping it produces the worst possible state: the selector shows the new
+/// role, the registry-backed surfaces agree, and every real S3 call is still
+/// the old one — with no way back, because re-picking the role the UI already
+/// displays is a no-op.
+///
+/// The drop is unconditional. Only the engine knows whether the role moved,
+/// and guessing from up here is exactly the mistake this exists to prevent;
+/// the cost of being wrong is one client rebuild and a re-read of the
+/// credentials still on disk.
+async fn observe_role(m: &impl QuiltModel, host: &Host) -> Result<RoleInfo, Error> {
+    let info = m.refresh_roles(host).await?;
+    m.clear_remote_client_cache(Some(host.clone())).await;
+    Ok(info)
+}
+
+/// Adopt `info` as the role now in force on `host`.
+///
+/// Two caches, and both have to move together: the [`RoleCache`] the roster
+/// quotes back at the user, and the S3 clients still signing as the role it
+/// replaced. Every caller that learns a role from the registry — the explicit
+/// switch and the read paths that can observe an out-of-band one — goes
+/// through here, so a new caller cannot land with only one of the two.
+async fn adopt_role(m: &impl QuiltModel, roles: &RoleCache, host: &Host, info: RoleInfo) {
+    roles.set(host, info).await;
+    m.clear_remote_client_cache(Some(host.clone())).await;
+}
+
+pub(super) async fn get_roles_command(
+    m: &impl QuiltModel,
+    roles: &RoleCache,
+    host: &str,
+) -> Result<RolesData, Error> {
     let host = Host::from_str(host)?;
-    Ok(RolesData::from(m.refresh_roles(&host).await?))
+    // Settings is where an out-of-band switch usually surfaces, so this is a
+    // deliberately uncached read — and therefore an observation that has to
+    // be followed through. See [`observe_role`].
+    let info = m.refresh_roles(&host).await?;
+    adopt_role(m, roles, &host, info.clone()).await;
+    Ok(RolesData::from(info))
 }
 
 #[tauri::command]
 pub async fn get_roles(
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     host: String,
 ) -> Result<RolesData, String> {
-    get_roles_command(&*m, &host)
+    get_roles_command(&*m, &roles, &host)
         .await
         .map_err(|e| e.to_string())
 }
@@ -213,15 +299,15 @@ pub async fn get_roles(
 /// credentials, but an already-built S3 client holds its own copy in the
 /// SDK's identity cache and would keep signing as the old role for up to
 /// an hour. `erase_auth` has the same two-step for logout. The
-/// [`RoleCache`] goes too, or the roster keeps quoting the previous role
-/// back at the user.
+/// [`RoleCache`] moves too, or the roster keeps quoting the previous role
+/// back at the user. [`adopt_role`] is the one place that knows all of them.
 ///
 /// Autosync's role-denied pauses are released here as well: they are the one
 /// pause the user cannot clear by hand, because every manual action that
 /// clears a pause is signed by the role that was refused. A switch is the
 /// remedy the banner names, so it has to be the remedy that works.
 ///
-/// Clear the caches only **after** the switch succeeds — clearing first
+/// Move the caches only **after** the switch succeeds — moving them first
 /// would let an in-flight vend repopulate them under the old role.
 pub(super) async fn switch_role_command(
     m: &impl QuiltModel,
@@ -236,9 +322,8 @@ pub(super) async fn switch_role_command(
     let host_name = host.to_string();
     // Three caches, not two: the stored credentials (expired by the switch),
     // the S3 clients holding their own copy, and the role name the roster
-    // quotes back at the user.
-    roles.invalidate(Some(&host)).await;
-    m.clear_remote_client_cache(Some(host)).await;
+    // quotes back at the user. The last two are `adopt_role`'s job.
+    adopt_role(m, roles, &host, info.clone()).await;
     watcher.clear_role_denied_pauses().await;
 
     tracing
@@ -572,6 +657,111 @@ mod tests {
         );
     }
 
+    /// A user holding two roles, the second of which is active.
+    fn two_roles() -> RoleInfo {
+        RoleInfo {
+            current: "ReadOnly".to_string(),
+            available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
+        }
+    }
+
+    /// A `RoleCache` already holding `host`'s role, as it would be after any
+    /// roster paint that hit a denial.
+    async fn warmed_role_cache(host: &Host) -> RoleCache {
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_refresh_roles()
+            .times(1)
+            .returning(|_| Ok(two_roles()));
+        model.expect_clear_remote_client_cache().returning(|_| ());
+
+        let roles = RoleCache::default();
+        assert_eq!(
+            roles.get(&model, host).await.expect("roles").current,
+            "ReadOnly"
+        );
+        roles
+    }
+
+    /// Logging out has to drop the role too, not just the credentials.
+    ///
+    /// The `RoleCache` is app-lifetime and holds the previous user's role
+    /// *name* and the list of roles they held. Log out, log in as someone
+    /// else, and the roster quotes a stranger's role at the new user and
+    /// gates the switch affordance on entitlements they do not have — for as
+    /// long as the process lives.
+    #[tokio::test]
+    async fn logging_out_drops_the_cached_role() {
+        let host: Host = "test.quilt.dev".parse().expect("host");
+        let roles = warmed_role_cache(&host).await;
+
+        let mut erasing = MockQuiltModel::new();
+        erasing.expect_clear_remote_client_cache().returning(|_| ());
+        erase_role_state(&erasing, &roles, "test.quilt.dev").await;
+
+        let mut next_user = MockQuiltModel::new();
+        next_user.expect_refresh_roles().times(1).returning(|_| {
+            Ok(RoleInfo {
+                current: "Curator".to_string(),
+                available: vec!["Curator".to_string()],
+            })
+        });
+        next_user
+            .expect_clear_remote_client_cache()
+            .returning(|_| ());
+
+        assert_eq!(
+            roles.get(&next_user, &host).await.expect("roles").current,
+            "Curator",
+            "the next login must be asked afresh, not served the last user's role"
+        );
+    }
+
+    /// A global logout (empty host) is not scoped to one catalog, so nothing
+    /// may survive it.
+    #[tokio::test]
+    async fn a_global_logout_drops_every_cached_role() {
+        let host: Host = "test.quilt.dev".parse().expect("host");
+        let roles = warmed_role_cache(&host).await;
+
+        let mut erasing = MockQuiltModel::new();
+        erasing.expect_clear_remote_client_cache().returning(|_| ());
+        erase_role_state(&erasing, &roles, "").await;
+
+        let mut next_user = MockQuiltModel::new();
+        next_user
+            .expect_refresh_roles()
+            .times(1)
+            .returning(|_| Ok(two_roles()));
+        next_user
+            .expect_clear_remote_client_cache()
+            .returning(|_| ());
+
+        roles.get(&next_user, &host).await.expect("roles");
+    }
+
+    /// An unparseable, non-empty host keys nothing in either cache, so it
+    /// must clear nothing — falling back to a global clear would log every
+    /// other catalog out of its role.
+    #[tokio::test]
+    async fn an_unparseable_logout_host_clears_nothing() {
+        let host: Host = "test.quilt.dev".parse().expect("host");
+        let roles = warmed_role_cache(&host).await;
+
+        let mut erasing = MockQuiltModel::new();
+        erasing.expect_clear_remote_client_cache().never();
+        erase_role_state(&erasing, &roles, "not a host").await;
+
+        let mut untouched = MockQuiltModel::new();
+        untouched.expect_refresh_roles().never();
+
+        assert_eq!(
+            roles.get(&untouched, &host).await.expect("roles").current,
+            "ReadOnly",
+            "an unkeyable host must leave the other hosts' entries alone"
+        );
+    }
+
     /// `get_roles` hands the stack's answer to the UI unchanged, so the
     /// selector opens on the role that is actually active.
     #[tokio::test]
@@ -583,8 +773,9 @@ mod tests {
                 available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
             })
         });
+        model.expect_clear_remote_client_cache().returning(|_| ());
 
-        let data = get_roles_command(&model, "test.quilt.dev")
+        let data = get_roles_command(&model, &RoleCache::default(), "test.quilt.dev")
             .await
             .expect("roles");
 
@@ -598,8 +789,9 @@ mod tests {
     async fn get_roles_rejects_an_unparseable_host() {
         let mut model = MockQuiltModel::new();
         model.expect_refresh_roles().never();
+        model.expect_clear_remote_client_cache().never();
 
-        let result = get_roles_command(&model, "").await;
+        let result = get_roles_command(&model, &RoleCache::default(), "").await;
 
         assert!(result.is_err(), "an empty host is not a queryable host");
     }
