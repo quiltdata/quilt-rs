@@ -414,6 +414,49 @@ pub trait QuiltModel {
         )
         .await?)
     }
+
+    /// Drop the remote's cached S3 clients (and their in-memory
+    /// credentials) for `host`, or for all hosts when `None`. Invoked on
+    /// logout and on a role switch so credentials stop working immediately
+    /// rather than lingering in a cached client until STS expiry. It lives
+    /// on the trait so a `MockQuiltModel` can record the flush — the one
+    /// step that makes either operation take effect in-process.
+    ///
+    /// The host is owned, not `Option<&Host>`, because `#[automock]` cannot
+    /// build an expectation for a reference nested inside another type
+    /// (same reason as [`QuiltModel::get_bucket_workflows_config`]).
+    async fn clear_remote_client_cache(&self, host: Option<Host>) {
+        self.get_quilt()
+            .lock()
+            .await
+            .get_remote()
+            .clear_client_cache(host.as_ref());
+    }
+
+    /// Read the active role for `host`.
+    async fn refresh_roles(&self, host: &Host) -> Result<RoleInfo, Error> {
+        Ok(self
+            .get_quilt()
+            .lock()
+            .await
+            .get_remote()
+            .refresh_roles(host)
+            .await?)
+    }
+
+    /// Switch the primary role. The caller **must** follow this with
+    /// [`QuiltModel::clear_remote_client_cache`] for the same host —
+    /// expiring the stored credentials does not touch a cached client's own
+    /// in-memory copy, so without it the old role keeps signing.
+    async fn switch_role(&self, host: &Host, role_name: &str) -> Result<RoleInfo, Error> {
+        Ok(self
+            .get_quilt()
+            .lock()
+            .await
+            .get_remote()
+            .switch_role(host, role_name)
+            .await?)
+    }
 }
 
 impl QuiltModel for Model {
@@ -438,51 +481,6 @@ impl Model {
         Ok(self.get_quilt().lock().await.set_home(directory).await?)
     }
 
-    /// Drop the remote's cached S3 clients (and their in-memory
-    /// credentials) for `host`, or for all hosts when `None`. Invoked on
-    /// logout so credentials stop working immediately rather than
-    /// lingering in a cached client until STS expiry.
-    pub async fn clear_remote_client_cache(&self, host: Option<&Host>) {
-        self.quilt
-            .lock()
-            .await
-            .get_remote()
-            .clear_client_cache(host);
-    }
-
-    /// Read the active role for `host`.
-    #[expect(
-        dead_code,
-        reason = "plumbing for the role UI; drop this attribute with the first caller"
-    )]
-    pub async fn refresh_roles(&self, host: &Host) -> Result<RoleInfo, Error> {
-        Ok(self
-            .quilt
-            .lock()
-            .await
-            .get_remote()
-            .refresh_roles(host)
-            .await?)
-    }
-
-    /// Switch the primary role. The caller **must** follow this with
-    /// [`Model::clear_remote_client_cache`] for the same host — expiring
-    /// the stored credentials does not touch a cached client's own
-    /// in-memory copy, so without it the old role keeps signing.
-    #[expect(
-        dead_code,
-        reason = "plumbing for the role UI; drop this attribute with the first caller"
-    )]
-    pub async fn switch_role(&self, host: &Host, role_name: &str) -> Result<RoleInfo, Error> {
-        Ok(self
-            .quilt
-            .lock()
-            .await
-            .get_remote()
-            .switch_role(host, role_name)
-            .await?)
-    }
-
     /// Buckets the active role can read; an optimistic hint, not an
     /// authoritative answer.
     #[expect(
@@ -500,7 +498,8 @@ impl Model {
     }
 
     /// Expire `host`'s cached STS credentials without logging out. Pair it
-    /// with [`Model::clear_remote_client_cache`] — see [`Model::switch_role`].
+    /// with [`QuiltModel::clear_remote_client_cache`] — see
+    /// [`QuiltModel::switch_role`].
     #[expect(
         dead_code,
         reason = "plumbing for the role UI; drop this attribute with the first caller"

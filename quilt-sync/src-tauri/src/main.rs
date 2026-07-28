@@ -190,6 +190,8 @@ fn main() {
             commands::get_login_data,
             commands::get_login_error_data,
             commands::get_merge_data,
+            commands::get_roles,
+            commands::switch_role,
             commands::load_workflow_rules,
             commands::validate_commit_candidate,
             commands::get_settings_data,

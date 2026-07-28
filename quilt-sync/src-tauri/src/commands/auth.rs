@@ -6,15 +6,17 @@ use serde::Serialize;
 use tauri::Manager;
 use tokio::sync;
 
+use quilt_rs::RoleInfo;
 use quilt_uri::Host;
 
 use crate::Error;
 use crate::model;
+use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::oauth::OAuthState;
 use crate::quilt;
 use crate::routes;
-use crate::telemetry::{MixpanelEvent, mixpanel::LoginFlow, prelude::*};
+use crate::telemetry::{MixpanelEvent, Telemetry, mixpanel::LoginFlow, prelude::*};
 
 // ── Login data for Leptos UI ──
 
@@ -87,7 +89,7 @@ fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<(), E
 pub async fn erase_auth(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    tracing: tauri::State<'_, Telemetry>,
     host: String,
 ) -> Result<String, String> {
     tracing.track(MixpanelEvent::AuthErased).await;
@@ -112,11 +114,83 @@ pub async fn erase_auth(
         if host.is_empty() {
             m.clear_remote_client_cache(None).await;
         } else if let Ok(host) = Host::from_str(&host) {
-            m.clear_remote_client_cache(Some(&host)).await;
+            m.clear_remote_client_cache(Some(host)).await;
         }
     }
 
     Notify::new(msg_init).map(result, msg_ok, msg_err)
+}
+
+// ── Role data for Leptos UI ──
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RolesData {
+    pub current: String,
+    pub available: Vec<String>,
+}
+
+impl From<RoleInfo> for RolesData {
+    fn from(info: RoleInfo) -> Self {
+        Self {
+            current: info.current,
+            available: info.available,
+        }
+    }
+}
+
+async fn get_roles_command(m: &impl QuiltModel, host: &str) -> Result<RolesData, Error> {
+    let host = Host::from_str(host)?;
+    Ok(RolesData::from(m.refresh_roles(&host).await?))
+}
+
+#[tauri::command]
+pub async fn get_roles(
+    m: tauri::State<'_, model::Model>,
+    host: String,
+) -> Result<RolesData, String> {
+    get_roles_command(&*m, &host)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Switch the primary role, then make it take effect locally.
+///
+/// Two caches must go, not one. `switch_role` expires the stored STS
+/// credentials, but an already-built S3 client holds its own copy in the
+/// SDK's identity cache and would keep signing as the old role for up to
+/// an hour. `erase_auth` has the same two-step for logout.
+///
+/// Clear the cache only **after** the switch succeeds — clearing first
+/// would let an in-flight vend repopulate it under the old role.
+async fn switch_role_command(
+    m: &impl QuiltModel,
+    tracing: &Telemetry,
+    host: &str,
+    role: &str,
+) -> Result<RolesData, Error> {
+    let host = Host::from_str(host)?;
+    let info = m.switch_role(&host, role).await?;
+    let host_name = host.to_string();
+    m.clear_remote_client_cache(Some(host)).await;
+
+    tracing
+        .track(MixpanelEvent::RoleSwitched { host: host_name })
+        .await;
+
+    Ok(RolesData::from(info))
+}
+
+#[tauri::command]
+pub async fn switch_role(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, Telemetry>,
+    host: String,
+    role: String,
+) -> Result<RolesData, String> {
+    switch_role_command(&*m, &tracing, &host, &role)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Navigate to a page after successful login.
@@ -138,7 +212,7 @@ pub(crate) fn navigate_after_login(
 /// Code-based login for legacy stacks that don't support Connect/OAuth.
 async fn login_command(
     m: &model::Model,
-    tracing: &crate::telemetry::Telemetry,
+    tracing: &Telemetry,
     host: &str,
     code: String,
 ) -> Result<(), Error> {
@@ -158,7 +232,7 @@ async fn login_command(
 #[tauri::command]
 pub async fn login(
     m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    tracing: tauri::State<'_, Telemetry>,
     host: String,
     code: String,
 ) -> Result<String, String> {
@@ -179,7 +253,7 @@ pub async fn login(
 pub async fn login_oauth(
     m: tauri::State<'_, model::Model>,
     oauth_state: tauri::State<'_, OAuthState>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    tracing: tauri::State<'_, Telemetry>,
     host: String,
     back: Option<String>,
 ) -> Result<String, String> {
@@ -205,7 +279,138 @@ pub async fn login_oauth(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+    use crate::model::MockQuiltModel;
+
+    /// A `MockQuiltModel` paired with the log of hosts whose cached S3
+    /// clients were dropped, so a test can assert on the flush itself
+    /// rather than on the switch's return value.
+    struct RecordingModel {
+        model: MockQuiltModel,
+        cache_clears: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingModel {
+        /// Hosts passed to `clear_remote_client_cache`, in call order. A
+        /// global clear (`None`) is recorded as an empty string, mirroring
+        /// `erase_auth`'s empty-host convention.
+        fn cache_clears_for_host(&self) -> Vec<String> {
+            self.cache_clears.lock().expect("cache clear log").clone()
+        }
+    }
+
+    /// A model whose `switch_role` succeeds and whose cache clears are
+    /// recorded.
+    fn mock_model_recording_cache_clears(new_role: &str) -> RecordingModel {
+        let cache_clears = Arc::new(Mutex::new(Vec::new()));
+        let mut model = MockQuiltModel::new();
+
+        let role = new_role.to_string();
+        model.expect_switch_role().returning(move |_, _| {
+            Ok(RoleInfo {
+                current: role.clone(),
+                available: vec!["ReadWrite".to_string(), role.clone()],
+            })
+        });
+
+        let log = Arc::clone(&cache_clears);
+        model
+            .expect_clear_remote_client_cache()
+            .returning(move |host: Option<Host>| {
+                log.lock()
+                    .expect("cache clear log")
+                    .push(host.map(|h| h.to_string()).unwrap_or_default());
+            });
+
+        RecordingModel {
+            model,
+            cache_clears,
+        }
+    }
+
+    /// A switch must expire the stored credentials AND drop the cached S3
+    /// clients. Dropping only the credentials leaves an already-built client
+    /// signing with the old role until its own STS expiry (~1h), which is the
+    /// feature silently doing nothing. Mirrors `erase_auth`'s contract.
+    #[tokio::test]
+    async fn switch_role_clears_the_remote_client_cache() {
+        let recording = mock_model_recording_cache_clears("ReadOnly");
+        let host = "test.quilt.dev";
+
+        switch_role_command(&recording.model, &Telemetry::default(), host, "ReadOnly")
+            .await
+            .expect("switch");
+
+        assert_eq!(
+            recording.cache_clears_for_host(),
+            vec![host.to_string()],
+            "a switch must clear the host's cached S3 clients, not just its credentials"
+        );
+    }
+
+    /// The switch reports the role the server confirmed, so the UI never
+    /// shows an optimistic value the stack rejected.
+    #[tokio::test]
+    async fn switch_role_returns_the_confirmed_role() {
+        let recording = mock_model_recording_cache_clears("ReadOnly");
+
+        let data = switch_role_command(
+            &recording.model,
+            &Telemetry::default(),
+            "test.quilt.dev",
+            "ReadOnly",
+        )
+        .await
+        .expect("switch");
+
+        assert_eq!(data.current, "ReadOnly");
+        assert_eq!(data.available, vec!["ReadWrite", "ReadOnly"]);
+    }
+
+    /// A rejected switch must leave the cached clients alone: the old role
+    /// is still the active one, and dropping its clients would force a
+    /// pointless re-vend on every in-flight request.
+    #[tokio::test]
+    async fn switch_role_leaves_the_cache_alone_when_the_switch_fails() {
+        let cache_clears = Arc::new(Mutex::new(Vec::new()));
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_switch_role()
+            .returning(|_, _| Err(Error::General("role rejected".to_string())));
+
+        let log = Arc::clone(&cache_clears);
+        model
+            .expect_clear_remote_client_cache()
+            .returning(move |host: Option<Host>| {
+                log.lock()
+                    .expect("cache clear log")
+                    .push(host.map(|h| h.to_string()).unwrap_or_default());
+            });
+
+        let result =
+            switch_role_command(&model, &Telemetry::default(), "test.quilt.dev", "ReadOnly").await;
+
+        assert!(result.is_err(), "a rejected switch must surface the error");
+        assert!(
+            cache_clears.lock().expect("cache clear log").is_empty(),
+            "a failed switch must not drop the still-valid clients of the current role"
+        );
+    }
+
+    /// An unparseable host must fail before any remote call — `Host` is the
+    /// cache key, so a switch we cannot key could never be flushed.
+    #[tokio::test]
+    async fn switch_role_rejects_an_unparseable_host() {
+        let mut model = MockQuiltModel::new();
+        model.expect_switch_role().never();
+        model.expect_clear_remote_client_cache().never();
+
+        let result = switch_role_command(&model, &Telemetry::default(), "", "ReadOnly").await;
+
+        assert!(result.is_err(), "an empty host is not a switchable host");
+    }
 
     #[tokio::test]
     async fn test_get_login_error_data() -> Result<(), String> {
