@@ -59,30 +59,41 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     Ok(region.to_str()?.into())
 }
 
-/// Map an AWS error code onto a typed kind. Keyed on the *code*, never the
-/// HTTP status: `ExpiredToken` and `InvalidAccessKeyId` are also 403 but
-/// call for a credential re-vend, not a role switch.
+/// Map an AWS error onto a typed kind. Keyed on the *code* wherever there is
+/// one, never on the HTTP status alone: `ExpiredToken` and
+/// `InvalidAccessKeyId` are also 403 but call for a credential re-vend, not a
+/// role switch.
 ///
-/// Only a genuine denial changes the kind. Every other code is handed to
+/// The one exception is a 403 that names no code at all. `HeadObject` is why
+/// that case exists: a HEAD response carries no body, so S3 has nowhere to
+/// put the `<Code>AccessDenied</Code>` document every other operation
+/// returns, and the SDK has no code to hand us. Reading the status is safe
+/// *because* the code is absent — a 403 that did name itself never reaches
+/// that arm.
+///
+/// Only a genuine denial changes the kind. Everything else is handed to
 /// `fallback`, so a call site keeps the operation-specific kind it would
 /// have produced anyway — a failed put stays [`S3ErrorKind::PutObject`]
 /// rather than collapsing into an undiagnosable [`S3ErrorKind::Raw`].
-pub(super) fn classify_s3_error_code(
+pub(super) fn classify_s3_error(
     code: Option<&str>,
+    status: Option<u16>,
     described: &str,
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
-    match code {
-        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+    match (code, status) {
+        (Some("AccessDenied"), _) | (None, Some(403)) => {
+            S3ErrorKind::AccessDenied(described.to_string())
+        }
         _ => fallback(described.to_string()),
     }
 }
 
 /// Classify an `SdkError` straight off an AWS call.
 ///
-/// [`describe_sdk_error`] consumes the error, so the code has to be lifted
-/// out first; doing it here keeps every call site from repeating that
-/// ordering constraint (and from getting it wrong).
+/// [`describe_sdk_error`] consumes the error, so the code and status have to
+/// be lifted out first; doing it here keeps every call site from repeating
+/// that ordering constraint (and from getting it wrong).
 pub(super) fn classify_sdk_error<E>(
     err: SdkError<E>,
     fallback: fn(String) -> S3ErrorKind,
@@ -94,7 +105,8 @@ where
         .as_service_error()
         .and_then(ProvideErrorMetadata::code)
         .map(str::to_owned);
-    classify_s3_error_code(code.as_deref(), &describe_sdk_error(err), fallback)
+    let status = err.raw_response().map(|raw| raw.status().as_u16());
+    classify_s3_error(code.as_deref(), status, &describe_sdk_error(err), fallback)
 }
 
 async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
@@ -434,11 +446,16 @@ impl Remote for RemoteS3 {
                 info!("ℹ️ Object does not exist at {}", s3_uri);
                 Ok(false)
             }
+            // A denial is typed distinctly — this is the push gate's first S3
+            // call (`.quilt/workflows/config.yml`), so collapsing it into a
+            // generic existence failure is what makes a no-read role's Push
+            // read as an unexplained S3 error instead of a role problem.
+            // Anything else stays a plain existence failure.
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
                 Err(Error::S3(S3Error {
                     host: host.cloned(),
-                    kind: S3ErrorKind::Exists(describe_sdk_error(err)),
+                    kind: classify_sdk_error(err, S3ErrorKind::Exists),
                 }))
             }
         }
@@ -518,9 +535,11 @@ impl Remote for RemoteS3 {
                 version: head.version_id,
                 ..s3_uri.clone()
             }),
+            // Same reasoning as [`Remote::exists`]: only a genuine denial
+            // changes the kind, everything else stays a resolve failure.
             Err(err) => Err(Error::S3(S3Error {
                 host: host.cloned(),
-                kind: S3ErrorKind::ResolveUrl(describe_sdk_error(err)),
+                kind: classify_sdk_error(err, S3ErrorKind::ResolveUrl),
             })),
         }
     }
@@ -715,8 +734,9 @@ mod tests {
     /// into a generic error that reads as "sign in again".
     #[test]
     fn access_denied_code_classifies_as_access_denied() {
-        let err = classify_s3_error_code(
+        let err = classify_s3_error(
             Some("AccessDenied"),
+            Some(403),
             "AccessDenied: forbidden",
             S3ErrorKind::Raw,
         );
@@ -732,8 +752,9 @@ mod tests {
     /// still has to come through typed.
     #[test]
     fn upload_denial_classifies_as_access_denied() {
-        let err = classify_s3_error_code(
+        let err = classify_s3_error(
             Some("AccessDenied"),
+            Some(403),
             "AccessDenied: forbidden",
             S3ErrorKind::PutObject,
         );
@@ -749,15 +770,21 @@ mod tests {
     #[test]
     fn non_denial_codes_keep_the_callers_fallback_kind() {
         assert_eq!(
-            classify_s3_error_code(
+            classify_s3_error(
                 Some("SlowDown"),
+                Some(503),
                 "SlowDown: throttled",
                 S3ErrorKind::PutObject
             ),
             S3ErrorKind::PutObject("SlowDown: throttled".to_string())
         );
         assert_eq!(
-            classify_s3_error_code(None, "HTTP 500 (no error body)", S3ErrorKind::UploadFile),
+            classify_s3_error(
+                None,
+                Some(500),
+                "HTTP 500 (no error body)",
+                S3ErrorKind::UploadFile
+            ),
             S3ErrorKind::UploadFile("HTTP 500 (no error body)".to_string())
         );
     }
@@ -767,8 +794,12 @@ mod tests {
     #[test]
     fn expired_credential_codes_do_not_classify_as_access_denied() {
         for code in ["ExpiredToken", "InvalidAccessKeyId"] {
-            let err =
-                classify_s3_error_code(Some(code), &format!("{code}: nope"), S3ErrorKind::Raw);
+            let err = classify_s3_error(
+                Some(code),
+                Some(403),
+                &format!("{code}: nope"),
+                S3ErrorKind::Raw,
+            );
             assert!(
                 !S3Error::new(err).is_access_denied(),
                 "{code} must not be read as a role denial"
@@ -778,17 +809,60 @@ mod tests {
 
     #[test]
     fn unknown_codes_stay_raw() {
-        let err = classify_s3_error_code(Some("SlowDown"), "SlowDown: throttled", S3ErrorKind::Raw);
+        let err = classify_s3_error(
+            Some("SlowDown"),
+            Some(503),
+            "SlowDown: throttled",
+            S3ErrorKind::Raw,
+        );
         assert_eq!(err, S3ErrorKind::Raw("SlowDown: throttled".to_string()));
     }
 
     #[test]
     fn missing_code_stays_raw() {
-        let err = classify_s3_error_code(None, "HTTP 500 (no error body)", S3ErrorKind::Raw);
+        let err = classify_s3_error(
+            None,
+            Some(500),
+            "HTTP 500 (no error body)",
+            S3ErrorKind::Raw,
+        );
         assert_eq!(
             err,
             S3ErrorKind::Raw("HTTP 500 (no error body)".to_string())
         );
+    }
+
+    /// A `HeadObject` refusal is a bodyless 403: HEAD responses carry no
+    /// payload, so S3 cannot send the `<Code>AccessDenied</Code>` document.
+    /// Without the status arm the `exists` gate on the push path — the first
+    /// S3 call a push makes — reports an untyped error and the user is told
+    /// to sign in again for a bucket their role simply cannot read.
+    #[test]
+    fn a_bodyless_403_classifies_as_access_denied() {
+        let err = classify_s3_error(
+            None,
+            Some(403),
+            "HTTP 403 (no error body)",
+            S3ErrorKind::Exists,
+        );
+        assert_eq!(
+            err,
+            S3ErrorKind::AccessDenied("HTTP 403 (no error body)".to_string())
+        );
+    }
+
+    /// The status arm is narrow on purpose: only 403, and only when nothing
+    /// named itself. A bodyless 404 or 500 keeps the call site's own kind.
+    #[test]
+    fn other_bodyless_statuses_keep_the_callers_fallback_kind() {
+        for status in [404u16, 500, 503] {
+            let described = format!("HTTP {status} (no error body)");
+            assert_eq!(
+                classify_s3_error(None, Some(status), &described, S3ErrorKind::ResolveUrl),
+                S3ErrorKind::ResolveUrl(described.clone()),
+                "HTTP {status} is not a denial"
+            );
+        }
     }
 
     /// Answer every connection with the same canned HTTP response, so an
@@ -880,6 +954,45 @@ mod tests {
         assert!(
             err.is_access_denied(),
             "the method must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// `exists` is the push gate's **first** S3 call: `fetch_workflows_config`
+    /// heads `.quilt/workflows/config.yml` before a single byte is uploaded.
+    /// A role that cannot read the bucket is refused right there, so if this
+    /// method swallows the denial the user is shown a raw S3 error on a row
+    /// the roster has already marked as out of reach.
+    #[test(tokio::test)]
+    async fn exists_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+
+        let Err(err) = Remote::exists(&remote, None, &S3Uri::try_from("s3://locked/x")?).await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the existence check must not re-wrap the denial, got: {err}"
+        );
+        Ok(())
+    }
+
+    /// `resolve_url` heads the same way `exists` does, and is reached while
+    /// resolving a manifest entry, so it has the same obligation.
+    #[test(tokio::test)]
+    async fn resolve_url_method_preserves_access_denied() -> Res<()> {
+        let remote = access_denied_remote().await;
+
+        let Err(err) = Remote::resolve_url(&remote, None, &S3Uri::try_from("s3://locked/x")?).await
+        else {
+            panic!("the stub endpoint always refuses");
+        };
+
+        assert!(
+            err.is_access_denied(),
+            "the resolve path must not re-wrap the denial, got: {err}"
         );
         Ok(())
     }
