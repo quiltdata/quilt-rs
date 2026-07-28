@@ -301,13 +301,13 @@ mod tests {
         }
     }
 
-    /// A model whose `switch_role` succeeds and whose cache clears are
-    /// recorded.
-    fn mock_model_recording_cache_clears(new_role: &str) -> RecordingModel {
+    /// A model whose `switch_role` succeeds — confirming `confirmed_role`
+    /// whatever was requested — and whose cache clears are recorded.
+    fn mock_model_recording_cache_clears(confirmed_role: &str) -> RecordingModel {
         let cache_clears = Arc::new(Mutex::new(Vec::new()));
         let mut model = MockQuiltModel::new();
 
-        let role = new_role.to_string();
+        let role = confirmed_role.to_string();
         model.expect_switch_role().returning(move |_, _| {
             Ok(RoleInfo {
                 current: role.clone(),
@@ -350,22 +350,29 @@ mod tests {
         );
     }
 
-    /// The switch reports the role the server confirmed, so the UI never
-    /// shows an optimistic value the stack rejected.
+    /// The switch reports the role the server **confirmed**, never the one
+    /// the UI asked for. A stack that normalises or falls back to a
+    /// different role than requested would otherwise leave the UI naming
+    /// one role while S3 signs as another. The requested spelling here
+    /// (`readonly`) deliberately differs from the confirmed one
+    /// (`ReadOnly`), so echoing the request back fails this test.
     #[tokio::test]
-    async fn switch_role_returns_the_confirmed_role() {
+    async fn switch_role_returns_the_confirmed_role_not_the_requested_one() {
         let recording = mock_model_recording_cache_clears("ReadOnly");
 
         let data = switch_role_command(
             &recording.model,
             &Telemetry::default(),
             "test.quilt.dev",
-            "ReadOnly",
+            "readonly",
         )
         .await
         .expect("switch");
 
-        assert_eq!(data.current, "ReadOnly");
+        assert_eq!(
+            data.current, "ReadOnly",
+            "the UI must show the role the stack confirmed, not the string it was sent"
+        );
         assert_eq!(data.available, vec!["ReadWrite", "ReadOnly"]);
     }
 
@@ -397,6 +404,38 @@ mod tests {
             cache_clears.lock().expect("cache clear log").is_empty(),
             "a failed switch must not drop the still-valid clients of the current role"
         );
+    }
+
+    /// `get_roles` hands the stack's answer to the UI unchanged, so the
+    /// selector opens on the role that is actually active.
+    #[tokio::test]
+    async fn get_roles_returns_the_active_role_and_the_choices() {
+        let mut model = MockQuiltModel::new();
+        model.expect_refresh_roles().returning(|_| {
+            Ok(RoleInfo {
+                current: "ReadWrite".to_string(),
+                available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
+            })
+        });
+
+        let data = get_roles_command(&model, "test.quilt.dev")
+            .await
+            .expect("roles");
+
+        assert_eq!(data.current, "ReadWrite");
+        assert_eq!(data.available, vec!["ReadWrite", "ReadOnly"]);
+    }
+
+    /// An unparseable host must fail before the remote call, so a typo
+    /// surfaces as an error rather than as an empty role list.
+    #[tokio::test]
+    async fn get_roles_rejects_an_unparseable_host() {
+        let mut model = MockQuiltModel::new();
+        model.expect_refresh_roles().never();
+
+        let result = get_roles_command(&model, "").await;
+
+        assert!(result.is_err(), "an empty host is not a queryable host");
     }
 
     /// An unparseable host must fail before any remote call — `Host` is the
