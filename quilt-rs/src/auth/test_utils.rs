@@ -156,7 +156,10 @@ impl HttpClient for GraphQlTestHttpClient {
         if call < self.graphql_fail_first_n {
             return Err(reqwest_error_with_status(401).await);
         }
-        if self.graphql_fail_first_n == 0 {
+        // Only the *first* call is pinned to the cached token: a body-level
+        // refusal (`me: null`) also triggers the force-refresh retry, and
+        // that second call is expected to present the freshly minted one.
+        if call == 0 && self.graphql_fail_first_n == 0 {
             assert_eq!(auth_token, ACCESS_TOKEN);
         }
 

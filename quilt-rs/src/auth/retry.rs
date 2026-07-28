@@ -6,6 +6,7 @@ use tracing::warn;
 use crate::Error;
 use crate::Res;
 use crate::error::LoginError;
+use crate::error::RoleError;
 use quilt_uri::Host;
 
 /// Shared shape of every predicate below: a wire-level failure that carried
@@ -43,8 +44,15 @@ pub(super) fn is_credentials_auth_error(e: &Error) -> bool {
 /// a 400 there is a malformed document, i.e. a client bug — but kept as its
 /// own predicate because it classifies a different endpoint, and the two are
 /// free to diverge as the registry's GraphQL error mapping evolves.
+///
+/// [`RoleError::NotAuthenticated`] counts too: GraphQL reports a refused
+/// session in the body, as `200 {"data":{"me":null}}`, not as a status code.
+/// It says exactly what a 401 says — this token no longer identifies a
+/// user — so it must reach the same force-refresh-then-login path instead of
+/// being handed back as a permanent failure nothing routes anywhere.
 pub(super) fn is_role_auth_error(e: &Error) -> bool {
-    has_status(e, |s| matches!(s, 401 | 403))
+    matches!(e, Error::Role(RoleError::NotAuthenticated(_)))
+        || has_status(e, |s| matches!(s, 401 | 403))
 }
 
 /// Extracts the HTTP status code from an `Error::Reqwest`, if the wire-level

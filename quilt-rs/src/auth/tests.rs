@@ -997,6 +997,43 @@ async fn refresh_roles_maps_a_persistent_401_to_login_required() -> Res {
     Ok(())
 }
 
+/// A registry answers a refused session on the role surface in the body —
+/// `200 {"data":{"me":null}}` — not with a status code. That is the same
+/// "log in again" answer a 401 carries, so it must take the same route:
+/// force-refresh, retry once, then report login required. Left unclassified
+/// it is a permanent failure nothing routes anywhere, and the role switcher
+/// silently renders nothing.
+#[test(tokio::test)]
+async fn refresh_roles_maps_a_persistently_null_me_to_login_required() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        me_is_null: true,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let result = auth.refresh_roles(&client, &host).await;
+
+    assert!(
+        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        "expected LoginRequired after a persistently null `me`, got: {result:?}"
+    );
+    assert_eq!(
+        client.token_calls.load(Ordering::SeqCst),
+        1,
+        "a body-level refusal must still force exactly one token refresh"
+    );
+    assert_eq!(
+        client
+            .tokens_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len(),
+        2,
+        "the retry must be bounded to one extra attempt"
+    );
+    Ok(())
+}
+
 /// Same contract on the mutation: a switch attempted against a dead session
 /// reports "login required", not a raw HTTP failure.
 #[test(tokio::test)]
