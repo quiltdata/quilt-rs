@@ -135,6 +135,24 @@ fn pull_popover(check: &PullCheck) -> Option<String> {
     }
 }
 
+/// Whether the row's Commit and Push affordance should render.
+///
+/// `has_changes` stays honest on a denied row — it is real local state, and
+/// hiding it misrepresents the package. But the *action* is a different
+/// question: a push always starts with an S3 read (the push gate's workflow
+/// config check), so a role the row cannot read for can never complete one.
+/// The state flag (`has_changes`) and the affordance gate (`no_access`) are
+/// kept as separate terms for exactly this reason — deriving one from the
+/// other collapses a case where they must disagree.
+fn publish_affordance(status: &str, has_changes: bool, has_origin: bool, no_access: bool) -> bool {
+    if no_access {
+        return false;
+    }
+    let publishable_status = status == "ahead" || (status == "local" && has_origin);
+    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_origin;
+    publishable_status || up_to_date_with_changes
+}
+
 // ── Installed Packages List page ──
 
 #[component]
@@ -674,10 +692,7 @@ fn build_package_menu(
         // Gated on having a remote origin, and on there being something to ship
         // (either uncommitted changes or a pending commit).
         <Show when=move || {
-            let s = status.get();
-            let publishable_status = s == "ahead" || (s == "local" && has_origin);
-            let up_to_date_with_changes = s == "up_to_date" && has_changes.get() && has_origin;
-            publishable_status || up_to_date_with_changes
+            publish_affordance(&status.get(), has_changes.get(), has_origin, access.no_access.get())
         }>
             <li class="menu-item">
                 <buttons::Publish
@@ -689,8 +704,10 @@ fn build_package_menu(
             </li>
         </Show>
 
-        // Pull (behind)
-        <Show when=move || status.get() == "behind">
+        // Pull (behind). Gated on access too: a denied role can never fetch
+        // the objects a pull would write, so the row falls back to the
+        // Switch-role remedy instead of an action that cannot succeed.
+        <Show when=move || status.get() == "behind" && !access.no_access.get()>
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
                 <div class="qui-popover">
@@ -714,8 +731,10 @@ fn build_package_menu(
             </li>
         </Show>
 
-        // Merge (diverged)
-        <Show when=move || status.get() == "diverged">
+        // Merge (diverged). Same access gate: the merge page's own actions
+        // (certify, reset-to-remote) both start with an S3 read, so sending
+        // a denied role there just relocates the failure.
+        <Show when=move || status.get() == "diverged" && !access.no_access.get()>
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
                 <buttons::Merge namespace=ns_for_merge.clone() small=true />
@@ -875,7 +894,7 @@ mod tests {
 
     use super::{
         AccessSignals, PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast,
-        pull_conflict_hint, pull_popover,
+        publish_affordance, pull_conflict_hint, pull_popover,
     };
 
     /// A row seeded by the pre-filter as denied.
@@ -928,6 +947,23 @@ mod tests {
         assert_eq!(
             access.reason.get_untracked().as_deref(),
             Some("Current role ReadOnly has no access to this bucket")
+        );
+    }
+
+    /// A denied row keeps `has_changes` honest but must not offer Commit and
+    /// Push: the push gate's first S3 call reads the workflow config, and a
+    /// role that cannot read the bucket can never get there. A readable row
+    /// with the identical local changes is the contrast that proves the gate
+    /// is on access, not on the changes themselves.
+    #[test]
+    fn denied_row_hides_publish_that_a_readable_row_with_the_same_changes_offers() {
+        assert!(
+            !publish_affordance("up_to_date", true, true, true),
+            "a denied row must not offer Commit and Push"
+        );
+        assert!(
+            publish_affordance("up_to_date", true, true, false),
+            "a readable row with the same local changes must still offer it"
         );
     }
 
