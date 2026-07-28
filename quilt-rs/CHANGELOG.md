@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.0-alpha5] - 2026-07-28
+
+### Changed
+
+- `InstalledPackage::status` now reports an access denial from the latest-hash read instead of degrading to the stored lineage, so a caller can tell a bucket the active role cannot read from a remote that is merely unreachable (offline callers still fall back as before) (<https://github.com/quiltdata/quilt-rs/pull/NNN>)
+
 ## [v0.34.0-alpha4] - 2026-07-27
 
 ### Added

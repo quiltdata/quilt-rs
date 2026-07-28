@@ -2,7 +2,7 @@
 name = "quilt-cli"
 description = "Command-line interface for Quilt data packages"
 
-version = "0.28.0"
+version = "0.29.0-alpha1"
 
 # Inherit from workspace
 edition.workspace = true
