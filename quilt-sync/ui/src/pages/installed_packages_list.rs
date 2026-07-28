@@ -352,14 +352,13 @@ fn PackageItem(
     let refreshing = RwSignal::new(true);
     let refresh_error = RwSignal::new(None::<String>);
     // Seeded from the light phase's readable-bucket pre-filter, then
-    // refined by the heavy phase. A denial from the real call is
-    // authoritative, but a *successful* call is not evidence of access
-    // (the status can come from cached lineage), so the refresh only ever
-    // adds the mark — never clears one the pre-filter set. A role switch
-    // re-runs the light phase, which is what clears it.
-    let no_access = RwSignal::new(data.no_access);
-    let no_access_reason = RwSignal::new(data.no_access_reason.clone());
-    let role_switch_host = RwSignal::new(data.role_switch_host.clone());
+    // replaced wholesale by the heavy phase — see `AccessSignals::apply`.
+    let access = AccessSignals {
+        no_access: RwSignal::new(data.no_access),
+        reason: RwSignal::new(data.no_access_reason.clone()),
+        role_switch_host: RwSignal::new(data.role_switch_host.clone()),
+    };
+    let no_access_reason = access.reason;
 
     let cancelled = Arc::new(AtomicBool::new(false));
     let cancelled_flag = cancelled.clone();
@@ -375,11 +374,11 @@ fn PackageItem(
             Ok(fresh) => {
                 status.set(fresh.status);
                 has_changes.set(fresh.has_changes);
-                if fresh.no_access {
-                    no_access.set(true);
-                    no_access_reason.set(fresh.no_access_reason);
-                    role_switch_host.set(fresh.role_switch_host);
-                }
+                access.apply(
+                    fresh.no_access,
+                    fresh.no_access_reason,
+                    fresh.role_switch_host,
+                );
             }
             Err(err) => refresh_error.set(Some(err)),
         }
@@ -462,10 +461,7 @@ fn PackageItem(
         &data,
         status,
         has_changes,
-        AccessSignals {
-            no_access,
-            role_switch_host,
-        },
+        access,
         pull_check,
         pull_retry,
         refreshing,
@@ -527,7 +523,27 @@ fn PackageItem(
 #[derive(Clone, Copy)]
 struct AccessSignals {
     no_access: RwSignal<bool>,
+    reason: RwSignal<Option<String>>,
     role_switch_host: RwSignal<Option<String>>,
+}
+
+impl AccessSignals {
+    /// Replace the light phase's guess with the heavy phase's answer — in
+    /// both directions.
+    ///
+    /// The pre-filter that seeds these signals is an optimistic hint drawn
+    /// from the registry's readable-bucket list, and that list only knows
+    /// the buckets registered with the stack while `set_remote` accepts any
+    /// S3 bucket. Only ever *adding* the mark made such a false positive
+    /// permanent for the life of the page — and since the mark suppresses
+    /// the Login affordance, it also left a genuinely broken row with no
+    /// remedy at all. The refresh is the real call, so it gets the last
+    /// word either way.
+    fn apply(self, no_access: bool, reason: Option<String>, role_switch_host: Option<String>) {
+        self.no_access.set(no_access);
+        self.reason.set(reason);
+        self.role_switch_host.set(role_switch_host);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -855,10 +871,65 @@ fn CreatePackagePopup(
 
 #[cfg(test)]
 mod tests {
+    use leptos::prelude::*;
+
     use super::{
-        PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast, pull_conflict_hint,
-        pull_popover,
+        AccessSignals, PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast,
+        pull_conflict_hint, pull_popover,
     };
+
+    /// A row seeded by the pre-filter as denied.
+    fn pre_marked_row() -> AccessSignals {
+        AccessSignals {
+            no_access: RwSignal::new(true),
+            reason: RwSignal::new(Some(
+                "Current role ReadOnly has no access to this bucket".to_string(),
+            )),
+            role_switch_host: RwSignal::new(Some("acme.quilt.dev".to_string())),
+        }
+    }
+
+    /// The pre-filter reads the registry's readable-bucket list, which does
+    /// not know about buckets outside the stack — but `set_remote` accepts
+    /// them. When the real call then succeeds, the mark must go: left in
+    /// place it greys a working row for the life of the page, and it takes
+    /// the row's Login remedy with it.
+    #[test]
+    fn a_refresh_that_does_not_deny_clears_the_pre_filter_mark() {
+        let access = pre_marked_row();
+
+        access.apply(false, None, None);
+
+        assert!(!access.no_access.get_untracked());
+        assert!(access.reason.get_untracked().is_none());
+        assert!(
+            access.role_switch_host.get_untracked().is_none(),
+            "an unmarked row must get its error affordances back"
+        );
+    }
+
+    /// The other direction still works: the real call is authoritative when
+    /// it denies a bucket the pre-filter listed as readable.
+    #[test]
+    fn a_refresh_that_denies_marks_a_row_the_pre_filter_cleared() {
+        let access = AccessSignals {
+            no_access: RwSignal::new(false),
+            reason: RwSignal::new(None),
+            role_switch_host: RwSignal::new(None),
+        };
+
+        access.apply(
+            true,
+            Some("Current role ReadOnly has no access to this bucket".to_string()),
+            Some("acme.quilt.dev".to_string()),
+        );
+
+        assert!(access.no_access.get_untracked());
+        assert_eq!(
+            access.reason.get_untracked().as_deref(),
+            Some("Current role ReadOnly has no access to this bucket")
+        );
+    }
 
     #[test]
     fn blocked_popover_names_conflicts_and_resolution_path() {

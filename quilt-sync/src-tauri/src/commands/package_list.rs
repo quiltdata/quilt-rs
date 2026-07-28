@@ -3,8 +3,10 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::time::Duration;
 
 use serde::Serialize;
+use tokio::time::timeout;
 
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
@@ -77,9 +79,9 @@ pub struct InstalledPackageListItem {
 /// it always has. Shared by both detection paths so they word the mark
 /// identically.
 #[derive(Clone, Debug, Default)]
-struct AccessMark {
+pub(super) struct AccessMark {
     no_access: bool,
-    reason: Option<String>,
+    pub(super) reason: Option<String>,
     role_switch_host: Option<String>,
 }
 
@@ -128,7 +130,7 @@ impl AccessMark {
 ///
 /// A failed query is not fatal: [`AccessMark::denied`] degrades to the
 /// unnamed wording rather than dropping the mark.
-async fn denied_mark(
+pub(super) async fn denied_mark(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     host: Option<&Host>,
@@ -139,6 +141,23 @@ async fn denied_mark(
     };
     AccessMark::denied(host, info.as_ref())
 }
+
+/// How long the roster waits on one host's readable-bucket query before
+/// giving up on it.
+///
+/// The roster is otherwise local data and used to paint without touching the
+/// network. The query added two round trips per host — `config.json`, then a
+/// GraphQL POST — serialized per host under that host's credential lock and
+/// behind a retry middleware with a 10s connect timeout, so an unreachable
+/// host (offline, captive portal, DNS blackhole) held the main screen blank
+/// for tens of seconds.
+///
+/// The pre-filter is an optimistic hint, and there is already a correct
+/// degrade path for not having it: reactive-only marking, where the
+/// authoritative per-row status call marks the denied rows a moment later.
+/// So the budget is deliberately short. Undershooting on a slow-but-working
+/// link costs only the hint; overshooting costs the first paint.
+const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// A message-bearing autosync pause for a namespace: the stable reason
 /// discriminant plus the human-readable message (raw refusal reason, or the
@@ -206,6 +225,8 @@ fn row_host(item: &InstalledPackageListItem) -> Option<&Host> {
 ///
 /// A failed query degrades to reactive-only marking. It must never be read
 /// as "nothing is readable": an empty set would grey the entire roster.
+/// A query that does not answer inside [`BUCKET_LIST_BUDGET`] counts as
+/// failed, which is what keeps the roster local-only in effect.
 async fn mark_unreadable_buckets(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
@@ -219,10 +240,15 @@ async fn mark_unreadable_buckets(
     }
 
     for host in hosts {
-        let readable: HashSet<String> = match m.readable_buckets(&host).await {
-            Ok(buckets) => buckets.into_iter().collect(),
-            Err(err) => {
+        let query = timeout(BUCKET_LIST_BUDGET, m.readable_buckets(&host));
+        let readable: HashSet<String> = match query.await {
+            Ok(Ok(buckets)) => buckets.into_iter().collect(),
+            Ok(Err(err)) => {
                 tracing::debug!("No readable-bucket list for {host}: {err}");
+                continue;
+            }
+            Err(_) => {
+                tracing::debug!("Readable-bucket list for {host} timed out");
                 continue;
             }
         };
@@ -400,6 +426,25 @@ impl RefreshedPackageStatus {
     }
 }
 
+/// Whether the working tree differs from the installed manifest, answered
+/// without touching the remote.
+///
+/// The fallback for a row whose remote refresh was refused. Local changes are
+/// computed locally at both ends, so a denial says nothing about them, and the
+/// UI gates Publish on the answer.
+async fn local_changes(m: &impl model::QuiltModel, package: &quilt::InstalledPackage) -> bool {
+    match m.recompute_local_status(package, None).await {
+        Ok(status) => !status.changes.is_empty(),
+        Err(err) => {
+            tracing::warn!(
+                "Failed to recompute local status for {}: {err}",
+                package.namespace,
+            );
+            false
+        }
+    }
+}
+
 pub(super) async fn refresh_package_status_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
@@ -457,7 +502,16 @@ pub(super) async fn refresh_package_status_from_model(
             // this bucket. Rendering "sign in again" here is what sent the
             // original bug reporter into an unrecoverable re-login loop —
             // the re-vend hands back the same denied role.
-            (cached_state, false, true)
+            //
+            // The changes, though, are the working tree against the cached
+            // manifest — local both ends, and none of the remote's business.
+            // Reporting `false` here would take the row's Publish button
+            // away while real uncommitted work sits underneath it.
+            (
+                cached_state,
+                local_changes(m, &installed_package).await,
+                true,
+            )
         }
         Err(err) => {
             tracing::warn!(
@@ -512,14 +566,6 @@ mod tests {
     use crate::model::mocks;
 
     // ── Access-marking fixtures ──
-
-    /// The error S3 returns when the active role cannot reach a bucket.
-    /// Distinct from a broken session: the credentials were vended fine.
-    fn access_denied_error() -> Error {
-        Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
-            quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
-        )))
-    }
 
     /// A `ManifestUri` in an explicit bucket, so a test can put two rows on
     /// the same host in different buckets — the shape the readable-bucket
@@ -601,9 +647,34 @@ mod tests {
     }
 
     /// A single package on `test.quilt.dev` whose status call fails with
-    /// `err`, with the host's roles under the test's control.
+    /// `err`, with the host's roles under the test's control and a clean
+    /// working tree.
     fn mock_model_with_status_error(err: Error, roles: Option<RoleInfo>) -> MockQuiltModel {
+        mock_model_with_status_error_and_local_changes(err, roles, false)
+    }
+
+    /// As above, but with the local working tree under the test's control
+    /// too: the denial path answers `has_changes` from a local recompute,
+    /// since the remote has no say in what the working tree contains.
+    fn mock_model_with_status_error_and_local_changes(
+        err: Error,
+        roles: Option<RoleInfo>,
+        dirty: bool,
+    ) -> MockQuiltModel {
         let mut model = mocks::create();
+        model
+            .expect_recompute_local_status()
+            .returning(move |_, _| {
+                let changes = if dirty {
+                    one_local_change()
+                } else {
+                    quilt::lineage::ChangeSet::new()
+                };
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    changes,
+                ))
+            });
         let pkg = make_installed_package(("test", "denied"));
         model
             .expect_get_installed_package()
@@ -654,6 +725,34 @@ mod tests {
         assert_ne!(
             item.status, "error",
             "must not collapse into the sign-in-again state"
+        );
+    }
+
+    /// A denied row keeps reporting its local changes. They are computed
+    /// against the cached manifest — local at both ends — and the UI gates
+    /// Publish on them, so dropping them hides the button on a row with real
+    /// uncommitted work.
+    #[tokio::test]
+    async fn a_denied_row_still_reports_its_local_changes() {
+        let m = mock_model_with_status_error_and_local_changes(
+            access_denied_error(),
+            Some(two_roles()),
+            true,
+        );
+
+        let item = refresh_package_status_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &("test", "denied").into(),
+        )
+        .await
+        .expect("refresh");
+
+        assert!(item.no_access, "the row is still marked");
+        assert!(
+            item.has_changes,
+            "a denial says nothing about the working tree"
         );
     }
 
@@ -827,6 +926,83 @@ mod tests {
         );
     }
 
+    /// A host that accepts the connection and then says nothing — the
+    /// captive-portal shape, which a connect timeout does not cover.
+    ///
+    /// Hand-written rather than mocked: a mockall expectation resolves
+    /// synchronously, so it cannot model a call that hangs.
+    struct SilentHost {
+        domain: tokio::sync::Mutex<quilt::LocalDomain>,
+    }
+
+    impl Default for SilentHost {
+        fn default() -> Self {
+            Self {
+                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(std::path::PathBuf::new())),
+            }
+        }
+    }
+
+    impl model::QuiltModel for SilentHost {
+        fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
+            &self.domain
+        }
+
+        async fn get_installed_packages_list(&self) -> Result<Vec<quilt::InstalledPackage>, Error> {
+            Ok(vec![
+                make_installed_package(("team", "open")),
+                make_installed_package(("team", "locked")),
+            ])
+        }
+
+        async fn get_installed_package_lineage(
+            &self,
+            package: &quilt::InstalledPackage,
+        ) -> Result<quilt::lineage::PackageLineage, Error> {
+            let ns = package.namespace.to_string();
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri_in_bucket("locked", &ns),
+                "abcdef".to_string(),
+            ))
+        }
+
+        async fn readable_buckets(&self, _host: &Host) -> Result<Vec<String>, Error> {
+            // Far beyond any budget the roster could reasonably wait.
+            tokio::time::sleep(BUCKET_LIST_BUDGET * 100).await;
+            Ok(Vec::new())
+        }
+    }
+
+    /// The roster is local data; the bucket query is an optimistic hint on
+    /// top of it. A host that never answers — offline, captive portal — must
+    /// not hold the main screen: the hint is dropped, the roster paints, and
+    /// the per-row status call marks whatever is really denied.
+    #[tokio::test(start_paused = true)]
+    async fn an_unanswerable_host_does_not_hold_the_roster() {
+        let m = SilentHost::default();
+
+        let started = tokio::time::Instant::now();
+        let data = get_installed_packages_list_data_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+
+        assert_eq!(data.packages.len(), 2, "the roster paints from local data");
+        assert!(
+            data.packages.iter().all(|p| !p.no_access),
+            "a query that never answered is not evidence of denial"
+        );
+        assert!(
+            started.elapsed() <= BUCKET_LIST_BUDGET,
+            "the roster waited {:?} on a host that never answers",
+            started.elapsed(),
+        );
+    }
+
     /// A denial is known even when the role query behind the wording fails,
     /// so the row is still marked — just unnamed, and with no switch
     /// affordance, since we cannot tell whether another role is held.
@@ -872,6 +1048,8 @@ mod tests {
         });
         m.expect_get_installed_package_status()
             .returning(|_, _| Err(access_denied_error()));
+        m.expect_recompute_local_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::default()));
         m.expect_refresh_roles()
             .times(1)
             .returning(|_| Ok(two_roles()));

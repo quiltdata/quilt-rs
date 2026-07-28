@@ -1,6 +1,26 @@
 //! Shared fixtures for command tests.
 
+use crate::Error;
 use crate::quilt;
+
+/// The error S3 returns when the active role cannot reach a bucket.
+/// Distinct from a broken session: the credentials were vended fine.
+pub(crate) fn access_denied_error() -> Error {
+    Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+        quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
+    )))
+}
+
+/// A working tree with one uncommitted addition — the shape that makes the
+/// difference between a row (or page) offering Commit/Publish and hiding it.
+pub(crate) fn one_local_change() -> quilt::lineage::ChangeSet {
+    let mut changes = quilt::lineage::ChangeSet::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    changes
+}
 
 /// Stringify the catalog host of a typed package URI, if set.
 /// Used by tests to verify host propagation without poking at
