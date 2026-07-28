@@ -116,8 +116,15 @@ impl AccessMark {
 /// Ask who the active role on `host` is, so a denial can name it.
 ///
 /// Goes through the [`RoleCache`], so the answer is fetched once per host
-/// no matter how many rows deny — the heavy phase runs one command
-/// invocation per row, concurrently, and they all land here.
+/// per roster load no matter how many rows deny — the heavy phase runs one
+/// command invocation per row, concurrently, and they all land here.
+///
+/// This never invalidates, and a single-row refresh outside a full load
+/// therefore rides the name the load warmed. That is the intended cadence:
+/// the roster load is the refresh point, and invalidating here instead would
+/// put a `/me` behind `refresh_lock_for(host)` — the mutex credential vending
+/// takes — once for every denied row, which is the pile-up the cache exists
+/// to prevent.
 ///
 /// A failed query is not fatal: [`AccessMark::denied`] degrades to the
 /// unnamed wording rather than dropping the mark.
@@ -149,6 +156,23 @@ pub(super) async fn get_installed_packages_list_data_from_model(
     tracing: &crate::telemetry::Telemetry,
     paused_reasons: &HashMap<String, PausedRow>,
 ) -> Result<InstalledPackagesListData, Error> {
+    // A roster load is the cadence the role refresh is pinned to. A switch is
+    // server-side and global, so it can happen in the web catalog with the app
+    // none the wiser; held for a whole session, the cached name would make a
+    // row say "Current role X has no access" about a role that in fact has it,
+    // and — worse — `observe_role` would never re-run, leaving the S3 clients
+    // signing as the old role until Settings is opened or the ~1h credential
+    // TTL expires. Dropping the names here means the first row that needs one
+    // re-fetches through `observe_role`, which finishes the coherence flush,
+    // and the cache then serves every remaining row: one `/me` per host per
+    // load, not one per row.
+    //
+    // Every host, not just the roster's: the roster is not known until the
+    // list below is fetched, and an entry is only a *name*, so clearing a host
+    // no row mentions costs nothing now and at most one round trip whenever
+    // something next asks about it.
+    roles.invalidate(None).await;
+
     let list = m.get_installed_packages_list().await?;
     let mut packages = Vec::new();
     for installed_package in list {
@@ -478,6 +502,8 @@ pub async fn refresh_package_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::{Arc, Mutex};
 
     use quilt_rs::RoleInfo;
 
@@ -873,6 +899,127 @@ mod tests {
                 "a cached role must name the row exactly as a fresh fetch would"
             );
         }
+    }
+
+    /// A roster whose `team/locked` row is always denied, and whose host
+    /// answers `/me` with a different role each time it is asked — the shape
+    /// of a switch made in the web catalog between two roster loads.
+    ///
+    /// Returns the model alongside the log of hosts whose S3 clients were
+    /// dropped, so a test can assert on the flush and not only on the wording.
+    fn mock_roster_switching_role_between_loads(
+        first: RoleInfo,
+        second: RoleInfo,
+    ) -> (MockQuiltModel, Arc<Mutex<Vec<String>>>) {
+        let mut model = mocks::create();
+
+        model.expect_get_installed_packages_list().returning(|| {
+            Ok(vec![
+                make_installed_package(("team", "open")),
+                make_installed_package(("team", "locked")),
+            ])
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let ns = pkg.namespace.to_string();
+                let bucket = if ns == "team/locked" {
+                    "locked"
+                } else {
+                    "reachable"
+                };
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri_in_bucket(bucket, &ns),
+                    "abcdef".to_string(),
+                ))
+            });
+        // Live over GraphQL, so the pre-filter already reflects the switch;
+        // only the *name* comes from the cache.
+        model
+            .expect_readable_buckets()
+            .returning(|_| Ok(vec!["reachable".to_string()]));
+
+        let answers = Mutex::new(vec![second, first]);
+        model.expect_refresh_roles().times(2).returning(move |_| {
+            Ok(answers
+                .lock()
+                .expect("role answers")
+                .pop()
+                .expect("one role answer per load"))
+        });
+
+        let cache_clears = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&cache_clears);
+        model
+            .expect_clear_remote_client_cache()
+            .returning(move |host: Option<Host>| {
+                log.lock()
+                    .expect("cache clear log")
+                    .push(host.map(|h| h.to_string()).unwrap_or_default());
+            });
+
+        (model, cache_clears)
+    }
+
+    /// Run one roster load and return the denied row's reason line.
+    async fn locked_row_reason(m: &impl model::QuiltModel, roles: &RoleCache) -> String {
+        let data = get_installed_packages_list_data_from_model(
+            m,
+            roles,
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+        data.packages
+            .into_iter()
+            .find(|p| p.namespace == "team/locked")
+            .expect("team/locked in roster")
+            .no_access_reason
+            .expect("a denied row says why")
+    }
+
+    /// A role switched outside the app — in the web catalog, where a switch
+    /// is server-side and global — must be picked up on the **next roster
+    /// load**, both halves of it.
+    ///
+    /// The visible half is the name: the mark itself is live (the pre-filter
+    /// queries the registry), but the wording quotes the cache, so a role
+    /// cached for the whole session makes a row read "Current role
+    /// `ReadWrite` has no access" while naming the role that granted it.
+    ///
+    /// The half that actually costs the user is the coherence flush. Only
+    /// `refresh_roles` can notice the new role and expire the stored
+    /// credentials, and only dropping the S3 clients releases the copy the
+    /// SDK's identity cache is still signing with. Cached per session, that
+    /// pair never re-ran on the roster path, so every read kept using the old
+    /// role until Settings was opened or the ~1h TTL ran out.
+    #[tokio::test]
+    async fn an_out_of_band_switch_is_picked_up_on_the_next_list_load() {
+        let read_write = RoleInfo {
+            current: "ReadWrite".to_string(),
+            available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
+        };
+        let (m, cache_clears) = mock_roster_switching_role_between_loads(read_write, two_roles());
+        let roles = RoleCache::default();
+
+        assert_eq!(
+            locked_row_reason(&m, &roles).await,
+            "Current role ReadWrite has no access to this bucket"
+        );
+        // The user switches to ReadOnly in the web catalog here.
+        assert_eq!(
+            locked_row_reason(&m, &roles).await,
+            "Current role ReadOnly has no access to this bucket",
+            "the next roster load must re-ask, not quote the role the session opened with"
+        );
+
+        assert_eq!(
+            *cache_clears.lock().expect("cache clear log"),
+            vec!["test.quilt.dev".to_string(), "test.quilt.dev".to_string()],
+            "each load's fetch must finish the flush, or the S3 clients keep \
+             signing as the role the user left"
+        );
     }
 
     /// A switch makes the cached role name wrong. Quoting the previous role

@@ -157,8 +157,8 @@ impl From<RoleInfo> for RolesData {
     }
 }
 
-/// Per-host [`RoleInfo`], resolved once and shared by everything that needs
-/// to *name* the active role.
+/// Per-host [`RoleInfo`], resolved once per roster load and shared by
+/// everything that needs to *name* the active role.
 ///
 /// The roster is why this exists. Its two access-marking phases both want
 /// the role, and the heavy phase runs as one Tauri command invocation per
@@ -181,7 +181,15 @@ pub struct RoleCache {
 type RoleCell = Arc<OnceCell<RoleInfo>>;
 
 impl RoleCache {
-    /// The active role on `host`, fetching it at most once per host.
+    /// The active role on `host`, fetching it at most once per host between
+    /// invalidations.
+    ///
+    /// Not once per session: the roster load invalidates every host before it
+    /// paints, so the entry lives for one list load. That is the cadence the
+    /// refresh is pinned to — long enough that fifty denied rows on one host
+    /// share a single answer, short enough that a switch made in the web
+    /// catalog surfaces on the next load rather than at the ~1h credential
+    /// expiry.
     ///
     /// The fetch goes through [`observe_role`], because reading the role is
     /// not a read: whenever the registry names a role this session has not
@@ -214,7 +222,9 @@ impl RoleCache {
     /// Forget `host`'s cached role, or every host's when `None`.
     ///
     /// A switch makes the cached name wrong, and a wrong role name in the
-    /// roster's reason line is worse than no cache at all. Logout goes
+    /// roster's reason line is worse than no cache at all — which is why the
+    /// roster load clears every host before it paints, since a switch made in
+    /// the web catalog leaves us nothing to notice. Logout goes
     /// further: the next user is a different person, and quoting the previous
     /// one's role — or gating the switch affordance on their `available` list
     /// — would outlive the session that earned it.
