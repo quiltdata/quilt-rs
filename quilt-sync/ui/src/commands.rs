@@ -922,6 +922,42 @@ pub async fn erase_auth(host: String) -> Result<String, String> {
     tauri::invoke("erase_auth", &Args { host }).await
 }
 
+/// The roles a host's stack grants the logged-in user. UI-side mirror of the
+/// backend `quilt_sync::commands::auth::RolesData`; the serde attributes MUST
+/// match so the payload crosses the Tauri boundary unchanged. `available`
+/// includes `current`, so a single-element list means there is nothing to
+/// switch to.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RolesData {
+    pub current: String,
+    pub available: Vec<String>,
+}
+
+/// Fetch the host's roles. Takes that host's credential single-flight lock, so
+/// call it lazily — never as part of a bulk page load.
+pub async fn get_roles(host: String) -> Result<RolesData, String> {
+    #[derive(Serialize)]
+    struct Args {
+        host: String,
+    }
+    tauri::invoke("get_roles", &Args { host }).await
+}
+
+/// Switch the host's primary role. The backend expires the stored credentials
+/// and clears the host's cached S3 clients, so the UI has no cache work to do.
+/// Returns the roles as confirmed by the stack — the confirmed `current` can
+/// differ from the requested role, so render what comes back, not what was
+/// asked for.
+pub async fn switch_role(host: String, role: String) -> Result<RolesData, String> {
+    #[derive(Serialize)]
+    struct Args {
+        host: String,
+        role: String,
+    }
+    tauri::invoke("switch_role", &Args { host, role }).await
+}
+
 // ── Setup ───────────────────────────────────────────────────
 
 pub async fn setup(directory: String) -> Result<String, String> {
@@ -1029,7 +1065,7 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, ViolationField,
+        CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, RolesData, ViolationField,
         WorkflowInfo, WorkflowIntent,
     };
 
@@ -1186,6 +1222,23 @@ mod tests {
                 conflicts: vec!["x.txt".to_string()],
             }
             .is_pullable()
+        );
+    }
+
+    /// The mirror struct must deserialize the exact JSON the backend
+    /// (`quilt_sync::commands::auth::RolesData`) serializes. If the two drift,
+    /// the Settings role switcher silently sees one role and hides itself.
+    #[test]
+    fn roles_data_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<RolesData>(
+                r#"{"current":"ReadWrite","available":["ReadOnly","ReadWrite"]}"#
+            )
+            .unwrap(),
+            RolesData {
+                current: "ReadWrite".to_string(),
+                available: vec!["ReadOnly".to_string(), "ReadWrite".to_string()],
+            }
         );
     }
 
