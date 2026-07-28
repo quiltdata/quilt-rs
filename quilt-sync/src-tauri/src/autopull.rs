@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 use tokio::sync::watch;
 
 use crate::autopull::status::SyncTrayAggregator;
+use crate::commands::RoleCache;
 use crate::model::Model;
 use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
@@ -56,6 +57,17 @@ pub enum PausedReason {
     /// tracked path changed on both sides. Carries the conflicting file names
     /// for the banner; the user resolves by committing → the merge page.
     PullConflict(Vec<String>),
+    /// Storage refused the call with `AccessDenied`: the active role cannot
+    /// reach this package's bucket. Retrying cannot help — the role has to
+    /// change first — so this pauses rather than backing off forever.
+    ///
+    /// Carries the role name for the banner. Empty when the name could not
+    /// be resolved (the role query itself failed): the pause still stands,
+    /// it just cannot name the role, exactly like the roster's
+    /// `AccessMark::denied` degradation.
+    RoleDenied {
+        role: String,
+    },
     /// Catch-all for non-transient errors we haven't enumerated:
     /// workflow validation failures, hash mismatches, remote
     /// configuration drift. The string travels to the UI in the
@@ -126,11 +138,17 @@ impl Watcher {
                 tokio::time::sleep(cadence).await;
                 task_inner.aggregator.note_tick_started();
                 let model_state = app_handle.state::<Model>();
+                // Same `state::<..>()` route as `Model`, and for the same
+                // reason: the watcher must share the *managed* cache, not a
+                // private one. A private copy would keep naming the role the
+                // user switched away from — `switch_role` invalidates only
+                // the managed instance.
+                let roles_state = app_handle.state::<RoleCache>();
                 // Box the tick future: it is the largest in the app and lives
                 // on the spawn task's stack across every iteration of this
                 // loop, so it exceeds the `large_futures` budget. See
                 // `clippy.toml`.
-                match Box::pin(run_once(&*model_state, &task_inner)).await {
+                match Box::pin(run_once(&*model_state, &roles_state, &task_inner)).await {
                     Ok(()) => task_inner.aggregator.note_tick_ended_ok(),
                     Err(err) => {
                         warn!("autosync: tick error: {err}");
@@ -171,6 +189,36 @@ impl Watcher {
         }
     }
 
+    /// Forget every pause caused by a role denial. Called by `switch_role`
+    /// once the switch lands.
+    ///
+    /// A [`PausedReason::RoleDenied`] is the one pause no other affordance
+    /// can clear: `clear_paused` fires after a manual push / pull / commit,
+    /// and every one of those is refused by the same role that caused the
+    /// pause. Without this, the banner's "switch role to resume" would be a
+    /// lie — the namespace would stay parked until the app restarts.
+    ///
+    /// Not host-scoped: the reason carries a role name, not a host. A switch
+    /// on one host therefore also un-pauses a denial on another, which costs
+    /// at most one extra attempt per package — still denied means paused
+    /// again on the same tick, with the role re-read from the freshly
+    /// invalidated cache.
+    pub async fn clear_role_denied_pauses(&self) {
+        let mut paused = self.inner.paused.write().await;
+        let cleared: Vec<Namespace> = paused
+            .iter()
+            .filter(|(_, reason)| matches!(reason, PausedReason::RoleDenied { .. }))
+            .map(|(namespace, _)| namespace.clone())
+            .collect();
+        for namespace in &cleared {
+            paused.remove(namespace);
+        }
+        drop(paused);
+        for namespace in &cleared {
+            self.inner.aggregator.note_cleared(namespace);
+        }
+    }
+
     /// Point-in-time view of the paused set, used by the
     /// `get_autosync_snapshot` Tauri command so the UI can re-hydrate
     /// per-page banners on navigation. Read-only — the lock is released
@@ -188,7 +236,7 @@ impl Watcher {
     }
 
     #[cfg(test)]
-    fn new_for_test(reporter: Arc<dyn StatusReporter>) -> Self {
+    pub(crate) fn new_for_test(reporter: Arc<dyn StatusReporter>) -> Self {
         let (tx, _) = watch::channel(SyncTrayStatus::default());
         Self::new_for_test_with_aggregator(reporter, Arc::new(SyncTrayAggregator::new(tx)))
     }
@@ -220,7 +268,7 @@ impl Watcher {
     }
 
     #[cfg(test)]
-    async fn pause_for_test(&self, namespace: Namespace, reason: PausedReason) {
+    pub(crate) async fn pause_for_test(&self, namespace: Namespace, reason: PausedReason) {
         self.inner.paused.write().await.insert(namespace, reason);
     }
 
@@ -335,6 +383,34 @@ mod tests {
             msg_b.starts_with("workflow rejected"),
             "raw error should lead the message, got: {msg_b}"
         );
+    }
+
+    /// The switch has to actually resume what the denial parked — and only
+    /// that. A pause with another cause is still true after a switch, so
+    /// clearing it would send autosync back into a conflict the user has not
+    /// resolved.
+    #[tokio::test]
+    async fn clear_role_denied_pauses_leaves_other_reasons_alone() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let denied: Namespace = ("acme", "denied").into();
+        let diverged: Namespace = ("acme", "diverged").into();
+        watcher
+            .pause_for_test(
+                denied.clone(),
+                PausedReason::RoleDenied {
+                    role: "ReadOnly".to_string(),
+                },
+            )
+            .await;
+        watcher
+            .pause_for_test(diverged.clone(), PausedReason::Diverged)
+            .await;
+
+        watcher.clear_role_denied_pauses().await;
+
+        let paused = watcher.snapshot().await.paused;
+        assert_eq!(paused.len(), 1, "only the denial should clear: {paused:?}");
+        assert_eq!(paused[0].namespace, diverged.to_string());
     }
 
     #[tokio::test]

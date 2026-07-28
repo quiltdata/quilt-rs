@@ -75,6 +75,12 @@ fn hint_lines(
         if paused_kind == Some("pullConflict") {
             return vec![pull_conflict_hint(paused_message)];
         }
+        // Same reasoning as the pull conflict: the generic guidance names an
+        // action that cannot work. A manual push is signed by the role that
+        // was just refused.
+        if paused_kind == Some("roleDenied") {
+            return vec![util::role_denied_hint(paused_message)];
+        }
         let mut lines = vec![PAUSED_GUIDANCE.to_string()];
         lines.extend(paused_message.map(str::to_string));
         return lines;
@@ -91,14 +97,19 @@ fn hint_lines(
 
 /// The autosync-paused toast for a namespace, or `None` when the pause needs
 /// no toast. The classic refusals (pendingChanges/pendingCommit/diverged) are
-/// already legible from the row's status string, so they stay silent; `other`
-/// and `pullConflict` carry information the status string drops, so both toast
-/// — the pull conflict with its file names and merge-page remediation.
+/// already legible from the row's status string, so they stay silent; `other`,
+/// `pullConflict` and `roleDenied` carry information the status string drops,
+/// so all three toast — the pull conflict with its file names and merge-page
+/// remediation, the denial with the role and the switch.
 fn paused_toast(reason: &str, namespace: &str, message: Option<&str>) -> Option<String> {
     match reason {
         "pullConflict" => Some(format!(
             "Autosync paused {namespace} — {}",
             pull_conflict_hint(message)
+        )),
+        "roleDenied" => Some(format!(
+            "Autosync paused {namespace} — {}",
+            util::role_denied_hint(message)
         )),
         "other" => {
             let msg = message.unwrap_or("Autosync paused");
@@ -1017,8 +1028,9 @@ mod tests {
     /// a pull conflict's merge-page remediation. Deliberate, and pinned
     /// here: the pause is downstream of the denial — no amount of merging
     /// makes a bucket readable — so leading with the conflict would send
-    /// the user to a page that cannot help. Revisit when autosync learns to
-    /// pause *for* a role denial, at which point the two agree.
+    /// the user to a page that cannot help. With autosync now pausing *for*
+    /// a denial too, the two say the same thing, so the precedence only ever
+    /// picks between agreeing messages.
     #[test]
     fn a_denial_outranks_a_pause_even_a_pull_conflict() {
         let reason = "Current role ReadOnly has no access to this bucket";
@@ -1043,6 +1055,40 @@ mod tests {
             ),
             vec![reason.to_string()],
         );
+        assert_eq!(
+            hint_lines(
+                "paused",
+                true,
+                Some("roleDenied"),
+                Some("ReadOnly"),
+                Some(reason)
+            ),
+            vec![reason.to_string()],
+        );
+    }
+
+    /// A role-denied pause on a row the roster did *not* pre-mark — a
+    /// write-only denial, which the read-presence bucket list cannot see.
+    /// The generic "push manually to resume" guidance would be a dead end
+    /// here, so the row names the role and the switch instead.
+    #[test]
+    fn role_denied_paused_row_points_at_the_role_switch() {
+        assert_eq!(
+            hint_lines("paused", true, Some("roleDenied"), Some("ReadOnly"), None),
+            vec![
+                "Current role ReadOnly has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string()
+            ]
+        );
+        assert_eq!(
+            hint_lines("paused", true, Some("roleDenied"), None, None),
+            vec![
+                "The active role has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string()
+            ]
+        );
     }
 
     #[test]
@@ -1057,6 +1103,18 @@ mod tests {
     fn healthy_row_has_no_hint() {
         assert!(hint_lines("up_to_date", true, None, None, None).is_empty());
         assert!(hint_lines("ahead", false, None, None, None).is_empty());
+    }
+
+    #[test]
+    fn paused_toast_carries_the_role_denial() {
+        assert_eq!(
+            paused_toast("roleDenied", "acme/demo", Some("ReadOnly")),
+            Some(
+                "Autosync paused acme/demo — Current role ReadOnly has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string()
+            )
+        );
     }
 
     #[test]

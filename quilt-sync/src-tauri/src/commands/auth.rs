@@ -13,6 +13,7 @@ use quilt_rs::RoleInfo;
 use quilt_uri::Host;
 
 use crate::Error;
+use crate::autopull::Watcher;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::notify::Notify;
@@ -215,11 +216,17 @@ pub async fn get_roles(
 /// [`RoleCache`] goes too, or the roster keeps quoting the previous role
 /// back at the user.
 ///
-/// Clear the cache only **after** the switch succeeds — clearing first
-/// would let an in-flight vend repopulate it under the old role.
+/// Autosync's role-denied pauses are released here as well: they are the one
+/// pause the user cannot clear by hand, because every manual action that
+/// clears a pause is signed by the role that was refused. A switch is the
+/// remedy the banner names, so it has to be the remedy that works.
+///
+/// Clear the caches only **after** the switch succeeds — clearing first
+/// would let an in-flight vend repopulate them under the old role.
 async fn switch_role_command(
     m: &impl QuiltModel,
     roles: &RoleCache,
+    watcher: &Watcher,
     tracing: &Telemetry,
     host: &str,
     role: &str,
@@ -232,6 +239,7 @@ async fn switch_role_command(
     // quotes back at the user.
     roles.invalidate(Some(&host)).await;
     m.clear_remote_client_cache(Some(host)).await;
+    watcher.clear_role_denied_pauses().await;
 
     tracing
         .track(MixpanelEvent::RoleSwitched { host: host_name })
@@ -244,11 +252,12 @@ async fn switch_role_command(
 pub async fn switch_role(
     m: tauri::State<'_, model::Model>,
     roles: tauri::State<'_, RoleCache>,
+    watcher: tauri::State<'_, Watcher>,
     tracing: tauri::State<'_, Telemetry>,
     host: String,
     role: String,
 ) -> Result<RolesData, String> {
-    switch_role_command(&*m, &roles, &tracing, &host, &role)
+    switch_role_command(&*m, &roles, &watcher, &tracing, &host, &role)
         .await
         .map_err(|e| e.to_string())
 }
@@ -342,7 +351,15 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use crate::autopull::PausedReason;
+    use crate::autopull::reporter::LogReporter;
     use crate::model::MockQuiltModel;
+    use quilt_uri::Namespace;
+
+    /// A watcher with no background task, for the switch's pause release.
+    fn test_watcher() -> Watcher {
+        Watcher::new_for_test(Arc::new(LogReporter))
+    }
 
     /// A `MockQuiltModel` paired with the log of hosts whose cached S3
     /// clients were dropped, so a test can assert on the flush itself
@@ -402,6 +419,7 @@ mod tests {
         switch_role_command(
             &recording.model,
             &RoleCache::default(),
+            &test_watcher(),
             &Telemetry::default(),
             host,
             "ReadOnly",
@@ -413,6 +431,79 @@ mod tests {
             recording.cache_clears_for_host(),
             vec![host.to_string()],
             "a switch must clear the host's cached S3 clients, not just its credentials"
+        );
+    }
+
+    /// Autosync parks a package whose bucket the role cannot reach, and
+    /// tells the user to switch role to resume. Nothing else releases that
+    /// pause — a manual push or pull is signed by the same refused role — so
+    /// if the switch does not release it, the package stays parked until the
+    /// app restarts and the advice on the banner is false.
+    #[tokio::test]
+    async fn switch_role_resumes_autosync_for_role_denied_packages() {
+        let recording = mock_model_recording_cache_clears("ReadWrite");
+        let watcher = test_watcher();
+        let namespace: Namespace = ("acme", "demo").into();
+        watcher
+            .pause_for_test(
+                namespace.clone(),
+                PausedReason::RoleDenied {
+                    role: "ReadOnly".to_string(),
+                },
+            )
+            .await;
+
+        switch_role_command(
+            &recording.model,
+            &RoleCache::default(),
+            &watcher,
+            &Telemetry::default(),
+            "test.quilt.dev",
+            "ReadWrite",
+        )
+        .await
+        .expect("switch");
+
+        assert!(
+            watcher.snapshot().await.paused.is_empty(),
+            "the switch the banner asks for must let autosync try again"
+        );
+    }
+
+    /// A failed switch changes nothing, so the pause must survive it: the
+    /// old role is still active and still denied.
+    #[tokio::test]
+    async fn a_rejected_switch_leaves_the_denial_pause_in_place() {
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_switch_role()
+            .returning(|_, _| Err(Error::General("role not held".to_string())));
+        let watcher = test_watcher();
+        let namespace: Namespace = ("acme", "demo").into();
+        watcher
+            .pause_for_test(
+                namespace.clone(),
+                PausedReason::RoleDenied {
+                    role: "ReadOnly".to_string(),
+                },
+            )
+            .await;
+
+        let result = switch_role_command(
+            &model,
+            &RoleCache::default(),
+            &watcher,
+            &Telemetry::default(),
+            "test.quilt.dev",
+            "ReadWrite",
+        )
+        .await;
+
+        assert!(result.is_err(), "a rejected switch must surface the error");
+        assert_eq!(
+            watcher.snapshot().await.paused.len(),
+            1,
+            "nothing changed, so the denial still stands"
         );
     }
 
@@ -429,6 +520,7 @@ mod tests {
         let data = switch_role_command(
             &recording.model,
             &RoleCache::default(),
+            &test_watcher(),
             &Telemetry::default(),
             "test.quilt.dev",
             "readonly",
@@ -466,6 +558,7 @@ mod tests {
         let result = switch_role_command(
             &model,
             &RoleCache::default(),
+            &test_watcher(),
             &Telemetry::default(),
             "test.quilt.dev",
             "ReadOnly",
@@ -522,6 +615,7 @@ mod tests {
         let result = switch_role_command(
             &model,
             &RoleCache::default(),
+            &test_watcher(),
             &Telemetry::default(),
             "",
             "ReadOnly",

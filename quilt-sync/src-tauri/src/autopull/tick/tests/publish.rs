@@ -147,7 +147,7 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     {
         let published = reporter.published.lock().unwrap();
@@ -195,7 +195,7 @@ async fn run_once_publishes_on_pending_commit_only() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
     let statuses = reporter.statuses.lock().unwrap();
@@ -223,7 +223,7 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());
     let statuses = reporter.statuses.lock().unwrap();
@@ -260,7 +260,7 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());
     let statuses = reporter.statuses.lock().unwrap();
@@ -306,7 +306,7 @@ async fn run_once_publishes_local_first_push() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
     Ok(())
@@ -335,7 +335,7 @@ async fn run_once_pauses_on_classic_diverged() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());
     {
@@ -372,7 +372,7 @@ async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     let paused = inner.paused.read().await;
     assert!(matches!(paused.get(&ns), Some(PausedReason::Diverged)));
@@ -402,7 +402,7 @@ async fn run_once_pauses_on_push_workflow_failure() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     {
         let paused_evts = reporter.paused.lock().unwrap();
@@ -453,7 +453,7 @@ async fn run_once_pauses_on_workflow_validation_rejection() -> Result<(), Error>
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     // Paused with the validator's own message (naming the rule), no wrapper
     // prefix.
@@ -491,6 +491,113 @@ async fn run_once_pauses_on_workflow_validation_rejection() -> Result<(), Error>
     Ok(())
 }
 
+/// An autosync publish the bucket refuses with `AccessDenied` must pause and
+/// name the role, not back off. Nothing else in the app covers this write:
+/// the tick calls `model::publish_with_settings` directly, so the Tauri
+/// command layer's "current role can't write here" message never runs for an
+/// autosync push.
+#[tokio::test]
+async fn run_once_pauses_and_names_the_role_on_denied_publish() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let status = quiet_status(UpstreamState::UpToDate, changes);
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+
+    let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+    // The write denial as the upload path types it: `classify_s3_error_code`
+    // promotes the `AccessDenied` code over the caller's `PutObject`
+    // fallback, so a denied push arrives as `S3ErrorKind::AccessDenied`.
+    model
+        .expect_package_publish()
+        .times(1)
+        .returning(|_, _, _, _, _, _| {
+            Err(Error::from(quilt::Error::S3(quilt::S3Error::new(
+                quilt::S3ErrorKind::AccessDenied("AccessDenied: forbidden".to_string()),
+            ))))
+        });
+    // Asked exactly once, through the cache, only because a pause needs the
+    // name — not on every tick.
+    model.expect_refresh_roles().times(1).returning(|_| {
+        Ok(quilt_rs::RoleInfo {
+            current: "ReadOnly".to_string(),
+            available: vec!["ReadOnly".to_string(), "ReadWriteQuiltV2".to_string()],
+        })
+    });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone());
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    {
+        let paused_evts = reporter.paused.lock().unwrap();
+        assert_eq!(paused_evts.len(), 1);
+        match &paused_evts[0].1 {
+            PausedReason::RoleDenied { role } => assert_eq!(role, "ReadOnly"),
+            other => panic!("expected RoleDenied, got {other:?}"),
+        }
+    }
+    // Neutral `"paused"`, not `"error"`: a denial is not a broken session,
+    // and the UI's Login affordance would send the user round a loop that
+    // re-vends the very same denied role.
+    {
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].1.status, "paused");
+    }
+    // Paused, so the next tick skips the namespace — and no backoff entry,
+    // which is the whole point: no 64-second retry of a write that can never
+    // land under this role.
+    assert!(matches!(
+        inner.paused.read().await.get(&ns),
+        Some(PausedReason::RoleDenied { role }) if role == "ReadOnly"
+    ));
+    assert!(inner.backoff.read().await.is_empty());
+    Ok(())
+}
+
+/// A denial the role query cannot put a name to still pauses. Dropping the
+/// pause because `/me` failed would put us back in the silent-retry loop.
+#[tokio::test]
+async fn run_once_pauses_on_denied_publish_even_when_the_role_is_unknown() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let status = quiet_status(UpstreamState::UpToDate, changes);
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+
+    let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+    model
+        .expect_package_publish()
+        .times(1)
+        .returning(|_, _, _, _, _, _| {
+            Err(Error::from(quilt::Error::S3(quilt::S3Error::new(
+                quilt::S3ErrorKind::AccessDenied("s3://bucket/key".to_string()),
+            ))))
+        });
+    model
+        .expect_refresh_roles()
+        .times(1)
+        .returning(|_| Err(Error::General("registry unreachable".to_string())));
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone());
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(matches!(
+        inner.paused.read().await.get(&ns),
+        Some(PausedReason::RoleDenied { role }) if role.is_empty()
+    ));
+    assert!(inner.backoff.read().await.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn run_once_backoffs_on_transient_publish_error() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
@@ -515,7 +622,7 @@ async fn run_once_backoffs_on_transient_publish_error() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     // Transient: no paused entry, no status emit, but backoff bumped.
     assert!(inner.paused.read().await.is_empty());
@@ -552,7 +659,7 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(inner.paused.read().await.is_empty());
     let backoff = inner.backoff.read().await;
@@ -614,7 +721,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
         aggregator: test_aggregator(),
     };
 
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(
         reporter.published.lock().unwrap().is_empty(),
@@ -645,7 +752,7 @@ async fn run_once_pull_only_does_not_publish_changes() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_with_flags(reporter.clone(), true, false);
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());
     let statuses = reporter.statuses.lock().unwrap();
@@ -671,7 +778,7 @@ async fn run_once_push_only_does_not_pull_behind() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_with_flags(reporter.clone(), false, true);
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
 
     let statuses = reporter.statuses.lock().unwrap();
     assert_eq!(statuses.len(), 1);
@@ -688,7 +795,7 @@ async fn run_once_both_off_is_a_noop() -> Result<(), Error> {
     let model = MockQuiltModel::new();
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_with_flags(reporter.clone(), false, false);
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
     assert!(reporter.statuses.lock().unwrap().is_empty());
     Ok(())
 }
@@ -726,7 +833,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator,
     };
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
     let after = rx.borrow().clone();
     assert_eq!(after.mode, crate::autopull::status::TrayMode::Paused);
     assert_eq!(after.error.as_deref(), Some("workflow rejected"));
@@ -776,7 +883,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator,
     };
-    run_once(&model, &inner).await?;
+    run_once(&model, &RoleCache::default(), &inner).await?;
     assert_eq!(rx.borrow().pending_changes, 1);
     Ok(())
 }

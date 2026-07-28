@@ -120,6 +120,28 @@ fn is_valid_label(label: &str) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
+/// The line shown for an autosync pause whose cause is a role denial
+/// (`reason = "roleDenied"`), given the role name the event carried.
+///
+/// Shared by the list row and the detail banner so both surfaces say the same
+/// thing. The generic paused guidance ("push manually to resume") is wrong
+/// here — a manual push under the same role is denied too — so this names the
+/// only fix there is. The wording matches the roster's `no_access_reason`,
+/// and it stays a neutral fact: switching to a narrow role on purpose is a
+/// legitimate thing to have done.
+///
+/// `None` means the backend could not resolve the role name, not that no role
+/// is active.
+pub fn role_denied_hint(role: Option<&str>) -> String {
+    match role {
+        Some(role) if !role.is_empty() => format!(
+            "Current role {role} has no access to this bucket. Switch role to resume autosync."
+        ),
+        _ => "The active role has no access to this bucket. Switch role to resume autosync."
+            .to_string(),
+    }
+}
+
 pub fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "kB", "MB", "GB", "TB", "PB", "EB"];
     if bytes == 0 {
@@ -187,6 +209,25 @@ mod tests {
         assert!(!is_valid_hostname(".example.com"));
         assert!(!is_valid_hostname("example..com"));
         assert!(!is_valid_hostname("example.com."));
+    }
+
+    #[test]
+    fn role_denied_hint_names_the_role_and_the_fix() {
+        assert_eq!(
+            role_denied_hint(Some("ReadOnly")),
+            "Current role ReadOnly has no access to this bucket. \
+             Switch role to resume autosync."
+        );
+    }
+
+    #[test]
+    fn role_denied_hint_without_a_name_still_offers_the_fix() {
+        // The backend sends no message when it could not resolve the name.
+        // An empty string is the same case, defensively.
+        let unnamed = "The active role has no access to this bucket. \
+                       Switch role to resume autosync.";
+        assert_eq!(role_denied_hint(None), unnamed);
+        assert_eq!(role_denied_hint(Some("")), unnamed);
     }
 
     #[test]

@@ -4,6 +4,7 @@ use crate::commands::{self, PausedEvent, PullCheck, PullOutcome};
 use crate::components::Notification;
 use crate::components::buttons;
 use crate::util::make_action;
+use crate::util::role_denied_hint;
 
 // ── Status banner ──
 
@@ -195,12 +196,15 @@ pub(super) fn StatusBanner(
 /// Headline + optional detail line for the autosync paused banner, keyed on the
 /// pause reason. A `pullConflict` names the conflicting files and points at the
 /// merge page — the same remediation the manual-pull `Blocked` copy gives —
-/// because "push manually to resume" is the wrong fix for a pull conflict.
+/// because "push manually to resume" is the wrong fix for a pull conflict. A
+/// `roleDenied` is the same story for a different reason: a manual push runs
+/// under the very role that was refused, so only a role switch clears it.
 /// Every other reason keeps the generic guidance with the raw refusal reason as
 /// the detail line.
 fn paused_banner_copy(reason: &str, message: Option<&str>) -> (String, Option<String>) {
     const GENERIC: &str = "Autosync paused. Resolve the issue, then push manually to resume.";
     match reason {
+        "roleDenied" => (role_denied_hint(message), None),
         "pullConflict" => {
             let headline = match message {
                 Some(files) if !files.is_empty() => format!(
@@ -295,6 +299,35 @@ mod tests {
             paused_banner_copy("pullConflict", None),
             (
                 "Pull conflict. Commit your changes to resolve it on the merge page.".to_string(),
+                None,
+            )
+        );
+    }
+
+    /// The generic "push manually to resume" guidance is actively wrong for a
+    /// denial: the manual push runs under the same refused role. The banner
+    /// must name the role and the switch instead.
+    #[test]
+    fn paused_role_denied_names_the_role_and_the_switch() {
+        assert_eq!(
+            paused_banner_copy("roleDenied", Some("ReadOnly")),
+            (
+                "Current role ReadOnly has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string(),
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn paused_role_denied_falls_back_without_a_role_name() {
+        assert_eq!(
+            paused_banner_copy("roleDenied", None),
+            (
+                "The active role has no access to this bucket. \
+                 Switch role to resume autosync."
+                    .to_string(),
                 None,
             )
         );

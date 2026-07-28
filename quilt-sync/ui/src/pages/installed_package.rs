@@ -21,11 +21,12 @@ use crate::tauri as tauri_bridge;
 /// Which autosync pause reasons warrant the detail page's dedicated paused
 /// banner. Diverged / Behind / Ahead are already covered by the status-driven
 /// banner, so only the reasons the status string cannot fully convey get the
-/// dedicated banner: free-form `"other"` refusals and `"pullConflict"` (which
+/// dedicated banner: free-form `"other"` refusals, `"pullConflict"` (which
 /// the status string flattens to `"paused"`, hiding the conflict details and
-/// the merge-page remediation).
+/// the merge-page remediation), and `"roleDenied"` (flattened the same way,
+/// hiding both the role and the fact that switching role is the only fix).
 fn warrants_paused_banner(reason: &str) -> bool {
-    matches!(reason, "other" | "pullConflict")
+    matches!(reason, "other" | "pullConflict" | "roleDenied")
 }
 
 #[component]
@@ -200,6 +201,9 @@ mod tests {
     fn message_bearing_reasons_get_the_dedicated_banner() {
         assert!(warrants_paused_banner("other"));
         assert!(warrants_paused_banner("pullConflict"));
+        // The status string flattens a denial to "paused", which tells the
+        // user nothing about the role or the one action that clears it.
+        assert!(warrants_paused_banner("roleDenied"));
     }
 
     #[test]
