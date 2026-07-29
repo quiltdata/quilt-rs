@@ -6,6 +6,7 @@ use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
 use crate::components::{
     IgnorePopup, IgnorePopupData, Notification, SetRemotePopup, UnignorePopup, UnignorePopupData,
+    with_popover,
 };
 use crate::util;
 use crate::util::make_action;
@@ -198,6 +199,12 @@ pub(super) fn InstalledPackageContent(
     // Push is offered only when there's a remote and something to ship.
     let is_publishable = has_origin
         && (status == "ahead" || (status == "up_to_date" && has_changes) || status == "local");
+    // A role denial disables both action-bar affordances (see
+    // `commit_affordance_disabled`) and gives them a shared tooltip. Disabled,
+    // not hidden: the user opened this page deliberately, and a button that
+    // simply vanishes explains nothing.
+    let commit_denied = commit_affordance_disabled(no_access_reason.as_deref());
+    let commit_hint = util::commit_denied_hint(no_access_reason.as_deref());
 
     view! {
         <div class="qui-page-installed-package">
@@ -348,6 +355,7 @@ pub(super) fn InstalledPackageContent(
         <Show when=move || show_commit>
             {
                 let href = commit_href_clone.clone();
+                let commit_hint = commit_hint.clone();
                 // When Commit and Push is present it takes the primary slot.
                 // Otherwise fall back to the original heuristic: primary when
                 // there are changes and no remote entries are queued for install.
@@ -366,13 +374,30 @@ pub(super) fn InstalledPackageContent(
                 );
                 view! {
                     <div class="qui-actionbar">
-                        <buttons::CreateNewRevision href=href primary=revision_primary />
+                        {with_popover(
+                            commit_hint.clone(),
+                            view! {
+                                <buttons::CreateNewRevision
+                                    href=href
+                                    primary=revision_primary
+                                    disabled=commit_denied
+                                />
+                            }
+                                .into_any(),
+                        )}
                         {is_publishable.then(|| view! {
                             <span class="actions-divider">"or"</span>
-                            <buttons::CommitAndPush
-                                on_click=on_publish
-                                busy=publish_busy
-                            />
+                            {with_popover(
+                                commit_hint.clone(),
+                                view! {
+                                    <buttons::CommitAndPush
+                                        on_click=on_publish
+                                        busy=publish_busy
+                                        disabled=commit_denied
+                                    />
+                                }
+                                    .into_any(),
+                            )}
                         })}
                     </div>
                 }
@@ -420,6 +445,23 @@ pub(super) fn InstalledPackageContent(
     }
 }
 
+/// Whether this page's commit affordances — "Create new revision", which is
+/// the way into the commit page, and "Commit and Push" — must be inert.
+///
+/// Committing looks like offline work but is not: the workflow quality gate
+/// reads the bucket's `.quilt/workflows/config.yml` before any manifest is
+/// written, so under a role that cannot read the bucket every commit is a 403.
+/// The packages *list* hides its affordance instead — a list row carries its
+/// own visible denial reason, and an inert button there would be noise — but a
+/// page the user navigated to must disable and explain, which is what
+/// [`crate::util::commit_denied_hint`] supplies.
+///
+/// A pure seam so the contrast (denied disables, readable does not) is
+/// testable without a DOM, matching `publish_affordance` on the list page.
+fn commit_affordance_disabled(no_access_reason: Option<&str>) -> bool {
+    no_access_reason.is_some()
+}
+
 /// A revision's display label: its manifest message with the full top-hash as
 /// a hover tooltip, falling back to the 8-char short hash when the message is
 /// empty. Returns `None` only when neither a message nor a hash is available.
@@ -433,5 +475,33 @@ fn revision_label(message: Option<&str>, hash: Option<&str>) -> Option<AnyView> 
             let short: String = h.chars().take(8).collect();
             view! { <span title=h.to_string()>{short}</span> }.into_any()
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_affordance_disabled;
+    use crate::util::commit_denied_hint;
+
+    const DENIED: &str = "Current role ReadOnly has no access to this bucket";
+
+    /// A denied bucket makes the page's commit affordances inert, and — the
+    /// contrast that keeps this test honest — an otherwise identical package
+    /// on a readable bucket leaves them live.
+    #[test]
+    fn a_denied_bucket_disables_the_commit_affordances_a_readable_one_does_not() {
+        assert!(commit_affordance_disabled(Some(DENIED)));
+        assert!(!commit_affordance_disabled(None));
+    }
+
+    /// The disabled affordances are not silent: the same denial supplies the
+    /// tooltip naming the role and the fix, and a readable bucket has none.
+    #[test]
+    fn the_disabled_commit_affordances_explain_themselves() {
+        assert_eq!(
+            commit_denied_hint(Some(DENIED)).as_deref(),
+            Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
+        );
+        assert_eq!(commit_denied_hint(None), None);
     }
 }
