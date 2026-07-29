@@ -142,6 +142,21 @@ pub fn role_denied_hint(role: Option<&str>) -> String {
     }
 }
 
+/// The tooltip on a commit affordance the active role cannot use, given the
+/// backend's `no_access_reason`; `None` when the role can reach the bucket and
+/// the affordance stays live.
+///
+/// Committing is not offline work: the workflow quality gate reads the
+/// bucket's `.quilt/workflows/config.yml` before any manifest is written, so
+/// under a denied role neither Commit nor Commit and Push can succeed. Both
+/// the commit page and the installed-package page word it this way, and the
+/// sentence continues the reason the roster already states rather than
+/// restating it — same neutral fact, same named role, plus the only fix.
+pub fn commit_denied_hint(no_access_reason: Option<&str>) -> Option<String> {
+    let reason = no_access_reason.filter(|reason| !reason.is_empty())?;
+    Some(format!("{reason}. Switch role to commit."))
+}
+
 pub fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "kB", "MB", "GB", "TB", "PB", "EB"];
     if bytes == 0 {
@@ -228,6 +243,31 @@ mod tests {
                        Switch role to resume autosync.";
         assert_eq!(role_denied_hint(None), unnamed);
         assert_eq!(role_denied_hint(Some("")), unnamed);
+    }
+
+    #[test]
+    fn commit_denied_hint_continues_the_reason_with_the_fix() {
+        assert_eq!(
+            commit_denied_hint(Some("Current role ReadOnly has no access to this bucket")),
+            Some(
+                "Current role ReadOnly has no access to this bucket. Switch role to commit."
+                    .to_string()
+            )
+        );
+        // The unnamed wording (the role query itself failed) reads the same way.
+        assert_eq!(
+            commit_denied_hint(Some("The active role has no access to this bucket")),
+            Some(
+                "The active role has no access to this bucket. Switch role to commit.".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn commit_denied_hint_is_absent_on_a_readable_bucket() {
+        assert_eq!(commit_denied_hint(None), None);
+        // An empty reason is not a denial either, defensively.
+        assert_eq!(commit_denied_hint(Some("")), None);
     }
 
     #[test]

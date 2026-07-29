@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.20.0-alpha3] - 2026-07-29
+
+### Changed
+
+- The commit buttons on the package page and the commit page are now disabled when the active role cannot read the package's bucket, explaining in a tooltip that names the role and points at switching it, instead of letting the commit fail with a storage error; opening the commit page and reviewing your changes there still works (<https://github.com/quiltdata/quilt-rs/pull/808>)
+
 ## [v0.20.0-alpha2] - 2026-07-28
 
 ### Added
