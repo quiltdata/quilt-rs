@@ -63,6 +63,12 @@ pub struct CommitData {
     pub workflow: Option<WorkflowData>,
     /// The bucket's workflow-selection situation for the commit dialog.
     pub workflows: CommitWorkflows,
+    /// The active role cannot reach this package's bucket, worded as the
+    /// roster words it — the same field name, shape and wording as
+    /// [`InstalledPackageData::no_access_reason`]. Committing is not offline
+    /// work (the workflow gate reads the bucket's config first), so this
+    /// disables the commit affordances and supplies their tooltip.
+    pub no_access_reason: Option<String>,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,

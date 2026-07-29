@@ -19,11 +19,13 @@ use quilt_uri::Host;
 use quilt_uri::S3Uri;
 
 use crate::Error;
+use crate::commands::RoleCache;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::quilt;
 
 use super::package_data::InstalledPackageEntryData;
+use super::package_list::denied_mark;
 
 // ── Merge data for Leptos UI ──
 
@@ -89,6 +91,18 @@ pub struct CommitData {
     pub user_meta_error: Option<String>,
     pub workflow: Option<CommitWorkflowData>,
     pub workflows: CommitWorkflows,
+    /// Why the active role cannot reach this package's bucket, worded exactly
+    /// as the roster words it. `Some` only on a denial.
+    ///
+    /// Same field name, same shape and same helper as
+    /// [`super::package_data::InstalledPackageData::no_access_reason`], so the
+    /// three surfaces that speak about a denial all say one thing.
+    ///
+    /// Committing is not offline work — the workflow quality gate reads the
+    /// bucket's `.quilt/workflows/config.yml` before any manifest is written —
+    /// so on a denial the commit affordances cannot succeed and the page
+    /// disables them, quoting this as the reason.
+    pub no_access_reason: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -258,6 +272,7 @@ fn workflows_config_to_commit_workflows(
 #[allow(clippy::too_many_lines, reason = "cohesive commit-data assembly")]
 async fn get_commit_data_from_model(
     m: &impl model::QuiltModel,
+    roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
 ) -> Result<CommitData, Error> {
@@ -267,13 +282,31 @@ async fn get_commit_data_from_model(
         ))
     })?;
 
-    // Committing is local work: the remote round trip inside `status` only
-    // refreshes `upstream_state`, which this page reports but does not act
-    // on. A denial there must therefore not keep the page shut — the user
-    // can still commit a package in a bucket the active role cannot read.
+    let lineage = m.get_installed_package_lineage(&installed_package).await?;
+
+    let typed_uri = lineage
+        .remote_uri
+        .as_ref()
+        .map(quilt_uri::S3PackageUri::from);
+    let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
+    if let Some(host) = origin_host {
+        tracing.add_host(host);
+    }
+
+    // Opening the page is local work: the remote round trip inside `status`
+    // only refreshes `upstream_state`, which this page reports but does not
+    // act on. A denial there must therefore not keep the page shut.
     // Recomputing against the cached manifest gives the same answer the
     // engine used to hand back when it swallowed the refresh error, minus
     // the upstream freshness nobody here needs.
+    //
+    // Committing itself is a different matter: the workflow quality gate
+    // reads the bucket's config before any manifest is written, so under a
+    // denied role no commit can succeed. The page still opens — the file
+    // list and the message are worth seeing — but it carries the reason so
+    // the commit affordances can be disabled and explained rather than
+    // failing on click.
+    let mut no_access_reason = None;
     let status = match m
         .get_installed_package_status(&installed_package, None)
         .await
@@ -281,9 +314,10 @@ async fn get_commit_data_from_model(
         Ok(status) => status,
         Err(err) if err.is_access_denied() => {
             tracing::info!(
-                "No read access to the remote of {}; committing on cached lineage",
+                "No read access to the remote of {}; opening the commit page on cached lineage",
                 installed_package.namespace,
             );
+            no_access_reason = denied_mark(m, roles, origin_host).await.reason;
             m.recompute_local_status(&installed_package, None).await?
         }
         Err(err) => return Err(err),
@@ -297,17 +331,6 @@ async fn get_commit_data_from_model(
         quilt::lineage::UpstreamState::Local => "local",
         quilt::lineage::UpstreamState::Error => "error",
     };
-
-    let lineage = m.get_installed_package_lineage(&installed_package).await?;
-
-    let typed_uri = lineage
-        .remote_uri
-        .as_ref()
-        .map(quilt_uri::S3PackageUri::from);
-    let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
-    if let Some(host) = origin_host {
-        tracing.add_host(host);
-    }
 
     // Build lookup maps for junky files
     let junky_map: std::collections::HashMap<_, _> = status
@@ -435,6 +458,7 @@ async fn get_commit_data_from_model(
         user_meta_error,
         workflow,
         workflows,
+        no_access_reason,
         entries: entries_list,
         ignored_count,
         unmodified_count,
@@ -444,6 +468,7 @@ async fn get_commit_data_from_model(
 #[tauri::command]
 pub async fn get_commit_data(
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
 ) -> Result<CommitData, String> {
@@ -451,7 +476,7 @@ pub async fn get_commit_data(
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_commit_data_from_model(&*m, &tracing, &namespace)
+    get_commit_data_from_model(&*m, &roles, &tracing, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -785,7 +810,7 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -799,12 +824,10 @@ mod tests {
         Ok(())
     }
 
-    /// Committing is local work. A role that cannot read the remote bucket
-    /// can still have local edits worth committing, so a denial on the
-    /// status refresh must not keep the Commit page from opening — the
-    /// entries come from the local recompute instead.
-    #[tokio::test]
-    async fn commit_data_opens_when_the_role_cannot_read_the_remote() -> Result<(), String> {
+    /// The model mocks shared by the denial-contrast pair below: an installed
+    /// package with a remote, a cached manifest, and an ungoverned bucket. The
+    /// caller wires up the status call, which is the only thing that differs.
+    fn denial_contrast_model() -> crate::model::MockQuiltModel {
         let mut model = mocks::create();
         model
             .expect_get_installed_package()
@@ -818,9 +841,6 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
-        model
-            .expect_get_installed_package_status()
-            .returning(|_, _| Err(access_denied_error()));
         // The installed revision's manifest is already in the local cache,
         // so reading it back needs no remote round trip and no read access.
         model
@@ -830,25 +850,84 @@ mod tests {
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
         model.expect_get_workflows_config().returning(|_| Ok(None));
+        model
+    }
+
+    /// Opening the page is local work: a role that cannot read the remote
+    /// bucket can still have local edits worth looking at, so a denial on the
+    /// status refresh must not keep the Commit page shut — the entries come
+    /// from the local recompute instead.
+    ///
+    /// Committing is *not* local work (the workflow gate reads the bucket's
+    /// config before any manifest is written), so the page must also carry the
+    /// reason, worded exactly as the roster words it, for the disabled commit
+    /// affordances to quote.
+    #[tokio::test]
+    async fn commit_data_opens_and_states_the_denial() -> Result<(), String> {
+        let mut model = denial_contrast_model();
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Err(access_denied_error()));
         model.expect_recompute_local_status().returning(|_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 quilt::lineage::UpstreamState::UpToDate,
                 one_local_change(),
             ))
         });
+        model.expect_refresh_roles().returning(|_| {
+            Ok(quilt_rs::RoleInfo {
+                current: "ReadOnly".to_string(),
+                available: vec!["ReadWrite".to_string(), "ReadOnly".to_string()],
+            })
+        });
+        model.expect_clear_remote_client_cache().returning(|_| ());
 
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace, "foo/bar");
         assert!(
             data.entries.iter().any(|e| e.filename == "file.txt"),
-            "the locally-computed change must still be offered for commit"
+            "the locally-computed change must still be listed"
         );
+        assert_eq!(
+            data.no_access_reason.as_deref(),
+            Some("Current role ReadOnly has no access to this bucket"),
+            "the commit page must say what the roster and the detail page say"
+        );
+        Ok(())
+    }
+
+    /// The contrast: the same package on a bucket the active role *can* read
+    /// carries no reason at all, so the commit affordances stay live.
+    #[tokio::test]
+    async fn commit_data_on_a_readable_bucket_states_no_denial() -> Result<(), String> {
+        let mut model = denial_contrast_model();
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    one_local_change(),
+                ))
+            });
+
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        assert!(
+            data.entries.iter().any(|e| e.filename == "file.txt"),
+            "the same local change is on offer"
+        );
+        assert_eq!(data.no_access_reason, None);
         Ok(())
     }
 
@@ -859,7 +938,8 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("missing", "package").into();
 
-        let result = get_commit_data_from_model(&model, &tracing, &namespace).await;
+        let result =
+            get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace).await;
         assert!(result.is_err());
     }
 
@@ -921,7 +1001,7 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -987,7 +1067,7 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1045,7 +1125,7 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1128,7 +1208,7 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1173,7 +1253,7 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1195,7 +1275,7 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1279,7 +1359,7 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -1313,7 +1393,7 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &tracing, &namespace)
+        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
             .await
             .map_err(|e| e.to_string())?;
 

@@ -16,6 +16,7 @@ use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, PreviousWorkflow, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData, WorkflowSection, build_workflow_view, previous_workflow_note,
+    with_popover,
 };
 use crate::util;
 use crate::util::format_size;
@@ -308,6 +309,15 @@ fn CommitContent(
     // `[Commit]` is shown.
     let has_remote = data.uri.as_ref().is_some_and(|u| u.catalog.is_some());
 
+    // A role denial on this package's bucket. Both action-bar buttons are
+    // disabled by it (not hidden: the user navigated here on purpose, and a
+    // vanished button explains nothing) and both carry the same tooltip saying
+    // why and what to do about it.
+    let no_access_reason = data.no_access_reason.clone();
+    let commit_hint = util::commit_denied_hint(no_access_reason.as_deref());
+    let commit_is_disabled =
+        Signal::derive(move || commit_disabled(&message.get(), no_access_reason.as_deref()));
+
     let ns_for_action = namespace.clone();
     let committing = RwSignal::new(false);
     let navigate_for_action = navigate.clone();
@@ -505,19 +515,31 @@ fn CommitContent(
 
         // ── Action bar ──
         <div class="qui-actionbar">
-            <buttons::CommitRevision
-                on_click=run_commit_only
-                busy=committing
-                disabled=Signal::derive(move || message.get().trim().is_empty())
-                primary=!has_remote
-            />
+            {with_popover(
+                commit_hint.clone(),
+                view! {
+                    <buttons::CommitRevision
+                        on_click=run_commit_only
+                        busy=committing
+                        disabled=commit_is_disabled
+                        primary=!has_remote
+                    />
+                }
+                    .into_any(),
+            )}
             {has_remote.then(|| view! {
                 <span class="actions-divider">"or"</span>
-                <buttons::CommitAndPush
-                    on_click=run_commit_and_push
-                    busy=committing
-                    disabled=Signal::derive(move || message.get().trim().is_empty())
-                />
+                {with_popover(
+                    commit_hint,
+                    view! {
+                        <buttons::CommitAndPush
+                            on_click=run_commit_and_push
+                            busy=committing
+                            disabled=commit_is_disabled
+                        />
+                    }
+                        .into_any(),
+                )}
             })}
         </div>
 
@@ -793,6 +815,22 @@ fn CommitEntryRow(
     }
 }
 
+// ── Action-bar gate ──
+
+/// Whether the action bar's Commit / Commit and Push buttons must be inert.
+///
+/// Two independent reasons, both of which make the click a guaranteed failure:
+/// an empty message (the manifest header requires one), and a role that cannot
+/// read the package's bucket. The second is the non-obvious one — committing
+/// looks like offline work, but the workflow quality gate reads the bucket's
+/// `.quilt/workflows/config.yml` before any manifest is written, so a denied
+/// role turns every commit into a 403. The buttons are disabled rather than
+/// hidden, and [`crate::util::commit_denied_hint`] supplies the tooltip that
+/// says why.
+fn commit_disabled(message: &str, no_access_reason: Option<&str>) -> bool {
+    message.trim().is_empty() || no_access_reason.is_some()
+}
+
 // ── Live-validation view model ──
 
 /// Whether a settled edit should (re)arm the debounce timer: only when the
@@ -948,14 +986,50 @@ fn JsonEditor(
 
 #[cfg(test)]
 mod tests {
-    use super::{displayed_violations, effective_metadata, field_violations, should_debounce};
+    use super::{
+        commit_disabled, displayed_violations, effective_metadata, field_violations,
+        should_debounce,
+    };
     use crate::commands::{CommitViolation, ViolationField};
+    use crate::util::commit_denied_hint;
+
+    const DENIED: &str = "Current role ReadOnly has no access to this bucket";
 
     fn violation(field: ViolationField, message: &str) -> CommitViolation {
         CommitViolation {
             field,
             message: message.to_string(),
         }
+    }
+
+    /// A denied bucket makes both action-bar buttons inert, and — the contrast
+    /// that keeps this test honest — an otherwise identical package on a
+    /// readable bucket leaves them live. Same message on both sides, so the
+    /// only thing under test is the access term.
+    #[test]
+    fn a_denied_bucket_disables_the_commit_buttons_a_readable_one_does_not() {
+        assert!(commit_disabled("a message", Some(DENIED)));
+        assert!(!commit_disabled("a message", None));
+    }
+
+    /// The disabled buttons are not silent: the same denial supplies the
+    /// tooltip that names the role and the fix, and a readable bucket has no
+    /// tooltip to show.
+    #[test]
+    fn the_disabled_commit_buttons_explain_themselves() {
+        assert_eq!(
+            commit_denied_hint(Some(DENIED)).as_deref(),
+            Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
+        );
+        assert_eq!(commit_denied_hint(None), None);
+    }
+
+    /// The message gate is unchanged and independent of access: an empty
+    /// message still disables on a bucket the role can read.
+    #[test]
+    fn an_empty_message_still_disables_on_a_readable_bucket() {
+        assert!(commit_disabled("", None));
+        assert!(commit_disabled("   ", None));
     }
 
     #[test]
