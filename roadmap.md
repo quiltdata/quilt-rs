@@ -28,8 +28,6 @@ systems that already do it well.
   only errors, so a report rarely tells the story that led to the problem
   and issues are hard to reproduce; log the surrounding activity (recent
   operations, state changes) and enrich Sentry reports with that context.
-- **Role switcher** *(M)* — switch between the access roles you have, from
-  inside the app.
 - **quilt-uri hardening** *(S)* — tighten how the app reads package links, so
   a bad one fails early with a clear message, not deep inside an operation.
 - **Finish hiding the machinery** *(M)* — replace Git-flavored wording (commit,
@@ -63,6 +61,9 @@ systems that already do it well.
 
 - **Gentle pull** — updating your local copy no longer wipes work you haven't
   sent up yet; it pulls in others' changes while keeping yours.
+- **Role switcher** — switch between the access roles you hold from inside the
+  app, on the desktop and from the CLI; packages your current role can't reach
+  say so plainly instead of asking you to sign in again.
 
 ## Later / exploring
 
