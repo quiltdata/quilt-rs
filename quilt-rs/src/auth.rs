@@ -670,6 +670,14 @@ impl<S: Storage + Send + Sync> Auth<S> {
             }
         };
 
+        // One line per `me` query, whether or not the role moved. Without it
+        // the only role logging is `reconcile_role`'s flush, which fires just
+        // on a *change* — so the ordinary case is silent and the cadence
+        // (one query per host per roster load, never one per row) cannot be
+        // observed at all. Keep it: this is the cheapest way to tell "asked
+        // once" from "asked per package".
+        debug!("🔎 Asked {} for the active role: {}", host, me.role.name);
+
         self.reconcile_role(host, &me.role.name).await?;
 
         Ok(RoleInfo::from(me))
