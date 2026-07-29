@@ -20,16 +20,12 @@
     box-shadow: var(--q-ui-shadows-button-hover);
   }
 
-  /* An anchor has no `disabled` attribute, so an inert link (see `CtaLink`)
-     states itself with `aria-disabled` and gets the same treatment. */
-  &[disabled],
-  &[aria-disabled="true"] {
+  &[disabled] {
     opacity: 0.7;
     cursor: not-allowed;
   }
 
-  &[disabled]:hover,
-  &[aria-disabled="true"]:hover {
+  &[disabled]:hover {
     background-color: #fff;
     box-shadow: var(--q-ui-shadows-button);
   }
@@ -39,8 +35,7 @@
     background: var(--q-ui-palette-primary);
   }
 
-  &.primary[disabled]:hover,
-  &.primary[aria-disabled="true"]:hover {
+  &.primary[disabled]:hover {
     color: #fff;
     background: var(--q-ui-palette-primary);
   }

@@ -8,10 +8,9 @@ const KIND: ButtonKind = ButtonKind::CreateNewRevision;
 pub fn CreateNewRevision(
     href: String,
     #[prop(optional, into)] primary: MaybeProp<bool>,
-    #[prop(optional, into)] disabled: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
-        <CtaLink href=href icon=KIND.icon() primary=primary disabled=disabled>
+        <CtaLink href=href icon=KIND.icon() primary=primary>
             {KIND.label()}
         </CtaLink>
     }

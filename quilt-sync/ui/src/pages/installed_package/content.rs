@@ -199,10 +199,11 @@ pub(super) fn InstalledPackageContent(
     // Push is offered only when there's a remote and something to ship.
     let is_publishable = has_origin
         && (status == "ahead" || (status == "up_to_date" && has_changes) || status == "local");
-    // A role denial disables both action-bar affordances (see
-    // `commit_affordance_disabled`) and gives them a shared tooltip. Disabled,
-    // not hidden: the user opened this page deliberately, and a button that
-    // simply vanishes explains nothing.
+    // A role denial disables the action bar's *action* — Commit and Push —
+    // and gives it a tooltip. Disabled, not hidden: the user opened this page
+    // deliberately, and a button that simply vanishes explains nothing.
+    // "Create new revision" is navigation and stays live (see
+    // `commit_affordance_disabled`).
     let commit_denied = commit_affordance_disabled(no_access_reason.as_deref());
     let commit_hint = util::commit_denied_hint(no_access_reason.as_deref());
 
@@ -374,21 +375,11 @@ pub(super) fn InstalledPackageContent(
                 );
                 view! {
                     <div class="qui-actionbar">
-                        {with_popover(
-                            commit_hint.clone(),
-                            view! {
-                                <buttons::CreateNewRevision
-                                    href=href
-                                    primary=revision_primary
-                                    disabled=commit_denied
-                                />
-                            }
-                                .into_any(),
-                        )}
+                        <buttons::CreateNewRevision href=href primary=revision_primary />
                         {is_publishable.then(|| view! {
                             <span class="actions-divider">"or"</span>
                             {with_popover(
-                                commit_hint.clone(),
+                                commit_hint,
                                 view! {
                                     <buttons::CommitAndPush
                                         on_click=on_publish
@@ -445,16 +436,21 @@ pub(super) fn InstalledPackageContent(
     }
 }
 
-/// Whether this page's commit affordances — "Create new revision", which is
-/// the way into the commit page, and "Commit and Push" — must be inert.
+/// Whether this page's commit *action* — "Commit and Push" — must be inert.
 ///
 /// Committing looks like offline work but is not: the workflow quality gate
 /// reads the bucket's `.quilt/workflows/config.yml` before any manifest is
 /// written, so under a role that cannot read the bucket every commit is a 403.
-/// The packages *list* hides its affordance instead — a list row carries its
-/// own visible denial reason, and an inert button there would be noise — but a
-/// page the user navigated to must disable and explain, which is what
-/// [`crate::util::commit_denied_hint`] supplies.
+/// A page the user navigated to disables and explains rather than hiding,
+/// which is what [`crate::util::commit_denied_hint`] supplies. (The packages
+/// *list* hides its affordance instead: a list row carries its own visible
+/// denial reason, and an inert button there would be noise.)
+///
+/// Deliberately narrow: this gates actions that cannot succeed, never
+/// navigation. "Create new revision" is a link to the commit page, and that
+/// page opens fine under a denial — it shows the banner and disables its own
+/// commit buttons — so the user can still read their changes and the
+/// explanation lands at the point of action instead of one screen earlier.
 ///
 /// A pure seam so the contrast (denied disables, readable does not) is
 /// testable without a DOM, matching `publish_affordance` on the list page.
@@ -485,23 +481,71 @@ mod tests {
 
     const DENIED: &str = "Current role ReadOnly has no access to this bucket";
 
-    /// A denied bucket makes the page's commit affordances inert, and — the
+    /// The page's own source, so the markup rule below can be checked without
+    /// a DOM: these tests run on the host target, where the Leptos view is
+    /// never rendered.
+    const SOURCE: &str = include_str!("content.rs");
+
+    /// A denied bucket makes the page's commit *action* inert, and — the
     /// contrast that keeps this test honest — an otherwise identical package
-    /// on a readable bucket leaves them live.
+    /// on a readable bucket leaves it live.
     #[test]
-    fn a_denied_bucket_disables_the_commit_affordances_a_readable_one_does_not() {
+    fn a_denied_bucket_disables_the_commit_action_a_readable_one_does_not() {
         assert!(commit_affordance_disabled(Some(DENIED)));
         assert!(!commit_affordance_disabled(None));
     }
 
-    /// The disabled affordances are not silent: the same denial supplies the
+    /// The rule is "disable actions that cannot succeed, never navigation".
+    /// "Create new revision" is a link to the commit page, which opens fine
+    /// under a denial and explains itself there, so it must stay a plain,
+    /// followable link — no `disabled`, no tooltip wrapper pre-empting it one
+    /// screen early. Pinned against the markup because that is where someone
+    /// would undo it while "fixing the inconsistency" with Commit and Push.
+    #[test]
+    fn the_link_to_the_commit_page_is_never_disabled() {
+        let bar = action_bar_markup();
+        let start = bar
+            .find("<buttons::CreateNewRevision")
+            .expect("the action bar still renders the commit-page link");
+        let (before, from_link) = bar.split_at(start);
+        let element = &from_link[..from_link
+            .find("/>")
+            .expect("the link element is self-closing")];
+
+        assert!(
+            !element.contains("disabled"),
+            "the commit-page link must stay followable, got: {element}"
+        );
+        assert!(
+            !before.contains("with_popover"),
+            "the commit-page link must not be wrapped in a denial tooltip"
+        );
+        // The contrast: the action *after* it does carry one, so this test
+        // cannot pass merely because every tooltip was deleted.
+        assert!(
+            from_link.contains("with_popover"),
+            "Commit and Push still explains its denial"
+        );
+    }
+
+    /// The disabled action is not silent: the same denial supplies the
     /// tooltip naming the role and the fix, and a readable bucket has none.
     #[test]
-    fn the_disabled_commit_affordances_explain_themselves() {
+    fn the_disabled_commit_action_explains_itself() {
         assert_eq!(
             commit_denied_hint(Some(DENIED)).as_deref(),
             Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
         );
         assert_eq!(commit_denied_hint(None), None);
+    }
+
+    /// The action bar's markup, sliced out of [`SOURCE`] so the assertions
+    /// above never read this test module's own text.
+    fn action_bar_markup() -> &'static str {
+        let start = SOURCE
+            .find(r#"<div class="qui-actionbar">"#)
+            .expect("the page still renders an action bar");
+        let bar = &SOURCE[start..];
+        &bar[..bar.find("</div>").expect("the action bar is closed")]
     }
 }

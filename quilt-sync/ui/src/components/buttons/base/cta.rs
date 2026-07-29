@@ -35,23 +35,13 @@ pub fn CtaLink(
     href: String,
     #[prop(optional)] icon: Option<&'static str>,
     #[prop(optional, into)] primary: MaybeProp<bool>,
-    /// Render the link inert. An anchor is not a form control, so there is no
-    /// `disabled` attribute to set: instead the `href` is dropped — an anchor
-    /// without one is neither a hyperlink nor keyboard-focusable — and
-    /// `aria-disabled` says the same to assistive tech. The stylesheet keys
-    /// the dimmed, not-allowed treatment off `[aria-disabled="true"]`
-    /// alongside the `[disabled]` it already applies to buttons.
-    #[prop(optional, into)]
-    disabled: MaybeProp<bool>,
     children: Children,
 ) -> impl IntoView {
-    let is_disabled = Signal::derive(move || disabled.get().unwrap_or(false));
     view! {
         <a
             class="qui-button large"
             class:primary=move || primary.get().unwrap_or(false)
-            href=move || (!is_disabled.get()).then(|| href.clone())
-            aria-disabled=move || is_disabled.get().then_some("true")
+            href=href
         >
             <span>{children()}</span>
             {icon.map(|src| view! { <img class="qui-icon" src=src /> })}
