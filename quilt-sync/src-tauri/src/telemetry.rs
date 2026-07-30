@@ -86,6 +86,16 @@ impl Telemetry {
         }
     }
 
+    /// Report an anomaly that produced no error value to carry — something that
+    /// should not have happened but that no `Err` describes.
+    ///
+    /// Keep `message` a constant: the crash reporter groups by it, so the
+    /// variable part belongs in the host tag ([`Self::add_host`]) rather than in
+    /// the text, or one anomaly becomes one issue per host.
+    pub fn report_anomaly(message: &str) {
+        Sentry::capture_message(message, Sentry::Level::Warning);
+    }
+
     /// Report a fault to the crash reporter without failing the caller.
     ///
     /// For the case an event cannot describe: an emitter that should be able to

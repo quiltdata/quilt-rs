@@ -67,29 +67,54 @@ pub async fn get_login_error_data(
     })
 }
 
-/// Remove one host's stored credentials.
+/// What a logout found under the host it was asked to erase.
 ///
-/// Addressed by the same builder that created the directory
+/// The distinction is not about success — both outcomes are one — but about
+/// whether there was anything to erase, which the caller reports differently.
+enum ErasedAuth {
+    /// Auth state was there and is now gone.
+    Removed(Host),
+    /// Nothing was stored under this host.
+    NothingStored(Host),
+}
+
+impl ErasedAuth {
+    /// The host the logout addressed, whichever outcome it reached.
+    fn host(&self) -> &Host {
+        match self {
+            Self::Removed(host) | Self::NothingStored(host) => host,
+        }
+    }
+}
+
+/// Remove one host's stored auth state — its client registration, tokens and
+/// credentials all live in the one directory, so the directory is the unit.
+///
+/// It is addressed through the builder that created it
 /// ([`DomainPaths::auth_host`]), so the name looked up here is the normalized
 /// host login wrote, not whatever string a caller happened to hold.
-fn erase_auth_command(app_handle: &tauri::AppHandle, host: &Host) -> Result<(), Error> {
+fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<ErasedAuth, Error> {
+    let host = Host::from_str(host)?;
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
-    let host_dir = DomainPaths::new(local_data_dir).auth_host(host);
+    let host_dir = DomainPaths::new(local_data_dir).auth_host(&host);
 
-    if host_dir.exists() {
-        // A `Host` cannot contain a path separator, so the join itself can no
-        // longer escape `auth_dir` — but `canonicalize` also resolves symlinks,
-        // and a host directory linked outside the auth dir would still take the
-        // delete with it. The containment check is for that.
-        let canonical = host_dir.canonicalize()?;
-        let canonical_auth = auth_dir.canonicalize()?;
-        if !canonical.starts_with(&canonical_auth) {
-            return Err(Error::General(format!("Invalid host: {host}")));
-        }
-        std::fs::remove_dir_all(&canonical)?;
+    if !host_dir.exists() {
+        return Ok(ErasedAuth::NothingStored(host));
     }
-    Ok(())
+
+    // A `Host` cannot contain a path separator, so the join itself can no longer
+    // escape `auth_dir` — but `canonicalize` also resolves symlinks, and a host
+    // directory linked outside the auth dir would still take the delete with it.
+    // The containment check is for that.
+    let canonical = host_dir.canonicalize()?;
+    let canonical_auth = auth_dir.canonicalize()?;
+    if !canonical.starts_with(&canonical_auth) {
+        return Err(Error::General(format!("Invalid host: {host}")));
+    }
+    std::fs::remove_dir_all(&canonical)?;
+
+    Ok(ErasedAuth::Removed(host))
 }
 
 #[tauri::command]
@@ -100,26 +125,6 @@ pub async fn erase_auth(
     tracing: tauri::State<'_, Telemetry>,
     host: String,
 ) -> Result<String, String> {
-    // One parse gates everything downstream: the stored directory is named by
-    // the normalized host, both caches key on a typed one, and the event
-    // guarantees one. A host that will not parse addresses none of them, so
-    // there is nothing to erase and nothing to attribute — report it to the
-    // crash reporter (every entry the settings page offers was parsed on the way
-    // in, so reaching this means the stored list is corrupt or the invoke came
-    // from outside the app) and tell the caller it failed.
-    let host = match Host::from_str(&host) {
-        Ok(host) => host,
-        Err(err) => {
-            warn!("Refusing to erase auth for an unparseable host ({host:?}): {err}");
-            Telemetry::report_error(&err);
-            return Err(format!("Failed to erase auth: {err}"));
-        }
-    };
-
-    tracing
-        .track(MixpanelEvent::AuthErased(AuthEvent { host: host.clone() }))
-        .await;
-
     let app_handle = app_handle.lock().await;
 
     let msg_init = format!("Erasing auth for {host}");
@@ -127,11 +132,34 @@ pub async fn erase_auth(
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
     let result = erase_auth_command(&app_handle, &host);
-    if result.is_ok() {
-        erase_role_state(&*m, &roles, &host).await;
+    // Every logout leaves exactly one signal, and which one says what happened.
+    match &result {
+        Ok(erased) => {
+            match erased {
+                ErasedAuth::Removed(host) => {
+                    tracing
+                        .track(MixpanelEvent::AuthErased(AuthEvent { host: host.clone() }))
+                        .await;
+                }
+                // No event, because nothing was erased — but the settings page
+                // offers a logout only for hosts it listed from these very
+                // directories, so a missing one means the list and the erase
+                // disagree about the name. The host rides along as the crash tag
+                // rather than in the message, which stays constant so the
+                // anomaly groups as one issue.
+                ErasedAuth::NothingStored(host) => {
+                    tracing.add_host(host);
+                    Telemetry::report_anomaly("Logout found no stored auth for the host");
+                }
+            }
+            // Either way: the role cache can still hold an entry for a host
+            // whose files are already gone, since the two are written apart.
+            erase_role_state(&*m, &roles, erased.host()).await;
+        }
+        Err(err) => Telemetry::report_error(err),
     }
 
-    Notify::new(msg_init).map(result, msg_ok, msg_err)
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 /// Drop everything a logged-out session left behind that names or empowers a
