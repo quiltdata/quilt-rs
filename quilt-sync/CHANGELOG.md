@@ -13,12 +13,12 @@
 
 ### Added
 
-- Settings → Auth lets you switch your active role per host (shown only when you hold more than one), and the new role applies immediately to reads and writes — including a role you switched in the web catalog, which takes effect as soon as the app reads it — instead of waiting for the previous role's credentials to expire (<https://github.com/quiltdata/quilt-rs/pull/807>)
+- Role switcher: Settings → Auth shows your active role per host and lets you change it (only when you hold more than one), taking effect on the next read or write instead of waiting for the previous role's credentials to expire — including a role you switched in the web catalog (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
 ### Changed
 
 - Pull now preserves non-conflicting local work instead of refusing on any local change: the Pull button shows up front whether pulling is safe or which files conflict (with commit → merge as the way out), and autosync pulls behind packages while keeping local edits, pausing with conflict guidance only on a real conflict (<https://github.com/quiltdata/quilt-rs/pull/800>)
-- A refused read or write now names the role instead of surfacing a raw storage error: the packages list marks rows the active role cannot read with the reason and a shortcut to switch, the package page states the same reason instead of asking you to sign in again, a denied push says the role cannot write there, autosync pauses the package with the same guidance instead of retrying forever (releasing that pause when you switch role), and the commit buttons are disabled with a tooltip that names the role and points at switching it rather than letting the commit fail
+- A bucket your active role cannot reach now says so wherever it surfaces — naming the role and offering to switch it, rather than showing a raw storage error or asking you to sign in again; commit is disabled up front instead of failing halfway, and autosync pauses the package until you switch role instead of retrying forever
   - <https://github.com/quiltdata/quilt-rs/pull/807>
   - <https://github.com/quiltdata/quilt-rs/pull/808>
 - QuiltSync shows a revision's commit message instead of its top-hash on the version-mismatch banner (full hash on hover) (<https://github.com/quiltdata/quilt-rs/pull/781>)
