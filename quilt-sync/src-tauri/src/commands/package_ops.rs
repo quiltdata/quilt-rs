@@ -19,7 +19,8 @@ use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 use crate::quilt::flow::PullOutcome;
-use crate::telemetry::{EventContext, MixpanelEvent};
+use crate::telemetry::MixpanelEvent;
+use crate::telemetry::event::{PackageEvent, RemotePackageEvent};
 
 async fn package_commit_command(
     m: &model::Model,
@@ -53,10 +54,9 @@ pub async fn package_commit(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::PackageCommitted,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Committing package {namespace}");
@@ -84,10 +84,9 @@ pub async fn certify_latest(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::LatestCertified,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::LatestCertified(RemotePackageEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Certifying latest for {namespace}");
@@ -119,10 +118,9 @@ pub async fn reset_local(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::LocalReset,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::LocalReset(RemotePackageEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Resetting local for {namespace}");
@@ -172,10 +170,9 @@ pub async fn package_push(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::PackagePushed,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Pushing package {namespace}");
@@ -240,24 +237,21 @@ pub async fn package_publish(
 
     if let Ok((_, outcome)) = &result {
         tracing
-            .track(
-                MixpanelEvent::PackagePublished,
-                EventContext::for_uri(uri.as_ref()),
-            )
+            .track(MixpanelEvent::PackagePublished(
+                RemotePackageEvent::for_uri(uri.as_ref()),
+            ))
             .await;
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
             tracing
-                .track(
-                    MixpanelEvent::PackageCommitted,
-                    EventContext::for_uri(uri.as_ref()),
-                )
+                .track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
+                    uri.as_ref(),
+                )))
                 .await;
         }
         tracing
-            .track(
-                MixpanelEvent::PackagePushed,
-                EventContext::for_uri(uri.as_ref()),
-            )
+            .track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+                uri.as_ref(),
+            )))
             .await;
     }
 
@@ -329,24 +323,21 @@ pub async fn package_commit_and_push(
 
     if let Ok((_, outcome)) = &result {
         tracing
-            .track(
-                MixpanelEvent::PackagePublished,
-                EventContext::for_uri(uri.as_ref()),
-            )
+            .track(MixpanelEvent::PackagePublished(
+                RemotePackageEvent::for_uri(uri.as_ref()),
+            ))
             .await;
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
             tracing
-                .track(
-                    MixpanelEvent::PackageCommitted,
-                    EventContext::for_uri(uri.as_ref()),
-                )
+                .track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
+                    uri.as_ref(),
+                )))
                 .await;
         }
         tracing
-            .track(
-                MixpanelEvent::PackagePushed,
-                EventContext::for_uri(uri.as_ref()),
-            )
+            .track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+                uri.as_ref(),
+            )))
             .await;
     }
 
@@ -382,10 +373,9 @@ pub async fn package_pull(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::PackagePulled,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Pulling package {namespace}");
@@ -440,10 +430,9 @@ pub async fn package_uninstall(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::PackageUninstalled,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::PackageUninstalled(PackageEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Uninstalling package {namespace}");
@@ -495,10 +484,9 @@ pub async fn set_remote(
     // The origin is this command's own argument: the remote being set.
     let origin_host = Host::from_str(&origin).ok();
     tracing
-        .track(
-            MixpanelEvent::RemoteSet,
-            EventContext::for_host(origin_host.as_ref()),
-        )
+        .track(MixpanelEvent::RemoteSet(RemotePackageEvent::for_host(
+            origin_host,
+        )))
         .await;
 
     // `Notify::new` logs the init line; on success/failure we log explicitly so
@@ -544,7 +532,7 @@ pub async fn package_create(
 ) -> Result<String, String> {
     // A package created here has no remote yet, so it belongs to no deployment.
     tracing
-        .track(MixpanelEvent::PackageCreated, EventContext::default())
+        .track(MixpanelEvent::PackageCreated(PackageEvent::hostless()))
         .await;
 
     let msg_init = format!("Creating package {namespace}");
@@ -579,10 +567,9 @@ pub async fn package_install_paths(
     // Installing names its package by URI, so the catalog is already in hand.
     let target = S3PackageUri::try_from(uri.as_str()).ok();
     tracing
-        .track(
-            MixpanelEvent::PackageInstalled,
-            EventContext::for_uri(target.as_ref()),
-        )
+        .track(MixpanelEvent::PackageInstalled(
+            RemotePackageEvent::for_uri(target.as_ref()),
+        ))
         .await;
 
     let msg_init = format!("Installing paths from {uri}");
@@ -635,10 +622,9 @@ pub async fn add_to_quiltignore(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::QuiltignorePatternAdded,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::QuiltignorePatternAdded(
+            PackageEvent::for_uri(uri.as_ref()),
+        ))
         .await;
 
     let msg_init = format!("Adding {pattern} to .quiltignore");

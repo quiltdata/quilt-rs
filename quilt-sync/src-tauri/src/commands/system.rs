@@ -19,7 +19,8 @@ use crate::notify::Notify;
 use crate::quilt;
 use crate::quilt::paths::DomainPaths;
 use crate::telemetry::diagnostics;
-use crate::telemetry::{EventContext, MixpanelEvent, prelude::*};
+use crate::telemetry::event::PackageFileEvent;
+use crate::telemetry::{MixpanelEvent, prelude::*};
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let path_resolver = app_handle.path();
@@ -94,12 +95,7 @@ pub async fn open_directory_picker(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<PathBuf, String> {
-    tracing
-        .track(
-            MixpanelEvent::DirectoryPickerOpened,
-            EventContext::default(),
-        )
-        .await;
+    tracing.track(MixpanelEvent::DirectoryPickerOpened).await;
 
     let app_handle = &app_handle.lock().await;
 
@@ -125,9 +121,7 @@ pub async fn debug_dot_quilt(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::DebugDotQuiltOpened, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::DebugDotQuiltOpened).await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening .quilt directory".to_string();
@@ -148,9 +142,7 @@ pub async fn debug_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::DebugLogsOpened, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::DebugLogsOpened).await;
     let app: &app::App = &app;
 
     let msg_init = "Opening logs directory".to_string();
@@ -172,9 +164,7 @@ pub async fn open_home_dir(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::FileBrowserOpened, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::HomeDirOpened).await;
 
     let msg_init = "Opening home directory".to_string();
     let msg_ok = "Successfully opened home directory".to_string();
@@ -194,9 +184,7 @@ pub async fn open_data_dir(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::FileBrowserOpened, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::DataDirOpened).await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening data directory".to_string();
@@ -224,9 +212,7 @@ pub async fn collect_diagnostic_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::DiagnosticLogsSaved, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::DiagnosticLogsSaved).await;
     let app_handle = app_handle.lock().await;
     let app: &app::App = &app;
 
@@ -241,9 +227,7 @@ pub async fn send_crash_report(
     zip_path: String,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::CrashReportSent, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::CrashReportSent).await;
 
     let zip_path = PathBuf::from(zip_path);
     if zip_path.file_name() != Some("quiltsync-diagnostic.zip".as_ref()) {
@@ -283,10 +267,9 @@ pub async fn reveal_in_file_browser(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::FileRevealed,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
@@ -314,10 +297,9 @@ pub async fn open_in_file_browser(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::FileBrowserOpened,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(
+            uri.as_ref(),
+        )))
         .await;
 
     let msg_init = format!("Opening file manager for {namespace}");
@@ -351,10 +333,9 @@ pub async fn open_in_default_application(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     tracing
-        .track(
-            MixpanelEvent::DefaultApplicationOpened,
-            EventContext::for_uri(uri.as_ref()),
-        )
+        .track(MixpanelEvent::DefaultApplicationOpened(
+            PackageFileEvent::for_uri(uri.as_ref()),
+        ))
         .await;
 
     let msg_init = format!("Opening {path} with default application for {namespace}");
@@ -382,9 +363,7 @@ pub async fn open_in_web_browser(
     // catalog links, documentation, a local directory and `mailto:` alike, so its
     // URL's host is not necessarily a Quilt deployment — and `host` means the
     // deployment an event concerns, never a hostname that appeared nearby.
-    tracing
-        .track(MixpanelEvent::WebBrowserOpened, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::WebBrowserOpened).await;
     let msg_init = format!("Opening URL {url}");
     let msg_ok = format!("Successfully opened {url}");
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
@@ -408,9 +387,7 @@ pub async fn setup(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     directory: String,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::SetupCompleted, EventContext::default())
-        .await;
+    tracing.track(MixpanelEvent::SetupCompleted).await;
     let msg_init = format!("Setup with directory {directory}");
     let msg_ok = format!("Successfully set up directory: {directory}");
     let msg_err = |err: &Error| format!("Failed to create QuiltSync directory: {err}");

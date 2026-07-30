@@ -13,7 +13,7 @@
 
 ### Changed
 
-- Usage analytics and crash reports now record which Quilt deployment an action concerned, so activity can be read per stack; actions that concern no deployment (app launch, first-run setup, the local debug and diagnostics actions) record none rather than an inherited one
+- Usage analytics and crash reports now record which Quilt deployment an action concerned, so activity can be read per stack, and opening a folder is reported as three distinct actions (a package's directory, the sync home, the app data directory) instead of one event that could not tell them apart; actions that concern no deployment record none rather than an inherited one
 
 ## [v0.20.0-alpha3] - 2026-07-29
 

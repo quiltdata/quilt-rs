@@ -12,9 +12,9 @@ use crate::commands;
 use crate::model;
 use crate::oauth::OAuthState;
 use crate::routes;
-use crate::telemetry::mixpanel::LoginFlow;
+use crate::telemetry::event::{LoginEvent, LoginFlow};
 use crate::telemetry::prelude::*;
-use crate::telemetry::{EventContext, MixpanelEvent, Telemetry};
+use crate::telemetry::{MixpanelEvent, Telemetry};
 
 fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
@@ -163,12 +163,12 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     .unwrap_or(redirect_path);
                 let telemetry = handle.state::<Telemetry>();
                 telemetry
-                    .track(
-                        MixpanelEvent::UserLoggedIn {
-                            flow: LoginFlow::OAuth,
-                        },
-                        EventContext::for_host(Some(&host)),
-                    )
+                    .track(MixpanelEvent::UserLoggedIn(LoginEvent {
+                        // Cloned, not moved: the redirect-failure path below
+                        // still needs the host to build its error route.
+                        host: host.clone(),
+                        flow: LoginFlow::OAuth,
+                    }))
                     .await;
                 if let Err(err) = commands::navigate_after_login(&handle, final_path) {
                     error!("Failed to redirect after login: {}", err);

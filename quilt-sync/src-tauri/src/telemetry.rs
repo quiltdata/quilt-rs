@@ -2,17 +2,18 @@ use std::sync::{Arc, Mutex};
 
 use ::sentry as Sentry;
 use mixpanel_rs::Mixpanel;
-use quilt_uri::{Host, S3PackageUri};
+use quilt_uri::Host;
 use semver::Version;
 
 use crate::Result;
 
 pub mod diagnostics;
+pub mod event;
 pub mod mixpanel;
 pub mod sentry;
 pub mod tracing;
 
-pub use mixpanel::MixpanelEvent;
+pub use event::MixpanelEvent;
 pub use tracing::LogsDir;
 
 pub mod prelude {
@@ -30,39 +31,6 @@ pub mod prelude {
 /// reaches crashes on that one worker and nowhere else. The hook reads this cell
 /// instead, on whatever thread the event leaves from.
 pub type AmbientHost = Arc<Mutex<Option<Host>>>;
-
-/// What an event concerns, beyond the event itself.
-///
-/// A struct rather than a bare host so the next dimension we need is added in
-/// one place: new context fields go here, not onto individual
-/// [`MixpanelEvent`] variants, which keeps a property spelled one way across
-/// every event that carries it. [`Self::default`] is the honest context for an
-/// event that concerns nothing in particular.
-#[derive(Debug, Clone, Default)]
-pub struct EventContext {
-    /// The Quilt deployment the event concerns.
-    ///
-    /// `None` means it concerns none — the event then carries no host rather
-    /// than inheriting the last one seen, so a host in the data is always the
-    /// deployment the user acted on.
-    pub host: Option<Host>,
-}
-
-impl EventContext {
-    /// Context for an event concerning `host`.
-    pub fn for_host(host: Option<&Host>) -> Self {
-        Self {
-            host: host.cloned(),
-        }
-    }
-
-    /// Context for an event concerning a package, taken from the URI the acting
-    /// surface rendered from. `None` catalog (or no URI) means the package has
-    /// no remote yet, so the event concerns no deployment.
-    pub fn for_uri(uri: Option<&S3PackageUri>) -> Self {
-        Self::for_host(uri.and_then(|uri| uri.catalog.as_ref()))
-    }
-}
 
 pub struct Telemetry {
     _sentry: Option<Sentry::ClientInitGuard>,
@@ -104,18 +72,28 @@ impl Telemetry {
         }
     }
 
-    /// Emit `event`, attributed by `context` to what it concerns.
+    /// Emit `event`, attributed to the deployment its payload names.
     ///
-    /// [`EventContext::default`] is for an event that concerns no deployment at
-    /// all — app launch, first-run setup, the local debug and diagnostics
-    /// actions — which then carries no host rather than inheriting one.
-    pub async fn track(&self, event: MixpanelEvent, context: EventContext) {
-        if let Some(host) = &context.host {
+    /// Which events can name one is a property of each event's payload type, so
+    /// there is nothing to pass here: an app-lifecycle or debug event has no
+    /// host to give, and a deployment-bearing one carries it already.
+    pub async fn track(&self, event: MixpanelEvent) {
+        if let Some(host) = event.host() {
             self.add_host(host);
         }
-        if let Err(err) = mixpanel::track_event(self.mixpanel.as_ref(), &event, &context).await {
+        if let Err(err) = mixpanel::track_event(self.mixpanel.as_ref(), &event).await {
             Sentry::capture_error(&err);
         }
+    }
+
+    /// Report a fault to the crash reporter without failing the caller.
+    ///
+    /// For the case an event cannot describe: an emitter that should be able to
+    /// name its deployment and cannot. Reporting it as a fault keeps the
+    /// analytics vocabulary free of error events, which would need their own
+    /// design for what an error is allowed to say.
+    pub fn report_error(err: &(dyn std::error::Error + Send + Sync + 'static)) {
+        Sentry::capture_error(err);
     }
 
     pub fn init(&self) {

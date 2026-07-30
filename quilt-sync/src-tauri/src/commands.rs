@@ -6,12 +6,13 @@
 //!
 //! A package operation is addressed by its `namespace`; several also accept the
 //! package `uri` the calling surface rendered from, and do nothing with it but
-//! read its catalog for [telemetry attribution](crate::telemetry::Telemetry::track).
+//! read its catalog into the event's payload for
+//! [telemetry attribution](crate::telemetry::Telemetry::track).
 //! It is passed rather than resolved from local lineage on purpose: the catalog
 //! the user acted on is what the analytics question asks about, and deriving it
 //! here would add I/O and a failure path to every tracked action — including one
 //! that would have to run *before* an uninstall destroys the lineage it reads.
-//! See [`crate::telemetry::EventContext::for_uri`].
+//! See [`crate::telemetry::event::PackageEvent::for_uri`] and its siblings.
 
 mod auth;
 mod commit_data;
