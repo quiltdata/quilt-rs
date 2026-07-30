@@ -617,6 +617,7 @@ pub async fn package_commit(
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -625,6 +626,7 @@ pub async fn package_commit(
         message: String,
         metadata: String,
         workflow: WorkflowIntent,
+        uri: Option<S3PackageUri>,
     }
     tauri::invoke(
         "package_commit",
@@ -633,25 +635,31 @@ pub async fn package_commit(
             message,
             metadata,
             workflow,
+            uri,
         },
     )
     .await
 }
 
-pub async fn package_push(namespace: String) -> Result<String, String> {
+pub async fn package_push(namespace: String, uri: Option<S3PackageUri>) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("package_push", &Args { namespace }).await
+    tauri::invoke("package_push", &Args { namespace, uri }).await
 }
 
-pub async fn package_publish(namespace: String) -> Result<String, String> {
+pub async fn package_publish(
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("package_publish", &Args { namespace }).await
+    tauri::invoke("package_publish", &Args { namespace, uri }).await
 }
 
 pub async fn package_commit_and_push(
@@ -659,6 +667,7 @@ pub async fn package_commit_and_push(
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -667,6 +676,7 @@ pub async fn package_commit_and_push(
         message: String,
         metadata: String,
         workflow: WorkflowIntent,
+        uri: Option<S3PackageUri>,
     }
     tauri::invoke(
         "package_commit_and_push",
@@ -675,6 +685,7 @@ pub async fn package_commit_and_push(
             message,
             metadata,
             workflow,
+            uri,
         },
     )
     .await
@@ -733,12 +744,13 @@ pub struct SubscriberErrorEvent {
 
 pub const FSWATCHER_SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
 
-pub async fn package_pull(namespace: String) -> Result<String, String> {
+pub async fn package_pull(namespace: String, uri: Option<S3PackageUri>) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("package_pull", &Args { namespace }).await
+    tauri::invoke("package_pull", &Args { namespace, uri }).await
 }
 
 /// The dry-run verdict of what a Pull would do right now. UI-side mirror of the
@@ -812,12 +824,16 @@ pub async fn package_pull_outcome(namespace: String) -> Result<PullOutcome, Stri
     tauri::invoke("package_pull_outcome", &Args { namespace }).await
 }
 
-pub async fn package_uninstall(namespace: String) -> Result<String, String> {
+pub async fn package_uninstall(
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("package_uninstall", &Args { namespace }).await
+    tauri::invoke("package_uninstall", &Args { namespace, uri }).await
 }
 
 pub async fn package_install_paths(uri: String, paths: Vec<String>) -> Result<String, String> {
@@ -853,20 +869,25 @@ pub async fn package_create(
 
 // ── Merge actions ───────────────────────────────────────────
 
-pub async fn certify_latest(namespace: String) -> Result<String, String> {
+pub async fn certify_latest(
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("certify_latest", &Args { namespace }).await
+    tauri::invoke("certify_latest", &Args { namespace, uri }).await
 }
 
-pub async fn reset_local(namespace: String) -> Result<String, String> {
+pub async fn reset_local(namespace: String, uri: Option<S3PackageUri>) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("reset_local", &Args { namespace }).await
+    tauri::invoke("reset_local", &Args { namespace, uri }).await
 }
 
 // ── Remote ──────────────────────────────────────────────────
@@ -998,13 +1019,26 @@ pub async fn setup(directory: String) -> Result<String, String> {
 
 // ── Quiltignore ─────────────────────────────────────────────
 
-pub async fn add_to_quiltignore(namespace: String, pattern: String) -> Result<String, String> {
+pub async fn add_to_quiltignore(
+    namespace: String,
+    pattern: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
         pattern: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("add_to_quiltignore", &Args { namespace, pattern }).await
+    tauri::invoke(
+        "add_to_quiltignore",
+        &Args {
+            namespace,
+            pattern,
+            uri,
+        },
+    )
+    .await
 }
 
 pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<bool, String> {
@@ -1018,12 +1052,16 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
 
 // ── File/browser ────────────────────────────────────────────
 
-pub async fn open_in_file_browser(namespace: String) -> Result<String, String> {
+pub async fn open_in_file_browser(
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("open_in_file_browser", &Args { namespace }).await
+    tauri::invoke("open_in_file_browser", &Args { namespace, uri }).await
 }
 
 pub async fn open_in_web_browser(url: String) -> Result<String, String> {
@@ -1037,22 +1075,45 @@ pub async fn open_in_web_browser(url: String) -> Result<String, String> {
 pub async fn open_in_default_application(
     namespace: String,
     path: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
         path: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("open_in_default_application", &Args { namespace, path }).await
+    tauri::invoke(
+        "open_in_default_application",
+        &Args {
+            namespace,
+            path,
+            uri,
+        },
+    )
+    .await
 }
 
-pub async fn reveal_in_file_browser(namespace: String, path: String) -> Result<String, String> {
+pub async fn reveal_in_file_browser(
+    namespace: String,
+    path: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
         path: String,
+        uri: Option<S3PackageUri>,
     }
-    tauri::invoke("reveal_in_file_browser", &Args { namespace, path }).await
+    tauri::invoke(
+        "reveal_in_file_browser",
+        &Args {
+            namespace,
+            path,
+            uri,
+        },
+    )
+    .await
 }
 
 pub async fn open_directory_picker() -> Result<String, String> {

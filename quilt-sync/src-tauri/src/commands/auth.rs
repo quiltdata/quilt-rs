@@ -20,7 +20,7 @@ use crate::notify::Notify;
 use crate::oauth::OAuthState;
 use crate::quilt;
 use crate::routes;
-use crate::telemetry::{MixpanelEvent, Telemetry, mixpanel::LoginFlow, prelude::*};
+use crate::telemetry::{EventContext, MixpanelEvent, Telemetry, mixpanel::LoginFlow, prelude::*};
 
 // ── Login data for Leptos UI ──
 
@@ -97,7 +97,15 @@ pub async fn erase_auth(
     tracing: tauri::State<'_, Telemetry>,
     host: String,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::AuthErased).await;
+    // The host is the command's own argument; an unparseable one still logs
+    // out, it just cannot be attributed.
+    let host_parsed = Host::from_str(&host).ok();
+    tracing
+        .track(
+            MixpanelEvent::AuthErased,
+            EventContext::for_host(host_parsed.as_ref()),
+        )
+        .await;
 
     let app_handle = app_handle.lock().await;
 
@@ -329,7 +337,6 @@ pub(super) async fn switch_role_command(
 ) -> Result<RolesData, Error> {
     let host = Host::from_str(host)?;
     let info = m.switch_role(&host, role).await?;
-    let host_name = host.to_string();
     // Three caches, not two: the stored credentials (expired by the switch),
     // the S3 clients holding their own copy, and the role name the roster
     // quotes back at the user. The last two are `adopt_role`'s job.
@@ -337,7 +344,10 @@ pub(super) async fn switch_role_command(
     watcher.clear_role_denied_pauses().await;
 
     tracing
-        .track(MixpanelEvent::RoleSwitched { host: host_name })
+        .track(
+            MixpanelEvent::RoleSwitched,
+            EventContext::for_host(Some(&host)),
+        )
         .await;
 
     Ok(RolesData::from(info))
@@ -384,10 +394,12 @@ async fn login_command(
     model::login(m, &host, code).await?;
 
     tracing
-        .track(MixpanelEvent::UserLoggedIn {
-            host: host.to_string(),
-            flow: LoginFlow::Legacy,
-        })
+        .track(
+            MixpanelEvent::UserLoggedIn {
+                flow: LoginFlow::Legacy,
+            },
+            EventContext::for_host(Some(&host)),
+        )
         .await;
 
     Ok(())
@@ -435,7 +447,10 @@ pub async fn login_oauth(
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
 
     tracing
-        .track(MixpanelEvent::OAuthLoginInitiated { host: host.clone() })
+        .track(
+            MixpanelEvent::OAuthLoginInitiated,
+            EventContext::for_host(Some(&host_parsed)),
+        )
         .await;
 
     Ok(format!("Opening browser for OAuth login to {host}"))

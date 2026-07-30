@@ -71,16 +71,19 @@ fn MergeContent(
     ui_locked: RwSignal<bool>,
 ) -> impl IntoView {
     let namespace = data.namespace.clone();
+    let uri = data.uri.clone();
     let navigate = use_navigate();
 
     let ns_for_certify = namespace.clone();
+    let uri_for_certify = uri.clone();
     let navigate_for_certify = navigate.clone();
     let on_certify = move |_| {
         let ns = ns_for_certify.clone();
+        let uri = uri_for_certify.clone();
         let navigate = navigate_for_certify.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::certify_latest(ns.clone()).await {
+            match commands::certify_latest(ns.clone(), uri).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
@@ -97,13 +100,15 @@ fn MergeContent(
     };
 
     let ns_for_reset = namespace.clone();
+    let uri_for_reset = uri.clone();
     let navigate_for_reset = navigate.clone();
     let on_reset = move |_| {
         let ns = ns_for_reset.clone();
+        let uri = uri_for_reset.clone();
         let navigate = navigate_for_reset.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::reset_local(ns.clone()).await {
+            match commands::reset_local(ns.clone(), uri).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
@@ -162,16 +167,19 @@ fn build_toolbar_actions(
     ui_locked: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
+    let uri = data.uri.clone();
     let origin_url = data.uri.as_ref().and_then(util::catalog_url);
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
 
         let ns_for_open = namespace.clone();
+        let uri_for_open = uri.clone();
         let on_open_file_browser = move |_| {
             let ns = ns_for_open.clone();
+            let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns).await {
+                match commands::open_in_file_browser(ns, uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -188,12 +196,14 @@ fn build_toolbar_actions(
         };
 
         let ns_for_uninstall = namespace.clone();
+        let uri_for_uninstall = uri.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
+            let uri = uri_for_uninstall.clone();
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns).await {
+                match commands::package_uninstall(ns, uri).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
                         navigate("/installed-packages-list", NavigateOptions::default());

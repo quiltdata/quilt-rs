@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use quilt_uri::S3PackageUri;
 use rfd::FileDialog;
 use serde::Serialize;
 use tauri::Manager;
@@ -18,7 +19,7 @@ use crate::notify::Notify;
 use crate::quilt;
 use crate::quilt::paths::DomainPaths;
 use crate::telemetry::diagnostics;
-use crate::telemetry::{MixpanelEvent, prelude::*};
+use crate::telemetry::{EventContext, MixpanelEvent, prelude::*};
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let path_resolver = app_handle.path();
@@ -93,7 +94,12 @@ pub async fn open_directory_picker(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<PathBuf, String> {
-    tracing.track(MixpanelEvent::DirectoryPickerOpened).await;
+    tracing
+        .track(
+            MixpanelEvent::DirectoryPickerOpened,
+            EventContext::default(),
+        )
+        .await;
 
     let app_handle = &app_handle.lock().await;
 
@@ -119,7 +125,9 @@ pub async fn debug_dot_quilt(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DebugDotQuiltOpened).await;
+    tracing
+        .track(MixpanelEvent::DebugDotQuiltOpened, EventContext::default())
+        .await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening .quilt directory".to_string();
@@ -140,7 +148,9 @@ pub async fn debug_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DebugLogsOpened).await;
+    tracing
+        .track(MixpanelEvent::DebugLogsOpened, EventContext::default())
+        .await;
     let app: &app::App = &app;
 
     let msg_init = "Opening logs directory".to_string();
@@ -162,7 +172,9 @@ pub async fn open_home_dir(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    tracing
+        .track(MixpanelEvent::FileBrowserOpened, EventContext::default())
+        .await;
 
     let msg_init = "Opening home directory".to_string();
     let msg_ok = "Successfully opened home directory".to_string();
@@ -182,7 +194,9 @@ pub async fn open_data_dir(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    tracing
+        .track(MixpanelEvent::FileBrowserOpened, EventContext::default())
+        .await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening data directory".to_string();
@@ -210,7 +224,9 @@ pub async fn collect_diagnostic_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DiagnosticLogsSaved).await;
+    tracing
+        .track(MixpanelEvent::DiagnosticLogsSaved, EventContext::default())
+        .await;
     let app_handle = app_handle.lock().await;
     let app: &app::App = &app;
 
@@ -225,7 +241,9 @@ pub async fn send_crash_report(
     zip_path: String,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::CrashReportSent).await;
+    tracing
+        .track(MixpanelEvent::CrashReportSent, EventContext::default())
+        .await;
 
     let zip_path = PathBuf::from(zip_path);
     if zip_path.file_name() != Some("quiltsync-diagnostic.zip".as_ref()) {
@@ -262,8 +280,14 @@ pub async fn reveal_in_file_browser(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
     path: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileRevealed).await;
+    tracing
+        .track(
+            MixpanelEvent::FileRevealed,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
@@ -287,8 +311,14 @@ pub async fn open_in_file_browser(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    tracing
+        .track(
+            MixpanelEvent::FileBrowserOpened,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
@@ -318,8 +348,14 @@ pub async fn open_in_default_application(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
     path: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DefaultApplicationOpened).await;
+    tracing
+        .track(
+            MixpanelEvent::DefaultApplicationOpened,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
@@ -342,7 +378,13 @@ pub async fn open_in_web_browser(
     url: String,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::WebBrowserOpened).await;
+    // Hostless on purpose, even though a URL has a host: this one command opens
+    // catalog links, documentation, a local directory and `mailto:` alike, so its
+    // URL's host is not necessarily a Quilt deployment — and `host` means the
+    // deployment an event concerns, never a hostname that appeared nearby.
+    tracing
+        .track(MixpanelEvent::WebBrowserOpened, EventContext::default())
+        .await;
     let msg_init = format!("Opening URL {url}");
     let msg_ok = format!("Successfully opened {url}");
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
@@ -366,7 +408,9 @@ pub async fn setup(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     directory: String,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::SetupCompleted).await;
+    tracing
+        .track(MixpanelEvent::SetupCompleted, EventContext::default())
+        .await;
     let msg_init = format!("Setup with directory {directory}");
     let msg_ok = format!("Successfully set up directory: {directory}");
     let msg_err = |err: &Error| format!("Failed to create QuiltSync directory: {err}");

@@ -210,12 +210,16 @@ pub(super) fn EntryRow(
 
     let ns_for_open = namespace.clone();
     let path_for_open = filename.clone();
+    let uri_for_open = pkg_uri.clone();
+    let uri_for_ignore = pkg_uri.clone();
+    let uri_for_unignore = pkg_uri.clone();
     let on_open = move |_| {
         let ns = ns_for_open.clone();
         let path = path_for_open.clone();
+        let uri = uri_for_open.clone();
         let notification = notification;
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, path).await {
+            match commands::open_in_default_application(ns, path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -224,12 +228,14 @@ pub(super) fn EntryRow(
 
     let ns_for_reveal = namespace.clone();
     let path_for_reveal = filename.clone();
+    let uri_for_reveal = pkg_uri.clone();
     let on_reveal = move |_| {
         let ns = ns_for_reveal.clone();
         let path = path_for_reveal.clone();
+        let uri = uri_for_reveal.clone();
         let notification = notification;
         leptos::task::spawn_local(async move {
-            match commands::reveal_in_file_browser(ns, path).await {
+            match commands::reveal_in_file_browser(ns, path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -257,6 +263,7 @@ pub(super) fn EntryRow(
                 namespace: ns_for_ignore.clone(),
                 path: path_for_ignore.clone(),
                 suggested_pattern: pattern,
+                uri: uri_for_ignore.clone(),
             }));
         }
     };
@@ -267,6 +274,7 @@ pub(super) fn EntryRow(
             show_unignore_popup.set(Some(UnignorePopupData {
                 namespace: ns_for_unignore.clone(),
                 pattern,
+                uri: uri_for_unignore.clone(),
             }));
         }
     };

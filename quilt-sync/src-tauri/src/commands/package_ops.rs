@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use quilt_rs::io::remote::WorkflowIntent;
 
-use quilt_uri::Host;
+use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
 use crate::autopull::Watcher;
@@ -19,7 +19,7 @@ use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 use crate::quilt::flow::PullOutcome;
-use crate::telemetry::MixpanelEvent;
+use crate::telemetry::{EventContext, MixpanelEvent};
 
 async fn package_commit_command(
     m: &model::Model,
@@ -38,6 +38,10 @@ async fn package_commit_command(
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "three of these are Tauri state injections a caller never passes; the rest are the revision's own fields plus the telemetry context"
+)]
 pub async fn package_commit(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
@@ -46,8 +50,14 @@ pub async fn package_commit(
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackageCommitted).await;
+    tracing
+        .track(
+            MixpanelEvent::PackageCommitted,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Committing package {namespace}");
     let msg_ok = format!("Successfully committed {namespace}");
@@ -71,8 +81,14 @@ pub async fn certify_latest(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::LatestCertified).await;
+    tracing
+        .track(
+            MixpanelEvent::LatestCertified,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Certifying latest for {namespace}");
     let msg_ok = format!("Successfully certified latest for {namespace}");
@@ -100,8 +116,14 @@ pub async fn reset_local(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::LocalReset).await;
+    tracing
+        .track(
+            MixpanelEvent::LocalReset,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Resetting local for {namespace}");
     let msg_ok = format!("Successfully reset local for {namespace}");
@@ -147,8 +169,14 @@ pub async fn package_push(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackagePushed).await;
+    tracing
+        .track(
+            MixpanelEvent::PackagePushed,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Pushing package {namespace}");
 
@@ -202,6 +230,7 @@ pub async fn package_publish(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
     let result = package_publish_command(&m, &settings, &namespace).await;
@@ -210,11 +239,26 @@ pub async fn package_publish(
     }
 
     if let Ok((_, outcome)) = &result {
-        tracing.track(MixpanelEvent::PackagePublished).await;
+        tracing
+            .track(
+                MixpanelEvent::PackagePublished,
+                EventContext::for_uri(uri.as_ref()),
+            )
+            .await;
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
-            tracing.track(MixpanelEvent::PackageCommitted).await;
+            tracing
+                .track(
+                    MixpanelEvent::PackageCommitted,
+                    EventContext::for_uri(uri.as_ref()),
+                )
+                .await;
         }
-        tracing.track(MixpanelEvent::PackagePushed).await;
+        tracing
+            .track(
+                MixpanelEvent::PackagePushed,
+                EventContext::for_uri(uri.as_ref()),
+            )
+            .await;
     }
 
     let msg_ok = match &result {
@@ -262,6 +306,10 @@ async fn package_commit_and_push_command(
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "three of these are Tauri state injections a caller never passes; the rest are the revision's own fields plus the telemetry context"
+)]
 pub async fn package_commit_and_push(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
@@ -270,6 +318,7 @@ pub async fn package_commit_and_push(
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
     let result =
@@ -279,11 +328,26 @@ pub async fn package_commit_and_push(
     }
 
     if let Ok((_, outcome)) = &result {
-        tracing.track(MixpanelEvent::PackagePublished).await;
+        tracing
+            .track(
+                MixpanelEvent::PackagePublished,
+                EventContext::for_uri(uri.as_ref()),
+            )
+            .await;
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
-            tracing.track(MixpanelEvent::PackageCommitted).await;
+            tracing
+                .track(
+                    MixpanelEvent::PackageCommitted,
+                    EventContext::for_uri(uri.as_ref()),
+                )
+                .await;
         }
-        tracing.track(MixpanelEvent::PackagePushed).await;
+        tracing
+            .track(
+                MixpanelEvent::PackagePushed,
+                EventContext::for_uri(uri.as_ref()),
+            )
+            .await;
     }
 
     let msg_ok = match &result {
@@ -315,8 +379,14 @@ pub async fn package_pull(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackagePulled).await;
+    tracing
+        .track(
+            MixpanelEvent::PackagePulled,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Pulling package {namespace}");
     let msg_ok = format!("Successfully pulled package {namespace}");
@@ -367,8 +437,14 @@ pub async fn package_uninstall(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackageUninstalled).await;
+    tracing
+        .track(
+            MixpanelEvent::PackageUninstalled,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
@@ -416,7 +492,14 @@ pub async fn set_remote(
     bucket: String,
     workflow: WorkflowIntent,
 ) -> Result<SetRemoteResponse, String> {
-    tracing.track(MixpanelEvent::RemoteSet).await;
+    // The origin is this command's own argument: the remote being set.
+    let origin_host = Host::from_str(&origin).ok();
+    tracing
+        .track(
+            MixpanelEvent::RemoteSet,
+            EventContext::for_host(origin_host.as_ref()),
+        )
+        .await;
 
     // `Notify::new` logs the init line; on success/failure we log explicitly so
     // the success payload can be the typed struct rather than a bare string.
@@ -459,7 +542,10 @@ pub async fn package_create(
     source: Option<String>,
     message: Option<String>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackageCreated).await;
+    // A package created here has no remote yet, so it belongs to no deployment.
+    tracing
+        .track(MixpanelEvent::PackageCreated, EventContext::default())
+        .await;
 
     let msg_init = format!("Creating package {namespace}");
     let msg_ok = format!("Successfully created package {namespace}");
@@ -490,7 +576,14 @@ pub async fn package_install_paths(
     uri: String,
     paths: Vec<String>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackageInstalled).await;
+    // Installing names its package by URI, so the catalog is already in hand.
+    let target = S3PackageUri::try_from(uri.as_str()).ok();
+    tracing
+        .track(
+            MixpanelEvent::PackageInstalled,
+            EventContext::for_uri(target.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Installing paths from {uri}");
     let msg_ok = format!("Successfully installed {} paths", paths.len());
@@ -539,8 +632,14 @@ pub async fn add_to_quiltignore(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
     pattern: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::QuiltignorePatternAdded).await;
+    tracing
+        .track(
+            MixpanelEvent::QuiltignorePatternAdded,
+            EventContext::for_uri(uri.as_ref()),
+        )
+        .await;
 
     let msg_init = format!("Adding {pattern} to .quiltignore");
     let msg_ok = format!("Added {pattern} to .quiltignore");
