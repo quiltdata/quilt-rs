@@ -435,26 +435,25 @@ pub async fn login_oauth(
     host: String,
     back: Option<String>,
 ) -> Result<String, String> {
-    let host_parsed = quilt_uri::Host::from_str(&host).map_err(|e| e.to_string())?;
+    // `host` is this command's IPC argument name, so it stays a `String` in the
+    // signature; the parsed form takes the name from here down.
+    let host_str = host;
+    let host = Host::from_str(&host_str).map_err(|e| e.to_string())?;
 
-    let redirect_uri = crate::oauth::redirect_uri(&host_parsed);
-    let client_id = model::get_or_register_client(&*m, &host_parsed, &redirect_uri)
+    let redirect_uri = crate::oauth::redirect_uri(&host);
+    let client_id = model::get_or_register_client(&*m, &host, &redirect_uri)
         .await
         .map_err(|e| e.to_string())?;
 
-    let request = oauth_state
-        .start_login(&host_parsed, &client_id, back)
-        .await;
+    let request = oauth_state.start_login(&host, &client_id, back).await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
 
     tracing
-        .track(MixpanelEvent::OAuthLoginInitiated(AuthEvent {
-            host: host_parsed,
-        }))
+        .track(MixpanelEvent::OAuthLoginInitiated(AuthEvent { host }))
         .await;
 
-    Ok(format!("Opening browser for OAuth login to {host}"))
+    Ok(format!("Opening browser for OAuth login to {host_str}"))
 }
 
 #[cfg(test)]
