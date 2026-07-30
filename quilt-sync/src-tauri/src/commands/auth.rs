@@ -1,6 +1,7 @@
 //! Login, login-error, OAuth, and auth-erase commands.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -93,11 +94,10 @@ impl ErasedAuth {
 /// It is addressed through the builder that created it
 /// ([`DomainPaths::auth_host`]), so the name looked up here is the normalized
 /// host login wrote, not whatever string a caller happened to hold.
-fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<ErasedAuth, Error> {
+fn erase_auth_dir(data_dir: &Path, host: &str) -> Result<ErasedAuth, Error> {
     let host = Host::from_str(host)?;
-    let local_data_dir = app_handle.path().app_local_data_dir()?;
-    let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
-    let host_dir = DomainPaths::new(local_data_dir).auth_host(&host);
+    let auth_dir = data_dir.join(quilt::paths::AUTH_DIR);
+    let host_dir = DomainPaths::new(data_dir.to_path_buf()).auth_host(&host);
 
     if !host_dir.exists() {
         return Ok(ErasedAuth::NothingStored(host));
@@ -117,6 +117,49 @@ fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<Erase
     Ok(ErasedAuth::Removed(host))
 }
 
+/// Log out of one host: drop its stored auth, then everything that outlives it.
+///
+/// Owns the whole operation the way [`switch_role_command`] owns a switch —
+/// the erase, the caches, and the telemetry — so the outer command is only the
+/// adapter that resolves Tauri state and reports the outcome. Takes the data
+/// directory rather than an `AppHandle` so it can be driven by a test.
+async fn erase_auth_command(
+    data_dir: &Path,
+    m: &impl QuiltModel,
+    roles: &RoleCache,
+    tracing: &Telemetry,
+    host: &str,
+) -> Result<(), Error> {
+    let erased = erase_auth_dir(data_dir, host);
+
+    // Every logout leaves exactly one signal, and which one says what happened.
+    match &erased {
+        Ok(ErasedAuth::Removed(host)) => {
+            tracing
+                .track(MixpanelEvent::AuthErased(AuthEvent { host: host.clone() }))
+                .await;
+        }
+        // No event, because nothing was erased — but the settings page offers a
+        // logout only for hosts it listed from these very directories, so a
+        // missing one means the list and the erase disagree about the name. The
+        // host rides along as the crash tag rather than in the message, which
+        // stays constant so the anomaly groups as one issue.
+        Ok(ErasedAuth::NothingStored(host)) => {
+            tracing.add_host(host);
+            Telemetry::report_anomaly("Logout found no stored auth for the host");
+        }
+        Err(err) => Telemetry::report_error(err),
+    }
+
+    // On either success: the role cache can still hold an entry for a host whose
+    // files are already gone, since the two are written apart.
+    if let Ok(erased) = &erased {
+        erase_role_state(m, roles, erased.host()).await;
+    }
+
+    erased.map(|_| ())
+}
+
 #[tauri::command]
 pub async fn erase_auth(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
@@ -131,35 +174,12 @@ pub async fn erase_auth(
     let msg_ok = format!("Successfully erased auth for {host}");
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    let result = erase_auth_command(&app_handle, &host);
-    // Every logout leaves exactly one signal, and which one says what happened.
-    match &result {
-        Ok(erased) => {
-            match erased {
-                ErasedAuth::Removed(host) => {
-                    tracing
-                        .track(MixpanelEvent::AuthErased(AuthEvent { host: host.clone() }))
-                        .await;
-                }
-                // No event, because nothing was erased — but the settings page
-                // offers a logout only for hosts it listed from these very
-                // directories, so a missing one means the list and the erase
-                // disagree about the name. The host rides along as the crash tag
-                // rather than in the message, which stays constant so the
-                // anomaly groups as one issue.
-                ErasedAuth::NothingStored(host) => {
-                    tracing.add_host(host);
-                    Telemetry::report_anomaly("Logout found no stored auth for the host");
-                }
-            }
-            // Either way: the role cache can still hold an entry for a host
-            // whose files are already gone, since the two are written apart.
-            erase_role_state(&*m, &roles, erased.host()).await;
-        }
-        Err(err) => Telemetry::report_error(err),
-    }
+    let result = match app_handle.path().app_local_data_dir() {
+        Ok(data_dir) => erase_auth_command(&data_dir, &*m, &roles, &tracing, &host).await,
+        Err(err) => Err(Error::from(err)),
+    };
 
-    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+    Notify::new(msg_init).map(result, msg_ok, msg_err)
 }
 
 /// Drop everything a logged-out session left behind that names or empowers a
@@ -491,6 +511,7 @@ mod tests {
     use crate::autopull::reporter::LogReporter;
     use crate::model::MockQuiltModel;
     use quilt_uri::Namespace;
+    use tempfile::TempDir;
 
     /// A watcher with no background task, for the switch's pause release.
     fn test_watcher() -> Watcher {
@@ -741,14 +762,100 @@ mod tests {
     /// else, and the roster quotes a stranger's role at the new user and
     /// gates the switch affordance on entitlements they do not have — for as
     /// long as the process lives.
+    /// Seeds `<data_dir>/.auth/<host>/tokens.json` for each host named.
+    fn seed_auth_dirs(data_dir: &Path, hosts: &[&str]) {
+        for host in hosts {
+            let dir = data_dir.join(quilt::paths::AUTH_DIR).join(host);
+            std::fs::create_dir_all(&dir).expect("seed auth dir");
+            std::fs::write(dir.join(quilt::paths::AUTH_TOKENS), "{}").expect("seed tokens");
+        }
+    }
+
+    /// A logout takes one host's stored auth and nothing else. The erase joins a
+    /// parsed host onto the auth dir, so a bug in that addressing would show up
+    /// here as the other host's credentials disappearing with it.
+    #[tokio::test]
+    async fn logging_out_erases_only_its_own_host() {
+        let data_dir = TempDir::new().expect("temp data dir");
+        seed_auth_dirs(data_dir.path(), &["a.quilt.dev", "b.quilt.dev"]);
+
+        let mut m = MockQuiltModel::new();
+        m.expect_clear_remote_client_cache().returning(|_| ());
+
+        erase_auth_command(
+            data_dir.path(),
+            &m,
+            &RoleCache::default(),
+            &Telemetry::default(),
+            "a.quilt.dev",
+        )
+        .await
+        .expect("logout");
+
+        let auth = data_dir.path().join(quilt::paths::AUTH_DIR);
+        assert!(!auth.join("a.quilt.dev").exists(), "its own host is gone");
+        assert!(
+            auth.join("b.quilt.dev").exists(),
+            "another host's credentials must survive someone else's logout"
+        );
+    }
+
+    /// Erasing a host that has nothing stored is still a success — a second
+    /// click, or a stale list, should not raise an error at the user.
+    #[tokio::test]
+    async fn logging_out_of_a_host_with_nothing_stored_succeeds() {
+        let data_dir = TempDir::new().expect("temp data dir");
+
+        let mut m = MockQuiltModel::new();
+        m.expect_clear_remote_client_cache().returning(|_| ());
+
+        erase_auth_command(
+            data_dir.path(),
+            &m,
+            &RoleCache::default(),
+            &Telemetry::default(),
+            "never.logged.in",
+        )
+        .await
+        .expect("nothing to erase is not a failure");
+    }
+
+    /// An unparseable host addresses no directory, so the logout must fail
+    /// rather than report a success that erased nothing.
+    #[tokio::test]
+    async fn logging_out_of_an_unparseable_host_fails() {
+        let data_dir = TempDir::new().expect("temp data dir");
+        let m = MockQuiltModel::new();
+
+        erase_auth_command(
+            data_dir.path(),
+            &m,
+            &RoleCache::default(),
+            &Telemetry::default(),
+            "not a host",
+        )
+        .await
+        .expect_err("an unparseable host cannot be erased");
+    }
+
     #[tokio::test]
     async fn logging_out_drops_the_cached_role() {
         let host: Host = "test.quilt.dev".parse().expect("host");
         let roles = warmed_role_cache(&host).await;
+        let data_dir = TempDir::new().expect("temp data dir");
+        seed_auth_dirs(data_dir.path(), &["test.quilt.dev"]);
 
         let mut erasing = MockQuiltModel::new();
         erasing.expect_clear_remote_client_cache().returning(|_| ());
-        erase_role_state(&erasing, &roles, &host).await;
+        erase_auth_command(
+            data_dir.path(),
+            &erasing,
+            &roles,
+            &Telemetry::default(),
+            "test.quilt.dev",
+        )
+        .await
+        .expect("logout");
 
         let mut next_user = MockQuiltModel::new();
         next_user.expect_refresh_roles().times(1).returning(|_| {
