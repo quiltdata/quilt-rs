@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use quilt_uri::S3PackageUri;
 
 use crate::commands;
 use crate::components::Notification;
@@ -11,6 +12,9 @@ pub struct IgnorePopupData {
     pub namespace: String,
     pub path: String,
     pub suggested_pattern: String,
+    /// The package's remote, carried from the row that opened this popup so the
+    /// edit it performs is attributed to the deployment the user is working on.
+    pub uri: Option<S3PackageUri>,
 }
 
 #[derive(Clone)]
@@ -78,6 +82,7 @@ pub fn IgnorePopup(
     };
 
     let ns_for_submit = namespace.clone();
+    let uri_for_submit = data.uri.clone();
     let on_close_for_submit = on_close.clone();
     let on_submit = move || {
         let p = pattern.get_untracked();
@@ -86,9 +91,10 @@ pub fn IgnorePopup(
         }
         submitting.set(true);
         let ns = ns_for_submit.clone();
+        let uri = uri_for_submit.clone();
         let on_close = on_close_for_submit.clone();
         leptos::task::spawn_local(async move {
-            match commands::add_to_quiltignore(ns, p).await {
+            match commands::add_to_quiltignore(ns, p, uri).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
@@ -166,6 +172,8 @@ pub fn IgnorePopup(
 pub struct UnignorePopupData {
     pub namespace: String,
     pub pattern: String,
+    /// See [`IgnorePopupData::uri`].
+    pub uri: Option<S3PackageUri>,
 }
 
 #[component]
@@ -177,13 +185,15 @@ pub fn UnignorePopup(
 ) -> impl IntoView {
     let ns = data.namespace.clone();
     let pattern_display = data.pattern.clone();
+    let uri = data.uri.clone();
 
     let on_close_for_edit = on_close.clone();
     let on_edit = move |_| {
         let ns = ns.clone();
+        let uri = uri.clone();
         let on_close = on_close_for_edit.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, ".quiltignore".to_string()).await {
+            match commands::open_in_default_application(ns, ".quiltignore".to_string(), uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }

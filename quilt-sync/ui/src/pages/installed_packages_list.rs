@@ -583,6 +583,7 @@ fn build_package_menu(
     show_set_remote_popup: RwSignal<Option<SetRemotePopupData>>,
 ) -> impl IntoView + use<> {
     let namespace = data.namespace.clone();
+    let uri = data.uri.clone();
     let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let origin_host = data.uri.as_ref().and_then(util::host_str);
     let current_host = origin_host.clone();
@@ -592,10 +593,12 @@ fn build_package_menu(
 
     // ── Open in file browser ──
     let ns_for_open = namespace.clone();
+    let uri_for_open = uri.clone();
     let on_open_file_browser = move |_| {
         let ns = ns_for_open.clone();
+        let uri = uri_for_open.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_file_browser(ns).await {
+            match commands::open_in_file_browser(ns, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -614,11 +617,13 @@ fn build_package_menu(
 
     // ── Uninstall ──
     let ns_for_uninstall = namespace.clone();
+    let uri_for_uninstall = uri.clone();
     let on_uninstall = move |_| {
         let ns = ns_for_uninstall.clone();
+        let uri = uri_for_uninstall.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::package_uninstall(ns).await {
+            match commands::package_uninstall(ns, uri).await {
                 Ok(msg) => {
                     ui_locked.set(false);
                     notification.set(Some(Notification::Success(msg)));
@@ -635,10 +640,12 @@ fn build_package_menu(
     // ── Sync actions (Publish/Pull) ──
     // Stored in StoredValue so they can be used inside Show children (which are Fn).
     let ns_for_publish = namespace.clone();
+    let uri_for_publish = uri.clone();
     let (publish_busy, on_publish) = make_action(
         move || {
             let ns = ns_for_publish.clone();
-            async move { commands::package_publish(ns).await }
+            let uri = uri_for_publish.clone();
+            async move { commands::package_publish(ns, uri).await }
         },
         notification,
         Some(ui_locked),
@@ -647,10 +654,12 @@ fn build_package_menu(
     let on_publish = StoredValue::new(on_publish);
 
     let ns_for_pull = namespace.clone();
+    let uri_for_pull = uri.clone();
     let (pull_busy, on_pull) = make_action(
         move || {
             let ns = ns_for_pull.clone();
-            async move { commands::package_pull(ns).await }
+            let uri = uri_for_pull.clone();
+            async move { commands::package_pull(ns, uri).await }
         },
         notification,
         Some(ui_locked),

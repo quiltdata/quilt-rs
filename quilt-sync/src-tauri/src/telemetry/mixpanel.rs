@@ -1,88 +1,43 @@
+//! Sending events to Mixpanel. *What* we report lives in
+//! [`event`](super::event).
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use mixpanel_rs::{Config, Mixpanel};
-use serde::Serialize;
 use serde_json::Value;
 
 use crate::env;
+use crate::error::TelemetryError;
+use crate::telemetry::MixpanelEvent;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LoginFlow {
-    OAuth,
-    Legacy,
-}
+/// The event as Mixpanel receives it: its name, and its properties.
+///
+/// Both come out of the adjacently tagged serialization — `{"t": "event_name"}`
+/// for an event with no payload, `{"t": "event_name", "c": {…}}` for one with a
+/// payload. Nothing is merged in here: an event that concerns a deployment
+/// carries the host in its own payload, so serde has already put it in `c`.
+pub fn event_payload(
+    event: &MixpanelEvent,
+) -> crate::Result<(String, Option<HashMap<String, Value>>)> {
+    let Value::Object(map) = serde_json::to_value(event)? else {
+        // Unreachable with adjacently tagged serialization.
+        return Err(TelemetryError::Serialize(
+            "Expected object from adjacently tagged serialization".to_string(),
+        )
+        .into());
+    };
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "t", content = "c")]
-#[serde(rename_all = "snake_case")]
-pub enum MixpanelEvent {
-    AppLaunched,
-    PackagePulled,
-    PackagePushed,
-    PackageCommitted,
-    PackagePublished,
-    PackageUninstalled,
-    PackageInstalled,
-    PackageCreated,
-    DirectoryPickerOpened,
-    AuthErased,
-    DebugDotQuiltOpened,
-    DebugLogsOpened,
-    FileRevealed,
-    FileBrowserOpened,
-    DefaultApplicationOpened,
-    WebBrowserOpened,
-    LatestCertified,
-    LocalReset,
-    RemoteSet,
-    OAuthLoginInitiated { host: String },
-    RoleSwitched { host: String },
-    UserLoggedIn { host: String, flow: LoginFlow },
-    SetupCompleted,
-    CrashReportSent,
-    DiagnosticLogsSaved,
-    QuiltignorePatternAdded,
-    ErrorOccurred { error_type: String },
-}
+    let Some(Value::String(event_name)) = map.get("t") else {
+        return Err(TelemetryError::Serialize("Failed to serialize event name".to_string()).into());
+    };
 
-#[allow(clippy::implicit_hasher)]
-impl TryFrom<MixpanelEvent> for (String, Option<HashMap<String, Value>>) {
-    type Error = crate::Error;
+    let properties = map
+        .get("c")
+        .and_then(|v| v.as_object())
+        .map(|obj| obj.clone().into_iter().collect());
 
-    fn try_from(event: MixpanelEvent) -> Result<Self, Self::Error> {
-        // Use adjacently tagged serde serialization to extract event name and properties
-        let serialized = serde_json::to_value(&event)?;
-
-        match serialized {
-            Value::Object(map) => {
-                // Adjacently tagged format: {"t": "event_name", "c": {...}} or {"t": "event_name"}
-                let Some(Value::String(event_name)) = map.get("t") else {
-                    return Err(crate::Error::Telemetry(
-                        crate::error::TelemetryError::Serialize(
-                            "Failed to serialize event name".to_string(),
-                        ),
-                    ));
-                };
-
-                let properties = map
-                    .get("c")
-                    .and_then(|v| v.as_object())
-                    .map(|obj| obj.clone().into_iter().collect());
-
-                Ok((event_name.clone(), properties))
-            }
-            _ => {
-                // This should not happen with adjacently tagged serialization
-                Err(crate::Error::Telemetry(
-                    crate::error::TelemetryError::Serialize(
-                        "Expected object from adjacently tagged serialization".to_string(),
-                    ),
-                ))
-            }
-        }
-    }
+    Ok((event_name.clone(), properties))
 }
 
 pub fn mixpanel_config() -> Option<(String, Config)> {
@@ -109,7 +64,7 @@ pub async fn track_event(
     event: &MixpanelEvent,
 ) -> crate::Result<()> {
     if let Some(mixpanel) = mixpanel {
-        let (event_name, properties) = event.clone().try_into()?;
+        let (event_name, properties) = event_payload(event)?;
         mixpanel.track(&event_name, properties).await?;
     }
     Ok(())
@@ -119,7 +74,8 @@ pub fn init(mixpanel: Option<&Arc<Mixpanel>>) {
     if let Some(mixpanel) = mixpanel {
         let mixpanel_clone = mixpanel.clone();
         tauri::async_runtime::spawn(async move {
-            match MixpanelEvent::AppLaunched.try_into() {
+            // App launch precedes any host, so it carries no payload at all.
+            match event_payload(&MixpanelEvent::AppLaunched) {
                 Ok((event_name, properties)) => {
                     if let Err(err) = mixpanel_clone.track(&event_name, properties).await {
                         eprintln!("Failed to track app launch: {err}");
@@ -135,138 +91,161 @@ pub fn init(mixpanel: Option<&Arc<Mixpanel>>) {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
+    use quilt_uri::Host;
+
     use super::*;
-    use crate::Error;
     use crate::Result;
+    use crate::telemetry::event::{
+        AuthEvent, LoginEvent, LoginFlow, PackageEvent, PackageFileEvent, RemotePackageEvent,
+    };
 
+    fn host() -> Host {
+        Host::from_str("example.quilt.dev").expect("valid test host")
+    }
+
+    fn host_value() -> Value {
+        Value::String("example.quilt.dev".to_string())
+    }
+
+    /// The events that carry no payload: name only, no properties object.
     #[test]
-    fn test_all_primitive_events() -> Result {
-        let (name, p) = MixpanelEvent::AppLaunched.try_into()?;
-        assert_eq!(name, "app_launched");
-        assert!(p.is_none());
+    fn test_events_without_a_payload() -> Result {
+        for (event, expected) in [
+            (MixpanelEvent::AppLaunched, "app_launched"),
+            (MixpanelEvent::SetupCompleted, "setup_completed"),
+            (
+                MixpanelEvent::DirectoryPickerOpened,
+                "directory_picker_opened",
+            ),
+            (MixpanelEvent::HomeDirOpened, "home_dir_opened"),
+            (MixpanelEvent::WebBrowserOpened, "web_browser_opened"),
+            (MixpanelEvent::DebugDotQuiltOpened, "debug_dot_quilt_opened"),
+            (MixpanelEvent::DebugLogsOpened, "debug_logs_opened"),
+            (MixpanelEvent::DataDirOpened, "data_dir_opened"),
+            (MixpanelEvent::DiagnosticLogsSaved, "diagnostic_logs_saved"),
+            (MixpanelEvent::CrashReportSent, "crash_report_sent"),
+        ] {
+            let (name, props) = event_payload(&event)?;
+            assert_eq!(name, expected);
+            assert!(props.is_none(), "{expected} must carry no properties");
+        }
 
-        let (name, p) = MixpanelEvent::PackagePulled.try_into()?;
+        Ok(())
+    }
+
+    /// A remote operation reports the deployment it ran against.
+    #[test]
+    fn test_remote_package_event_reports_its_host() -> Result {
+        let event = MixpanelEvent::PackagePulled(RemotePackageEvent::for_host(Some(host())));
+
+        let (name, props) = event_payload(&event)?;
+
         assert_eq!(name, "package_pulled");
-        assert!(p.is_none());
+        let props = props.expect("host");
+        assert_eq!(props.get("host"), Some(&host_value()));
+        assert_eq!(props.len(), 1);
 
-        let (name, p) = MixpanelEvent::PackagePushed.try_into()?;
-        assert_eq!(name, "package_pushed");
-        assert!(p.is_none());
+        Ok(())
+    }
 
-        let (name, p) = MixpanelEvent::PackageCommitted.try_into()?;
-        assert_eq!(name, "package_committed");
-        assert!(p.is_none());
+    /// Every operation whose host the caller supplies must still emit when the
+    /// caller supplied none — an unattributed event, never a dropped one.
+    #[test]
+    fn test_caller_supplied_events_emit_without_a_host() -> Result {
+        for (event, expected) in [
+            (
+                MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(None)),
+                "package_pushed",
+            ),
+            (
+                MixpanelEvent::PackageCommitted(PackageEvent::for_uri(None)),
+                "package_committed",
+            ),
+            (
+                MixpanelEvent::PackageCreated(PackageEvent::hostless()),
+                "package_created",
+            ),
+            (
+                MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(None)),
+                "file_revealed",
+            ),
+        ] {
+            let (name, props) = event_payload(&event)?;
+            assert_eq!(name, expected);
+            assert_eq!(
+                props.expect("payload").get("host"),
+                Some(&Value::Null),
+                "{expected} must report a null host, not omit the property"
+            );
+        }
 
-        let (name, p) = MixpanelEvent::PackageUninstalled.try_into()?;
-        assert_eq!(name, "package_uninstalled");
-        assert!(p.is_none());
+        Ok(())
+    }
 
-        let (name, p) = MixpanelEvent::PackageInstalled.try_into()?;
-        assert_eq!(name, "package_installed");
-        assert!(p.is_none());
+    /// The wire form a login event sent when `host` was a field of the event
+    /// itself: `host` beside `flow`, same names, same string value.
+    #[test]
+    fn test_user_logged_in_keeps_its_wire_shape() -> Result {
+        let event = MixpanelEvent::UserLoggedIn(LoginEvent {
+            host: host(),
+            flow: LoginFlow::OAuth,
+        });
 
-        let (name, p) = MixpanelEvent::PackageCreated.try_into()?;
-        assert_eq!(name, "package_created");
-        assert!(p.is_none());
+        let (name, props) = event_payload(&event)?;
 
-        let (name, p) = MixpanelEvent::DirectoryPickerOpened.try_into()?;
-        assert_eq!(name, "directory_picker_opened");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::AuthErased.try_into()?;
-        assert_eq!(name, "auth_erased");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::DebugDotQuiltOpened.try_into()?;
-        assert_eq!(name, "debug_dot_quilt_opened");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::DebugLogsOpened.try_into()?;
-        assert_eq!(name, "debug_logs_opened");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::FileRevealed.try_into()?;
-        assert_eq!(name, "file_revealed");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::FileBrowserOpened.try_into()?;
-        assert_eq!(name, "file_browser_opened");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::DefaultApplicationOpened.try_into()?;
-        assert_eq!(name, "default_application_opened");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::WebBrowserOpened.try_into()?;
-        assert_eq!(name, "web_browser_opened");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::LatestCertified.try_into()?;
-        assert_eq!(name, "latest_certified");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::LocalReset.try_into()?;
-        assert_eq!(name, "local_reset");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::RemoteSet.try_into()?;
-        assert_eq!(name, "remote_set");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::SetupCompleted.try_into()?;
-        assert_eq!(name, "setup_completed");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::CrashReportSent.try_into()?;
-        assert_eq!(name, "crash_report_sent");
-        assert!(p.is_none());
-
-        let (name, p) = MixpanelEvent::DiagnosticLogsSaved.try_into()?;
-        assert_eq!(name, "diagnostic_logs_saved");
-        assert!(p.is_none());
+        assert_eq!(name, "user_logged_in");
+        let props = props.expect("host and flow");
+        assert_eq!(props.get("host"), Some(&host_value()));
+        assert_eq!(props.get("flow"), Some(&Value::String("oauth".to_string())));
 
         Ok(())
     }
 
     #[test]
-    fn test_user_logged_in_event() -> Result {
-        let event = MixpanelEvent::UserLoggedIn {
-            host: "example.quilt.dev".to_string(),
-            flow: LoginFlow::OAuth,
-        };
-        match event.try_into()? {
-            (name, Some(props)) => {
-                assert_eq!(name, "user_logged_in");
-                assert_eq!(
-                    props.get("host"),
-                    Some(&Value::String("example.quilt.dev".to_string()))
-                );
-                assert_eq!(props.get("flow"), Some(&Value::String("oauth".to_string())));
-                Ok(())
-            }
-            _ => Err(Error::Telemetry(crate::error::TelemetryError::Serialize(
-                "UserLoggedIn".to_string(),
-            ))),
+    fn test_auth_events_report_a_guaranteed_host() -> Result {
+        for (event, expected) in [
+            (
+                MixpanelEvent::RoleSwitched(AuthEvent { host: host() }),
+                "role_switched",
+            ),
+            // `snake_case` splits the leading acronym, so this event has always
+            // been reported under this slightly odd name. Renaming it would break
+            // the continuity of its history, so the name stays and this records it.
+            (
+                MixpanelEvent::OAuthLoginInitiated(AuthEvent { host: host() }),
+                "o_auth_login_initiated",
+            ),
+            (
+                MixpanelEvent::AuthErased(AuthEvent { host: host() }),
+                "auth_erased",
+            ),
+        ] {
+            let (name, props) = event_payload(&event)?;
+            assert_eq!(name, expected);
+            assert_eq!(props.expect("host").get("host"), Some(&host_value()));
         }
+
+        Ok(())
     }
 
+    /// The accessor the crash-report cell reads. Exhaustive by construction —
+    /// the compiler rejects a new variant that does not answer this.
     #[test]
-    fn test_error_occurred_event() -> Result {
-        let event = MixpanelEvent::ErrorOccurred {
-            error_type: "network_timeout".to_string(),
-        };
-        match event.try_into()? {
-            (name, Some(props)) => {
-                assert_eq!(name, "error_occurred");
-                assert_eq!(
-                    props.get("error_type"),
-                    Some(&Value::String("network_timeout".to_string()))
-                );
-                Ok(())
-            }
-            _ => Err(Error::Telemetry(crate::error::TelemetryError::Serialize(
-                "ErrorOccurred".to_string(),
-            ))),
-        }
+    fn test_host_accessor_matches_the_payload() {
+        assert_eq!(
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_host(Some(host()))).host(),
+            Some(&host())
+        );
+        assert_eq!(
+            MixpanelEvent::AuthErased(AuthEvent { host: host() }).host(),
+            Some(&host())
+        );
+        assert_eq!(MixpanelEvent::AppLaunched.host(), None);
+        assert_eq!(
+            MixpanelEvent::PackageCommitted(PackageEvent::for_uri(None)).host(),
+            None
+        );
     }
 }

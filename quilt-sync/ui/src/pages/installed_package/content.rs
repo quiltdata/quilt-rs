@@ -162,7 +162,8 @@ pub(super) fn InstalledPackageContent(
     let commit_href_clone = commit_href.clone();
 
     let ns_for_status = namespace.clone();
-    let origin_host_for_status = origin_host.clone();
+    let uri_for_status = uri.clone();
+    let uri_for_actions = uri.clone();
     let status_clone = status.clone();
 
     // Two-phase Pull affordance: the banner renders immediately from `status`;
@@ -301,7 +302,7 @@ pub(super) fn InstalledPackageContent(
                 <StatusBanner
                     namespace=ns_for_status
                     status=status_clone
-                    origin_host=origin_host_for_status
+                    uri=uri_for_status
                     no_access_reason=banner_no_access_reason
                     pull_check=pull_check
                     pull_retry=pull_retry
@@ -364,10 +365,12 @@ pub(super) fn InstalledPackageContent(
                     !is_publishable && has_changes && checked_count.get() == 0
                 });
                 let ns_for_publish = namespace.clone();
+                let uri_for_publish = uri_for_actions.clone();
                 let (publish_busy, on_publish) = make_action(
                     move || {
                         let ns = ns_for_publish.clone();
-                        async move { commands::package_publish(ns).await }
+                        let uri = uri_for_publish.clone();
+                        async move { commands::package_publish(ns, uri).await }
                     },
                     notification,
                     Some(ui_locked),

@@ -1,8 +1,10 @@
 use leptos::prelude::*;
+use quilt_uri::S3PackageUri;
 
 use crate::commands::{self, PausedEvent, PullCheck, PullOutcome};
 use crate::components::Notification;
 use crate::components::buttons;
+use crate::util::host_str;
 use crate::util::make_action;
 use crate::util::role_denied_hint;
 
@@ -20,7 +22,11 @@ use crate::util::role_denied_hint;
 pub(super) fn StatusBanner(
     namespace: String,
     status: String,
-    origin_host: Option<String>,
+    /// The package's remote, when it has one. Its catalog answers both
+    /// questions this banner asks about the remote: whether there *is* one (and
+    /// so which banner to show, and where Login would point), and which
+    /// deployment the sync actions here should be attributed to.
+    uri: Option<S3PackageUri>,
     /// Why the active role cannot reach this package's bucket, when it
     /// cannot. Outranks every status-driven banner — see
     /// [`remote_state_banner`].
@@ -40,7 +46,7 @@ pub(super) fn StatusBanner(
     refetch: Trigger,
 ) -> impl IntoView {
     let ns = namespace;
-    let host = origin_host;
+    let host = uri.as_ref().and_then(host_str);
 
     // A denial and the "unable to check" state are both answers about the
     // remote's reachability rather than about its contents, so one function
@@ -78,10 +84,12 @@ pub(super) fn StatusBanner(
     let content = match status.as_str() {
         "ahead" => {
             let ns_for_push = ns.clone();
+            let uri_for_push = uri.clone();
             let (push_busy, on_push) = make_action(
                 move || {
                     let ns = ns_for_push.clone();
-                    async move { commands::package_push(ns).await }
+                    let uri = uri_for_push.clone();
+                    async move { commands::package_push(ns, uri).await }
                 },
                 notification,
                 Some(ui_locked),
@@ -98,10 +106,12 @@ pub(super) fn StatusBanner(
         }
         "behind" => {
             let ns_for_pull = ns.clone();
+            let uri_for_pull = uri.clone();
             let (pull_busy, on_pull) = make_action(
                 move || {
                     let ns = ns_for_pull.clone();
-                    async move { commands::package_pull(ns).await }
+                    let uri = uri_for_pull.clone();
+                    async move { commands::package_pull(ns, uri).await }
                 },
                 notification,
                 Some(ui_locked),
@@ -150,10 +160,12 @@ pub(super) fn StatusBanner(
         ),
         "local" if host.is_some() => {
             let ns_for_push = ns.clone();
+            let uri_for_push = uri.clone();
             let (push_busy, on_push) = make_action(
                 move || {
                     let ns = ns_for_push.clone();
-                    async move { commands::package_push(ns).await }
+                    let uri = uri_for_push.clone();
+                    async move { commands::package_push(ns, uri).await }
                 },
                 notification,
                 Some(ui_locked),

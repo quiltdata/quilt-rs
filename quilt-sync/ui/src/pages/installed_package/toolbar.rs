@@ -16,6 +16,7 @@ pub(super) fn build_toolbar_actions(
     show_set_remote_popup: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
+    let uri = data.uri.clone();
     let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
@@ -37,10 +38,12 @@ pub(super) fn build_toolbar_actions(
         let navigate = use_navigate();
 
         let ns_for_open = namespace.clone();
+        let uri_for_open = uri.clone();
         let on_open_file_browser = move |_| {
             let ns = ns_for_open.clone();
+            let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns).await {
+                match commands::open_in_file_browser(ns, uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -57,12 +60,14 @@ pub(super) fn build_toolbar_actions(
         };
 
         let ns_for_uninstall = namespace.clone();
+        let uri_for_uninstall = uri.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
+            let uri = uri_for_uninstall.clone();
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns).await {
+                match commands::package_uninstall(ns, uri).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
                         navigate("/installed-packages-list", NavigateOptions::default());

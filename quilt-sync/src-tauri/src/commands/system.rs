@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use quilt_uri::S3PackageUri;
 use rfd::FileDialog;
 use serde::Serialize;
 use tauri::Manager;
@@ -18,6 +19,7 @@ use crate::notify::Notify;
 use crate::quilt;
 use crate::quilt::paths::DomainPaths;
 use crate::telemetry::diagnostics;
+use crate::telemetry::event::PackageFileEvent;
 use crate::telemetry::{MixpanelEvent, prelude::*};
 
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
@@ -162,7 +164,7 @@ pub async fn open_home_dir(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    tracing.track(MixpanelEvent::HomeDirOpened).await;
 
     let msg_init = "Opening home directory".to_string();
     let msg_ok = "Successfully opened home directory".to_string();
@@ -182,7 +184,7 @@ pub async fn open_data_dir(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    tracing.track(MixpanelEvent::DataDirOpened).await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening data directory".to_string();
@@ -262,8 +264,13 @@ pub async fn reveal_in_file_browser(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
     path: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileRevealed).await;
+    tracing
+        .track(MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(
+            uri.as_ref(),
+        )))
+        .await;
 
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
@@ -287,8 +294,13 @@ pub async fn open_in_file_browser(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileBrowserOpened).await;
+    tracing
+        .track(MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(
+            uri.as_ref(),
+        )))
+        .await;
 
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
@@ -318,8 +330,13 @@ pub async fn open_in_default_application(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     namespace: String,
     path: String,
+    uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DefaultApplicationOpened).await;
+    tracing
+        .track(MixpanelEvent::DefaultApplicationOpened(
+            PackageFileEvent::for_uri(uri.as_ref()),
+        ))
+        .await;
 
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
@@ -342,6 +359,10 @@ pub async fn open_in_web_browser(
     url: String,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
+    // Hostless on purpose, even though a URL has a host: this one command opens
+    // catalog links, documentation, a local directory and `mailto:` alike, so its
+    // URL's host is not necessarily a Quilt deployment — and `host` means the
+    // deployment an event concerns, never a hostname that appeared nearby.
     tracing.track(MixpanelEvent::WebBrowserOpened).await;
     let msg_init = format!("Opening URL {url}");
     let msg_ok = format!("Successfully opened {url}");

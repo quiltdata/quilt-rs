@@ -319,6 +319,7 @@ fn CommitContent(
         Signal::derive(move || commit_disabled(&message.get(), no_access_reason.as_deref()));
 
     let ns_for_action = namespace.clone();
+    let uri_for_action = data.uri.clone();
     let committing = RwSignal::new(false);
     let navigate_for_action = navigate.clone();
     // `action` decides whether we do a plain commit or a commit-and-push.
@@ -334,6 +335,7 @@ fn CommitContent(
         committing.set(true);
         ui_locked.set(true);
         let ns = ns_for_action.clone();
+        let uri = uri_for_action.clone();
         let meta = get_json_editor_value(editor_ref, textarea_ref);
         let wf = workflow_intents
             .get(selected_workflow.get_untracked())
@@ -341,9 +343,9 @@ fn CommitContent(
             .unwrap_or(WorkflowIntent::BucketDefault);
         leptos::task::spawn_local(async move {
             let result = if push {
-                commands::package_commit_and_push(ns.clone(), msg, meta, wf).await
+                commands::package_commit_and_push(ns.clone(), msg, meta, wf, uri).await
             } else {
-                commands::package_commit(ns.clone(), msg, meta, wf).await
+                commands::package_commit(ns.clone(), msg, meta, wf, uri).await
             };
             match result {
                 Ok(msg) => {
@@ -579,6 +581,7 @@ fn build_toolbar_actions(
     ui_locked: RwSignal<bool>,
 ) -> ToolbarActions {
     let namespace = data.namespace.clone();
+    let uri = data.uri.clone();
     let origin_url = data.uri.as_ref().and_then(util::catalog_url);
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
@@ -587,10 +590,12 @@ fn build_toolbar_actions(
         let navigate = use_navigate();
 
         let ns_for_open = namespace.clone();
+        let uri_for_open = uri.clone();
         let on_open_file_browser = move |_| {
             let ns = ns_for_open.clone();
+            let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns).await {
+                match commands::open_in_file_browser(ns, uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -607,12 +612,14 @@ fn build_toolbar_actions(
         };
 
         let ns_for_uninstall = namespace.clone();
+        let uri_for_uninstall = uri.clone();
         let on_uninstall = move |_| {
             let ns = ns_for_uninstall.clone();
+            let uri = uri_for_uninstall.clone();
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns).await {
+                match commands::package_uninstall(ns, uri).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
                         navigate("/installed-packages-list", NavigateOptions::default());
@@ -694,11 +701,15 @@ fn CommitEntryRow(
 
     let ns_for_open = entry.namespace.clone();
     let path_for_open = entry.filename.clone();
+    let uri_for_open = pkg_uri.clone();
+    let uri_for_ignore = pkg_uri.clone();
+    let uri_for_unignore = pkg_uri.clone();
     let on_open = move |_| {
         let ns = ns_for_open.clone();
         let path = path_for_open.clone();
+        let uri = uri_for_open.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, path).await {
+            match commands::open_in_default_application(ns, path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -707,11 +718,13 @@ fn CommitEntryRow(
 
     let ns_for_reveal = entry.namespace.clone();
     let path_for_reveal = entry.filename.clone();
+    let uri_for_reveal = pkg_uri.clone();
     let on_reveal = move |_| {
         let ns = ns_for_reveal.clone();
         let path = path_for_reveal.clone();
+        let uri = uri_for_reveal.clone();
         leptos::task::spawn_local(async move {
-            match commands::reveal_in_file_browser(ns, path).await {
+            match commands::reveal_in_file_browser(ns, path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -740,6 +753,7 @@ fn CommitEntryRow(
                 namespace: ns_for_ignore.clone(),
                 path: path_for_ignore.clone(),
                 suggested_pattern: pattern,
+                uri: uri_for_ignore.clone(),
             }));
         }
     };
@@ -751,6 +765,7 @@ fn CommitEntryRow(
             show_unignore_popup.set(Some(UnignorePopupData {
                 namespace: ns_for_unignore.clone(),
                 pattern,
+                uri: uri_for_unignore.clone(),
             }));
         }
     };
