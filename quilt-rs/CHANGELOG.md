@@ -9,35 +9,25 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.34.0-alpha5] - 2026-07-28
-
-### Changed
-
-- `InstalledPackage::status` now reports an access denial from the latest-hash read instead of degrading to the stored lineage, so a caller can tell a bucket the active role cannot read from a remote that is merely unreachable (offline callers still fall back as before) (<https://github.com/quiltdata/quilt-rs/pull/807>)
-
-## [v0.34.0-alpha4] - 2026-07-27
+## [v0.34.0] - 2026-07-30
 
 ### Added
 
 - Role support on `Auth` and `RemoteS3`: read the available roles and the active one, switch it, and list the buckets it can read, with the on-disk S3 credentials expiring on any observed role change — so a caller that also drops its cached S3 clients re-vends under the current role while the signed-in session is kept — and object reads, existence checks, URL resolution, and uploads now reporting an access denial distinctly from other storage failures (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
-## [v0.34.0-alpha3] - 2026-07-22
-
 ### Changed
 
+- The per-object hash types moved from the `checksum` module to a new `object_hash` module — `checksum` now holds only the storage-aware `calculate_hash` / `verify_hash` / `refresh_hash` helpers — and `Hash::from_file` became `Hash::from_reader`, taking an async reader plus an explicit length instead of a `tokio::fs::File` (<https://github.com/quiltdata/quilt-rs/pull/785>)
 - `pull` is now a surgical reconcile instead of a nuke-and-reinstall: it applies only the remote's `base ↔ latest` delta over tracked paths, preserving non-conflicting local work (a `Behind` package with local edits is no longer a dead end), refuses only on a pending local commit or a true conflict, and shares one apply primitive with `reset_to_latest` (<https://github.com/quiltdata/quilt-rs/pull/800>)
-
-## [v0.34.0-alpha2] - 2026-07-20
+- `InstalledPackage::status` now reports an access denial from the latest-hash read instead of degrading to the stored lineage, so a caller can tell a bucket the active role cannot read from a remote that is merely unreachable (offline callers still fall back as before) (<https://github.com/quiltdata/quilt-rs/pull/807>)
 
 ### Removed
 
 - The unused `object_hash::hash_sha256_checksum` helper (<https://github.com/quiltdata/quilt-rs/pull/786>)
 
-## [v0.34.0-alpha1] - 2026-07-20
+### quilt-uri
 
-### Changed
-
-- The per-object hash types moved from the `checksum` module to a new `object_hash` module — `checksum` now holds only the storage-aware `calculate_hash` / `verify_hash` / `refresh_hash` helpers — and `Hash::from_file` became `Hash::from_reader`, taking an async reader plus an explicit length instead of a `tokio::fs::File` (<https://github.com/quiltdata/quilt-rs/pull/785>)
+- Updated [from v0.3.0 to v0.4.0](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.3.0...quilt-uri/v0.4.0) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.33.0] - 2026-07-14
 

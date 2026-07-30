@@ -9,7 +9,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.29.0-alpha1] - 2026-07-28
+## [v0.29.0] - 2026-07-30
 
 ### Added
 
@@ -18,6 +18,14 @@
 ### Changed
 
 - `quilt status` now exits non-zero with the reason when the active role cannot read the package's bucket, instead of printing stale state from the last successful refresh (<https://github.com/quiltdata/quilt-rs/pull/807>)
+
+### quilt-rs
+
+- Updated [from v0.33.0 to v0.34.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.33.0...quilt-rs/v0.34.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.3.0 to v0.4.0](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.3.0...quilt-uri/v0.4.0) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.28.0] - 2026-07-14
 
