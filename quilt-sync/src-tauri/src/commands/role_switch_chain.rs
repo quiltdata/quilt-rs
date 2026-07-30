@@ -112,7 +112,7 @@ struct FakeStack {
     /// Buckets each role may read, in the order the stack lists the roles.
     readable: Vec<(String, Vec<String>)>,
     /// Hosts passed to `clear_remote_client_cache`, in call order. A global
-    /// clear (`None`) records as the empty string, as in `erase_auth`.
+    /// clear (`None`) records as the empty string.
     cache_clears: Mutex<Vec<String>>,
 }
 

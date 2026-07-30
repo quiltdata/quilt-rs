@@ -19,6 +19,7 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::oauth::OAuthState;
 use crate::quilt;
+use crate::quilt::paths::DomainPaths;
 use crate::routes;
 use crate::telemetry::event::{AuthEvent, LoginEvent, LoginFlow};
 use crate::telemetry::{MixpanelEvent, Telemetry, prelude::*};
@@ -66,26 +67,27 @@ pub async fn get_login_error_data(
     })
 }
 
-fn erase_auth_command(app_handle: &tauri::AppHandle, host: &str) -> Result<(), Error> {
+/// Remove one host's stored credentials.
+///
+/// Addressed by the same builder that created the directory
+/// ([`DomainPaths::auth_host`]), so the name looked up here is the normalized
+/// host login wrote, not whatever string a caller happened to hold.
+fn erase_auth_command(app_handle: &tauri::AppHandle, host: &Host) -> Result<(), Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_dir = local_data_dir.join(quilt::paths::AUTH_DIR);
+    let host_dir = DomainPaths::new(local_data_dir).auth_host(host);
 
-    if host.is_empty() {
-        // Global erase (backward compat)
-        if auth_dir.exists() {
-            std::fs::remove_dir_all(&auth_dir)?;
+    if host_dir.exists() {
+        // A `Host` cannot contain a path separator, so the join itself can no
+        // longer escape `auth_dir` — but `canonicalize` also resolves symlinks,
+        // and a host directory linked outside the auth dir would still take the
+        // delete with it. The containment check is for that.
+        let canonical = host_dir.canonicalize()?;
+        let canonical_auth = auth_dir.canonicalize()?;
+        if !canonical.starts_with(&canonical_auth) {
+            return Err(Error::General(format!("Invalid host: {host}")));
         }
-    } else {
-        // Per-host erase — canonicalize and verify containment
-        let host_dir = auth_dir.join(host);
-        if host_dir.exists() {
-            let canonical = host_dir.canonicalize()?;
-            let canonical_auth = auth_dir.canonicalize()?;
-            if !canonical.starts_with(&canonical_auth) {
-                return Err(Error::General(format!("Invalid host: {host}")));
-            }
-            std::fs::remove_dir_all(&canonical)?;
-        }
+        std::fs::remove_dir_all(&canonical)?;
     }
     Ok(())
 }
@@ -98,21 +100,25 @@ pub async fn erase_auth(
     tracing: tauri::State<'_, Telemetry>,
     host: String,
 ) -> Result<String, String> {
-    // The host is this command's own argument, and it reached the settings page
-    // by being parsed on the way in — so an unparseable one here means the stored
-    // state is corrupt. That is a fault, not an event with a missing field: the
-    // logout still proceeds, and the crash reporter hears about it.
-    match Host::from_str(&host) {
-        Ok(host) => {
-            tracing
-                .track(MixpanelEvent::AuthErased(AuthEvent { host }))
-                .await;
-        }
+    // One parse gates everything downstream: the stored directory is named by
+    // the normalized host, both caches key on a typed one, and the event
+    // guarantees one. A host that will not parse addresses none of them, so
+    // there is nothing to erase and nothing to attribute — report it to the
+    // crash reporter (every entry the settings page offers was parsed on the way
+    // in, so reaching this means the stored list is corrupt or the invoke came
+    // from outside the app) and tell the caller it failed.
+    let host = match Host::from_str(&host) {
+        Ok(host) => host,
         Err(err) => {
-            warn!("Erasing auth for an unparseable host {host}: {err}");
+            warn!("Refusing to erase auth for an unparseable host ({host:?}): {err}");
             Telemetry::report_error(&err);
+            return Err(format!("Failed to erase auth: {err}"));
         }
-    }
+    };
+
+    tracing
+        .track(MixpanelEvent::AuthErased(AuthEvent { host: host.clone() }))
+        .await;
 
     let app_handle = app_handle.lock().await;
 
@@ -139,19 +145,11 @@ pub async fn erase_auth(
 /// in as a different person leaves the roster quoting a stranger's role and
 /// offering the switch affordance on their entitlements.
 ///
-/// Global logout (empty host) clears every host; a per-host logout clears
-/// only that host's. An unparseable non-empty host can have nothing keyed
-/// under it — both caches key on a valid [`Host`] — so there is nothing to
-/// clear, and we must NOT fall back to clearing everything, which would drop
-/// unrelated hosts.
-async fn erase_role_state(m: &impl QuiltModel, roles: &RoleCache, host: &str) {
-    if host.is_empty() {
-        roles.invalidate(None).await;
-        m.clear_remote_client_cache(None).await;
-    } else if let Ok(host) = Host::from_str(host) {
-        roles.invalidate(Some(&host)).await;
-        m.clear_remote_client_cache(Some(host)).await;
-    }
+/// Scoped to the one host logging out: both caches key on a [`Host`], so a
+/// typed argument is what keeps this from reaching another catalog's entries.
+async fn erase_role_state(m: &impl QuiltModel, roles: &RoleCache, host: &Host) {
+    roles.invalidate(Some(host)).await;
+    m.clear_remote_client_cache(Some(host.clone())).await;
 }
 
 // ── Role data for Leptos UI ──
@@ -481,8 +479,8 @@ mod tests {
 
     impl RecordingModel {
         /// Hosts passed to `clear_remote_client_cache`, in call order. A
-        /// global clear (`None`) is recorded as an empty string, mirroring
-        /// `erase_auth`'s empty-host convention.
+        /// global clear (`None`) is recorded as an empty string — the model API
+        /// still allows one, though logout no longer asks for it.
         fn cache_clears_for_host(&self) -> Vec<String> {
             self.cache_clears.lock().expect("cache clear log").clone()
         }
@@ -722,7 +720,7 @@ mod tests {
 
         let mut erasing = MockQuiltModel::new();
         erasing.expect_clear_remote_client_cache().returning(|_| ());
-        erase_role_state(&erasing, &roles, "test.quilt.dev").await;
+        erase_role_state(&erasing, &roles, &host).await;
 
         let mut next_user = MockQuiltModel::new();
         next_user.expect_refresh_roles().times(1).returning(|_| {
@@ -739,51 +737,6 @@ mod tests {
             roles.get(&next_user, &host).await.expect("roles").current,
             "Curator",
             "the next login must be asked afresh, not served the last user's role"
-        );
-    }
-
-    /// A global logout (empty host) is not scoped to one catalog, so nothing
-    /// may survive it.
-    #[tokio::test]
-    async fn a_global_logout_drops_every_cached_role() {
-        let host: Host = "test.quilt.dev".parse().expect("host");
-        let roles = warmed_role_cache(&host).await;
-
-        let mut erasing = MockQuiltModel::new();
-        erasing.expect_clear_remote_client_cache().returning(|_| ());
-        erase_role_state(&erasing, &roles, "").await;
-
-        let mut next_user = MockQuiltModel::new();
-        next_user
-            .expect_refresh_roles()
-            .times(1)
-            .returning(|_| Ok(two_roles()));
-        next_user
-            .expect_clear_remote_client_cache()
-            .returning(|_| ());
-
-        roles.get(&next_user, &host).await.expect("roles");
-    }
-
-    /// An unparseable, non-empty host keys nothing in either cache, so it
-    /// must clear nothing — falling back to a global clear would log every
-    /// other catalog out of its role.
-    #[tokio::test]
-    async fn an_unparseable_logout_host_clears_nothing() {
-        let host: Host = "test.quilt.dev".parse().expect("host");
-        let roles = warmed_role_cache(&host).await;
-
-        let mut erasing = MockQuiltModel::new();
-        erasing.expect_clear_remote_client_cache().never();
-        erase_role_state(&erasing, &roles, "not a host").await;
-
-        let mut untouched = MockQuiltModel::new();
-        untouched.expect_refresh_roles().never();
-
-        assert_eq!(
-            roles.get(&untouched, &host).await.expect("roles").current,
-            "ReadOnly",
-            "an unkeyable host must leave the other hosts' entries alone"
         );
     }
 
