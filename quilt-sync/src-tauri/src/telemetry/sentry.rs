@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use semver::Version;
 
 use crate::env;
@@ -30,10 +28,7 @@ fn tag_host(host: AmbientHost) -> sentry::ClientOptions {
         Some(event)
     };
 
-    sentry::ClientOptions {
-        before_send: Some(Arc::new(before_send)),
-        ..Default::default()
-    }
+    sentry::ClientOptions::new().before_send(before_send)
 }
 
 pub fn sentry_config(version: &Version, host: AmbientHost) -> Option<sentry::ClientOptions> {
@@ -41,9 +36,13 @@ pub fn sentry_config(version: &Version, host: AmbientHost) -> Option<sentry::Cli
     if dsn.is_none() {
         eprintln!("No SENTRY_DSN configured, Sentry disabled");
     }
-    dsn.map(|dsn| sentry::ClientOptions {
-        dsn: Some(dsn),
-        release: Some(version.to_string().into()),
-        ..tag_host(host)
+    dsn.map(|dsn| {
+        // `ClientOptions` is `#[non_exhaustive]` as of sentry 0.49, so it is built
+        // through the setters. `dsn` is assigned directly because the `dsn` setter
+        // takes a `&str` and panics on a malformed value — `get_sentry_dsn` already
+        // parsed it and warns instead.
+        let mut options = tag_host(host).release(version.to_string());
+        options.dsn = Some(dsn);
+        options
     })
 }

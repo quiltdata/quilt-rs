@@ -26,7 +26,7 @@ quilt-uri = { path = "../../quilt-uri" }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-i18n = "4.2.1"
 semver = "1.0.28"
-sentry = { version = "0.48.5", features = ["tracing"] }
+sentry = { version = "0.49.1", features = ["tracing"] }
 mixpanel-rs = "0.3.1"
 notify = "8.2"
 notify-debouncer-full = "0.7"
@@ -56,7 +56,7 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
 serde_yaml.workspace = true
-serial_test = "3"
+serial_test = "4"
 tokio-test.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
