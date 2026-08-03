@@ -15,6 +15,16 @@ use crate::quilt::lineage::UpstreamState;
 
 mod publish;
 
+/// Hex of an ASCII string, matching the per-byte path encoding in the status
+/// fingerprint — for asserting a path appears hex-encoded in an outcome digest.
+fn hex(s: &str) -> String {
+    use std::fmt::Write as _;
+    s.bytes().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
+}
+
 fn test_aggregator() -> Arc<crate::autopull::status::SyncTrayAggregator> {
     let (tx, _) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
     Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx))
@@ -894,5 +904,152 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let logins = reporter.logins.lock().unwrap();
     assert_eq!(logins.len(), 1);
     assert_eq!(logins[0].as_ref(), Some(&host));
+    Ok(())
+}
+
+/// A no-action tick (up-to-date, local changes, nothing to pull or publish)
+/// carries a fingerprint of the observed status, so two identical ticks
+/// produce identical outcomes and a consumer can skip the repeat.
+#[tokio::test]
+async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: None,
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ))
+    });
+    model
+        .expect_get_installed_package_status()
+        .returning(|_, _| {
+            let mut changes = BTreeMap::new();
+            changes.insert(
+                std::path::PathBuf::from("a.txt"),
+                quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
+            );
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                changes,
+            ))
+        });
+
+    // pull + push disabled → the tick observes and does nothing.
+    let outcome = refresh_then_maybe_sync(
+        &model,
+        &ns,
+        &lineage,
+        &PublishSettings::default(),
+        Duration::from_secs(0),
+        false,
+        false,
+    )
+    .await
+    .expect("no-action tick should be Ok");
+
+    assert!(outcome.has_changes);
+    let hex_path = hex("a.txt");
+    assert!(
+        outcome.fingerprint.starts_with("up_to_date;")
+            && outcome.fingerprint.contains(&format!("{hex_path}:M:")),
+        "outcome should carry the observation fingerprint, got: {}",
+        outcome.fingerprint
+    );
+    Ok(())
+}
+
+/// A persistently-paused package re-emits its conflict every tick. The status
+/// event it carries must have a stable, non-empty fingerprint (derived from the
+/// heuristic status it reports) — otherwise a paused page rebuilds every tick,
+/// the same trap the no-action path had.
+#[tokio::test]
+async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into())
+                .unwrap(),
+        ))
+    });
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+    model.expect_package_pull_outcome().times(1).returning(|_| {
+        Ok(PullOutcome::Blocked {
+            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+        })
+    });
+    model.expect_package_pull().times(0);
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: reporter.clone(),
+        aggregator: test_aggregator(),
+    };
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let statuses = reporter.statuses.lock().unwrap();
+    assert_eq!(
+        statuses.len(),
+        1,
+        "the conflict tick emits one status event"
+    );
+    let event = &statuses[0].1;
+    assert_eq!(event.status, "paused");
+    // The fingerprint is a stable function of the heuristic observation, so the
+    // same pause re-reported carries the same fingerprint (consumer skips it).
+    assert_eq!(
+        event.fingerprint,
+        format!("{};{}", event.status, event.has_changes),
+        "conflict emit should carry a stable heuristic fingerprint, not an empty default"
+    );
+    assert!(!event.fingerprint.is_empty());
     Ok(())
 }

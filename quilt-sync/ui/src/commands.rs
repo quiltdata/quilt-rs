@@ -505,6 +505,11 @@ pub struct PackageStatusEvent {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
+    /// Digest of the observation this event reports (see the backend's
+    /// `PackageStatusEvent`). The page acts only when it differs from the last
+    /// one it acted on, so a tick that re-reports an unchanged tree — same
+    /// fingerprint — leaves the page untouched instead of rebuilding it.
+    pub fingerprint: String,
 }
 
 pub const PACKAGE_STATUS_EVENT: &str = "package-status-changed";

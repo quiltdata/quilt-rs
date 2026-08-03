@@ -1,6 +1,3 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +15,6 @@ use crate::fswatcher::subscriber::SubscriberError;
 use crate::fswatcher::subscriber::Subscription;
 use crate::model::Model;
 use crate::model::QuiltModel;
-use crate::quilt;
 use crate::telemetry::prelude::*;
 
 /// How often the reactor re-snapshots the installed-packages list and
@@ -32,12 +28,6 @@ pub(crate) struct ReactorState {
     pub reporter: Arc<dyn StatusReporter>,
     pub signal_rx: mpsc::Receiver<MappingSignal>,
     pub subscription: Subscription,
-    /// Per-namespace fingerprint of the last emitted status. Two recomputes
-    /// that produce the same fingerprint emit only the first event — this
-    /// is how the watcher avoids feeding back on itself when the backend's
-    /// own reads (e.g. `flow::status` walking the working tree to compute
-    /// the next status) trigger inotify `OPEN`/`ATTRIB` events.
-    pub previous_fingerprints: BTreeMap<Namespace, String>,
     /// Kind of the last `Err` returned by `reconcile`. A failed `add()`
     /// doesn't insert into the subscription's watched set, so the next
     /// reconcile retries the same namespaces and fails the same way; this
@@ -67,7 +57,6 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                     if let Err(err) = state.subscription.reconcile(Vec::new()) {
                         emit_subscriber_error(state.reporter.as_ref(), &err);
                     }
-                    state.previous_fingerprints.clear();
                     // Re-enabling later should be able to surface the
                     // inotify-limit toast again if the limit still applies.
                     state.last_reconcile_error_kind = None;
@@ -78,13 +67,7 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                     continue;
                 }
                 let model = app_handle.state::<Model>();
-                process_signal(
-                    &*model,
-                    state.reporter.as_ref(),
-                    &mut state.previous_fingerprints,
-                    signal,
-                )
-                .await;
+                process_signal(&*model, state.reporter.as_ref(), signal).await;
             }
             else => break,
         }
@@ -94,16 +77,11 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
 pub(crate) async fn process_signal(
     model: &impl QuiltModel,
     reporter: &dyn StatusReporter,
-    previous_fingerprints: &mut BTreeMap<Namespace, String>,
     signal: MappingSignal,
 ) {
     let pkg = match model.get_installed_package(&signal.namespace).await {
         Ok(Some(pkg)) => pkg,
-        Ok(None) => {
-            // already uninstalled; drop any stale fingerprint
-            previous_fingerprints.remove(&signal.namespace);
-            return;
-        }
+        Ok(None) => return, // already uninstalled
         Err(err) => {
             warn!(
                 "fswatcher: get_installed_package for {} failed: {err}",
@@ -122,40 +100,16 @@ pub(crate) async fn process_signal(
             return;
         }
     };
-    let fingerprint = status_fingerprint(&status);
-    if previous_fingerprints.get(&signal.namespace) == Some(&fingerprint) {
-        // Same fingerprint as last emit — spurious wake (e.g. inotify
-        // `OPEN` event from the UI reading the working tree). Skip.
-        return;
-    }
-    previous_fingerprints.insert(signal.namespace.clone(), fingerprint);
-    let event = PackageStatusEvent {
-        namespace: signal.namespace.to_string(),
-        status: status.upstream_state.to_string(),
-        has_changes: !status.changes.is_empty(),
-    };
-    reporter.report_status(&signal.namespace, event);
-}
-
-/// Stable digest of the parts of `InstalledPackageStatus` that the UI
-/// renders. Two recompute results with the same fingerprint produce the
-/// same UI, so the second one need not be re-emitted.
-///
-/// Format: `<upstream>;<path>:<kind>:<hash>;<path>:<kind>:<hash>;...`
-/// Paths are walked in `BTreeMap` order (sorted by `PathBuf`), so the
-/// output is deterministic without an explicit sort.
-fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
-    let mut out = String::new();
-    let _ = write!(out, "{};", status.upstream_state);
-    for (path, change) in &status.changes {
-        let (kind, row) = match change {
-            quilt::lineage::Change::Added(r) => ("A", r),
-            quilt::lineage::Change::Modified(r) => ("M", r),
-            quilt::lineage::Change::Removed(r) => ("D", r),
-        };
-        let _ = write!(out, "{}:{}:{};", path.to_string_lossy(), kind, row.hash);
-    }
-    out
+    // Emit on every signal — including a spurious wake that recomputes an
+    // identical status. The event carries a fingerprint of the observation,
+    // and the *consumer* skips a repeat. A producer-side suppression map here
+    // was reactor-only (the autopull tick never consulted it), so it could
+    // strand the page on a stale view after a tick moved it — stale-and-quiet,
+    // with no recovery.
+    reporter.report_status(
+        &signal.namespace,
+        PackageStatusEvent::from_status(&signal.namespace, &status),
+    );
 }
 
 /// Snapshot the current installed-packages list and resolve each one's
@@ -191,10 +145,6 @@ async fn reconcile_from_model(state: &mut ReactorState, app_handle: &tauri::AppH
     let Some(mappings) = snapshot_mappings(&*model).await else {
         return;
     };
-    let kept: BTreeSet<Namespace> = mappings.iter().map(|(ns, _)| ns.clone()).collect();
-    state
-        .previous_fingerprints
-        .retain(|ns, _| kept.contains(ns));
     match state.subscription.reconcile(mappings) {
         Ok(()) => {
             state.last_reconcile_error_kind = None;
@@ -222,8 +172,11 @@ pub(crate) fn emit_subscriber_error(reporter: &dyn StatusReporter, err: &Subscri
 mod tests {
     use super::*;
 
+    use std::collections::BTreeMap;
+
     use crate::autopull::reporter::test_support::RecordingReporter;
     use crate::model::MockQuiltModel;
+    use crate::quilt;
 
     fn changes_with_one_file(kind: &'static str) -> BTreeMap<PathBuf, quilt::lineage::Change> {
         let mut changes = BTreeMap::new();
@@ -248,12 +201,10 @@ mod tests {
         let mut model = MockQuiltModel::new();
         model.expect_get_installed_package().returning(|_| Ok(None));
         let reporter = Arc::new(RecordingReporter::default());
-        let mut prev = BTreeMap::new();
 
         process_signal(
             &model,
             reporter.as_ref(),
-            &mut prev,
             MappingSignal {
                 namespace: ("acme", "demo").into(),
             },
@@ -276,12 +227,10 @@ mod tests {
             ))
         });
         let reporter = Arc::new(RecordingReporter::default());
-        let mut prev = BTreeMap::new();
 
         process_signal(
             &model,
             reporter.as_ref(),
-            &mut prev,
             MappingSignal {
                 namespace: ns.clone(),
             },
@@ -296,11 +245,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn identical_recompute_after_first_emit_is_suppressed() {
-        // Two back-to-back signals where the recomputed status is byte-for-byte
-        // identical (the second one came from a spurious wake — e.g. an inotify
-        // OPEN event fired by the UI re-reading the working tree). The reactor
-        // must emit exactly once.
+    async fn identical_recompute_after_first_emit_still_emits() {
+        // Two back-to-back signals with a byte-for-byte identical recomputed
+        // status (the second from a spurious wake — e.g. an inotify OPEN fired
+        // by the UI re-reading the working tree). The reactor no longer holds a
+        // suppression map: it emits both, each carrying the same fingerprint,
+        // and the *consumer* skips the repeat. (A producer-side map would strand
+        // the page after a tick moved it — stale-and-quiet with no recovery.)
         let ns: Namespace = ("acme", "demo").into();
         let mut model = MockQuiltModel::new();
         model
@@ -317,17 +268,20 @@ mod tests {
                 ))
             });
         let reporter = Arc::new(RecordingReporter::default());
-        let mut prev = BTreeMap::new();
         let signal = MappingSignal {
             namespace: ns.clone(),
         };
 
-        process_signal(&model, reporter.as_ref(), &mut prev, signal.clone()).await;
-        process_signal(&model, reporter.as_ref(), &mut prev, signal).await;
+        process_signal(&model, reporter.as_ref(), signal.clone()).await;
+        process_signal(&model, reporter.as_ref(), signal).await;
 
         let statuses = reporter.statuses.lock().unwrap();
-        assert_eq!(statuses.len(), 1, "second recompute should be suppressed");
-        assert_eq!(statuses[0].0, ns);
+        assert_eq!(
+            statuses.len(),
+            2,
+            "both emit; the consumer dedups by fingerprint"
+        );
+        assert_eq!(statuses[0].1.fingerprint, statuses[1].1.fingerprint);
     }
 
     #[tokio::test]
@@ -362,13 +316,12 @@ mod tests {
                 ))
             });
         let reporter = Arc::new(RecordingReporter::default());
-        let mut prev = BTreeMap::new();
         let signal = MappingSignal {
             namespace: ns.clone(),
         };
 
-        process_signal(&model, reporter.as_ref(), &mut prev, signal.clone()).await;
-        process_signal(&model, reporter.as_ref(), &mut prev, signal).await;
+        process_signal(&model, reporter.as_ref(), signal.clone()).await;
+        process_signal(&model, reporter.as_ref(), signal).await;
 
         assert_eq!(reporter.statuses.lock().unwrap().len(), 2);
     }
