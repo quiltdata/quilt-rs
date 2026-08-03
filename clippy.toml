@@ -5,4 +5,8 @@
 # lint still fires on genuine outliers. Two futures exceed it and are
 # `Box::pin`-ed at their call sites: the autosync tick and the publish state
 # machine (boxing the latter also deflates its caller).
-future-size-threshold = 18500
+#
+# The budget tracks the cluster, so a dependency update that grows the crates
+# inside these state machines moves it: the 2026-08-03 sweep (AWS SDK, reqwest,
+# Tauri, Sentry) shifted the cluster from ~18.4 KB to ~19.7 KB.
+future-size-threshold = 19800
