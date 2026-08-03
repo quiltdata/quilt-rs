@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.20.1-alpha2] - 2026-08-03
+
+### Fixed
+
+- Files you tick for download on the installed-package page are no longer lost when the page refreshes: any change to the package — including editing an unrelated local file — used to clear your choices and re-check "Select all", discarding a set of paths you were part-way through picking. The selection now survives a refresh, follows files by path rather than by their position in the list, and drops files that have since been downloaded or removed from the package (<https://github.com/quiltdata/quilt-rs/pull/814>)
+- The "Select all" checkbox on the installed-package page shows a dash when only some files are ticked, instead of looking empty as though nothing were selected (<https://github.com/quiltdata/quilt-rs/pull/814>)
+
+### Changed
+
+- The installed-package page updates in place when the package changes, instead of blanking to a spinner and redrawing itself; opening a different package still shows the spinner (<https://github.com/quiltdata/quilt-rs/pull/814>)
+
 ## [v0.20.1-alpha1] - 2026-08-03
 
 ### Fixed
