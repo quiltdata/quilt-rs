@@ -15,6 +15,16 @@ use crate::quilt::lineage::UpstreamState;
 
 mod publish;
 
+/// Hex of an ASCII string, matching the per-byte path encoding in the status
+/// fingerprint — for asserting a path appears hex-encoded in an outcome digest.
+fn hex(s: &str) -> String {
+    use std::fmt::Write as _;
+    s.bytes().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
+}
+
 fn test_aggregator() -> Arc<crate::autopull::status::SyncTrayAggregator> {
     let (tx, _) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
     Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx))
@@ -947,7 +957,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
     .expect("no-action tick should be Ok");
 
     assert!(outcome.has_changes);
-    let hex_path: String = "a.txt".bytes().map(|b| format!("{b:02x}")).collect();
+    let hex_path = hex("a.txt");
     assert!(
         outcome.fingerprint.starts_with("up_to_date;")
             && outcome.fingerprint.contains(&format!("{hex_path}:M:")),

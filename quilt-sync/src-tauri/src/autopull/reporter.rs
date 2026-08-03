@@ -312,6 +312,15 @@ struct LoginRequiredEvent {
 mod tests {
     use super::*;
 
+    /// Hex of an ASCII string — mirrors the per-byte encoding the fingerprint
+    /// applies to a path, for asserting a path appears hex-encoded in a digest.
+    fn hex(s: &str) -> String {
+        s.bytes().fold(String::new(), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        })
+    }
+
     #[test]
     fn from_status_assembles_status_has_changes_and_fingerprint_from_one_observation() {
         use std::collections::BTreeMap;
@@ -340,7 +349,7 @@ mod tests {
             "fingerprint should lead with the upstream state, got: {}",
             event.fingerprint
         );
-        let hex_path: String = "a.txt".bytes().map(|b| format!("{b:02x}")).collect();
+        let hex_path = hex("a.txt");
         assert!(
             event.fingerprint.contains(&format!("{hex_path}:M:")),
             "fingerprint should carry the hex-encoded path and kind, got: {}",
@@ -374,11 +383,11 @@ mod tests {
         // `a:M:<hash>;b` can't serialize like two separate entries, so a genuine
         // change is never read as a duplicate.
         let fp = fingerprint_of_one_modified(PathBuf::from("weird;name:with:delims"));
-        let hex: String = "weird;name:with:delims"
-            .bytes()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        assert!(fp.contains(&hex), "path should be hex-encoded, got: {fp}");
+        let expected = hex("weird;name:with:delims");
+        assert!(
+            fp.contains(&expected),
+            "path should be hex-encoded, got: {fp}"
+        );
         assert!(
             !fp.contains("name:with"),
             "raw path delimiters must not survive to be read as separators, got: {fp}"
