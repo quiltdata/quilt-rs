@@ -55,9 +55,13 @@ impl PackageStatusEvent {
 /// Two recompute results with the same fingerprint produce the same view, so
 /// the second need not be acted on.
 ///
-/// Format: `<upstream>;<path>:<kind>:<hash>;<path>:<kind>:<hash>;...`
+/// Format: `<upstream>;<esc(path)>:<kind>:<hash>;<esc(path)>:<kind>:<hash>;...`
 /// Paths are walked in `BTreeMap` order (sorted by `PathBuf`), so the output
-/// is deterministic without an explicit sort.
+/// is deterministic without an explicit sort. The path is the only field that
+/// can carry the `:`/`;` delimiters (kind is A/M/D, the hash is hex/base64), so
+/// it is percent-escaped to keep the digest **injective** — otherwise a crafted
+/// path (`a:M:<hash>;b`) could serialize like two separate entries, colliding
+/// two distinct observations and making a consumer skip a real refetch.
 pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
     let mut out = String::new();
     let _ = write!(out, "{};", status.upstream_state);
@@ -67,7 +71,13 @@ pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus
             quilt::lineage::Change::Modified(r) => ("M", r),
             quilt::lineage::Change::Removed(r) => ("D", r),
         };
-        let _ = write!(out, "{}:{}:{};", path.to_string_lossy(), kind, row.hash);
+        // Escape `%` first so the escaping itself stays reversible/injective.
+        let escaped = path
+            .to_string_lossy()
+            .replace('%', "%25")
+            .replace(':', "%3A")
+            .replace(';', "%3B");
+        let _ = write!(out, "{escaped}:{kind}:{};", row.hash);
     }
     out
 }
@@ -334,6 +344,41 @@ mod tests {
             event.fingerprint.contains("a.txt:M:"),
             "fingerprint should carry the changed path and kind, got: {}",
             event.fingerprint
+        );
+    }
+
+    #[test]
+    fn fingerprint_escapes_path_delimiters() {
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+
+        // The path is the only fingerprint field that can hold the `:`/`;`
+        // delimiters (kind is A/M/D, the hash is hex/base64). Unescaped, a path
+        // like `a:M:<hash>;b` serializes identically to two separate paths, so a
+        // genuine change would read as a duplicate and the page would skip the
+        // refetch. The path is escaped to keep the encoding injective.
+        let ns: Namespace = ("acme", "demo").into();
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            PathBuf::from("weird;name:with:delims"),
+            quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
+        );
+        let fp = PackageStatusEvent::from_status(
+            &ns,
+            &quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::UpToDate,
+                changes,
+            ),
+        )
+        .fingerprint;
+
+        assert!(
+            fp.contains("weird%3Bname%3Awith%3Adelims"),
+            "path delimiters should be escaped, got: {fp}"
+        );
+        assert!(
+            !fp.contains("name:with"),
+            "raw path delimiters must not survive to be read as separators, got: {fp}"
         );
     }
 
