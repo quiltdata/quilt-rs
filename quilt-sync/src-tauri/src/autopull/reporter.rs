@@ -55,13 +55,16 @@ impl PackageStatusEvent {
 /// Two recompute results with the same fingerprint produce the same view, so
 /// the second need not be acted on.
 ///
-/// Format: `<upstream>;<esc(path)>:<kind>:<hash>;<esc(path)>:<kind>:<hash>;...`
+/// Format: `<upstream>;<hex(path)>:<kind>:<hash>;<hex(path)>:<kind>:<hash>;...`
 /// Paths are walked in `BTreeMap` order (sorted by `PathBuf`), so the output
 /// is deterministic without an explicit sort. The path is the only field that
-/// can carry the `:`/`;` delimiters (kind is A/M/D, the hash is hex/base64), so
-/// it is percent-escaped to keep the digest **injective** — otherwise a crafted
-/// path (`a:M:<hash>;b`) could serialize like two separate entries, colliding
-/// two distinct observations and making a consumer skip a real refetch.
+/// can hold arbitrary bytes — non-UTF-8 names on Linux, or the `:`/`;`
+/// delimiters (kind is A/M/D, the hash is hex/base64) — so it is **hex-encoded
+/// from its lossless bytes**. Hex is `0-9a-f` only, so it is both lossless and
+/// delimiter-free, keeping the digest **injective**: no two distinct
+/// observations share a fingerprint, so a consumer never skips a real refetch.
+/// (A lossy path string would fold two distinct non-UTF-8 names to the same
+/// `�`; a raw path could serialize a crafted `a:M:<hash>;b` like two entries.)
 pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
     let mut out = String::new();
     let _ = write!(out, "{};", status.upstream_state);
@@ -71,13 +74,10 @@ pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus
             quilt::lineage::Change::Modified(r) => ("M", r),
             quilt::lineage::Change::Removed(r) => ("D", r),
         };
-        // Escape `%` first so the escaping itself stays reversible/injective.
-        let escaped = path
-            .to_string_lossy()
-            .replace('%', "%25")
-            .replace(':', "%3A")
-            .replace(';', "%3B");
-        let _ = write!(out, "{escaped}:{kind}:{};", row.hash);
+        for b in path.as_os_str().as_encoded_bytes() {
+            let _ = write!(out, "{b:02x}");
+        }
+        let _ = write!(out, ":{kind}:{};", row.hash);
     }
     out
 }
@@ -334,52 +334,71 @@ mod tests {
         assert_eq!(event.status, "up_to_date");
         assert!(event.has_changes);
         // ...and the fingerprint carries the upstream state plus the changed
-        // path's kind, so the three describe one observation.
+        // path (hex-encoded) and its kind, so the three describe one observation.
         assert!(
             event.fingerprint.starts_with("up_to_date;"),
             "fingerprint should lead with the upstream state, got: {}",
             event.fingerprint
         );
+        let hex_path: String = "a.txt".bytes().map(|b| format!("{b:02x}")).collect();
         assert!(
-            event.fingerprint.contains("a.txt:M:"),
-            "fingerprint should carry the changed path and kind, got: {}",
+            event.fingerprint.contains(&format!("{hex_path}:M:")),
+            "fingerprint should carry the hex-encoded path and kind, got: {}",
             event.fingerprint
         );
     }
 
-    #[test]
-    fn fingerprint_escapes_path_delimiters() {
+    fn fingerprint_of_one_modified(path: std::path::PathBuf) -> String {
         use std::collections::BTreeMap;
-        use std::path::PathBuf;
-
-        // The path is the only fingerprint field that can hold the `:`/`;`
-        // delimiters (kind is A/M/D, the hash is hex/base64). Unescaped, a path
-        // like `a:M:<hash>;b` serializes identically to two separate paths, so a
-        // genuine change would read as a duplicate and the page would skip the
-        // refetch. The path is escaped to keep the encoding injective.
-        let ns: Namespace = ("acme", "demo").into();
         let mut changes = BTreeMap::new();
         changes.insert(
-            PathBuf::from("weird;name:with:delims"),
+            path,
             quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
         );
-        let fp = PackageStatusEvent::from_status(
-            &ns,
+        PackageStatusEvent::from_status(
+            &("acme", "demo").into(),
             &quilt::lineage::InstalledPackageStatus::new(
                 quilt::lineage::UpstreamState::UpToDate,
                 changes,
             ),
         )
-        .fingerprint;
+        .fingerprint
+    }
 
-        assert!(
-            fp.contains("weird%3Bname%3Awith%3Adelims"),
-            "path delimiters should be escaped, got: {fp}"
-        );
+    #[test]
+    fn fingerprint_hex_encodes_paths_so_delimiters_cannot_collide() {
+        use std::path::PathBuf;
+
+        // The path is the only field that can hold the `:`/`;` delimiters (kind
+        // is A/M/D, the hash is hex/base64). Hex-encoded, a crafted path like
+        // `a:M:<hash>;b` can't serialize like two separate entries, so a genuine
+        // change is never read as a duplicate.
+        let fp = fingerprint_of_one_modified(PathBuf::from("weird;name:with:delims"));
+        let hex: String = "weird;name:with:delims"
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert!(fp.contains(&hex), "path should be hex-encoded, got: {fp}");
         assert!(
             !fp.contains("name:with"),
             "raw path delimiters must not survive to be read as separators, got: {fp}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fingerprint_distinguishes_non_utf8_paths() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        use std::path::PathBuf;
+
+        // Two paths that differ only in invalid-UTF-8 bytes fold to the same
+        // `to_string_lossy()` output (both `foo` + the replacement char), which
+        // would collide their fingerprints. Hex-encoding the lossless bytes
+        // keeps them distinct.
+        let a = fingerprint_of_one_modified(PathBuf::from(OsStr::from_bytes(b"foo\xff")));
+        let b = fingerprint_of_one_modified(PathBuf::from(OsStr::from_bytes(b"foo\xfe")));
+        assert_ne!(a, b, "non-UTF-8 paths must not collide in the fingerprint");
     }
 
     #[test]

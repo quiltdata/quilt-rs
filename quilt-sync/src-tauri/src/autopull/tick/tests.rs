@@ -947,8 +947,10 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
     .expect("no-action tick should be Ok");
 
     assert!(outcome.has_changes);
+    let hex_path: String = "a.txt".bytes().map(|b| format!("{b:02x}")).collect();
     assert!(
-        outcome.fingerprint.starts_with("up_to_date;") && outcome.fingerprint.contains("a.txt:M:"),
+        outcome.fingerprint.starts_with("up_to_date;")
+            && outcome.fingerprint.contains(&format!("{hex_path}:M:")),
         "outcome should carry the observation fingerprint, got: {}",
         outcome.fingerprint
     );
