@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.20.1-alpha1] - 2026-08-03
+
+### Fixed
+
+- The installed-package page no longer reloads on a timer: with autosync on it used to refetch every 30 s whether or not anything had changed, flashing a spinner and clearing the file selection to redraw the view already on screen. It now refreshes only when the package's state actually changes (<https://github.com/quiltdata/quilt-rs/pull/813>)
+
 ## [v0.20.0] - 2026-07-30
 
 ### Added
