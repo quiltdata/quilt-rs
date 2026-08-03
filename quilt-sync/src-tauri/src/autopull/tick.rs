@@ -11,6 +11,8 @@ use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
 use crate::autopull::reporter::PackageStatusEvent;
+use crate::autopull::reporter::clean_uptodate_fingerprint;
+use crate::autopull::reporter::status_fingerprint;
 use crate::commands::RoleCache;
 use crate::model;
 use crate::model::QuiltModel;
@@ -27,6 +29,28 @@ pub(crate) struct RefreshOutcome {
     /// pull success, on quiet-window deferral, and on any no-action
     /// tick. `run_once` reads this to call `report_published`.
     pub published: Option<String>,
+    /// Fingerprint of the observation this outcome reports, put on the
+    /// emitted `PackageStatusEvent` so a repeated no-action tick — the same
+    /// observation re-reported — collides with the last and is skipped by the
+    /// consumer. Set from the observed status, except the mutation-success
+    /// paths, which reach a settled `UpToDate` tree (`clean_uptodate_fingerprint`).
+    pub fingerprint: String,
+}
+
+impl RefreshOutcome {
+    /// An outcome that reports the observed tree without publishing.
+    fn observed(
+        upstream: quilt::lineage::UpstreamState,
+        has_changes: bool,
+        fingerprint: String,
+    ) -> Self {
+        Self {
+            upstream,
+            has_changes,
+            published: None,
+            fingerprint,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -215,6 +239,8 @@ pub(crate) async fn refresh_then_maybe_sync(
         .map_err(classify_transient_or_login)?;
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
+    // Observed-tree fingerprint, taken before the publish path consumes `status`.
+    let fingerprint = status_fingerprint(&status);
     // `lineage` comes from `run_once`'s skip-filter read — re-reading it
     // here would cost an extra trait call per tick and open a narrow
     // race window where a commit landing between the two reads would
@@ -285,19 +311,16 @@ pub(crate) async fn refresh_then_maybe_sync(
                         // `kept_changes` is the intended post-pull state.
                         // `kept_changes` comes from the outcome (post-pull
                         // truth), not the pre-pull `has_changes`.
-                        Ok(RefreshOutcome {
-                            upstream: quilt::lineage::UpstreamState::UpToDate,
-                            has_changes: kept_changes,
-                            published: None,
-                        })
+                        Ok(RefreshOutcome::observed(
+                            quilt::lineage::UpstreamState::UpToDate,
+                            kept_changes,
+                            clean_uptodate_fingerprint(),
+                        ))
                     }
                     // Nothing was applied on the error path, so the pre-pull
                     // `has_changes` still describes the tree.
-                    Err(err) => classify_sync_err(err).map(|()| RefreshOutcome {
-                        upstream,
-                        has_changes,
-                        published: None,
-                    }),
+                    Err(err) => classify_sync_err(err)
+                        .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
                 };
             }
             // Race: tip moved back to up-to-date between status and classify.
@@ -318,11 +341,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         let now = SystemTime::now();
         if !status.working_tree_quiet(now, quiet_window) {
             info!("autosync: namespace={namespace} working tree not quiet, deferring");
-            return Ok(RefreshOutcome {
-                upstream,
-                has_changes,
-                published: None,
-            });
+            return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
         }
         // `publish_with_settings` is shared with the manual one-click
         // Publish command in `commands.rs`, so a change to publish
@@ -335,21 +354,15 @@ pub(crate) async fn refresh_then_maybe_sync(
                     upstream: quilt::lineage::UpstreamState::UpToDate,
                     has_changes: false,
                     published: Some(message),
+                    fingerprint: clean_uptodate_fingerprint(),
                 })
             }
-            Err(err) => classify_sync_err(err).map(|()| RefreshOutcome {
-                upstream,
-                has_changes,
-                published: None,
-            }),
+            Err(err) => classify_sync_err(err)
+                .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
         };
     }
 
-    Ok(RefreshOutcome {
-        upstream,
-        has_changes,
-        published: None,
-    })
+    Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -485,6 +498,7 @@ pub(crate) async fn run_once(
                         namespace: namespace.to_string(),
                         status: outcome.upstream.to_string(),
                         has_changes: outcome.has_changes,
+                        fingerprint: outcome.fingerprint,
                     },
                 );
                 inner.aggregator.clear_error(&namespace);
@@ -548,6 +562,15 @@ pub(crate) async fn run_once(
                         namespace: namespace.to_string(),
                         status: status.to_string(),
                         has_changes,
+                        // No `InstalledPackageStatus` here — this is a
+                        // heuristic status from a refusal reason. A stable
+                        // digest of what it reports is enough: a package stuck
+                        // paused re-emits the same reason every tick, so the
+                        // same `(status, has_changes)` yields the same
+                        // fingerprint and the consumer skips the repeat. The
+                        // paused *detail* (which files) rides the separate
+                        // `autosync-paused` event, not this one.
+                        fingerprint: format!("{status};{has_changes}"),
                     },
                 );
                 let aggregator_message = match &reason {

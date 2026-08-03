@@ -16,6 +16,15 @@ use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Spinner};
 use crate::tauri as tauri_bridge;
 
+/// True iff `event` reports an observation the page has not acted on yet — its
+/// fingerprint differs from the last one the page refetched for. A tick that
+/// re-reports an unchanged tree carries the same fingerprint, so this returns
+/// false and the page holds still (keeps its selection, filters, open dialog)
+/// instead of tearing down and rebuilding to the identical view.
+fn is_new_observation(last_acted: Option<&str>, event: &PackageStatusEvent) -> bool {
+    last_acted != Some(event.fingerprint.as_str())
+}
+
 // ── Installed Package page ──
 
 /// Which autosync pause reasons warrant the detail page's dedicated paused
@@ -121,19 +130,32 @@ pub fn InstalledPackage() -> impl IntoView {
         }
     });
 
+    // The last observation this page acted on. A background tick re-reports a
+    // package's status every iteration whether or not anything moved; each
+    // event carries a fingerprint of the observation, and the page refetches
+    // only when it differs from this. A no-op re-report is skipped, so the page
+    // keeps its selection, filters, and open dialog instead of rebuilding to
+    // the identical view. Read untracked: this effect must run on new events,
+    // not when it records its own last-acted value.
+    let last_fingerprint: RwSignal<Option<String>> = RwSignal::new(None);
     Effect::new(move |_| {
         let Some(ev) = event_holder.get() else { return };
         let current = query.read().get("namespace").unwrap_or_default();
-        if ev.namespace == current {
-            // Any status emit other than `"paused"` for this namespace
-            // means the watcher has progressed past the pause (or the
-            // user manually cleared it via Publish / Pull / Set Remote).
-            // Drop the cached message so the banner reverts.
-            if ev.status != "paused" {
-                paused_event.set(None);
-            }
-            refetch.notify();
+        if ev.namespace != current {
+            return;
         }
+        if !is_new_observation(last_fingerprint.get_untracked().as_deref(), &ev) {
+            return;
+        }
+        last_fingerprint.set(Some(ev.fingerprint.clone()));
+        // Any status emit other than `"paused"` for this namespace means the
+        // watcher has progressed past the pause (or the user manually cleared
+        // it via Publish / Pull / Set Remote). Drop the cached message so the
+        // banner reverts.
+        if ev.status != "paused" {
+            paused_event.set(None);
+        }
+        refetch.notify();
     });
 
     view! {
@@ -212,5 +234,40 @@ mod tests {
         assert!(!warrants_paused_banner("behind"));
         assert!(!warrants_paused_banner("pendingChanges"));
         assert!(!warrants_paused_banner("pendingCommit"));
+    }
+
+    // NOTE: `#[wasm_bindgen_test]`, not `#[test]` — the wasm runner never
+    // collects a plain `#[test]` (the ones above compile but do not run).
+    use super::{PackageStatusEvent, is_new_observation};
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn ev(fingerprint: &str) -> PackageStatusEvent {
+        PackageStatusEvent {
+            namespace: "acme/demo".to_string(),
+            status: "up_to_date".to_string(),
+            has_changes: false,
+            fingerprint: fingerprint.to_string(),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn first_event_is_a_new_observation() {
+        // Nothing acted on yet — the first event always refetches.
+        assert!(is_new_observation(None, &ev("up_to_date;")));
+    }
+
+    #[wasm_bindgen_test]
+    fn same_fingerprint_holds_still() {
+        // A no-op tick re-reports the same observation — the page must not act.
+        assert!(!is_new_observation(Some("up_to_date;"), &ev("up_to_date;")));
+    }
+
+    #[wasm_bindgen_test]
+    fn changed_fingerprint_is_a_new_observation() {
+        // A real change (a modified path enters the digest) → refetch.
+        assert!(is_new_observation(
+            Some("up_to_date;"),
+            &ev("up_to_date;a.txt:M:h;")
+        ));
     }
 }

@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -61,7 +60,6 @@ pub fn spawn(
         reporter: reporter.clone(),
         signal_rx,
         subscription,
-        previous_fingerprints: BTreeMap::new(),
         last_reconcile_error_kind: None,
     };
 

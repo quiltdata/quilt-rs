@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use serde::Serialize;
 
 use quilt_uri::Host;
@@ -5,6 +7,7 @@ use quilt_uri::Namespace;
 use tauri::Emitter;
 
 use crate::autopull::PausedReason;
+use crate::quilt;
 use crate::telemetry::prelude::*;
 
 /// Event names. Kept in lockstep with the UI's `listen(...)` calls.
@@ -23,6 +26,65 @@ pub struct PackageStatusEvent {
     pub namespace: String,
     pub status: String,
     pub has_changes: bool,
+    /// Digest of the observation this event reports — the upstream state
+    /// and, per changed path, its kind and content hash. Two events with
+    /// equal fingerprints describe the same working tree and remote, so a
+    /// consumer that already acted on one can ignore the other. Assembled
+    /// here with `status`/`has_changes` from a single `status` so the three
+    /// cannot disagree.
+    pub fingerprint: String,
+}
+
+impl PackageStatusEvent {
+    /// The single assembler: `status`, `has_changes`, and `fingerprint` all
+    /// come from one `InstalledPackageStatus` observation.
+    pub fn from_status(
+        namespace: &Namespace,
+        status: &quilt::lineage::InstalledPackageStatus,
+    ) -> Self {
+        Self {
+            namespace: namespace.to_string(),
+            status: status.upstream_state.to_string(),
+            has_changes: !status.changes.is_empty(),
+            fingerprint: status_fingerprint(status),
+        }
+    }
+}
+
+/// Stable digest of the parts of `InstalledPackageStatus` a consumer renders.
+/// Two recompute results with the same fingerprint produce the same view, so
+/// the second need not be acted on.
+///
+/// Format: `<upstream>;<path>:<kind>:<hash>;<path>:<kind>:<hash>;...`
+/// Paths are walked in `BTreeMap` order (sorted by `PathBuf`), so the output
+/// is deterministic without an explicit sort.
+pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
+    let mut out = String::new();
+    let _ = write!(out, "{};", status.upstream_state);
+    for (path, change) in &status.changes {
+        let (kind, row) = match change {
+            quilt::lineage::Change::Added(r) => ("A", r),
+            quilt::lineage::Change::Modified(r) => ("M", r),
+            quilt::lineage::Change::Removed(r) => ("D", r),
+        };
+        let _ = write!(out, "{}:{}:{};", path.to_string_lossy(), kind, row.hash);
+    }
+    out
+}
+
+/// Fingerprint of a clean, up-to-date working tree — the state a package
+/// reaches right after a successful publish, and after a pull that kept no
+/// local work. The mutation paths in the tick don't hold a post-mutation
+/// `InstalledPackageStatus` to fingerprint directly, but the observation they
+/// represent is a settled `UpToDate` tree, and this names it. (A pull that
+/// *kept* local changes reads this too; it understates by one changed-path
+/// digest, which the next tick's real observation corrects — a redundant
+/// refetch at worst, never a missed one.)
+pub(crate) fn clean_uptodate_fingerprint() -> String {
+    status_fingerprint(&quilt::lineage::InstalledPackageStatus::new(
+        quilt::lineage::UpstreamState::UpToDate,
+        std::collections::BTreeMap::new(),
+    ))
 }
 
 /// Payload emitted to the UI after autosync publishes a package. The UI
@@ -241,11 +303,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn from_status_assembles_status_has_changes_and_fingerprint_from_one_observation() {
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+
+        let ns: Namespace = ("acme", "demo").into();
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            PathBuf::from("a.txt"),
+            quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
+        );
+        let status = quilt::lineage::InstalledPackageStatus::new(
+            quilt::lineage::UpstreamState::UpToDate,
+            changes,
+        );
+
+        let event = PackageStatusEvent::from_status(&ns, &status);
+
+        // status and has_changes are read from the same status...
+        assert_eq!(event.status, "up_to_date");
+        assert!(event.has_changes);
+        // ...and the fingerprint carries the upstream state plus the changed
+        // path's kind, so the three describe one observation.
+        assert!(
+            event.fingerprint.starts_with("up_to_date;"),
+            "fingerprint should lead with the upstream state, got: {}",
+            event.fingerprint
+        );
+        assert!(
+            event.fingerprint.contains("a.txt:M:"),
+            "fingerprint should carry the changed path and kind, got: {}",
+            event.fingerprint
+        );
+    }
+
+    #[test]
     fn package_status_event_serializes_camel_case() {
         let event = PackageStatusEvent {
             namespace: "acme/demo".to_string(),
             status: "up_to_date".to_string(),
             has_changes: false,
+            fingerprint: "up_to_date;".to_string(),
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(
@@ -254,6 +352,10 @@ mod tests {
         );
         assert!(json.contains(r#""status":"up_to_date""#));
         assert!(json.contains(r#""namespace":"acme/demo""#));
+        assert!(
+            json.contains(r#""fingerprint":"up_to_date;""#),
+            "expected the fingerprint on the wire, got: {json}"
+        );
     }
 
     #[test]
