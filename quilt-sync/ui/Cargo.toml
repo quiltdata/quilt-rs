@@ -23,7 +23,7 @@ send_wrapper = "0.6.0"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.76"
-web-sys = { version = "0.3.103", features = ["DomTokenList", "Element", "HtmlButtonElement", "HtmlInputElement", "Node"] }
+web-sys = { version = "0.3.103", features = ["DomTokenList", "Element", "HtmlButtonElement", "Node"] }
 
 [lints]
 workspace = true
