@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.20.1-alpha2] - 2026-08-03
+
+### Fixed
+
+- Files ticked for download on the installed-package page are no longer cleared when the package changes underneath you; the app bar's Refresh still starts clean (<https://github.com/quiltdata/quilt-rs/pull/814>)
+- "Select all" shows a dash when only some files are ticked, instead of looking empty (<https://github.com/quiltdata/quilt-rs/pull/814>)
+
+### Changed
+
+- The installed-package page updates in place when the package changes instead of blanking to a spinner; opening a different package still shows one (<https://github.com/quiltdata/quilt-rs/pull/814>)
+
 ## [v0.20.1-alpha1] - 2026-08-03
 
 ### Fixed
