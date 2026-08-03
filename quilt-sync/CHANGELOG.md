@@ -13,7 +13,7 @@
 
 ### Fixed
 
-- Files you tick for download on the installed-package page are no longer lost when the page refreshes: any change to the package — including editing an unrelated local file — used to clear your choices and re-check "Select all", discarding a set of paths you were part-way through picking. The selection now survives a refresh, follows files by path rather than by their position in the list, and drops files that have since been downloaded or removed from the package (<https://github.com/quiltdata/quilt-rs/pull/814>)
+- Files you tick for download on the installed-package page are no longer lost when QuiltSync picks up a change to the package: any change — including editing an unrelated local file — used to clear your choices and re-check "Select all", discarding a set of paths you were part-way through picking. Your choices now survive, follow files by path rather than by their position in the list, and drop files that have since been downloaded or removed from the package. The **Refresh** button in the app bar reloads QuiltSync itself, and still starts from a clean selection (<https://github.com/quiltdata/quilt-rs/pull/814>)
 - The "Select all" checkbox on the installed-package page shows a dash when only some files are ticked, instead of looking empty as though nothing were selected (<https://github.com/quiltdata/quilt-rs/pull/814>)
 
 ### Changed
