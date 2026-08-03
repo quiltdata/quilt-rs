@@ -1,6 +1,9 @@
+use std::collections::BTreeSet;
+
 use leptos::prelude::*;
 
 use super::entries::{EntriesToolbar, EntryRow};
+use super::selection::{RemoteSelection, all_selected, partially_selected, resolve, toggled_all};
 use super::status_banner::StatusBanner;
 use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
@@ -34,6 +37,10 @@ pub(super) fn InstalledPackageContent(
     local_only: bool,
     show_set_remote_popup: RwSignal<bool>,
     paused_event: RwSignal<Option<PausedEvent>>,
+    /// Which remote entries are ticked for download. Owned by the page component
+    /// above the resource boundary so it survives a refresh — see
+    /// [`super::selection`].
+    selection: RwSignal<RemoteSelection>,
 ) -> impl IntoView {
     let filter_unmodified = RwSignal::new(data.filter_unmodified);
     let filter_ignored = RwSignal::new(data.filter_ignored);
@@ -60,14 +67,26 @@ pub(super) fn InstalledPackageContent(
         .iter()
         .any(|e| matches!(e.status.as_str(), "added" | "modified" | "deleted"));
 
-    // Track which remote entries are checked (by index) — all selected by default
-    let initial_checked: Vec<usize> = entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.status == "remote")
-        .map(|(i, _)| i)
-        .collect();
-    let checked_indices = RwSignal::new(initial_checked);
+    // The remote entries this package currently offers, by path. Every read of
+    // the selection is resolved against this set, which is what lets a preserved
+    // selection stay honest with no cleanup pass: a name that has since been
+    // installed or dropped is simply not in here any more. Held in a
+    // `StoredValue` so the rows share one copy rather than cloning it per row.
+    let remote_paths = StoredValue::new(
+        entries
+            .iter()
+            .filter(|e| e.status == "remote")
+            .map(|e| e.filename.clone())
+            .collect::<BTreeSet<String>>(),
+    );
+
+    // The one derived selection. The header checkbox and every row read *this*
+    // and store nothing of their own, so they cannot disagree with each other —
+    // before, they were two independent derivations over one index vector, and
+    // their agreement rested on both being rebuilt at once.
+    let selected = Memo::new(move |_| {
+        remote_paths.with_value(|remote| selection.with(|s| resolve(s, remote)))
+    });
 
     // Filtered entries
     let entries_for_view = entries.clone();
@@ -89,13 +108,14 @@ pub(super) fn InstalledPackageContent(
     });
 
     // Count checked remote entries
-    let checked_count = Memo::new(move |_| checked_indices.get().len());
+    let checked_count = Memo::new(move |_| selected.with(BTreeSet::len));
 
     let show_toolbar = has_remote_entries || ignored_count > 0 || unmodified_count > 0;
 
-    // Install selected paths
+    // Install selected paths. The resolved selection is already remote-only and
+    // already narrowed to what the package still offers, so it is the path list
+    // verbatim — no index lookup left to mis-resolve.
     let uri_for_install = uri.clone();
-    let entries_for_install = entries.clone();
     let on_install_paths = move |_| {
         let Some(uri) = uri_for_install
             .as_ref()
@@ -103,13 +123,7 @@ pub(super) fn InstalledPackageContent(
         else {
             return;
         };
-        let indices = checked_indices.get_untracked();
-        let paths: Vec<String> = indices
-            .iter()
-            .filter_map(|&i| entries_for_install.get(i))
-            .filter(|e| e.status == "remote")
-            .map(|e| e.filename.clone())
-            .collect();
+        let paths: Vec<String> = selected.get_untracked().into_iter().collect();
         if paths.is_empty() {
             return;
         }
@@ -130,31 +144,20 @@ pub(super) fn InstalledPackageContent(
         });
     };
 
-    // Select all
-    let entries_for_select = entries.clone();
+    // Select all — clears a full selection, otherwise takes everything.
     let on_select_all = move |_: leptos::ev::Event| {
-        let current = checked_indices.get_untracked();
-        let remote_indices: Vec<usize> = entries_for_select
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.status == "remote")
-            .map(|(i, _)| i)
-            .collect();
-        if current.len() == remote_indices.len() {
-            checked_indices.set(Vec::new());
-        } else {
-            checked_indices.set(remote_indices);
-        }
+        let current = selection.get_untracked();
+        selection.set(remote_paths.with_value(|remote| toggled_all(&current, remote)));
     };
 
-    let entries_for_all_check = entries.clone();
     let all_remote_selected = Memo::new(move |_| {
-        let checked = checked_indices.get();
-        let remote_count = entries_for_all_check
-            .iter()
-            .filter(|e| e.status == "remote")
-            .count();
-        remote_count > 0 && checked.len() == remote_count
+        remote_paths.with_value(|remote| selected.with(|s| all_selected(s, remote)))
+    });
+    // Drives the header checkbox's indeterminate state: a partial selection now
+    // outlives a refresh, so drawing it as an empty box would be a standing claim
+    // that nothing is selected.
+    let some_remote_selected = Memo::new(move |_| {
+        remote_paths.with_value(|remote| selected.with(|s| partially_selected(s, remote)))
     });
 
     // Commit button: primary when no remote entries are checked
@@ -318,8 +321,9 @@ pub(super) fn InstalledPackageContent(
                     <Show when=move || show_toolbar>
                         <EntriesToolbar
                             has_remote_entries=has_remote_entries
-                            on_select_all=on_select_all.clone()
+                            on_select_all=on_select_all
                             all_selected=all_remote_selected
+                            partially_selected=some_remote_selected
                             checked_count=checked_count
                             on_install_paths=on_install_paths.clone()
                             filter_unmodified=filter_unmodified
@@ -339,10 +343,11 @@ pub(super) fn InstalledPackageContent(
                             let:item
                         >
                             <EntryRow
-                                index=item.0
                                 entry=item.1
                                 pkg_uri=uri.clone()
-                                checked_indices=checked_indices
+                                selection=selection
+                                selected=selected
+                                remote_paths=remote_paths
                                 notification=notification
                                 show_ignore_popup=show_ignore_popup
                                 show_unignore_popup=show_unignore_popup

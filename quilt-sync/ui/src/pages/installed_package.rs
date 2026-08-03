@@ -1,5 +1,6 @@
 mod content;
 mod entries;
+mod selection;
 mod status_banner;
 mod toolbar;
 
@@ -7,6 +8,7 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
 
 use content::InstalledPackageContent;
+use selection::RemoteSelection;
 use toolbar::build_toolbar_actions;
 
 use crate::commands::{
@@ -64,6 +66,28 @@ pub fn InstalledPackage() -> impl IntoView {
         let namespace = query.read().get("namespace").unwrap_or_default();
         let filter = query.read().get("filter");
         async move { commands::get_installed_package_data(namespace, filter).await }
+    });
+
+    // The remote-file selection is held *here*, not in the content component
+    // that renders the checkboxes. `InstalledPackageContent` receives its data
+    // by value out of the resource's `Suspend`, so every re-resolution re-runs
+    // it and every signal created inside it is a brand-new signal — a selection
+    // created down there is destroyed by any refresh. This is the same reason
+    // `last_fingerprint` below sits up here.
+    let selection = RwSignal::new(RemoteSelection::default());
+
+    // Moving between packages must not carry the previous package's picks over.
+    // The router keeps this component **mounted** when only the `namespace`
+    // query changes, so nothing unmounts the selection; and because it is keyed
+    // by path, a carried-over set would tick same-named files in the package
+    // just opened. Compares against the previous value rather than firing on
+    // every read, so the first run (which has no previous namespace) is inert.
+    Effect::new(move |previous: Option<Option<String>>| {
+        let namespace = query.read().get("namespace");
+        if previous.is_some_and(|prev| prev != namespace) {
+            selection.set(RemoteSelection::default());
+        }
+        namespace
     });
 
     // Autosync watcher → page refresh: when the backend reports a
@@ -158,8 +182,16 @@ pub fn InstalledPackage() -> impl IntoView {
         refetch.notify();
     });
 
+    // A `Transition` (not `Suspense`) is deliberate: a plain `Suspense` shows its
+    // fallback whenever the resource re-enters a pending state, so every refresh
+    // that survives the fingerprint gate blanks the whole screen to a spinner and
+    // back — for a change that may have nothing to do with what is on it.
+    // `Transition` keeps the already-rendered children mounted while a later load
+    // is pending and falls back only on the initial one, so a genuine change
+    // updates the page in place. The commit screen made the same switch for a
+    // related reason (see the note on its boundary).
     view! {
-        <Suspense fallback=move || {
+        <Transition fallback=move || {
             view! {
                 <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
                     <Spinner />
@@ -200,6 +232,7 @@ pub fn InstalledPackage() -> impl IntoView {
                                         local_only=local_only
                                         show_set_remote_popup=show_set_remote_popup
                                         paused_event=paused_event
+                                        selection=selection
                                     />
                                 </Layout>
                             }
@@ -211,7 +244,7 @@ pub fn InstalledPackage() -> impl IntoView {
                     }
                 })
             }}
-        </Suspense>
+        </Transition>
     }
 }
 

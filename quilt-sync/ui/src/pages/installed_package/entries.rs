@@ -1,7 +1,10 @@
+use std::collections::BTreeSet;
+
 use leptos::prelude::*;
 
 use quilt_uri::S3PackageUri;
 
+use super::selection::{RemoteSelection, toggled_path};
 use crate::commands::{self, EntryData};
 use crate::components::buttons;
 use crate::components::{IgnorePopupData, Notification, UnignorePopupData};
@@ -15,6 +18,9 @@ pub(super) fn EntriesToolbar(
     has_remote_entries: bool,
     on_select_all: impl Fn(leptos::ev::Event) + 'static,
     all_selected: Memo<bool>,
+    /// Some remote entries are ticked but not all — draws the box indeterminate
+    /// rather than empty, which would read as "nothing is selected".
+    partially_selected: Memo<bool>,
     checked_count: Memo<usize>,
     on_install_paths: impl Fn(leptos::ev::MouseEvent) + 'static,
     filter_unmodified: RwSignal<bool>,
@@ -46,6 +52,7 @@ pub(super) fn EntriesToolbar(
                                 <input
                                     type="checkbox"
                                     prop:checked=move || all_selected.get()
+                                    prop:indeterminate=move || partially_selected.get()
                                     on:change=on_select_all
                                 />
                                 "Select all"
@@ -134,10 +141,15 @@ fn EntriesFilter(
     reason = "declarative Leptos view; length is markup, not logic complexity"
 )]
 pub(super) fn EntryRow(
-    index: usize,
     entry: EntryData,
     pkg_uri: Option<S3PackageUri>,
-    checked_indices: RwSignal<Vec<usize>>,
+    /// The held selection, written on a checkbox click.
+    selection: RwSignal<RemoteSelection>,
+    /// What is ticked right now — the one derivation the header shares, read
+    /// rather than mirrored, so a row cannot disagree with it.
+    selected: Memo<BTreeSet<String>>,
+    /// The remote entries the package currently offers, for resolving a toggle.
+    remote_paths: StoredValue<BTreeSet<String>>,
     notification: RwSignal<Option<Notification>>,
     show_ignore_popup: RwSignal<Option<IgnorePopupData>>,
     show_unignore_popup: RwSignal<Option<UnignorePopupData>>,
@@ -183,24 +195,23 @@ pub(super) fn EntryRow(
     let filename_title = filename.clone();
 
     // Checkbox state for remote entries
+    let name_for_check = filename.clone();
     let is_checked = Memo::new(move |_| {
         if !is_remote {
             return true; // non-remote always show as checked (disabled)
         }
-        checked_indices.get().contains(&index)
+        selected.with(|s| s.contains(&name_for_check))
     });
 
+    let name_for_toggle = filename.clone();
     let on_checkbox_change = move |_| {
         if !is_remote {
             return;
         }
-        let mut indices = checked_indices.get_untracked();
-        if let Some(pos) = indices.iter().position(|&i| i == index) {
-            indices.remove(pos);
-        } else {
-            indices.push(index);
-        }
-        checked_indices.set(indices);
+        let current = selection.get_untracked();
+        selection.set(
+            remote_paths.with_value(|remote| toggled_path(&current, remote, &name_for_toggle)),
+        );
     };
 
     // Action buttons
@@ -341,5 +352,74 @@ pub(super) fn EntryRow(
                 </ul>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EntriesToolbar;
+    use leptos::prelude::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// The toolbar's header checkbox in one selection state. `indeterminate` is a
+    /// DOM *property* with no attribute form, so it can only be checked against a
+    /// real element — which is the whole reason these two tests are here rather
+    /// than beside the pure rules in `super::super::selection`.
+    fn header_checkbox(all: bool, partial: bool) -> web_sys::HtmlInputElement {
+        let el = mount(move || {
+            view! {
+                <EntriesToolbar
+                    has_remote_entries=true
+                    on_select_all=|_| {}
+                    all_selected=Memo::new(move |_| all)
+                    partially_selected=Memo::new(move |_| partial)
+                    checked_count=Memo::new(move |_| usize::from(all || partial))
+                    on_install_paths=|_| {}
+                    filter_unmodified=RwSignal::new(true)
+                    filter_ignored=RwSignal::new(true)
+                    ignored_count=0
+                    unmodified_count=0
+                    with_status=false
+                />
+            }
+        });
+        el.query_selector(".select-all input")
+            .unwrap()
+            .expect("the toolbar still renders a select-all checkbox")
+            .dyn_into()
+            .unwrap()
+    }
+
+    /// A partial selection draws **indeterminate**, not empty. An empty box says
+    /// "nothing is selected", which was a momentary lie while the selection died
+    /// on every refresh and is a standing one now that it survives.
+    #[wasm_bindgen_test]
+    fn a_partial_selection_draws_indeterminate() {
+        let header = header_checkbox(false, true);
+        assert!(header.indeterminate());
+        assert!(!header.checked());
+    }
+
+    /// The contrast, so the test above cannot pass by everything being drawn
+    /// indeterminate: full is plainly checked, empty is plainly empty.
+    #[wasm_bindgen_test]
+    fn full_and_empty_selections_draw_plainly() {
+        let full = header_checkbox(true, false);
+        assert!(full.checked());
+        assert!(!full.indeterminate());
+
+        let empty = header_checkbox(false, false);
+        assert!(!empty.checked());
+        assert!(!empty.indeterminate());
     }
 }
