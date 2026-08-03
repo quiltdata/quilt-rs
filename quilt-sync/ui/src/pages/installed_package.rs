@@ -76,14 +76,24 @@ pub fn InstalledPackage() -> impl IntoView {
     // `last_fingerprint` below sits up here.
     let selection = RwSignal::new(RemoteSelection::default());
 
+    // Which package this page is showing. A `Memo` so a change to any *other*
+    // query param — `filter` is the one that moves — does not read as a package
+    // switch to the two consumers below.
+    let namespace_key = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
+
     // Moving between packages must not carry the previous package's picks over.
-    // The router keeps this component **mounted** when only the `namespace`
-    // query changes, so nothing unmounts the selection; and because it is keyed
-    // by path, a carried-over set would tick same-named files in the package
-    // just opened. Compares against the previous value rather than firing on
-    // every read, so the first run (which has no previous namespace) is inert.
-    Effect::new(move |previous: Option<Option<String>>| {
-        let namespace = query.read().get("namespace");
+    // A query-only change does not remount this component, so nothing unmounts
+    // the selection; and because it is keyed by path, a carried-over set would
+    // tick same-named files in the package just opened. Compares against the
+    // previous value, so the first run (which has no previous namespace) is
+    // inert.
+    //
+    // No navigation performs such a switch *today* — every route to this page
+    // either comes from a different route or is a full webview navigation — so
+    // this is a guard against a package switch being added in place, not a fix
+    // for a reachable bug. Same for the keyed boundary below.
+    Effect::new(move |previous: Option<String>| {
+        let namespace = namespace_key.get();
         if previous.is_some_and(|prev| prev != namespace) {
             selection.set(RemoteSelection::default());
         }
@@ -190,19 +200,35 @@ pub fn InstalledPackage() -> impl IntoView {
     // is pending and falls back only on the initial one, so a genuine change
     // updates the page in place. The commit screen made the same switch for a
     // related reason (see the note on its boundary).
+    //
+    // The boundary is **keyed to the package**: keeping children mounted across a
+    // load is right for a refresh of the package on screen, and wrong for a switch
+    // to a different one, because the retained subtree's handlers close over the
+    // *previous* package's namespace and URI — a click in that window would
+    // download, publish, or pull against the package the user just left.
+    // Re-reading `namespace_key` here rebuilds the boundary on a package switch,
+    // which disposes those handlers and shows the spinner (the pre-`Transition`
+    // behaviour, and the right one for a genuine navigation). A `filter` change
+    // deliberately does not rebuild: same package, so the handlers stay correct.
     view! {
-        <Transition fallback=move || {
+        {move || {
+            namespace_key.track();
+            let mismatch_requested = mismatch_requested.clone();
+            let mismatch_bucket = mismatch_bucket.clone();
+            let mismatch_catalog = mismatch_catalog.clone();
             view! {
-                <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
-                    <Spinner />
-                </Layout>
-            }
-        }>
-            {move || {
-                let mismatch_requested = mismatch_requested.clone();
-                let mismatch_bucket = mismatch_bucket.clone();
-                let mismatch_catalog = mismatch_catalog.clone();
-                Suspend::new(async move {
+                <Transition fallback=move || {
+                    view! {
+                        <Layout breadcrumbs=vec![] notification=notification ui_locked=ui_locked>
+                            <Spinner />
+                        </Layout>
+                    }
+                }>
+                    {move || {
+                        let mismatch_requested = mismatch_requested.clone();
+                        let mismatch_bucket = mismatch_bucket.clone();
+                        let mismatch_catalog = mismatch_catalog.clone();
+                        Suspend::new(async move {
                     match data.await {
                         Ok(d) => {
                             let ns = d.namespace.clone();
@@ -243,8 +269,10 @@ pub fn InstalledPackage() -> impl IntoView {
                         }
                     }
                 })
-            }}
-        </Transition>
+                    }}
+                </Transition>
+            }
+        }}
     }
 }
 
