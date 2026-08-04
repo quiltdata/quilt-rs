@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::env;
 use crate::error::TelemetryError;
-use crate::telemetry::MixpanelEvent;
+use crate::telemetry::{MixpanelEvent, Sinks};
 
 /// The event as Mixpanel receives it: its name, and its properties.
 ///
@@ -40,7 +40,7 @@ pub fn event_payload(
     Ok((event_name.clone(), properties))
 }
 
-pub fn mixpanel_config() -> Option<(String, Config)> {
+pub fn mixpanel_config(sinks: Sinks) -> Option<(String, Config)> {
     let token = env::mixpanel_project_token();
     let secret = env::mixpanel_api_secret();
     if token.is_none() {
@@ -52,7 +52,17 @@ pub fn mixpanel_config() -> Option<(String, Config)> {
     token.map(|token| {
         let config = Config {
             secret,
-            debug: cfg!(debug_assertions),
+            // A local build echoes every event it sends, which is the whole
+            // feedback loop a developer gets — the sinks themselves are
+            // elsewhere. Keyed on the resolved mode rather than on
+            // `debug_assertions`: the two agreed only by accident, and the flag
+            // was dead while a debug build could not construct a client at all.
+            debug: sinks.is_development(),
+            // Marks the request as test traffic. Belt to the braces of a
+            // separate project — what the ingest API does with the flag is not
+            // verified here, so the isolation rests on the credentials, not on
+            // this.
+            test: sinks.is_development(),
             ..Default::default()
         };
         (token, config)

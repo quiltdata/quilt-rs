@@ -4,6 +4,11 @@
 start:
     cd quilt-sync && cargo tauri dev
 
+# Start QuiltSync with telemetry live against the sinks in quilt-sync/.env.
+# Point those at throwaway projects first — see quilt-sync/.env.example.
+start-telemetry:
+    cd quilt-sync && QUILTSYNC_TELEMETRY_DEV=1 cargo tauri dev
+
 # Run test coverage for all packages
 coverage:
     cargo tarpaulin --out html
