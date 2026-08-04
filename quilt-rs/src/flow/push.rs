@@ -233,7 +233,9 @@ pub(crate) async fn push_package_impl(
     // path never copies it over the installed one (`copy_cached_to_installed`
     // below runs only on the hash-mismatch error). So a locally committed row
     // keeps its `file://` `physical_key` in `.quilt/installed/` after a
-    // successful push, until a later pull or reset refreshes it from this cache.
+    // successful push, and stays that way: pull and reset both short-circuit
+    // once `latest` is the hash we just pushed, so those keys only go away when
+    // *another* client publishes a newer revision.
     //
     // Safe because `top_hash` excludes `physical_key` (see
     // `manifest::top_hasher`) — the two copies are the same revision, which is
