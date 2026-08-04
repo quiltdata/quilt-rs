@@ -71,7 +71,20 @@ async fn stream_remote_with_installed_rows(
 }
 
 /// Installs paths to already existing manifest (provided as an argument to this function).
-/// It also modifies manifest, because installed paths have `place` pointing to `file://location`
+///
+/// Rows go into the installed manifest **verbatim** — `physical_key` is never
+/// rewritten to the `file://` object-store location, despite the `place` value
+/// computed below (logged, never consumed) and the plan sketch's "replace
+/// entry's physical key" step (never implemented). Nothing needs the rewrite:
+/// [`matches_content`](crate::manifest::ManifestRow::matches_content) ignores
+/// `physical_key`, so a later push dedups by content whatever the scheme.
+///
+/// A row's scheme is therefore just its source manifest's, not an origin
+/// marker. `file://` means the bytes were committed locally
+/// ([`commit`](fn@super::commit) / [`create`](fn@super::create)) and outlives a
+/// push, which never rewrites the installed manifest. Watch out — the caching
+/// call below parses `physical_key` as an `S3Uri`, so a `file://` row whose
+/// object is missing from the cache errors instead of being fetched.
 // TODO: `working_dir` is in `paths` already, and we pass namespace anyway
 //       so we can remove working_dir from the arguments
 #[allow(clippy::too_many_arguments)]
@@ -114,7 +127,7 @@ pub async fn install_paths(
     // for each path in entries_paths:
     //   get entry from installed manifest
     //   cache the entry into identity cache (if not there)
-    //   replace entry's physical key in the manifest with the cached physical key
+    //   (the sketch rewrote the physical key here; the code does not — see above)
     //
     // write the adjusted manifest into the installed manifest path
     // copy the selected paths into the working folder
@@ -149,6 +162,9 @@ pub async fn install_paths(
             debug!("✔️ Cached object: {}", object_dest.display());
         }
 
+        // Diagnostic only: the `file://` URL the row *would* carry if rows were
+        // rewritten to the object store (they are not — see above). Logged and
+        // discarded; the error arm still asserts `object_dest` is absolute.
         let place = Url::from_file_path(&object_dest)
             .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
             .to_string();
@@ -157,6 +173,7 @@ pub async fn install_paths(
             object_dest.display(),
             place
         );
+        // The row goes in unchanged — `physical_key` and all.
         entries.insert(row.logical_key.clone(), row.clone());
 
         let working_dest = working_dir.join(&row.logical_key);

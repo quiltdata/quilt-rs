@@ -81,6 +81,17 @@ pub async fn upload_manifest(
 
 /// Upload file containing hash of the manifest
 /// "tagged" by timestamp.
+///
+/// This is the only place a revision's publish time reaches the remote: the
+/// manifest format carries no timestamps (neither `ManifestHeader` nor
+/// `ManifestRow` has a time field), so `.quilt/named_packages/<ns>/<epoch>` is
+/// the registry's revision history.
+///
+/// It is **write-only from this client**: reading those times back means
+/// enumerating the tag objects, and [`Remote`] has no list operation. So
+/// nothing here can answer "when was revision X published" or "what revisions
+/// exist". The value written is the *local* `CommitState::timestamp` — when
+/// the commit was made on the pushing machine, not when the upload completed.
 pub async fn tag_timestamp(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
@@ -92,6 +103,11 @@ pub async fn tag_timestamp(
     // create it with the value of {self.commit.hash}
     // TODO: Otherwise try again with the current timestamp as the tag
     // (e.g., try five times with exponential backoff, then Error)
+    // NB: the key has one-second resolution and holds the *commit* time, so two
+    // commits of the same namespace made within one second collide even if
+    // pushed hours apart. `upload_tag` overwrites, so the second push silently
+    // takes over the tag and the *first* revision is left with a manifest but no
+    // history entry.
     let tag_timestamp = TagUri::timestamp(manifest_uri, Seconds(timestamp.timestamp()));
     upload_tag(remote, manifest_uri, tag_timestamp).await
 }
@@ -176,6 +192,17 @@ pub async fn resolve_manifest_uri(
 /// After uploading we get new hash,
 /// though it should be the same as already calclulated during commit.
 /// Response with the new `ManifestRow` with `physical_key` pointing to the place it was uploaded to.
+///
+/// A published row's `physical_key` is always remote: either rewritten below to
+/// the `remote_url` this upload returns, or copied from the remote row by
+/// `push::use_existing_row_or_upload`'s content-match branch. That pair — not
+/// the scheme check — is what keeps a local key out of a published manifest.
+///
+/// The check guards the *input* instead: a row that is not local has no business
+/// being uploaded, so a package re-pointed at another bucket hard-errors rather
+/// than republishing another bucket's objects. (An `s3://` key would fail
+/// `to_file_path` anyway; the check's own catch is host-less schemes like
+/// `foo:///abs/path`.)
 pub async fn upload_row(
     remote: &impl Remote,
     host_config: &HostConfig,

@@ -229,6 +229,18 @@ pub(crate) async fn push_package_impl(
         )
         .await,
     );
+    // The uploaded manifest goes into the *cached* manifests dir; the success
+    // path never copies it over the installed one (`copy_cached_to_installed`
+    // below runs only on the hash-mismatch error). So a locally committed row
+    // keeps its `file://` `physical_key` in `.quilt/installed/` after a
+    // successful push, and stays that way: pull and reset both short-circuit
+    // once `latest` is the hash we just pushed, so those keys only go away when
+    // *another* client publishes a newer revision.
+    //
+    // Safe because `top_hash` excludes `physical_key` (see
+    // `manifest::top_hasher`) — the two copies are the same revision, which is
+    // also why the `new_manifest_uri.hash != commit.hash` guard below does not
+    // fire on a normal push.
     let dest_dir = paths.cached_manifests_dir(&manifest_uri.bucket);
     let (cache_path, top_hash) =
         build_manifest_from_rows_stream(storage, dest_dir, local_manifest.header.clone(), stream)
