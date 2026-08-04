@@ -62,10 +62,9 @@ impl Analytics {
         match sinks {
             Sinks::Disabled => Self::Off,
             Sinks::Development => Self::DryRun,
-            Sinks::Production => mixpanel_config()
-                .map_or(Self::Off, |(token, config)| {
-                    Self::Live(Arc::new(Mixpanel::init(&token, Some(config))))
-                }),
+            Sinks::Production => mixpanel_config().map_or(Self::Off, |(token, config)| {
+                Self::Live(Arc::new(Mixpanel::init(&token, Some(config))))
+            }),
         }
     }
 }
@@ -98,8 +97,8 @@ fn dry_run_line(event: &MixpanelEvent) -> crate::Result<String> {
             // `properties` came from `serde_json::to_value`, so re-serializing it
             // cannot fail; the fallback keeps the event visible rather than
             // turning a formatting slip into a lost observation.
-            let rendered = serde_json::to_string(&properties)
-                .unwrap_or_else(|_| "<unrenderable>".to_string());
+            let rendered =
+                serde_json::to_string(&properties).unwrap_or_else(|_| "<unrenderable>".to_string());
             format!("telemetry(dry-run) {name} {rendered}")
         }
         None => format!("telemetry(dry-run) {name}"),
