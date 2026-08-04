@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use ::sentry as Sentry;
-use mixpanel_rs::Mixpanel;
 use quilt_uri::Host;
 use semver::Version;
 
@@ -14,6 +13,7 @@ pub mod sentry;
 pub mod tracing;
 
 pub use event::MixpanelEvent;
+pub use mixpanel::Analytics;
 pub use tracing::LogsDir;
 
 pub mod prelude {
@@ -76,6 +76,9 @@ impl Sinks {
 
     /// The `environment` an outgoing report is attributed to, so internal
     /// traffic is filterable at the sink rather than only by convention.
+    ///
+    /// Only the crash sink uses this. Analytics needs no equivalent, because a
+    /// local build sends nothing at all — see [`mixpanel::Analytics`].
     pub fn environment(self) -> Option<&'static str> {
         match self {
             Self::Production => Some("production"),
@@ -83,17 +86,11 @@ impl Sinks {
             Self::Disabled => None,
         }
     }
-
-    /// Whether this is a local build, which the analytics client uses to mark
-    /// its requests as test traffic and to echo each event it sends.
-    pub fn is_development(self) -> bool {
-        matches!(self, Self::Development)
-    }
 }
 
 pub struct Telemetry {
     _sentry: Option<Sentry::ClientInitGuard>,
-    mixpanel: Option<Arc<Mixpanel>>,
+    analytics: Analytics,
     /// The host every outgoing crash report is tagged with; see [`AmbientHost`].
     host: AmbientHost,
 }
@@ -104,16 +101,17 @@ impl Telemetry {
         // to exist before the client is built.
         let host: AmbientHost = Arc::new(Mutex::new(None));
 
-        // `Sinks::Disabled` short-circuits before either config is read, so a
-        // silent build never touches the credential lookups at all.
-        let enabled = sinks.is_enabled().then_some(());
-
         Self {
-            mixpanel: enabled
-                .and_then(|()| mixpanel::mixpanel_config(sinks))
-                .map(|(token, config)| Arc::new(Mixpanel::init(&token, Some(config)))),
-            _sentry: enabled
-                .and_then(|()| sentry::sentry_config(version, sinks, Arc::clone(&host)))
+            analytics: Analytics::resolve(sinks),
+            // The crash sink has no dry run — the SDK either holds a client or it
+            // does not — so a local build reaches it only if a developer supplies
+            // a DSN, and then reports as `development`. That is deliberate: it
+            // keeps crash-side behaviour testable by someone who has a spare
+            // project, without requiring one.
+            _sentry: sinks
+                .is_enabled()
+                .then(|| sentry::sentry_config(version, sinks, Arc::clone(&host)))
+                .flatten()
                 .map(::sentry::init),
             host,
         }
@@ -144,7 +142,7 @@ impl Telemetry {
         if let Some(host) = event.host() {
             self.add_host(host);
         }
-        if let Err(err) = mixpanel::track_event(self.mixpanel.as_ref(), &event).await {
+        if let Err(err) = mixpanel::track_event(&self.analytics, &event).await {
             Sentry::capture_error(&err);
         }
     }
@@ -170,7 +168,7 @@ impl Telemetry {
     }
 
     pub fn init(&self) {
-        mixpanel::init(self.mixpanel.as_ref());
+        mixpanel::init(&self.analytics);
     }
 
     /// Returns the current global maximum log level as a human-readable string.
@@ -238,19 +236,23 @@ mod tests {
     /// `SENTRY_DSN` is deliberately left unset — initializing the crash client
     /// would spawn a real transport thread, and the analytics half is what proves
     /// the wiring.
+    /// An opted-in local build reaches the dry run — and reaches it *even with a
+    /// token present*, which is the property that makes the isolation
+    /// structural. A developer holding real credentials still cannot emit from
+    /// their laptop.
     #[test]
     #[serial]
-    fn an_opted_in_build_builds_a_client() {
+    fn an_opted_in_build_dry_runs_even_holding_a_token() {
         unsafe {
             std::env::set_var("QUILTSYNC_TELEMETRY_DEV", "1");
-            std::env::set_var("MIXPANEL_PROJECT_TOKEN", "not-a-real-token");
+            std::env::set_var("MIXPANEL_PROJECT_TOKEN", "a-token-that-must-not-be-used");
             std::env::remove_var("SENTRY_DSN");
         }
 
         let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve());
         assert!(
-            telemetry.mixpanel.is_some(),
-            "the opt-in path must reach a constructed client, or the rig proves nothing"
+            matches!(telemetry.analytics, Analytics::DryRun),
+            "a local build must never construct a live client, token or not"
         );
 
         unsafe {
@@ -285,7 +287,7 @@ mod tests {
     )]
     fn disabled_sinks_build_no_client() {
         let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::Disabled);
-        assert!(telemetry.mixpanel.is_none());
+        assert!(matches!(telemetry.analytics, Analytics::Off));
         assert!(telemetry._sentry.is_none());
     }
 
@@ -303,7 +305,5 @@ mod tests {
         assert_eq!(Sinks::Disabled.environment(), None);
         assert_eq!(Sinks::Production.environment(), Some("production"));
         assert_eq!(Sinks::Development.environment(), Some("development"));
-        assert!(!Sinks::Production.is_development());
-        assert!(Sinks::Development.is_development());
     }
 }

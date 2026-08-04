@@ -4,8 +4,9 @@
 start:
     cd quilt-sync && cargo tauri dev
 
-# Start QuiltSync with telemetry live against the sinks in quilt-sync/.env.
-# Point those at throwaway projects first — see quilt-sync/.env.example.
+# Start QuiltSync with telemetry observable: every analytics event is printed to
+# the terminal in its exact wire form and nothing is sent. Needs no credentials.
+# See quilt-sync/.env.example.
 start-telemetry:
     cd quilt-sync && QUILTSYNC_TELEMETRY_DEV=1 cargo tauri dev
 
