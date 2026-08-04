@@ -279,6 +279,17 @@ mod tests {
 
     /// The accessor the crash-report cell reads. Exhaustive by construction —
     /// the compiler rejects a new variant that does not answer this.
+    /// The dry-run and off arms are reachable and never fail the caller — a
+    /// telemetry sink must not be able to break the command it rides on. This
+    /// exercises the arms; that the line reaches a terminal is not something a
+    /// test can see.
+    #[tokio::test]
+    async fn the_silent_arms_never_fail_the_caller() -> Result {
+        track_event(&Analytics::DryRun, &MixpanelEvent::AppLaunched).await?;
+        track_event(&Analytics::Off, &MixpanelEvent::AppLaunched).await?;
+        Ok(())
+    }
+
     /// A dry run is only useful if what it prints is what would have been sent.
     /// These assert the line carries the wire *name* and the wire *properties* —
     /// so a developer reading the console is reading the payload, and a payload
