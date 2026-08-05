@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ::sentry as Sentry;
@@ -5,6 +6,7 @@ use quilt_uri::Host;
 use semver::Version;
 
 use crate::Result;
+use crate::telemetry::prelude::*;
 
 pub mod diagnostics;
 pub mod event;
@@ -85,6 +87,13 @@ pub struct Telemetry {
     /// Where a fault goes. A field rather than a direct call to the crash SDK, so
     /// that "this path reported a fault" is observable — see [`Faults`].
     faults: Faults,
+    /// Whether a refused event has already been reported this run.
+    ///
+    /// A refusal is systematic — a bad token, a property the API will not take —
+    /// so it fails every event until someone fixes it. Reporting each would turn
+    /// one misconfiguration into one crash report per user action, and the first
+    /// carries the whole signal.
+    refusal_reported: AtomicBool,
 }
 
 impl Telemetry {
@@ -103,6 +112,7 @@ impl Telemetry {
             host,
             install_id,
             faults: Faults::resolve(sinks),
+            refusal_reported: AtomicBool::new(false),
         }
     }
 
@@ -140,7 +150,7 @@ impl Telemetry {
         if let Err(err) =
             mixpanel::track_event(&self.analytics, &event, self.install_id.as_ref()).await
         {
-            self.report_error(&err);
+            self.report_delivery_failure(&err);
         }
     }
 
@@ -162,6 +172,26 @@ impl Telemetry {
     /// design for what an error is allowed to say.
     pub fn report_error(&self, err: &(dyn std::error::Error + Send + Sync + 'static)) {
         self.faults.error(err);
+    }
+
+    /// Decide what a failed send deserves.
+    ///
+    /// A **refusal** is our bug and must be visible, but only once: it fails every
+    /// event alike, so the second report says nothing the first did not. Anything
+    /// **unreachable** is somebody's network — logged, never reported, or the crash
+    /// reporter fills with other people's tunnels and the refusals drown among
+    /// them.
+    fn report_delivery_failure(&self, err: &crate::Error) {
+        match mixpanel::DeliveryFailure::classify(err) {
+            mixpanel::DeliveryFailure::Refused => {
+                if !self.refusal_reported.swap(true, Ordering::Relaxed) {
+                    self.report_error(err);
+                }
+            }
+            mixpanel::DeliveryFailure::Unreachable => {
+                warn!("telemetry: event not delivered: {err}");
+            }
+        }
     }
 
     /// What was reported through [`Self::report_anomaly`] and
@@ -197,6 +227,7 @@ impl Default for Telemetry {
             // Recording rather than printing, so a test can assert what a path
             // reported instead of a developer reading it go by.
             faults: Faults::Recorded(Arc::new(Mutex::new(Vec::new()))),
+            refusal_reported: AtomicBool::new(false),
         }
     }
 }
@@ -206,6 +237,68 @@ mod tests {
     use serial_test::serial;
 
     use super::*;
+
+    fn refusal() -> crate::Error {
+        crate::Error::from(mixpanel_rs::error::Error::ApiClientError(
+            400,
+            "no such token".to_owned(),
+        ))
+    }
+
+    /// A refusal is reported, because it is our bug and fails every event alike.
+    /// Reported **once**, because the second report says nothing the first did not
+    /// — and without that, one bad token becomes one crash report per user action.
+    #[test]
+    fn a_refusal_is_reported_once_however_often_it_recurs() {
+        let telemetry = Telemetry::default();
+
+        for _ in 0..5 {
+            telemetry.report_delivery_failure(&refusal());
+        }
+
+        let reported = telemetry.reported_faults();
+        assert_eq!(
+            reported.len(),
+            1,
+            "one misconfiguration is one report: {reported:?}"
+        );
+        assert!(reported[0].contains("no such token"), "{reported:?}");
+    }
+
+    /// An unreachable API is nobody's bug. Reporting it would fill the crash
+    /// reporter with other people's flaky connections and bury the refusals.
+    #[test]
+    fn an_unreachable_api_is_never_reported() {
+        let telemetry = Telemetry::default();
+
+        telemetry.report_delivery_failure(&crate::Error::from(
+            mixpanel_rs::error::Error::MaxRetriesReached("gave up".to_owned()),
+        ));
+
+        assert!(
+            telemetry.reported_faults().is_empty(),
+            "a bad connection is not a fault to report: {:?}",
+            telemetry.reported_faults()
+        );
+    }
+
+    /// And a network failure must not consume the one refusal report — otherwise
+    /// the first flaky tunnel masks a real misconfiguration for the whole run.
+    #[test]
+    fn a_network_failure_does_not_spend_the_refusal_report() {
+        let telemetry = Telemetry::default();
+
+        telemetry.report_delivery_failure(&crate::Error::from(
+            mixpanel_rs::error::Error::ApiServerError(503),
+        ));
+        telemetry.report_delivery_failure(&refusal());
+
+        assert_eq!(
+            telemetry.reported_faults().len(),
+            1,
+            "the refusal still got through"
+        );
+    }
 
     /// Tests build with `debug_assertions` on, so this pins the branch a
     /// developer actually runs.
