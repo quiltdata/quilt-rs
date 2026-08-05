@@ -1,0 +1,127 @@
+/*
+ * Select. A native `<select>` in a bordered wrapper: consistent closed state,
+ * native open dropdown. That trade is what lets the design system carry no
+ * listbox, combobox or popover at all.
+ *
+ * The `<select>` is stretched over the whole wrapper at `opacity: 0`, and the
+ * closed state — prefix, value, caret — is drawn beneath it. A `<label>` alone
+ * was not enough: browsers forward a label click to a checkbox or input, but
+ * deliberately never synthesise "open the dropdown" for a select, so only the
+ * select's own text box was clickable. Now every pixel of the control is.
+ *
+ * `opacity: 0` rather than `visibility: hidden` or `display: none`: the element
+ * must stay hit-testable and in the accessibility tree. It is still a real,
+ * focusable, labelled select — only its own closed rendering is hidden, which is
+ * the rendering we are replacing.
+ */
+
+.root {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 10px;
+  border: 1px solid var(--q-border-default);
+  border-radius: var(--q-radius-md);
+  background: var(--q-canvas-default);
+  color: var(--q-fg-default);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-tight);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.root:hover:not(.disabled) {
+  background: var(--q-overlay-hover);
+  border-color: var(--q-border-strong);
+}
+
+/* The ring belongs around the whole control, so the wrapper takes it and the
+ * field's own is suppressed. `:focus-within` rather than `:focus-visible`:
+ * clicking a select focuses it *and* opens the dropdown, so a ring on click is
+ * expected here rather than noise. */
+.root:focus-within {
+  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
+  outline-offset: var(--q-focus-ring-offset);
+}
+
+.root.disabled {
+  cursor: not-allowed;
+  color: var(--q-fg-disabled);
+  border-color: var(--q-border-muted);
+  background: var(--q-overlay-hover);
+}
+
+.prefix {
+  flex: none;
+  color: var(--q-fg-muted);
+}
+
+/* The label always renders; when it is not shown it goes off-screen rather than
+ * being dropped, so the control keeps its accessible name and the `<label>`
+ * keeps naming it from markup. `display: none` or omitting it would leave the
+ * select anonymous to a screen reader. */
+.offscreen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.root.disabled .prefix,
+.root.disabled .caret {
+  color: var(--q-fg-disabled);
+}
+
+/* Covers the wrapper so any click opens the OS dropdown. Absolute, so it paints
+ * above the static siblings beneath it and takes their clicks. */
+.field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: inherit;
+  opacity: 0;
+}
+
+/* The visible value. Truncates rather than widening the control. */
+.value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field:focus-visible {
+  outline: none;
+}
+
+.field:disabled {
+  color: inherit;
+}
+
+.caret {
+  display: inline-flex;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--q-fg-muted);
+  pointer-events: none;
+}
+
+.caret svg {
+  width: 100%;
+  height: 100%;
+}
