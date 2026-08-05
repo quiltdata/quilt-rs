@@ -28,7 +28,10 @@ mod kit;
 mod gallery {
     pub mod button;
     pub mod card;
+    pub mod countdown;
+    pub mod host_row;
     pub mod select;
+    pub mod state_strip;
     pub mod toggle_row;
 }
 
@@ -36,7 +39,10 @@ use leptos::prelude::*;
 
 use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
+use crate::gallery::countdown::CountdownStories;
+use crate::gallery::host_row::HostRowStories;
 use crate::gallery::select::SelectStories;
+use crate::gallery::state_strip::StateStripScene;
 use crate::gallery::toggle_row::ToggleRowStories;
 use kit::Button;
 
@@ -81,6 +87,9 @@ fn Gallery() -> impl IntoView {
             <SelectStories />
             <CardStories />
             <ToggleRowStories />
+            <CountdownStories />
+            <HostRowStories />
+            <StateStripScene />
         </div>
     }
 }
@@ -101,6 +110,22 @@ pub fn Story(title: &'static str, note: &'static str, children: Children) -> imp
 
 /// One labelled cell. The label is what makes the gallery reviewable: a
 /// screenshot of unlabelled controls cannot be discussed.
+/// A composed scene: several components arranged as the real page arranges them,
+/// at the width the page gives them. Stories prove a component in isolation;
+/// scenes prove they work together, which is where spacing and alignment
+/// mistakes actually show up.
+#[component]
+#[allow(clippy::must_use_candidate, reason = "consumed by view!")]
+pub fn Scene(title: &'static str, note: &'static str, children: Children) -> impl IntoView {
+    view! {
+        <section class="g-section">
+            <h2>{title}</h2>
+            <p class="g-note">{note}</p>
+            <div class="g-scene">{children()}</div>
+        </section>
+    }
+}
+
 #[component]
 #[allow(clippy::must_use_candidate, reason = "consumed by view!")]
 pub fn Cell(

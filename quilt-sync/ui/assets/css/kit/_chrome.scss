@@ -31,6 +31,15 @@ body {
   gap: var(--q-space-2);
 }
 
+/* Composed scenes are not grid cells: a simulation of a real region has to be
+ * the width the region actually gets, not a column. */
+.g-scene {
+  border: 1px dashed var(--q-border-default);
+  border-radius: var(--q-radius-lg);
+  background: var(--q-canvas-page);
+  padding: var(--q-space-3);
+}
+
 /* Wider cells for components that are themselves containers. A card at 260px
  * misrepresents it: the state strip gives each one roughly half the window. */
 .g-cell--wide { grid-column: span 2; }
