@@ -8,11 +8,13 @@ use crate::Result;
 
 pub mod diagnostics;
 pub mod event;
+pub mod install_id;
 pub mod mixpanel;
 pub mod sentry;
 pub mod tracing;
 
 pub use event::MixpanelEvent;
+pub use install_id::InstallId;
 pub use mixpanel::Analytics;
 pub use tracing::LogsDir;
 
@@ -75,10 +77,14 @@ pub struct Telemetry {
     analytics: Analytics,
     /// The host every outgoing crash report is tagged with; see [`AmbientHost`].
     host: AmbientHost,
+    /// This install's identity, on every analytics event and every crash report
+    /// so the two can be read together. `None` when it could not be persisted —
+    /// see [`install_id::load`].
+    install_id: Option<InstallId>,
 }
 
 impl Telemetry {
-    pub fn new(version: &Version, sinks: Sinks) -> Self {
+    pub fn new(version: &Version, sinks: Sinks, install_id: Option<InstallId>) -> Self {
         // The cell outlives the client and is read by its event hook, so it has
         // to exist before the client is built.
         let host: AmbientHost = Arc::new(Mutex::new(None));
@@ -87,11 +93,18 @@ impl Telemetry {
             analytics: Analytics::resolve(sinks),
             _sentry: sinks
                 .reports_crashes()
-                .then(|| sentry::sentry_config(version, Arc::clone(&host)))
+                .then(|| sentry::sentry_config(version, install_id.clone(), Arc::clone(&host)))
                 .flatten()
                 .map(::sentry::init),
             host,
+            install_id,
         }
+    }
+
+    /// This install's identity, for the diagnostic export — so a report a user
+    /// emails in can be lined up against that install's event stream.
+    pub fn install_id(&self) -> Option<&InstallId> {
+        self.install_id.as_ref()
     }
 
     pub fn init_file_logging(base_path: &std::path::Path) -> Result<LogsDir> {
@@ -119,7 +132,9 @@ impl Telemetry {
         if let Some(host) = event.host() {
             self.add_host(host);
         }
-        if let Err(err) = mixpanel::track_event(&self.analytics, &event).await {
+        if let Err(err) =
+            mixpanel::track_event(&self.analytics, &event, self.install_id.as_ref()).await
+        {
             Sentry::capture_error(&err);
         }
     }
@@ -145,7 +160,7 @@ impl Telemetry {
     }
 
     pub fn init(&self) {
-        mixpanel::init(&self.analytics);
+        mixpanel::init(&self.analytics, self.install_id.clone());
     }
 
     /// Returns the current global maximum log level as a human-readable string.
@@ -165,6 +180,7 @@ impl Default for Telemetry {
             _sentry: None,
             analytics: Analytics::Off,
             host: Arc::new(Mutex::new(None)),
+            install_id: None,
         }
     }
 }
@@ -201,7 +217,7 @@ mod tests {
             std::env::set_var("SENTRY_DSN", "https://public@example.invalid/1");
         }
 
-        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve());
+        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve(), None);
         assert!(
             matches!(telemetry.analytics, Analytics::DryRun),
             "a local build must never construct a live analytics client"

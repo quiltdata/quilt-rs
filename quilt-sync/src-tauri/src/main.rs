@@ -64,8 +64,21 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let package_info = app.package_info();
+
+            // Resolved before the sinks are built: the crash client's event hook
+            // captures the identity when the client is constructed, so it has to
+            // be known first or crashes would go out unattributed.
+            let data_dir = app
+                .path()
+                .app_local_data_dir()
+                .expect("Failed to resolve data dir");
+
             let sinks = telemetry::Sinks::resolve();
-            let telemetry = telemetry::Telemetry::new(&package_info.version, sinks);
+            let telemetry = telemetry::Telemetry::new(
+                &package_info.version,
+                sinks,
+                telemetry::InstallId::load(&data_dir),
+            );
 
             // This is for runtime registering
             #[cfg(desktop)]
@@ -74,11 +87,6 @@ fn main() {
                     error!("Failed to register deep link for {}: {}", scheme, err);
                 }
             }
-
-            let data_dir = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to resolve data dir");
 
             let logs_dir = telemetry::Telemetry::init_file_logging(&data_dir)?;
 

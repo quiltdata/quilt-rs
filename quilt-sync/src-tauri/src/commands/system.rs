@@ -198,8 +198,9 @@ async fn collect_diagnostic_logs_command(
     app_handle: &tauri::AppHandle,
     m: &model::Model,
     app: &app::App,
+    tracing: &crate::telemetry::Telemetry,
 ) -> Result<PathBuf, Error> {
-    let info = diagnostics::collect(app_handle, m, app).await?;
+    let info = diagnostics::collect(app_handle, m, app, tracing.install_id()).await?;
     tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(&info))
         .await
         .map_err(|e| e.to_string())?
@@ -216,7 +217,7 @@ pub async fn collect_diagnostic_logs(
     let app_handle = app_handle.lock().await;
     let app: &app::App = &app;
 
-    match collect_diagnostic_logs_command(&app_handle, &m, app).await {
+    match collect_diagnostic_logs_command(&app_handle, &m, app, &tracing).await {
         Ok(zip_path) => Ok(zip_path.display().to_string()),
         Err(err) => Err(err.to_string()),
     }
