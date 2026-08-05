@@ -3,20 +3,17 @@
  * else, so if the gallery looks wrong the tokens are wrong.
  */
 
+/* Gallery-only padding. Everything else about `body` is in the reset, which
+ * the application bundle shares. */
 body {
-  margin: 0;
   padding: 28px;
-  background: var(--q-canvas-page);
-  color: var(--q-fg-default);
-  font-family: var(--q-font-sans);
-  font-size: var(--q-text-body);
-  line-height: var(--q-line-body);
 }
 
 .g-page { max-width: 1280px; margin: 0 auto; }
+.g-head { margin-bottom: 30px; }
 
 .g-head h1 { font-size: var(--q-text-title); margin: 0 0 4px; font-weight: 600; }
-.g-head p { margin: 0 0 26px; font-size: var(--q-text-body); color: var(--q-fg-muted); max-width: 60ch; }
+.g-head p { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fg-muted); max-width: 60ch; }
 
 .g-section { margin-bottom: 34px; }
 .g-section h2 {
