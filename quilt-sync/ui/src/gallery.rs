@@ -77,30 +77,87 @@ fn Gallery() -> impl IntoView {
 
     Effect::new(move |_| set_theme(dark.get()));
 
+    // One list, used twice: the index reads the labels, the page consumes the
+    // views. A second hardcoded list of section names would drift from this one
+    // the first time anybody added a component.
+    //
+    // Anchors rather than tabs. Tabs would show one component at a time, which
+    // costs the thing a design-system gallery is *for*: noticing that a Select is
+    // a pixel taller than a Button, or that two components disagree about a
+    // baseline. The scenes exist precisely to compare, and Ctrl+F stops working
+    // across hidden panels. So the page stays one scroll and gains a way to jump.
+    let sections: Vec<(&'static str, AnyView)> = vec![
+        ("Button", view! { <ButtonStories /> }.into_any()),
+        ("Select", view! { <SelectStories /> }.into_any()),
+        ("Card", view! { <CardStories /> }.into_any()),
+        ("ToggleRow", view! { <ToggleRowStories /> }.into_any()),
+        ("Countdown", view! { <CountdownStories /> }.into_any()),
+        ("HostRow", view! { <HostRowStories /> }.into_any()),
+        ("ViewToggle", view! { <ViewToggleStories /> }.into_any()),
+        ("SearchInput", view! { <SearchInputStories /> }.into_any()),
+        ("Scene · state strip", view! { <StateStripScene /> }.into_any()),
+        ("Scene · list toolbar", view! { <ListToolbarScene /> }.into_any()),
+    ];
+
+    let index: Vec<&'static str> = sections.iter().map(|(label, _)| *label).collect();
+
     view! {
-        <div class="g-page">
-            <header class="g-head">
-                <h1>"QuiltSync design system"</h1>
-                <p>
-                    "Every cell is one state. Tab through them — the focus ring is
-                     part of what is being reviewed."
-                </p>
+        <div class="g-shell">
+            <nav class="g-nav" aria-label="Components">
                 <Button on_click=move |_| dark.update(|d| *d = !*d)>
                     {move || if dark.get() { "Light theme" } else { "Dark theme" }}
                 </Button>
-            </header>
-            <ButtonStories />
-            <SelectStories />
-            <CardStories />
-            <ToggleRowStories />
-            <CountdownStories />
-            <HostRowStories />
-            <ViewToggleStories />
-            <SearchInputStories />
-            <StateStripScene />
-            <ListToolbarScene />
+                <ul>
+                    {index
+                        .into_iter()
+                        .map(|label| {
+                            view! {
+                                <li>
+                                    <a href=format!("#{}", slug(label))>{label}</a>
+                                </li>
+                            }
+                        })
+                        .collect_view()}
+                </ul>
+            </nav>
+            <main class="g-main">
+                <header class="g-head">
+                    <h1>"QuiltSync design system"</h1>
+                    <p>
+                        "Every cell is one state. Tab through them — the focus ring is
+                         part of what is being reviewed."
+                    </p>
+                </header>
+                {sections
+                    .into_iter()
+                    .map(|(label, body)| {
+                        view! {
+                            <div id=slug(label) class="g-anchor">
+                                {body}
+                            </div>
+                        }
+                    })
+                    .collect_view()}
+            </main>
         </div>
     }
+}
+
+/// Anchor id from a section label. Lossy on purpose — it only has to be stable
+/// and unique across the index, not reversible.
+fn slug(label: &str) -> String {
+    label
+        .chars()
+        .filter_map(|c| {
+            if c.is_ascii_alphanumeric() {
+                Some(c.to_ascii_lowercase())
+            } else if c == ' ' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// A titled group of related states. One component may have several — `Button`

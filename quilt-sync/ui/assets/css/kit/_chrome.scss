@@ -9,7 +9,48 @@ body {
   padding: var(--q-space-7);
 }
 
-.g-page { max-width: var(--q-container); margin: 0 auto; }
+/* Sticky index beside one long scroll, rather than tabs. */
+.g-shell {
+  display: flex;
+  gap: var(--q-space-6);
+  max-width: var(--q-container);
+  margin: 0 auto;
+  align-items: flex-start;
+}
+
+.g-nav {
+  position: sticky;
+  top: var(--q-space-7);
+  flex: none;
+  width: 170px;
+}
+
+.g-nav ul {
+  list-style: none;
+  margin: var(--q-space-4) 0 0;
+  padding: 0;
+  border-left: 1px solid var(--q-border-muted);
+}
+
+.g-nav li a {
+  display: block;
+  padding: 4px var(--q-space-3);
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  color: var(--q-fg-muted);
+  text-decoration: none;
+}
+
+.g-nav li a:hover {
+  color: var(--q-fg-default);
+  border-left-color: var(--q-border-strong);
+  background: var(--q-overlay-hover);
+}
+
+.g-main { flex: 1 1 auto; min-width: 0; }
+
+/* Jumping to a section should not put its heading flush against the top. */
+.g-anchor { scroll-margin-top: var(--q-space-6); }
 .g-head { margin-bottom: var(--q-space-8); }
 
 .g-head h1 { font-size: var(--q-text-title); margin: 0 0 4px; font-weight: 600; }
