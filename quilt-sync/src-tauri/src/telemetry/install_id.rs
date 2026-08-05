@@ -18,13 +18,26 @@ use uuid::Uuid;
 
 use crate::telemetry::prelude::*;
 
-/// The file holding the identity, beside the app's own data.
+/// The file holding the identity, in the app's own data directory beside
+/// `publish_settings.json`, `autosync_settings.json`, `logs/` and `.auth/`.
 ///
-/// A plain file rather than a settings key: it is written once and read on every
-/// launch, it must survive a settings-format change, and deleting it is the
-/// user-facing way to become a new install — which is also the cheapest shape
-/// for an opt-out to reuse later.
-const FILE_NAME: &str = "install-id";
+/// One concern, one `FILE_NAME`, resolved against `app_local_data_dir` — the
+/// convention every other persisted setting here already follows. There is no
+/// shared settings framework to join instead.
+///
+/// Two deliberate departures from those siblings:
+///
+/// - **A bare value, not JSON.** Wrapping one opaque string in an object buys
+///   nothing, and reading it costs support a parse: `cat install_id` answers
+///   "which install is this?" directly, which is the question a crash report
+///   raises. Deleting the file to become a new install is a clearer affordance
+///   for the same reason — and the cheapest shape for an opt-out to reuse later.
+/// - **Written atomically, and synchronously.** The settings files write in
+///   place; identity cannot afford to, because a torn settings file regenerates
+///   from defaults while a torn identity silently becomes a *different* install
+///   forever. Synchronous because this is read once during setup, before there is
+///   any reason to involve the runtime.
+const FILE_NAME: &str = "install_id";
 
 /// An install's anonymous identity. Opaque by construction — nothing reads its
 /// shape, so the generator's format is free to change.
