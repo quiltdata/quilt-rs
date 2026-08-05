@@ -247,6 +247,31 @@
   --q-danger-subtle: var(--gray-3);
   --q-danger-border: var(--gray-6);
 
+  /* SPACE — a 4px grid, mirroring v1's `--q-ui-size-*` but named by multiples of
+   * the unit rather than by half-steps (`--q-space-3` reads better than
+   * `--q-ui-size-1-5`). Use for layout: gaps between regions, page padding, row
+   * rhythm.
+   *
+   * Component padding is NOT required to land on the grid. A control's optical
+   * size is set by its text and border, not by a layout rule, so `Button` uses
+   * 5px/12px deliberately. Forcing it onto 4px or 8px would change how the
+   * control reads to satisfy a number. */
+  --q-space-1: 4px;
+  --q-space-2: 8px;
+  --q-space-3: 12px;
+  --q-space-4: 16px;
+  --q-space-5: 20px;
+  --q-space-6: 24px;
+  --q-space-7: 28px;
+  --q-space-8: 32px;
+  --q-space-10: 40px;
+  --q-space-12: 48px;
+
+  /* Page width cap. v1 sets 1280px, which exactly equals the default window
+   * width, so its container has zero margin at the size users actually get —
+   * almost certainly unintentional. Held slightly under so gutters exist. */
+  --q-container: 1200px;
+
   /* SHAPE. One shadow, overlays only — the page is flat and bordered. */
   --q-radius-sm: 4px;
   --q-radius-md: 6px;
