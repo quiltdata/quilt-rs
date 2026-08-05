@@ -1,0 +1,43 @@
+/*
+ * HostRow. One authenticated host in the Accounts card: its name, its role, and
+ * whatever single affordance that state calls for.
+ *
+ * Not a `<label>` like ToggleRow — this row's trailing slot IS interactive (a
+ * role select or a sign-in button), so a label wrapper would swallow it.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) 0;
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.host {
+  display: block;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub {
+  display: block;
+  margin-top: 1px;
+  color: var(--q-fg-muted);
+}
+
+/* Signed out is not an error in the row's own right — the row is fine, the
+ * session is gone — but it is the one state that needs to be noticed. */
+.warning {
+  color: var(--q-danger-fg);
+}
+
+.trailing {
+  flex: none;
+}
