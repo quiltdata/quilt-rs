@@ -464,7 +464,13 @@ pub(crate) async fn run_once(
         let Some(remote) = lineage.remote_uri.as_ref() else {
             continue;
         };
-        if remote.origin.is_none() || remote.bucket.is_empty() {
+        // The origin is what makes every outcome below attributable: the loop
+        // declines to work on a package without one, so `report_*` can require a
+        // host rather than accept an absent one.
+        let Some(origin) = remote.origin.as_ref() else {
+            continue;
+        };
+        if remote.bucket.is_empty() {
             continue;
         }
 
@@ -490,7 +496,7 @@ pub(crate) async fn run_once(
                 inner.backoff.write().await.remove(&namespace);
                 inner.login_blocked.write().await.remove(&namespace);
                 if let Some(message) = outcome.published.as_deref() {
-                    inner.reporter.report_published(&namespace, message);
+                    inner.reporter.report_published(&namespace, origin, message);
                 }
                 inner.reporter.report_status(
                     &namespace,
@@ -522,13 +528,15 @@ pub(crate) async fn run_once(
                 // the lookup is cached per host and the namespace is about
                 // to be paused, so a denied host costs at most one `/me`
                 // per role switch — not one per tick.
-                let reason = name_denied_role(model, roles, remote.origin.as_ref(), reason).await;
+                let reason = name_denied_role(model, roles, Some(origin), reason).await;
                 inner
                     .paused
                     .write()
                     .await
                     .insert(namespace.clone(), reason.clone());
-                inner.reporter.report_paused(&namespace, reason.clone());
+                inner
+                    .reporter
+                    .report_paused(&namespace, origin, reason.clone());
                 // Heuristic status from the refusal reason — flow::pull /
                 // flow::publish don't expose the post-attempt state
                 // directly. The string `"error"` is **reserved** for "we

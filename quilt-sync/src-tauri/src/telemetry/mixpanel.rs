@@ -400,6 +400,84 @@ mod tests {
         Ok(())
     }
 
+    /// Autosync gets its **own** names rather than folding into the manual
+    /// series. Pinned here because that was a deliberate call: adding background
+    /// work to `package_published` would silently redefine a series already being
+    /// read as user actions.
+    #[test]
+    fn autosync_reports_under_its_own_names() -> Result {
+        use crate::telemetry::event::{AutosyncEvent, AutosyncPausedEvent, PausedKind};
+
+        let (name, props) = event_payload(&MixpanelEvent::AutosyncPublished(AutosyncEvent {
+            host: host(),
+        }))?;
+        assert_eq!(name, "autosync_published");
+        assert_eq!(props.expect("host").get("host"), Some(&host_value()));
+
+        let (name, props) = event_payload(&MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
+            host: host(),
+            reason: PausedKind::RoleDenied,
+        }))?;
+        assert_eq!(name, "autosync_paused");
+        let props = props.expect("host and reason");
+        assert_eq!(props.get("host"), Some(&host_value()));
+        assert_eq!(
+            props.get("reason"),
+            Some(&Value::String("role_denied".to_owned()))
+        );
+
+        Ok(())
+    }
+
+    /// A pause carries the *category* and nothing else — no file names, no role
+    /// name, no message. The engine's own reason type holds all three for the UI
+    /// banner, and none of it may cross into the vocabulary.
+    #[test]
+    fn a_pause_carries_no_free_text() -> Result {
+        use crate::autopull::PausedReason;
+        use crate::telemetry::event::{AutosyncPausedEvent, PausedKind};
+
+        for reason in [
+            PausedReason::PullConflict(vec!["secret-project/notes.txt".to_owned()]),
+            PausedReason::RoleDenied {
+                role: "an-internal-role-name".to_owned(),
+            },
+            PausedReason::Other("a raw refusal mentioning /home/someone/path".to_owned()),
+        ] {
+            let (_, props) = event_payload(&MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
+                host: host(),
+                reason: PausedKind::from(&reason),
+            }))?;
+
+            let rendered = serde_json::to_string(&props.expect("payload"))?;
+            assert!(
+                !rendered.contains("notes.txt")
+                    && !rendered.contains("an-internal-role-name")
+                    && !rendered.contains("/home/someone"),
+                "detail leaked from {reason:?} into {rendered}"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// The login-required event's host is optional, and an absent one is reported
+    /// rather than dropped — the same rule the unattributed package events follow.
+    #[test]
+    fn an_unattributed_login_requirement_still_reports() -> Result {
+        use crate::telemetry::event::AutosyncAuthEvent;
+
+        let (name, props) =
+            event_payload(&MixpanelEvent::AutosyncLoginRequired(AutosyncAuthEvent {
+                host: None,
+            }))?;
+
+        assert_eq!(name, "autosync_login_required");
+        assert_eq!(props.expect("payload").get("host"), Some(&Value::Null));
+
+        Ok(())
+    }
+
     /// The dry-run and off arms are reachable and never fail the caller — a
     /// telemetry sink must not be able to break the command it rides on. This
     /// exercises the arms; that the line reaches a terminal is not something a
@@ -473,6 +551,15 @@ mod tests {
             Some(&host())
         );
         assert_eq!(MixpanelEvent::AppLaunched.host(), None);
+        // Autosync's host is guaranteed, so the accessor must find it — an
+        // unattributed autosync event would be a contradiction.
+        assert_eq!(
+            MixpanelEvent::AutosyncPublished(crate::telemetry::event::AutosyncEvent {
+                host: host()
+            })
+            .host(),
+            Some(&host())
+        );
         assert_eq!(
             MixpanelEvent::PackageCommitted(PackageEvent::for_uri(None)).host(),
             None
