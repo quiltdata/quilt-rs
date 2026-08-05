@@ -1,0 +1,57 @@
+/*
+ * Gallery chrome only — never shipped. Reads tier-2 tokens like everything
+ * else, so if the gallery looks wrong the tokens are wrong.
+ */
+
+body {
+  margin: 0;
+  padding: 28px;
+  background: var(--q-canvas-page);
+  color: var(--q-fg-default);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+}
+
+.g-page { max-width: 1280px; margin: 0 auto; }
+
+.g-head h1 { font-size: var(--q-text-title); margin: 0 0 4px; font-weight: 600; }
+.g-head p { margin: 0 0 26px; font-size: var(--q-text-body); color: var(--q-fg-muted); max-width: 60ch; }
+
+.g-section { margin-bottom: 34px; }
+.g-section h2 {
+  font-size: var(--q-text-body);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--q-fg-muted);
+  margin: 0 0 3px;
+}
+.g-note { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fg-muted); max-width: 80ch; }
+
+.g-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.g-cell {
+  border: 1px solid var(--q-border-muted);
+  border-radius: var(--q-radius-lg);
+  background: var(--q-canvas-default);
+  padding: 9px 11px 12px;
+  min-width: 0;
+}
+
+.g-cell__label {
+  display: block;
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+  color: var(--q-fg-muted);
+  margin-bottom: 8px;
+}
+
+/* Cells must not stretch their contents: a button in a gallery has to show its
+ * real intrinsic width, or long-label truncation cannot be judged. */
+.g-cell__body { display: flex; align-items: flex-start; min-width: 0; }
+
+.g-inline { display: flex; gap: 8px; flex-wrap: wrap; }

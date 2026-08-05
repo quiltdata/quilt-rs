@@ -1,0 +1,319 @@
+/*
+ * Two-tier token layer for the v2 main page.
+ *
+ * TIER 1 — primitives. Vendored Radix custom scales. Values are copied
+ *          verbatim from the generator; regenerate and replace wholesale
+ *          rather than editing a step by hand. Page and component CSS must
+ *          NOT read these.
+ * TIER 2 — semantic roles. The ONLY tier component CSS may reference.
+ *
+ * The point of the split is that dark mode, and a colourblind-safe variant,
+ * become a matter of re-pointing tier-2 names rather than editing every
+ * stylesheet. v1's `theme.css` is a flat primitive list read directly by page
+ * CSS, which is exactly why it cannot support either.
+ *
+ * This file is additive: it does not touch `theme.css`, so v1 is unaffected.
+ *
+ * HEX ONLY, DELIBERATELY. The generator also emits a
+ * `@supports (color: color(display-p3 1 1 1))` / `@media (color-gamut: p3)`
+ * block of `oklch()` twins for wide-gamut displays. Dropped, and not only for
+ * brevity: carrying every value twice invites editing one half and forgetting
+ * the twin, which produces colour differences that reproduce on some hardware
+ * and not others. Reconsider per-scale if a *saturated* scale is ever added —
+ * a vivid green or red is where sRGB actually clips. Even then, hex governs
+ * review: WebKitGTK's gamut reporting inside a Tauri window is unverified, so
+ * hex is what most users see and hex is what contrast checks must use.
+ *
+ * NOTE ON THE ACCENT SCALES. Light and dark behave differently on purpose.
+ * Light is generated from Quilt's brand navy, so step 9 (#282b50) is very dark
+ * and step 10 (#3a3e65) is *lighter* — solid-hover lightens, the reverse of
+ * Radix's usual light-theme direction. Dark is a vivid blue at step 9
+ * (#3d63dd) with step 10 (#3f5cb0) darker, the conventional direction. A hover
+ * rule written from muscle memory will be wrong in one theme or the other, so
+ * both go through --q-accent-emphasis-hover and neither is hand-written.
+ */
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * TIER 1 — LIGHT
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+/* accent (blue) */
+:root, .light, .light-theme {
+  --blue-1: #f7f8f8;
+  --blue-2: #f2f3f8;
+  --blue-3: #e9ebf5;
+  --blue-4: #dfe2f5;
+  --blue-5: #d2d6f3;
+  --blue-6: #c2c8ef;
+  --blue-7: #aeb5e4;
+  --blue-8: #939bd7;
+  --blue-9: #282b50;
+  --blue-10: #3a3e65;
+  --blue-11: #545a90;
+  --blue-12: #2a2d52;
+
+  --blue-a1: #3b7b7b04;
+  --blue-a2: #1834c209;
+  --blue-a3: #0a26b412;
+  --blue-a4: #041fcc1c;
+  --blue-a5: #021bcf29;
+  --blue-a6: #041fca3a;
+  --blue-a7: #0118b24e;
+  --blue-a8: #0316a66a;
+  --blue-a9: #010531d7;
+  --blue-a10: #000538c4;
+  --blue-a11: #010a5baa;
+  --blue-a12: #010531d5;
+
+  --blue-contrast: #fff;
+  --blue-surface: #f0f1f8cc;
+  --blue-indicator: #282b50;
+  --blue-track: #282b50;
+}
+
+/* neutral (gray) */
+:root, .light, .light-theme {
+  --gray-1: #f6f7f8;
+  --gray-2: #f3f3f5;
+  --gray-3: #e9eaed;
+  --gray-4: #e1e1e6;
+  --gray-5: #d9dae0;
+  --gray-6: #d1d2d9;
+  --gray-7: #c5c7cf;
+  --gray-8: #b1b3bf;
+  --gray-9: #848691;
+  --gray-10: #797b86;
+  --gray-11: #5b5d65;
+  --gray-12: #1e1f24;
+
+  --gray-a1: #2f629505;
+  --gray-a2: #1b1b5b08;
+  --gray-a3: #0a184212;
+  --gray-a4: #0404351a;
+  --gray-a5: #030a3722;
+  --gray-a6: #0208322a;
+  --gray-a7: #050e3337;
+  --gray-a8: #0209324b;
+  --gray-a9: #02061d79;
+  --gray-a10: #00041a84;
+  --gray-a11: #020511a3;
+  --gray-a12: #010208e1;
+
+  --gray-contrast: #FFFFFF;
+  --gray-surface: #ffffffcc;
+  --gray-indicator: #848691;
+  --gray-track: #848691;
+
+  --color-background: #fafafa;
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * TIER 1 — DARK
+ *
+ * One selector, not two. Following the OS is done by *setting* `data-theme`
+ * from Rust (read `prefers-color-scheme` once at startup, and let the Settings
+ * toggle override it) rather than by duplicating 60 lines of scale into a
+ * `@media (prefers-color-scheme: dark)` block. Plain CSS has no way to share
+ * one value set between two selectors, and a hand-maintained duplicate is a
+ * drift bug waiting to happen.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+:root[data-theme="dark"], .dark, .dark-theme {
+  /* accent (blue) */
+  --blue-1: #0c111c;
+  --blue-2: #111725;
+  --blue-3: #172448;
+  --blue-4: #1d2e61;
+  --blue-5: #243974;
+  --blue-6: #2d4484;
+  --blue-7: #375098;
+  --blue-8: #405eb2;
+  --blue-9: #3d63dd;
+  --blue-10: #3f5cb0;
+  --blue-11: #93b4ff;
+  --blue-12: #d5e2ff;
+
+  --blue-a1: #0012fb0c;
+  --blue-a2: #1156f916;
+  --blue-a3: #2b64ff3b;
+  --blue-a4: #3567ff56;
+  --blue-a5: #3f71fd6b;
+  --blue-a6: #4b7afd7c;
+  --blue-a7: #5480ff91;
+  --blue-a8: #5783ffad;
+  --blue-a9: #4571ffdb;
+  --blue-a10: #5580feab;
+  --blue-a11: #93b4ff;
+  --blue-a12: #d5e2ff;
+
+  --blue-contrast: #fff;
+  --blue-surface: #111d3980;
+  --blue-indicator: #3d63dd;
+  --blue-track: #3d63dd;
+
+  /* neutral (gray) */
+  --gray-1: #111113;
+  --gray-2: #19191b;
+  --gray-3: #222325;
+  --gray-4: #292a2e;
+  --gray-5: #303136;
+  --gray-6: #393a40;
+  --gray-7: #46484f;
+  --gray-8: #5f606a;
+  --gray-9: #6c6e79;
+  --gray-10: #797b86;
+  --gray-11: #b2b3bd;
+  --gray-12: #eeeef0;
+
+  --gray-a1: #1111bb03;
+  --gray-a2: #cbcbf90b;
+  --gray-a3: #d6e2f916;
+  --gray-a4: #d1d9f920;
+  --gray-a5: #d7ddfd28;
+  --gray-a6: #d9defc33;
+  --gray-a7: #dae2fd43;
+  --gray-a8: #e0e3fd60;
+  --gray-a9: #e0e4fd70;
+  --gray-a10: #e3e7fd7e;
+  --gray-a11: #eff0feb9;
+  --gray-a12: #fdfdffef;
+
+  --gray-contrast: #FFFFFF;
+  --gray-surface: rgb(0 0 0 / 5%);
+  --gray-indicator: #6c6e79;
+  --gray-track: #6c6e79;
+
+  --color-background: #111;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * TIER 1 — status scales: NOT YET GENERATED
+ *
+ * `success`, `attention` and `danger` are still missing, in both themes. They
+ * are needed by StatePill, which carries ten states across four tones — the
+ * green `Latest`, the amber `Newer revision available` / `No S3 bucket yet`,
+ * and the red `No access` / `conflicts in N files` / `Changed in both places`.
+ *
+ * The tier-2 names below are deliberately wired to GRAY placeholders rather
+ * than to invented greens and reds. A grey `Latest` pill reads as unfinished,
+ * which is the point: an invented colour would read as done and ship wrong.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* ═════════════════════════════════════════════════════════════════════════
+ * TIER 2 — semantic roles. Component CSS reads ONLY these.
+ *
+ * Because every name below resolves through a tier-1 variable, this block is
+ * written once and serves both themes.
+ * ═════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* TEXT — exactly two levels, because a Radix scale offers exactly two.
+   * Steps 11 and 12 are the text steps; 9 and 10 are SOLID BACKGROUND steps
+   * and are not readable as text. An earlier draft mapped a third "subtle"
+   * level onto step 9 and it measured 3.38:1 on light and 3.72:1 on dark,
+   * against AA's 4.5:1 — the row timestamps were the casualty. Do not
+   * reintroduce a third level; if something needs to recede, use `muted` and
+   * lean on weight or size, not on a lighter grey.
+   *
+   * Measured on --q-canvas-default: default 15.3:1 light / 16.3:1 dark,
+   * muted 6.1:1 / 9.1:1, accent-fg 6.0:1 / 9.2:1. */
+  --q-fg-default: var(--gray-12);
+  --q-fg-muted: var(--gray-11);
+  --q-fg-on-emphasis: var(--blue-contrast);
+
+  /* Disabled controls only. Step 9 is legitimate here: WCAG exempts inactive
+   * components from contrast minimums, and looking inactive is the point. Never
+   * use this for text a user has to read. */
+  --q-fg-disabled: var(--gray-9);
+
+  /* opaque surfaces */
+  --q-canvas-page: var(--color-background);
+  --q-canvas-default: var(--gray-1);
+  --q-canvas-subtle: var(--gray-2);
+  --q-canvas-inset: var(--gray-3);
+
+  /* INTERACTION OVERLAYS — alpha, not solid, and this distinction is
+   * load-bearing. A solid hover tint only works on the one background it was
+   * chosen against: `--gray-2` as a hover is invisible on a card whose
+   * background is already `--gray-2`, which is exactly where the Accounts and
+   * Autosync cards put their buttons. An alpha overlay composites onto
+   * whatever is beneath and darkens (light) or lightens (dark) by the right
+   * amount regardless. Use these for hover/active; use the opaque canvases
+   * above only for surfaces that own their background.
+   *
+   * Hover and active are two steps apart, not one: a3 -> a4 is invisible in
+   * practice, which is how the first pressed state ended up unreadable. */
+  --q-overlay-hover: var(--gray-a3);
+  --q-overlay-active: var(--gray-a5);
+  --q-overlay-selected: var(--gray-a4);
+  --q-overlay-accent-hover: var(--blue-a3);
+
+  /* lines. `muted` separates rows; `default` outlines controls. */
+  --q-border-muted: var(--gray-4);
+  --q-border-default: var(--gray-7);
+  --q-border-strong: var(--gray-8);
+
+  /* accent. `fg` is link/interactive text, `emphasis` is a solid fill.
+   * Light uses step 11 rather than 12 for text: 12 (#2a2d52) is nearly
+   * identical to 9, so a link coloured with it would be indistinguishable
+   * from a solid accent fill. Dark's step 11 (#93b4ff) is the readable one
+   * against dark surfaces, so the same mapping works for both. */
+  --q-accent-fg: var(--blue-11);
+  --q-accent-emphasis: var(--blue-9);
+  --q-accent-emphasis-hover: var(--blue-10);
+  --q-accent-subtle: var(--blue-3);
+  --q-accent-border: var(--blue-7);
+
+  /* focus. One ring for the whole app; never removed, only restyled.
+   * Step 8 rather than 9: in light, 9 is the near-black brand navy, which
+   * reads as a border rather than a ring. */
+  --q-focus-ring: var(--blue-8);
+  --q-focus-ring-width: 2px;
+  --q-focus-ring-offset: 2px;
+
+  /* status — PLACEHOLDER, see the TIER 1 note above */
+  --q-success-fg: var(--gray-11);
+  --q-success-emphasis: var(--gray-9);
+  --q-success-subtle: var(--gray-3);
+  --q-success-border: var(--gray-6);
+
+  --q-attention-fg: var(--gray-11);
+  --q-attention-emphasis: var(--gray-9);
+  --q-attention-subtle: var(--gray-3);
+  --q-attention-border: var(--gray-6);
+
+  --q-danger-fg: var(--gray-11);
+  --q-danger-emphasis: var(--gray-9);
+  --q-danger-subtle: var(--gray-3);
+  --q-danger-border: var(--gray-6);
+
+  /* shape. One shadow, for overlays only — the page is flat and bordered.
+   * v1's theme.css carries five MUI elevation triples; none survive here. */
+  --q-radius-sm: 4px;
+  --q-radius-md: 6px;
+  --q-radius-lg: 8px;
+  --q-radius-pill: 999px;
+  --q-shadow-overlay: 0 8px 24px rgb(0 0 0 / 14%);
+
+  /* ── TYPE ──────────────────────────────────────────────────────────────
+   * System stack: no webfont, no FOUT, native on all three platforms. v1
+   * ships 1.2 MB of Roboto across 42 woff2 files; none are loaded here.
+   *
+   * 14px IS THE FLOOR, AND THERE IS DELIBERATELY NO TOKEN BELOW IT. Earlier
+   * drafts had 12.5px and 11.5px steps for row text, pills and section
+   * labels; they are gone rather than merely unused, so no one can reach for
+   * one. Hierarchy below body size comes from weight, colour and
+   * letter-spacing — not from shrinking text.
+   *
+   * Consequence to re-measure, not guess: the layout spec's vertical budget
+   * derived ~13 visible list rows at 900px from 12.5px rows. Taller rows mean
+   * fewer. Check it in the gallery before trusting that figure. */
+  --q-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+  --q-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --q-text-body: 14px;    /* the floor. Rows, buttons, pills, labels. */
+  --q-text-lead: 16px;    /* card titles, emphasised copy */
+  --q-text-title: 18px;   /* page and section titles */
+  --q-line-body: 1.45;
+  --q-line-tight: 1.25;   /* controls, single-line labels */
+}
