@@ -24,20 +24,22 @@ fn get_sentry_dsn() -> Option<sentry::types::Dsn> {
 /// is fixed for the process, but a scope carrying it would still reach only the
 /// threads that snapshotted after it was set. One mechanism, both facts.
 fn stamp_event(install_id: Option<InstallId>, host: AmbientHost) -> sentry::ClientOptions {
+    // Built once, not per event: the identity is fixed for the process, so the
+    // hook clones a finished value rather than reassembling it on every send.
+    // `user.id` and nothing else — the install identity is all we know, and it is
+    // deliberately not a person.
+    let user = install_id.map(|install_id| sentry::User {
+        id: Some(install_id.as_str().to_owned()),
+        ..Default::default()
+    });
+
     let before_send = move |mut event: sentry::protocol::Event<'static>| {
         if let Some(host) = host.lock().ok().and_then(|host| host.clone()) {
             event
                 .tags
                 .insert("quilt_host".to_string(), host.to_string());
         }
-        if let Some(install_id) = &install_id {
-            // `user.id` and nothing else: the install identity is the only thing
-            // we know, and it is deliberately not a person.
-            event.user = Some(sentry::User {
-                id: Some(install_id.as_str().to_string()),
-                ..Default::default()
-            });
-        }
+        event.user.clone_from(&user);
         Some(event)
     };
 

@@ -33,9 +33,15 @@ struct DiagnosticMetadata {
     data_dir: String,
     home_dir: String,
     authenticated_hosts: Vec<String>,
-    /// Absent on an install whose identity could not be persisted, so a missing
-    /// value here means "no identity", never "an older export".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `null` on an install whose identity could not be persisted — written, not
+    /// omitted, so that "this install has no identity" and "this export predates
+    /// the field" are different bytes rather than the same absence. `serde(default)`
+    /// is what lets the older shape still parse.
+    ///
+    /// The same rule the event vocabulary follows: an unattributed event reports a
+    /// null host rather than dropping the property, because a reader cannot divide
+    /// by a value that was never written.
+    #[serde(default)]
     install_id: Option<String>,
 }
 
@@ -79,7 +85,7 @@ pub async fn collect(
         home_dir,
         logs_dir: app.logs_dir.path().to_path_buf(),
         auth_hosts,
-        install_id: install_id.map(|id| id.as_str().to_string()),
+        install_id: install_id.map(|id| id.as_str().to_owned()),
     })
 }
 
@@ -348,6 +354,44 @@ mod tests {
             serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
         assert!(parsed.authenticated_hosts.is_empty());
         assert_eq!(parsed, DiagnosticMetadata::from_info(&info));
+    }
+
+    /// An install with no identity writes `install_id: null` rather than omitting
+    /// the key, so a reader can tell it apart from an export that predates the
+    /// field — and an export that *does* predate it still parses.
+    ///
+    /// Without the first half, "no identity" and "older export" are the same
+    /// bytes, and the field answers neither question.
+    #[test]
+    fn an_absent_identity_is_written_as_null_not_omitted() {
+        let data_tmp = TempDir::new().expect("data tempdir");
+        let logs_tmp = TempDir::new().expect("logs tempdir");
+
+        let mut info = make_info(
+            data_tmp.path().to_path_buf(),
+            logs_tmp.path().to_path_buf(),
+            Vec::new(),
+        );
+        info.install_id = None;
+
+        let zip_path = save_diagnostic_zip(&info).expect("save zip");
+        let entries = read_zip_entries(&zip_path);
+        let raw: serde_json::Value =
+            serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
+
+        assert_eq!(
+            raw.get("install_id"),
+            Some(&serde_json::Value::Null),
+            "an unattributed install must say so, not stay silent: {raw}"
+        );
+
+        // The older shape — no key at all — still reads, which is what
+        // `serde(default)` buys and why omitting is not needed for compatibility.
+        let legacy =
+            br#"{"version":"v","os":"o","data_dir":"d","home_dir":"h","authenticated_hosts":[]}"#;
+        let parsed: DiagnosticMetadata =
+            serde_json::from_slice(legacy).expect("an export predating the field must still parse");
+        assert_eq!(parsed.install_id, None);
     }
 
     #[test]

@@ -107,7 +107,7 @@ fn wire_payload(
     let mut properties = properties.unwrap_or_default();
     properties.insert(
         "distinct_id".to_string(),
-        Value::String(install_id.as_str().to_string()),
+        Value::String(install_id.as_str().to_owned()),
     );
     Ok((name, Some(properties)))
 }
@@ -331,7 +331,7 @@ mod tests {
         let props = props.expect("an identity, even with no payload of its own");
         assert_eq!(
             props.get("distinct_id"),
-            Some(&Value::String(id.as_str().to_string()))
+            Some(&Value::String(id.as_str().to_owned()))
         );
         assert_eq!(props.len(), 1, "nothing else is invented: {props:?}");
 
@@ -358,7 +358,7 @@ mod tests {
         assert_eq!(props.get("flow"), Some(&Value::String("oauth".to_string())));
         assert_eq!(
             props.get("distinct_id"),
-            Some(&Value::String(id.as_str().to_string()))
+            Some(&Value::String(id.as_str().to_owned()))
         );
 
         Ok(())
