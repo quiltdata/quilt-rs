@@ -30,8 +30,11 @@ mod gallery {
     pub mod card;
     pub mod countdown;
     pub mod host_row;
+    pub mod list_toolbar;
+    pub mod search_input;
     pub mod select;
     pub mod state_strip;
+    pub mod view_toggle;
     pub mod toggle_row;
 }
 
@@ -41,8 +44,11 @@ use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
 use crate::gallery::countdown::CountdownStories;
 use crate::gallery::host_row::HostRowStories;
+use crate::gallery::list_toolbar::ListToolbarScene;
+use crate::gallery::search_input::SearchInputStories;
 use crate::gallery::select::SelectStories;
 use crate::gallery::state_strip::StateStripScene;
+use crate::gallery::view_toggle::ViewToggleStories;
 use crate::gallery::toggle_row::ToggleRowStories;
 use kit::Button;
 
@@ -89,7 +95,10 @@ fn Gallery() -> impl IntoView {
             <ToggleRowStories />
             <CountdownStories />
             <HostRowStories />
+            <ViewToggleStories />
+            <SearchInputStories />
             <StateStripScene />
+            <ListToolbarScene />
         </div>
     }
 }
