@@ -10,6 +10,7 @@ use quilt_uri::Namespace;
 use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
+use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
 use crate::autopull::reporter::clean_uptodate_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
@@ -50,6 +51,28 @@ impl RefreshOutcome {
             published: None,
             fingerprint,
         }
+    }
+}
+
+/// Whether a login failure *starts* an episode for its deployment, or joins one.
+///
+/// Per deployment rather than per package, and that is the whole point: one expired
+/// session blocks every package on the host, and they reach this code one per loop
+/// iteration. A per-package answer would report one expiry as many.
+///
+/// Asked *before* the failing namespace is recorded, so its own entry cannot make
+/// it look like a continuation of itself.
+fn login_episode(
+    blocked: &std::collections::BTreeMap<Namespace, Option<Host>>,
+    host: Option<&Host>,
+) -> LoginBlock {
+    if blocked
+        .values()
+        .any(|blocked_host| blocked_host.as_ref() == host)
+    {
+        LoginBlock::Continues
+    } else {
+        LoginBlock::Began
     }
 }
 
@@ -515,12 +538,18 @@ pub(crate) async fn run_once(
             Err(WatchError::LoginRequired(host)) => {
                 // Backoff until the user re-auths; the Ok arm clears it.
                 bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
-                inner
-                    .login_blocked
-                    .write()
-                    .await
-                    .insert(namespace.clone(), host.clone());
-                inner.reporter.report_login_required(host.as_ref());
+                // The episode is per *deployment*, not per package: one expired
+                // session blocks every package on that host, and they arrive one
+                // per loop iteration. Asking whether any other namespace is
+                // already blocked on this host — before inserting this one — is
+                // what makes it countable once.
+                let block = {
+                    let mut blocked = inner.login_blocked.write().await;
+                    let block = login_episode(&blocked, host.as_ref());
+                    blocked.insert(namespace.clone(), host.clone());
+                    block
+                };
+                inner.reporter.report_login_required(host.as_ref(), block);
                 inner.aggregator.note_login_required(&namespace, host);
             }
             Err(WatchError::Conflict(reason)) => {

@@ -682,6 +682,11 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
     let logins = reporter.logins.lock().unwrap();
     assert_eq!(logins.len(), 1);
     assert_eq!(logins[0].as_ref(), Some(&host));
+    assert_eq!(
+        *reporter.login_blocks.lock().unwrap(),
+        vec![LoginBlock::Began],
+        "the first discovery starts the episode"
+    );
     Ok(())
 }
 

@@ -15,6 +15,21 @@ use crate::telemetry::event::{
 };
 use crate::telemetry::prelude::*;
 
+/// Whether a deployment's session has *just* become unusable, or was already.
+///
+/// The distinction exists for telemetry: the loop rediscovers an expired session
+/// on every backoff-due tick, for every package on that deployment, so reporting
+/// each discovery would count one expiry many times over. The UI wants the
+/// opposite — it re-renders the same affordance idempotently and does not care —
+/// so this informs telemetry without changing when anyone is told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginBlock {
+    /// No package on this deployment was blocked before. The episode starts here.
+    Began,
+    /// Another package on the same deployment is already blocked, or this one was.
+    Continues,
+}
+
 /// Event names. Kept in lockstep with the UI's `listen(...)` calls.
 pub const STATUS_EVENT: &str = "package-status-changed";
 pub const LOGIN_REQUIRED_EVENT: &str = "autosync-login-required";
@@ -201,7 +216,10 @@ pub trait StatusReporter: Send + Sync + 'static {
     /// lineage has no origin before doing work, so an outcome it reports always
     /// concerns a known deployment.
     fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason);
-    fn report_login_required(&self, host: Option<&Host>);
+    /// `block` distinguishes the deployment's session *becoming* unusable from
+    /// the loop retrying while it stays that way. Only the transition is worth
+    /// counting; the retries are a log line.
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock);
     fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
         warn!(
             "fswatcher: kind={} namespace={:?} message={}",
@@ -233,11 +251,11 @@ impl StatusReporter for LogReporter {
         info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
     }
 
-    fn report_login_required(&self, host: Option<&Host>) {
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
         if let Some(h) = host {
-            warn!("autosync: login required for {h}");
+            warn!("autosync: login required for {h} ({block:?})");
         } else {
-            warn!("autosync: login required");
+            warn!("autosync: login required ({block:?})");
         }
     }
 }
@@ -298,11 +316,16 @@ impl StatusReporter for TelemetryReporter {
         self.inner.report_paused(namespace, host, reason);
     }
 
-    fn report_login_required(&self, host: Option<&Host>) {
-        self.emit(MixpanelEvent::AutosyncLoginRequired(AutosyncAuthEvent {
-            host: host.cloned(),
-        }));
-        self.inner.report_login_required(host);
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
+        // Once per deployment per episode. The loop rediscovers the same expired
+        // session on every backoff-due tick and for every package on that host, so
+        // counting discoveries would report one expiry as many.
+        if block == LoginBlock::Began {
+            self.emit(MixpanelEvent::AutosyncLoginRequired(AutosyncAuthEvent {
+                host: host.cloned(),
+            }));
+        }
+        self.inner.report_login_required(host, block);
     }
 
     fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
@@ -356,11 +379,11 @@ impl StatusReporter for TauriEventReporter {
         }
     }
 
-    fn report_login_required(&self, host: Option<&Host>) {
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
         if let Some(h) = host {
-            warn!("autosync: login required for {h}");
+            warn!("autosync: login required for {h} ({block:?})");
         } else {
-            warn!("autosync: login required");
+            warn!("autosync: login required ({block:?})");
         }
         // TODO(autosync/03-merge-conflicts.md): no UI listener yet.
         let payload = LoginRequiredEvent {
@@ -611,6 +634,9 @@ pub(crate) mod test_support {
         pub statuses: Mutex<Vec<(Namespace, PackageStatusEvent)>>,
         pub paused: Mutex<Vec<(Namespace, PausedReason)>>,
         pub logins: Mutex<Vec<Option<Host>>>,
+        /// Whether each login report was the start of an episode or a repeat, so a
+        /// test can assert one expiry is counted once.
+        pub login_blocks: Mutex<Vec<LoginBlock>>,
         pub subscriber_errors: Mutex<Vec<SubscriberErrorEvent>>,
         pub published: Mutex<Vec<(Namespace, String)>>,
         /// Hosts seen on the outcomes that carry one, so a test can assert the
@@ -635,7 +661,8 @@ pub(crate) mod test_support {
                 .push((namespace.clone(), reason));
         }
 
-        fn report_login_required(&self, host: Option<&Host>) {
+        fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
+            self.login_blocks.lock().unwrap().push(block);
             self.logins.lock().unwrap().push(host.cloned());
         }
 
