@@ -242,6 +242,28 @@ impl Telemetry {
         report_delivery_failure(&self.faults, &self.refusal_reported, err);
     }
 
+    /// The names of the events sitting in the queue, in order.
+    ///
+    /// Reads the channel rather than a recording of it, so a test observes what a
+    /// caller actually handed over — not a parallel bookkeeping that could drift
+    /// from it. Draining is fine: nothing consumes the queue in a test, because
+    /// the sender is only started by [`Self::init`].
+    #[cfg(test)]
+    pub fn queued_events(&self) -> Vec<String> {
+        let Ok(mut pending) = self.pending.lock() else {
+            return Vec::new();
+        };
+        let Some(receiver) = pending.as_mut() else {
+            return Vec::new();
+        };
+
+        let mut names = Vec::new();
+        while let Ok(queued) = receiver.try_recv() {
+            names.push(queued.name());
+        }
+        names
+    }
+
     /// What was reported through [`Self::report_anomaly`] and
     /// [`Self::report_error`] — the seam that made this unit worth doing. Without
     /// it a path can claim to report a fault and no test can tell.

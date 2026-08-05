@@ -95,6 +95,12 @@ pub async fn open_directory_picker(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<PathBuf, String> {
+    // Deliberately reported before the outcome, and the only site that is. The
+    // criterion is whether the event's name stays true when the call returns
+    // `Err`, and here it does: this command models the user *cancelling* as an
+    // error, so waiting for success would silently narrow "the picker was shown"
+    // to "a folder was chosen". Those are different questions and this event
+    // answers the first. If the second is ever wanted, it is a second event.
     tracing.track(MixpanelEvent::DirectoryPickerOpened);
 
     let app_handle = &app_handle.lock().await;
@@ -121,14 +127,15 @@ pub async fn debug_dot_quilt(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DebugDotQuiltOpened);
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening .quilt directory".to_string();
     let msg_ok = "Successfully opened .quilt directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
-    Notify::new(msg_init).map(debug_dot_quilt_command(&app_handle), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::DebugDotQuiltOpened)
+        .map(debug_dot_quilt_command(&app_handle), msg_ok, msg_err)
 }
 
 fn debug_logs_command(app: &app::App) -> Result<(), Error> {
@@ -142,14 +149,15 @@ pub async fn debug_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DebugLogsOpened);
     let app: &app::App = &app;
 
     let msg_init = "Opening logs directory".to_string();
     let msg_ok = "Successfully opened logs directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open logs directory: {err}");
 
-    Notify::new(msg_init).map(debug_logs_command(app), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::DebugLogsOpened)
+        .map(debug_logs_command(app), msg_ok, msg_err)
 }
 
 async fn open_home_dir_command(m: &model::Model) -> Result<(), Error> {
@@ -164,13 +172,13 @@ pub async fn open_home_dir(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::HomeDirOpened);
-
     let msg_init = "Opening home directory".to_string();
     let msg_ok = "Successfully opened home directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
 
-    Notify::new(msg_init).map(open_home_dir_command(&m).await, msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::HomeDirOpened)
+        .map(open_home_dir_command(&m).await, msg_ok, msg_err)
 }
 
 fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
@@ -184,14 +192,15 @@ pub async fn open_data_dir(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DataDirOpened);
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening data directory".to_string();
     let msg_ok = "Successfully opened data directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open data directory: {err}");
 
-    Notify::new(msg_init).map(open_data_dir_command(&app_handle), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::DataDirOpened)
+        .map(open_data_dir_command(&app_handle), msg_ok, msg_err)
 }
 
 async fn collect_diagnostic_logs_command(
@@ -213,12 +222,18 @@ pub async fn collect_diagnostic_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DiagnosticLogsSaved);
     let app_handle = app_handle.lock().await;
     let app: &app::App = &app;
 
     match collect_diagnostic_logs_command(&app_handle, &m, app, &tracing).await {
-        Ok(zip_path) => Ok(zip_path.display().to_string()),
+        Ok(zip_path) => {
+            // Reported here rather than through `Notify::on_success`, because this
+            // command returns the archive's path and so does not route its outcome
+            // through `map`. Same rule, hand-applied: nothing was saved unless this
+            // arm was reached.
+            tracing.track(MixpanelEvent::DiagnosticLogsSaved);
+            Ok(zip_path.display().to_string())
+        }
         Err(err) => Err(err.to_string()),
     }
 }
@@ -228,8 +243,6 @@ pub async fn send_crash_report(
     zip_path: String,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::CrashReportSent);
-
     let zip_path = PathBuf::from(zip_path);
     if zip_path.file_name() != Some("quiltsync-diagnostic.zip".as_ref()) {
         return Err("Invalid diagnostic zip filename".to_string());
@@ -245,7 +258,9 @@ pub async fn send_crash_report(
             .map_err(|e| Error::General(e.to_string()))
             .and_then(|r| r);
 
-    Notify::new(msg_init).map(result, msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::CrashReportSent)
+        .map(result, msg_ok, msg_err)
 }
 
 async fn reveal_in_file_browser_command(
@@ -267,19 +282,20 @@ pub async fn reveal_in_file_browser(
     path: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(
-        uri.as_ref(),
-    )));
-
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
-    Notify::new(msg_init).map(
-        reveal_in_file_browser_command(&m, &namespace, &path).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            reveal_in_file_browser_command(&m, &namespace, &path).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 async fn open_in_file_browser_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -295,19 +311,20 @@ pub async fn open_in_file_browser(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(
-        uri.as_ref(),
-    )));
-
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
     let msg_err = |err: &Error| format!("Failed to open file manager: {err}");
 
-    Notify::new(msg_init).map(
-        open_in_file_browser_command(&m, &namespace).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            open_in_file_browser_command(&m, &namespace).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 async fn open_in_default_application_command(
@@ -329,19 +346,20 @@ pub async fn open_in_default_application(
     path: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DefaultApplicationOpened(
-        PackageFileEvent::for_uri(uri.as_ref()),
-    ));
-
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
     let msg_err = |err: &Error| format!("Failed to open application: {err}");
 
-    Notify::new(msg_init).map(
-        open_in_default_application_command(&m, &namespace, &path).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::DefaultApplicationOpened(PackageFileEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            open_in_default_application_command(&m, &namespace, &path).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
@@ -358,12 +376,13 @@ pub async fn open_in_web_browser(
     // catalog links, documentation, a local directory and `mailto:` alike, so its
     // URL's host is not necessarily a Quilt deployment — and `host` means the
     // deployment an event concerns, never a hostname that appeared nearby.
-    tracing.track(MixpanelEvent::WebBrowserOpened);
     let msg_init = format!("Opening URL {url}");
     let msg_ok = format!("Successfully opened {url}");
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
 
-    Notify::new(msg_init).map(open_in_web_browser_command(&url), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::WebBrowserOpened)
+        .map(open_in_web_browser_command(&url), msg_ok, msg_err)
 }
 
 async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {
@@ -382,11 +401,12 @@ pub async fn setup(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     directory: String,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::SetupCompleted);
     let msg_init = format!("Setup with directory {directory}");
     let msg_ok = format!("Successfully set up directory: {directory}");
     let msg_err = |err: &Error| format!("Failed to create QuiltSync directory: {err}");
-    Notify::new(msg_init).map(setup_command(&m, &directory).await, msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::SetupCompleted)
+        .map(setup_command(&m, &directory).await, msg_ok, msg_err)
 }
 
 // ── Auto-update ────────────────────────────────────────────
