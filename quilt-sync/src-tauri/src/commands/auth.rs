@@ -146,9 +146,9 @@ async fn erase_auth_command(
         // stays constant so the anomaly groups as one issue.
         Ok(ErasedAuth::NothingStored(host)) => {
             tracing.add_host(host);
-            Telemetry::report_anomaly("Logout found no stored auth for the host");
+            tracing.report_anomaly("Logout found no stored auth for the host");
         }
-        Err(err) => Telemetry::report_error(err),
+        Err(err) => tracing.report_error(err),
     }
 
     // On either success: the role cache can still hold an entry for a host whose
@@ -774,6 +774,74 @@ mod tests {
     /// A logout takes one host's stored auth and nothing else. The erase joins a
     /// parsed host onto the auth dir, so a bug in that addressing would show up
     /// here as the other host's credentials disappearing with it.
+    /// The claim the spec makes about logout, finally assertable: one that finds
+    /// nothing stored is still a **success** — a second click must not raise an
+    /// error — but it emits no event and *reports an anomaly*, because the settings
+    /// page offers logout only for hosts it listed from these very directories, so
+    /// a missing one means the list and the erase disagree about the name.
+    ///
+    /// Before fault reporting had a seam this could be read but not checked: it
+    /// went straight to a process-global crash client that no test could observe.
+    #[tokio::test]
+    async fn logging_out_a_host_with_nothing_stored_reports_an_anomaly() {
+        let data_dir = TempDir::new().expect("temp data dir");
+        seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
+
+        let mut m = MockQuiltModel::new();
+        m.expect_clear_remote_client_cache().returning(|_| ());
+
+        let telemetry = Telemetry::default();
+        erase_auth_command(
+            data_dir.path(),
+            &m,
+            &RoleCache::default(),
+            &telemetry,
+            "never-logged-in.quilt.dev",
+        )
+        .await
+        .expect("a logout that finds nothing stored is still a success");
+
+        let reported = telemetry.reported_faults();
+        assert_eq!(
+            reported.len(),
+            1,
+            "exactly one signal per attempt: {reported:?}"
+        );
+        assert!(
+            reported[0].contains("Logout found no stored auth"),
+            "and it is the anomaly, not something else: {reported:?}"
+        );
+    }
+
+    /// The other side of the same rule: a logout that *does* erase something
+    /// reports no fault at all. Without this, the assertion above would pass on an
+    /// implementation that reported an anomaly every time.
+    #[tokio::test]
+    async fn a_successful_logout_reports_no_fault() {
+        let data_dir = TempDir::new().expect("temp data dir");
+        seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
+
+        let mut m = MockQuiltModel::new();
+        m.expect_clear_remote_client_cache().returning(|_| ());
+
+        let telemetry = Telemetry::default();
+        erase_auth_command(
+            data_dir.path(),
+            &m,
+            &RoleCache::default(),
+            &telemetry,
+            "a.quilt.dev",
+        )
+        .await
+        .expect("logout");
+
+        assert!(
+            telemetry.reported_faults().is_empty(),
+            "erasing what was there is not an anomaly: {:?}",
+            telemetry.reported_faults()
+        );
+    }
+
     #[tokio::test]
     async fn logging_out_erases_only_its_own_host() {
         let data_dir = TempDir::new().expect("temp data dir");
