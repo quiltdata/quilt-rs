@@ -121,10 +121,22 @@ impl DeliveryFailure {
     pub fn classify(err: &crate::Error) -> Self {
         use mixpanel_rs::error::Error as Mp;
 
-        let crate::Error::Telemetry(TelemetryError::Mixpanel(err)) = err else {
-            // Anything that is not the client's own error never reached the
-            // network — a payload we could not serialize is not a bad connection.
+        let crate::Error::Telemetry(err) = err else {
+            // Nothing outside telemetry reaches this, and an unrecognised failure
+            // is safer treated as ours than as the network's.
             return Self::Refused;
+        };
+
+        // Exhaustive over our own errors as well as the client's, so a new one
+        // cannot inherit an answer by falling through. That is precisely how a
+        // timeout once read as a refusal.
+        let err = match err {
+            // A timeout *did* reach the network — it simply got no verdict, which
+            // is the user's connection rather than our payload.
+            TelemetryError::SendTimeout(_) => return Self::Unreachable,
+            // A payload we could not even serialize never left the process.
+            TelemetryError::Serialize(_) => return Self::Refused,
+            TelemetryError::Mixpanel(err) => err,
         };
 
         match err {
@@ -306,12 +318,7 @@ async fn send_batch(
 
             tokio::time::timeout(SEND_TIMEOUT, mixpanel.track_batch(events))
                 .await
-                .map_err(|_| {
-                    TelemetryError::Serialize(format!(
-                        "send timed out after {}s",
-                        SEND_TIMEOUT.as_secs()
-                    ))
-                })??;
+                .map_err(|_| TelemetryError::SendTimeout(SEND_TIMEOUT.as_secs()))??;
         }
         Analytics::DryRun => {
             for queued in &batch {
@@ -697,6 +704,25 @@ mod tests {
     fn a_serialization_failure_counts_as_a_refusal() {
         let err = crate::Error::from(TelemetryError::Serialize("bad shape".to_owned()));
         assert_eq!(DeliveryFailure::classify(&err), DeliveryFailure::Refused);
+    }
+
+    /// A timeout *did* reach the network and got no verdict, so it is the user's
+    /// connection, not our payload.
+    ///
+    /// This regressed once and the existing coverage did not catch it: the timeout
+    /// borrowed the serialization error, which classifies as a refusal, so a slow
+    /// network filed a false fault **and spent the one refusal report a run is
+    /// allowed** — swallowing any genuine refusal later in the same run. The
+    /// per-variant tests passed throughout, because the variant they exercised was
+    /// not the one the timeout used.
+    #[test]
+    fn a_timeout_is_the_network_not_our_payload() {
+        let err = crate::Error::from(TelemetryError::SendTimeout(10));
+        assert_eq!(
+            DeliveryFailure::classify(&err),
+            DeliveryFailure::Unreachable,
+            "a timeout must not be reported as our bug"
+        );
     }
 
     /// Autosync gets its **own** names rather than folding into the manual

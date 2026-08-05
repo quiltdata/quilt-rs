@@ -356,20 +356,31 @@ mod tests {
 
     /// And a network failure must not consume the one refusal report — otherwise
     /// the first flaky tunnel masks a real misconfiguration for the whole run.
+    ///
+    /// Both kinds of not-reaching-the-API are exercised, because this exact property
+    /// regressed once through the kind that was missing: a send timeout borrowed the
+    /// serialization error, classified as a refusal, and spent the report.
     #[test]
     fn a_network_failure_does_not_spend_the_refusal_report() {
-        let telemetry = Telemetry::default();
+        for network in [
+            crate::Error::from(mixpanel_rs::error::Error::ApiServerError(503)),
+            crate::Error::from(crate::error::TelemetryError::SendTimeout(10)),
+        ] {
+            let telemetry = Telemetry::default();
 
-        telemetry.report_delivery_failure_for_test(&crate::Error::from(
-            mixpanel_rs::error::Error::ApiServerError(503),
-        ));
-        telemetry.report_delivery_failure_for_test(&refusal());
+            telemetry.report_delivery_failure_for_test(&network);
+            assert!(
+                telemetry.reported_faults().is_empty(),
+                "{network} is not a fault to report"
+            );
 
-        assert_eq!(
-            telemetry.reported_faults().len(),
-            1,
-            "the refusal still got through"
-        );
+            telemetry.report_delivery_failure_for_test(&refusal());
+            assert_eq!(
+                telemetry.reported_faults().len(),
+                1,
+                "the refusal still got through after {network}"
+            );
+        }
     }
 
     /// Tests build with `debug_assertions` on, so this pins the branch a
