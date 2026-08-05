@@ -27,13 +27,17 @@ mod kit;
 // in `Gallery` below — there is no registry to keep in step.
 mod gallery {
     pub mod button;
+    pub mod card;
     pub mod select;
+    pub mod toggle_row;
 }
 
 use leptos::prelude::*;
 
 use crate::gallery::button::ButtonStories;
+use crate::gallery::card::CardStories;
 use crate::gallery::select::SelectStories;
+use crate::gallery::toggle_row::ToggleRowStories;
 use kit::Button;
 
 fn main() {
@@ -75,6 +79,8 @@ fn Gallery() -> impl IntoView {
             </header>
             <ButtonStories />
             <SelectStories />
+            <CardStories />
+            <ToggleRowStories />
         </div>
     }
 }
@@ -97,9 +103,17 @@ pub fn Story(title: &'static str, note: &'static str, children: Children) -> imp
 /// screenshot of unlabelled controls cannot be discussed.
 #[component]
 #[allow(clippy::must_use_candidate, reason = "consumed by view!")]
-pub fn Cell(label: &'static str, children: Children) -> impl IntoView {
+pub fn Cell(
+    label: &'static str,
+    /// Span two grid columns. For components that are containers — a card at one
+    /// column's width reads as something it is not.
+    #[prop(optional)]
+    wide: bool,
+    children: Children,
+) -> impl IntoView {
+    let class = if wide { "g-cell g-cell--wide" } else { "g-cell" };
     view! {
-        <div class="g-cell">
+        <div class=class>
             <span class="g-cell__label">{label}</span>
             <div class="g-cell__body">{children()}</div>
         </div>

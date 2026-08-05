@@ -1,0 +1,123 @@
+/*
+ * ToggleRow. A checkbox, a label with a sub-label, and a trailing slot for a
+ * countdown or an idle note.
+ *
+ * The wrapper is a `<label>`, and here that is enough: browsers *do* forward a
+ * label click to a checkbox — unlike a select, where they refuse to synthesise
+ * opening the dropdown. So the whole row toggles.
+ *
+ * Consequence for callers: the trailing slot must NOT be interactive. Anything
+ * clickable in there would be swallowed by the label and toggle the checkbox
+ * instead. A countdown and a line of text are fine; a button is not.
+ */
+
+.root {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) 0;
+  cursor: pointer;
+}
+
+.root.disabled {
+  cursor: not-allowed;
+  color: var(--q-fg-disabled);
+}
+
+/* The real checkbox: focusable, labelled, in the accessibility tree — but not
+ * drawn. Off-screen rather than `appearance: none` with a pseudo-element,
+ * because a pseudo-element on a replaced input is unreliable across the three
+ * webviews and this needs none. */
+.input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  border: 1px solid var(--q-border-strong);
+  border-radius: var(--q-radius-sm);
+  background: var(--q-canvas-default);
+  color: transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.indicator svg {
+  width: 12px;
+  height: 12px;
+}
+
+.input:checked + .indicator {
+  background: var(--q-accent-emphasis);
+  border-color: var(--q-accent-emphasis);
+  /* Safe in both themes: `--blue-contrast` is #fff in each, so the tick never
+   * needs a per-theme value. */
+  color: var(--q-fg-on-emphasis);
+}
+
+.root:hover:not(.disabled) .indicator {
+  border-color: var(--q-fg-muted);
+}
+
+/* The ring goes on the box, because the input it belongs to is off-screen. */
+.input:focus-visible + .indicator {
+  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
+  outline-offset: var(--q-focus-ring-offset);
+}
+
+.root.disabled .indicator {
+  border-color: var(--q-border-muted);
+  background: var(--q-overlay-hover);
+}
+
+.input:checked:disabled + .indicator {
+  background: var(--q-fg-disabled);
+  border-color: var(--q-fg-disabled);
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.label {
+  display: block;
+}
+
+.sublabel {
+  display: block;
+  margin-top: 1px;
+  color: var(--q-fg-muted);
+}
+
+.root.disabled .sublabel {
+  color: var(--q-fg-disabled);
+}
+
+/* Right-aligned and never shrinking: a countdown that reflows as its digits
+ * change is worse than one that is simply wide enough. Tabular figures keep the
+ * digits from jittering. */
+.trailing {
+  flex: none;
+  padding-left: var(--q-space-2);
+  color: var(--q-fg-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.root.disabled .trailing {
+  color: var(--q-fg-disabled);
+}

@@ -31,6 +31,10 @@ body {
   gap: var(--q-space-2);
 }
 
+/* Wider cells for components that are themselves containers. A card at 260px
+ * misrepresents it: the state strip gives each one roughly half the window. */
+.g-cell--wide { grid-column: span 2; }
+
 .g-cell {
   border: 1px solid var(--q-border-muted);
   border-radius: var(--q-radius-lg);
