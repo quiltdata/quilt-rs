@@ -1,0 +1,147 @@
+/*
+ * Button. Class names are hashed per module, so they need no prefix and cannot
+ * collide — hence bare `btn`, `primary`, `large`.
+ *
+ * Tier-2 tokens only, never a primitive or a literal. Flat and bordered: no
+ * shadow on any state.
+ */
+
+.btn {
+  /* `appearance`, `margin`, `font` and the focus ring come from the baseline. */
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-tight);
+
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border: 1px solid var(--q-border-default);
+  border-radius: var(--q-radius-md);
+  background: var(--q-canvas-default);
+  color: var(--q-fg-default);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 100%;
+
+  /* Colour only. Never transition geometry — a button that moves under the
+   * cursor is a button you miss. */
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--q-overlay-hover);
+  border-color: var(--q-border-strong);
+}
+
+.btn:active:not(:disabled) {
+  background: var(--q-overlay-active);
+
+  /* Pressed. `transform`, so nothing reflows, and no transition on it, so the
+   * shift is instantaneous — the no-moving-geometry rule above is about
+   * transitions. Fires for Space and Enter too. */
+  transform: translate(1px, 1px);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  color: var(--q-fg-disabled);
+  border-color: var(--q-border-muted);
+  background: var(--q-overlay-hover);
+}
+
+/* ── size — orthogonal to `variant`, hence a separate prop ─────────────── */
+.large {
+  padding: 8px 16px;
+  font-size: var(--q-text-lead);
+}
+
+.large .icon,
+.large.loading::before {
+  width: 16px;
+  height: 16px;
+}
+
+/* ── leading slot ────────────────────────────────────────────────────────
+ * Icon and spinner are ONE slot: loading hides the icon and the spinner takes
+ * its place, so a button with an icon keeps its width. Without an icon it does
+ * grow — accepted, because callers swap the label at the same moment anyway
+ * (`Publish` -> `Publishing…`).
+ */
+.icon {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Truncate rather than overflow. `nowrap` alone lets a long label blow past the
+ * button's container — in a queue row that breaks the layout, not just the
+ * button. */
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.loading .icon {
+  display: none;
+}
+
+/* ── primary ──────────────────────────────────────────────────────────── */
+.primary {
+  background: var(--q-accent-emphasis);
+  border-color: var(--q-accent-emphasis);
+  color: var(--q-fg-on-emphasis);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--q-accent-emphasis-hover);
+  border-color: var(--q-accent-emphasis-hover);
+}
+
+.primary:active:not(:disabled) {
+  /* Light's accent cannot go darker than rest, so the press is carried by
+   * geometry and a darker border rather than by fill. */
+  background: var(--q-accent-emphasis);
+  border-color: var(--q-fg-default);
+  transform: translate(1px, 1px);
+}
+
+.primary:disabled {
+  background: var(--q-overlay-selected);
+  border-color: var(--q-border-muted);
+  color: var(--q-fg-disabled);
+}
+
+/* ── loading ─────────────────────────────────────────────────────────────
+ * CSS-only: no component, nothing to dispose of.
+ */
+.loading::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  animation: spin 620ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Reduced motion keeps the ring and stops only the rotation — but dims it, so a
+ * frozen ring reads as inactive rather than as a rendering bug. */
+@media (prefers-reduced-motion: reduce) {
+  .loading::before {
+    animation: none;
+    border-top-color: currentcolor;
+    opacity: 0.45;
+  }
+}
