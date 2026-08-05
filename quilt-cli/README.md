@@ -63,3 +63,29 @@ quilt status --namespace akarve/cord19
 it up from the saved lineage.
 
 URIs follow the [Quilt+ URI format](https://docs.quilt.bio/quilt-platform-catalog-user/uri).
+
+## Fully local workflow
+
+No login or remote is required to create, edit, and version a package
+entirely on disk:
+
+```sh
+# --home is only needed on the first invocation against a domain
+quilt --home ~/QuiltHome create --namespace me/local-pkg \
+    --message "Initial revision"
+
+# Package files live under <home>/<namespace>; add/edit them directly
+mkdir -p ~/QuiltHome/me/local-pkg
+echo "a,b,c" > ~/QuiltHome/me/local-pkg/data.csv
+
+quilt status --namespace me/local-pkg
+quilt commit --namespace me/local-pkg --message "Add data.csv" --no-workflow
+
+quilt list
+```
+
+Add `--source <dir>` to `create` to populate the package from an existing
+directory instead of starting empty. The package stays local-only — usable
+with `status`, `commit`, and `uninstall` — until a `push` (which then
+requires `--bucket`/`--origin` for the first push) sends a revision to a
+remote.
