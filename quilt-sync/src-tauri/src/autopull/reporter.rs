@@ -1,14 +1,34 @@
 use std::fmt::Write;
+use std::sync::Arc;
 
 use serde::Serialize;
 
 use quilt_uri::Host;
 use quilt_uri::Namespace;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::autopull::PausedReason;
 use crate::quilt;
+use crate::telemetry::Telemetry;
+use crate::telemetry::event::{
+    AutosyncAuthEvent, AutosyncEvent, AutosyncPausedEvent, MixpanelEvent, PausedKind,
+};
 use crate::telemetry::prelude::*;
+
+/// Whether a deployment's session has *just* become unusable, or was already.
+///
+/// The distinction exists for telemetry: the loop rediscovers an expired session
+/// on every backoff-due tick, for every package on that deployment, so reporting
+/// each discovery would count one expiry many times over. The UI wants the
+/// opposite — it re-renders the same affordance idempotently and does not care —
+/// so this informs telemetry without changing when anyone is told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginBlock {
+    /// No package on this deployment was blocked before. The episode starts here.
+    Began,
+    /// Another package on the same deployment is already blocked, or this one was.
+    Continues,
+}
 
 /// Event names. Kept in lockstep with the UI's `listen(...)` calls.
 pub const STATUS_EVENT: &str = "package-status-changed";
@@ -192,8 +212,14 @@ pub struct SubscriberErrorEvent {
 /// tests and a hypothetical headless daemon wire a logger.
 pub trait StatusReporter: Send + Sync + 'static {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent);
-    fn report_paused(&self, namespace: &Namespace, reason: PausedReason);
-    fn report_login_required(&self, host: Option<&Host>);
+    /// `host` is required rather than optional: the loop skips any package whose
+    /// lineage has no origin before doing work, so an outcome it reports always
+    /// concerns a known deployment.
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason);
+    /// `block` distinguishes the deployment's session *becoming* unusable from
+    /// the loop retrying while it stays that way. Only the transition is worth
+    /// counting; the retries are a log line.
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock);
     fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
         warn!(
             "fswatcher: kind={} namespace={:?} message={}",
@@ -202,8 +228,8 @@ pub trait StatusReporter: Send + Sync + 'static {
     }
     /// Surface a successful autosync publish. Default implementation
     /// logs only; `TauriEventReporter` also emits `PUBLISHED_EVENT`.
-    fn report_published(&self, namespace: &Namespace, message: &str) {
-        info!("autosync: published namespace={namespace} message={message}");
+    fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
+        info!("autosync: published namespace={namespace} host={host} message={message}");
     }
 }
 
@@ -221,21 +247,109 @@ impl StatusReporter for LogReporter {
         );
     }
 
-    fn report_paused(&self, namespace: &Namespace, reason: PausedReason) {
-        info!("autosync: paused namespace={namespace} reason={reason:?}");
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+        info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
     }
 
-    fn report_login_required(&self, host: Option<&Host>) {
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
         if let Some(h) = host {
-            warn!("autosync: login required for {h}");
+            warn!("autosync: login required for {h} ({block:?})");
         } else {
-            warn!("autosync: login required");
+            warn!("autosync: login required ({block:?})");
         }
     }
 }
 
 /// Production reporter: emits typed events on the Tauri event bus and
 /// also logs so file-tail-style debugging still works.
+/// Wraps another reporter and, in passing, tells telemetry what the engine just
+/// did.
+///
+/// A decorator rather than calls threaded into the tick: the engine already
+/// funnels every outcome through [`StatusReporter`], so that trait *is* the seam,
+/// and adding a second one inside the loop would mean two places to keep in step.
+/// The inner reporter still does its job — this only observes.
+///
+/// **Not every method reports.** `report_status` fires per package per tick and
+/// carries a fingerprint precisely so consumers can discard repeats; it is a
+/// progress signal, not a countable act, and sending it would swamp the
+/// vocabulary. A subscriber error is reported as a *fault* rather than an event,
+/// because the analytics vocabulary carries no error events by design.
+///
+/// Emission is spawned rather than awaited, because the trait is synchronous and
+/// telemetry is not. That is the right shape regardless: the engine must not wait
+/// on a network call to finish its tick.
+pub struct TelemetryReporter {
+    handle: tauri::AppHandle,
+    inner: Arc<dyn StatusReporter>,
+}
+
+impl TelemetryReporter {
+    pub fn wrapping(inner: Arc<dyn StatusReporter>, handle: tauri::AppHandle) -> Self {
+        Self { handle, inner }
+    }
+
+    /// Hand `event` to telemetry without blocking the caller.
+    ///
+    /// The `Telemetry` lives in Tauri state rather than being held here, so a
+    /// reporter constructed before it is managed still works — the same reason
+    /// [`TauriEventReporter`] holds a handle instead of a window.
+    fn emit(&self, event: MixpanelEvent) {
+        let handle = self.handle.clone();
+        tauri::async_runtime::spawn(async move {
+            handle.state::<Telemetry>().track(event).await;
+        });
+    }
+}
+
+impl StatusReporter for TelemetryReporter {
+    fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
+        // Deliberately not reported — see the type's note on volume.
+        self.inner.report_status(namespace, event);
+    }
+
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+        self.emit(MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
+            host: host.clone(),
+            reason: PausedKind::from(&reason),
+        }));
+        self.inner.report_paused(namespace, host, reason);
+    }
+
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
+        // Once per deployment per episode. The loop rediscovers the same expired
+        // session on every backoff-due tick and for every package on that host, so
+        // counting discoveries would report one expiry as many.
+        if block == LoginBlock::Began {
+            self.emit(MixpanelEvent::AutosyncLoginRequired(AutosyncAuthEvent {
+                host: host.cloned(),
+            }));
+        }
+        self.inner.report_login_required(host, block);
+    }
+
+    fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
+        // A fault, not an event: the vocabulary has no error events, and the
+        // filesystem watcher concerns no deployment, so there would be nothing to
+        // attribute one to. The message is a constant so the reporter groups it as
+        // one issue rather than one per path.
+        let handle = self.handle.clone();
+        tauri::async_runtime::spawn(async move {
+            handle
+                .state::<Telemetry>()
+                .report_anomaly("Autosync filesystem watcher reported an error");
+        });
+        self.inner.report_subscriber_error(event);
+    }
+
+    fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
+        self.emit(MixpanelEvent::AutosyncPublished(AutosyncEvent {
+            host: host.clone(),
+        }));
+        self.inner.report_published(namespace, host, message);
+    }
+}
+
 pub struct TauriEventReporter {
     handle: tauri::AppHandle,
 }
@@ -257,19 +371,19 @@ impl StatusReporter for TauriEventReporter {
         }
     }
 
-    fn report_paused(&self, namespace: &Namespace, reason: PausedReason) {
-        info!("autosync: paused namespace={namespace} reason={reason:?}");
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+        info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
         let payload = PausedEvent::from_reason(namespace, &reason);
         if let Err(err) = self.handle.emit(PAUSED_EVENT, &payload) {
             warn!("autosync: failed to emit {PAUSED_EVENT}: {err}");
         }
     }
 
-    fn report_login_required(&self, host: Option<&Host>) {
+    fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
         if let Some(h) = host {
-            warn!("autosync: login required for {h}");
+            warn!("autosync: login required for {h} ({block:?})");
         } else {
-            warn!("autosync: login required");
+            warn!("autosync: login required ({block:?})");
         }
         // TODO(autosync/03-merge-conflicts.md): no UI listener yet.
         let payload = LoginRequiredEvent {
@@ -290,8 +404,8 @@ impl StatusReporter for TauriEventReporter {
         }
     }
 
-    fn report_published(&self, namespace: &Namespace, message: &str) {
-        info!("autosync: published namespace={namespace} message={message}");
+    fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
+        info!("autosync: published namespace={namespace} host={host} message={message}");
         let payload = PublishedEvent {
             namespace: namespace.to_string(),
             message: message.to_string(),
@@ -520,8 +634,15 @@ pub(crate) mod test_support {
         pub statuses: Mutex<Vec<(Namespace, PackageStatusEvent)>>,
         pub paused: Mutex<Vec<(Namespace, PausedReason)>>,
         pub logins: Mutex<Vec<Option<Host>>>,
+        /// Whether each login report was the start of an episode or a repeat, so a
+        /// test can assert one expiry is counted once.
+        pub login_blocks: Mutex<Vec<LoginBlock>>,
         pub subscriber_errors: Mutex<Vec<SubscriberErrorEvent>>,
         pub published: Mutex<Vec<(Namespace, String)>>,
+        /// Hosts seen on the outcomes that carry one, so a test can assert the
+        /// engine attributed a report to the package's own deployment rather than
+        /// merely compiling against a `&Host`.
+        pub hosts: Mutex<Vec<Host>>,
     }
 
     impl StatusReporter for RecordingReporter {
@@ -532,14 +653,16 @@ pub(crate) mod test_support {
                 .push((namespace.clone(), event));
         }
 
-        fn report_paused(&self, namespace: &Namespace, reason: PausedReason) {
+        fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+            self.hosts.lock().unwrap().push(host.clone());
             self.paused
                 .lock()
                 .unwrap()
                 .push((namespace.clone(), reason));
         }
 
-        fn report_login_required(&self, host: Option<&Host>) {
+        fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
+            self.login_blocks.lock().unwrap().push(block);
             self.logins.lock().unwrap().push(host.cloned());
         }
 
@@ -547,7 +670,8 @@ pub(crate) mod test_support {
             self.subscriber_errors.lock().unwrap().push(event);
         }
 
-        fn report_published(&self, namespace: &Namespace, message: &str) {
+        fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
+            self.hosts.lock().unwrap().push(host.clone());
             self.published
                 .lock()
                 .unwrap()

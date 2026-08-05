@@ -131,8 +131,14 @@ fn main() {
             app.manage(oauth::OAuthState::default());
             // The watcher reads `Model` via `app_handle.state::<Model>()`
             // so it can spawn after `Model` is registered above.
+            // Telemetry wraps the UI reporter rather than replacing it: the
+            // engine's outcomes reach the window exactly as before, and telemetry
+            // observes them on the way past.
             let reporter: Arc<dyn StatusReporter> =
-                Arc::new(TauriEventReporter::new(app.handle().clone()));
+                Arc::new(autopull::reporter::TelemetryReporter::wrapping(
+                    Arc::new(TauriEventReporter::new(app.handle().clone())),
+                    app.handle().clone(),
+                ));
             let (watcher, status_rx) = Watcher::spawn(
                 app.handle().clone(),
                 autosync_settings.clone(),

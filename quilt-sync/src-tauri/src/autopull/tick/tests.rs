@@ -1053,3 +1053,50 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     assert!(!event.fingerprint.is_empty());
     Ok(())
 }
+
+/// One expired session is **one** episode, however many packages it blocks.
+///
+/// Tested on the classifier rather than through `run_once`, because the loop
+/// prunes `login_blocked` to currently-installed namespaces on entry — so a
+/// sibling cannot be injected without a second installed package, and the
+/// property under test is not about installation.
+#[test]
+fn login_episode_counts_per_deployment_not_per_package() {
+    let host: Host = "catalog.dev".parse().unwrap();
+    let other: Host = "elsewhere.dev".parse().unwrap();
+
+    let mut blocked = BTreeMap::new();
+    assert_eq!(
+        login_episode(&blocked, Some(&host)),
+        LoginBlock::Began,
+        "nothing is blocked yet, so this failure starts the episode"
+    );
+
+    blocked.insert(("acme", "first").into(), Some(host.clone()));
+    assert_eq!(
+        login_episode(&blocked, Some(&host)),
+        LoginBlock::Continues,
+        "a sibling on the same deployment means the session was already known bad"
+    );
+    assert_eq!(
+        login_episode(&blocked, Some(&other)),
+        LoginBlock::Began,
+        "a different deployment's session expiring is its own episode"
+    );
+}
+
+/// An unattributed failure is its own episode, and does not merge with an
+/// attributed one — two unknowns are indistinguishable, so they collapse, but an
+/// unknown must never be taken for a known host.
+#[test]
+fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
+    let host: Host = "catalog.dev".parse().unwrap();
+    let mut blocked = BTreeMap::new();
+    blocked.insert(("acme", "first").into(), Some(host));
+
+    assert_eq!(
+        login_episode(&blocked, None),
+        LoginBlock::Began,
+        "a failure that could not name its deployment is not that deployment's"
+    );
+}

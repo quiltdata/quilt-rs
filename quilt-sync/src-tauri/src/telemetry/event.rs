@@ -69,6 +69,75 @@ pub struct LoginEvent {
     pub flow: LoginFlow,
 }
 
+/// Something autosync did on its own, against a deployment it is **known** to
+/// have.
+///
+/// The host is required here where a manual package operation's is optional, and
+/// the loop is why: it skips any package whose lineage carries no origin before
+/// doing any work, so every outcome it reports is about a package with a remote.
+/// That is the proof a required host needs — the tightening the previous change
+/// left open for the manual paths, available here for free.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutosyncEvent {
+    pub host: Host,
+}
+
+/// Autosync stopping on a package, and the kind of thing that stopped it.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutosyncPausedEvent {
+    pub host: Host,
+    pub reason: PausedKind,
+}
+
+/// Autosync stopping because the session expired.
+///
+/// The one autosync payload whose host is optional, and not for the usual
+/// reason: the refusal itself carries the host only when the failing call knew
+/// which one it was talking to, so an absent host here means the engine could not
+/// name the deployment, not that there wasn't one.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutosyncAuthEvent {
+    pub host: Option<Host>,
+}
+
+/// Why autosync paused, coarsely — the variant, never its contents.
+///
+/// The engine's own reason type carries a conflicting-file list, a role name and
+/// a free-text message for the UI banner. None of that crosses into telemetry:
+/// the vocabulary admits no free text, and a file name is exactly the kind of
+/// detail [the module's rule](self) exists to keep out. The category is what a
+/// report can act on anyway — "how often does a role denial stop background
+/// sync" does not need to know which file.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PausedKind {
+    PendingChanges,
+    PendingCommit,
+    Diverged,
+    PullConflict,
+    RoleDenied,
+    /// The engine's own catch-all for non-transient errors it has not
+    /// enumerated. Coarse by inheritance rather than by choice: sharpening it
+    /// means sharpening `PausedReason` upstream first.
+    Other,
+}
+
+impl From<&crate::autopull::PausedReason> for PausedKind {
+    fn from(reason: &crate::autopull::PausedReason) -> Self {
+        use crate::autopull::PausedReason as R;
+        // Exhaustive rather than wildcarded, so a new pause reason cannot be
+        // added without deciding how a report should see it.
+        match reason {
+            R::PendingChanges => Self::PendingChanges,
+            R::PendingCommit => Self::PendingCommit,
+            R::Diverged => Self::Diverged,
+            R::PullConflict(_) => Self::PullConflict,
+            R::RoleDenied { .. } => Self::RoleDenied,
+            R::Other(_) => Self::Other,
+        }
+    }
+}
+
 impl RemotePackageEvent {
     pub fn for_uri(uri: Option<&S3PackageUri>) -> Self {
         Self {
@@ -149,6 +218,18 @@ pub enum MixpanelEvent {
     FileRevealed(PackageFileEvent),
     DefaultApplicationOpened(PackageFileEvent),
 
+    // ── autosync: the engine acting with no user present ──
+    /// A publish the loop completed on its own. Deliberately *not*
+    /// `package_published`: folding unattended work into a series read as
+    /// user actions would redefine it silently, which is the thing the
+    /// name-continuity rule exists to prevent.
+    AutosyncPublished(AutosyncEvent),
+    /// The loop stopped on a package, with the category that stopped it.
+    AutosyncPaused(AutosyncPausedEvent),
+    /// The loop stopped because the session expired — the silent-failure signal:
+    /// background sync ceases working and nothing asked the user anything.
+    AutosyncLoginRequired(AutosyncAuthEvent),
+
     // ── auth: always names the deployment it acts on ──
     UserLoggedIn(LoginEvent),
     RoleSwitched(AuthEvent),
@@ -180,6 +261,10 @@ impl MixpanelEvent {
             Self::PackageDirOpened(e)
             | Self::FileRevealed(e)
             | Self::DefaultApplicationOpened(e) => e.host.as_ref(),
+
+            Self::AutosyncPublished(e) => Some(&e.host),
+            Self::AutosyncPaused(e) => Some(&e.host),
+            Self::AutosyncLoginRequired(e) => e.host.as_ref(),
 
             Self::RoleSwitched(e) | Self::OAuthLoginInitiated(e) | Self::AuthErased(e) => {
                 Some(&e.host)
