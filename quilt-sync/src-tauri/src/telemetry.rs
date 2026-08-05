@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use ::sentry as Sentry;
-use mixpanel_rs::Mixpanel;
 use quilt_uri::Host;
 use semver::Version;
 
@@ -14,6 +13,7 @@ pub mod sentry;
 pub mod tracing;
 
 pub use event::MixpanelEvent;
+pub use mixpanel::Analytics;
 pub use tracing::LogsDir;
 
 pub mod prelude {
@@ -32,25 +32,63 @@ pub mod prelude {
 /// instead, on whatever thread the event leaves from.
 pub type AmbientHost = Arc<Mutex<Option<Host>>>;
 
+/// Where this build's telemetry goes — decided by the build profile alone.
+///
+/// **Nothing leaves a local build.** Analytics dry-runs to the terminal (see
+/// [`mixpanel::Analytics`]) and the crash reporter is not constructed at all, so
+/// no configuration, environment variable, or stray `.env` credential can make a
+/// developer's machine emit. That is why this needs no opt-in: an opt-in guards a
+/// risk, and there is none left to guard.
+///
+/// The crash reporter is the asymmetric half. It has no dry run — the SDK either
+/// holds a client or it does not — so rather than gate it on a flag, a local build
+/// simply never builds one. The cost is that crash-side behaviour (breadcrumbs,
+/// stack traces, release health) stays release-verified; the alternative was a
+/// `.env` DSN quietly shipping a developer's crashes, which is the thing a
+/// deliberate act was supposed to prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sinks {
+    /// Release build: the sinks configured at build time.
+    Production,
+    /// Local build: analytics dry-runs, the crash reporter is absent.
+    Development,
+}
+
+impl Sinks {
+    pub fn resolve() -> Self {
+        if cfg!(debug_assertions) {
+            Self::Development
+        } else {
+            Self::Production
+        }
+    }
+
+    /// Whether a crash client is built. True only for a release build — see the
+    /// type's note on why a local build never reports crashes.
+    pub fn reports_crashes(self) -> bool {
+        matches!(self, Self::Production)
+    }
+}
+
 pub struct Telemetry {
     _sentry: Option<Sentry::ClientInitGuard>,
-    mixpanel: Option<Arc<Mixpanel>>,
+    analytics: Analytics,
     /// The host every outgoing crash report is tagged with; see [`AmbientHost`].
     host: AmbientHost,
 }
 
 impl Telemetry {
-    pub fn new(version: &Version, enable: Option<()>) -> Self {
+    pub fn new(version: &Version, sinks: Sinks) -> Self {
         // The cell outlives the client and is read by its event hook, so it has
         // to exist before the client is built.
         let host: AmbientHost = Arc::new(Mutex::new(None));
 
         Self {
-            mixpanel: enable
-                .and(mixpanel::mixpanel_config())
-                .map(|(token, config)| Arc::new(Mixpanel::init(&token, Some(config)))),
-            _sentry: enable
-                .and(sentry::sentry_config(version, Arc::clone(&host)))
+            analytics: Analytics::resolve(sinks),
+            _sentry: sinks
+                .reports_crashes()
+                .then(|| sentry::sentry_config(version, Arc::clone(&host)))
+                .flatten()
                 .map(::sentry::init),
             host,
         }
@@ -81,7 +119,7 @@ impl Telemetry {
         if let Some(host) = event.host() {
             self.add_host(host);
         }
-        if let Err(err) = mixpanel::track_event(self.mixpanel.as_ref(), &event).await {
+        if let Err(err) = mixpanel::track_event(&self.analytics, &event).await {
             Sentry::capture_error(&err);
         }
     }
@@ -107,7 +145,7 @@ impl Telemetry {
     }
 
     pub fn init(&self) {
-        mixpanel::init(self.mixpanel.as_ref());
+        mixpanel::init(&self.analytics);
     }
 
     /// Returns the current global maximum log level as a human-readable string.
@@ -118,9 +156,82 @@ impl Telemetry {
 
 #[cfg(test)]
 impl Default for Telemetry {
+    /// A test double, built as one rather than resolved from a build mode: a test
+    /// wants a `Telemetry` that neither sends nor prints, which is not something
+    /// any shipped build is. Constructing the fields directly keeps [`Sinks`]
+    /// describing only the two builds that exist.
     fn default() -> Self {
-        // In tests, use non-production mode (no telemetry)
-        let version = semver::Version::new(0, 0, 0);
-        Self::new(&version, None)
+        Self {
+            _sentry: None,
+            analytics: Analytics::Off,
+            host: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+
+    use super::*;
+
+    /// Tests build with `debug_assertions` on, so this pins the branch a
+    /// developer actually runs.
+    #[test]
+    fn a_local_build_resolves_to_development() {
+        assert_eq!(Sinks::resolve(), Sinks::Development);
+    }
+
+    /// The invariant, and the reason no opt-in is needed: a local build cannot
+    /// emit **even holding real credentials**. Analytics dry-runs and no crash
+    /// client is constructed, so there is nothing for a stray `.env` to switch on.
+    ///
+    /// `#[serial]` because this mutates the process environment, which races any
+    /// concurrent reader — the same reason [`crate::env`]'s tests are serial.
+    #[test]
+    #[serial]
+    #[allow(
+        clippy::used_underscore_binding,
+        reason = "`_sentry` is underscore-prefixed because it is held only for its Drop; \
+                  whether it was constructed at all is exactly what this test asserts"
+    )]
+    fn a_local_build_cannot_emit_even_holding_credentials() {
+        unsafe {
+            std::env::set_var("MIXPANEL_PROJECT_TOKEN", "a-token-that-must-not-be-used");
+            std::env::set_var("SENTRY_DSN", "https://public@example.invalid/1");
+        }
+
+        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve());
+        assert!(
+            matches!(telemetry.analytics, Analytics::DryRun),
+            "a local build must never construct a live analytics client"
+        );
+        assert!(
+            telemetry._sentry.is_none(),
+            "a local build must never construct a crash client, DSN or not"
+        );
+
+        unsafe {
+            std::env::remove_var("MIXPANEL_PROJECT_TOKEN");
+            std::env::remove_var("SENTRY_DSN");
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::used_underscore_binding,
+        reason = "see `a_local_build_cannot_emit_even_holding_credentials`"
+    )]
+    fn the_test_double_builds_nothing() {
+        let telemetry = Telemetry::default();
+        assert!(matches!(telemetry.analytics, Analytics::Off));
+        assert!(telemetry._sentry.is_none());
+    }
+
+    /// Only a release build reports crashes — the asymmetry the type documents.
+    #[test]
+    fn only_a_release_build_reports_crashes() {
+        assert!(Sinks::Production.reports_crashes());
+        assert!(!Sinks::Development.reports_crashes());
     }
 }

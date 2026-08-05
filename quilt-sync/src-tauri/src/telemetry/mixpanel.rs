@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::env;
 use crate::error::TelemetryError;
-use crate::telemetry::MixpanelEvent;
+use crate::telemetry::{MixpanelEvent, Sinks};
 
 /// The event as Mixpanel receives it: its name, and its properties.
 ///
@@ -40,7 +40,35 @@ pub fn event_payload(
     Ok((event_name.clone(), properties))
 }
 
-pub fn mixpanel_config() -> Option<(String, Config)> {
+/// Where an event goes.
+///
+/// A local build resolves to [`Self::DryRun`] and **never constructs a client**:
+/// there are no credentials to find and nothing that could reach a real project
+/// by accident. That is the isolation — structural, not a flag on a request whose
+/// server-side meaning we would have to trust.
+#[derive(Clone)]
+pub enum Analytics {
+    /// A configured sink: the event is sent.
+    Live(Arc<Mixpanel>),
+    /// A local build: the event is rendered to its wire form and written to the
+    /// developer's console. Nothing leaves the machine.
+    DryRun,
+    /// No sink: the event is dropped.
+    Off,
+}
+
+impl Analytics {
+    pub fn resolve(sinks: Sinks) -> Self {
+        match sinks {
+            Sinks::Development => Self::DryRun,
+            Sinks::Production => mixpanel_config().map_or(Self::Off, |(token, config)| {
+                Self::Live(Arc::new(Mixpanel::init(&token, Some(config))))
+            }),
+        }
+    }
+}
+
+fn mixpanel_config() -> Option<(String, Config)> {
     let token = env::mixpanel_project_token();
     let secret = env::mixpanel_api_secret();
     if token.is_none() {
@@ -52,41 +80,58 @@ pub fn mixpanel_config() -> Option<(String, Config)> {
     token.map(|token| {
         let config = Config {
             secret,
-            debug: cfg!(debug_assertions),
             ..Default::default()
         };
         (token, config)
     })
 }
 
-pub async fn track_event(
-    mixpanel: Option<&Arc<Mixpanel>>,
-    event: &MixpanelEvent,
-) -> crate::Result<()> {
-    if let Some(mixpanel) = mixpanel {
-        let (event_name, properties) = event_payload(event)?;
-        mixpanel.track(&event_name, properties).await?;
+/// The event as a dry run reports it — the **same** name and properties
+/// [`event_payload`] hands the live path, so a developer reads the payload
+/// rather than a paraphrase of it that could drift from it.
+fn dry_run_line(event: &MixpanelEvent) -> crate::Result<String> {
+    let (name, properties) = event_payload(event)?;
+    Ok(match properties {
+        Some(properties) => {
+            // `properties` came from `serde_json::to_value`, so re-serializing it
+            // cannot fail; the fallback keeps the event visible rather than
+            // turning a formatting slip into a lost observation.
+            let rendered =
+                serde_json::to_string(&properties).unwrap_or_else(|_| "<unrenderable>".to_string());
+            format!("telemetry(dry-run) {name} {rendered}")
+        }
+        None => format!("telemetry(dry-run) {name}"),
+    })
+}
+
+pub async fn track_event(analytics: &Analytics, event: &MixpanelEvent) -> crate::Result<()> {
+    match analytics {
+        Analytics::Live(mixpanel) => {
+            let (event_name, properties) = event_payload(event)?;
+            mixpanel.track(&event_name, properties).await?;
+        }
+        // Deliberately `eprintln!` and not `info!`: this is console output for
+        // whoever is running the app, not application logging, and routing it
+        // through the subscriber would subject it to the very filter default a
+        // developer is often here to observe. It also matches how this module
+        // already reports its configuration.
+        Analytics::DryRun => eprintln!("{}", dry_run_line(event)?),
+        Analytics::Off => {}
     }
     Ok(())
 }
 
-pub fn init(mixpanel: Option<&Arc<Mixpanel>>) {
-    if let Some(mixpanel) = mixpanel {
-        let mixpanel_clone = mixpanel.clone();
-        tauri::async_runtime::spawn(async move {
-            // App launch precedes any host, so it carries no payload at all.
-            match event_payload(&MixpanelEvent::AppLaunched) {
-                Ok((event_name, properties)) => {
-                    if let Err(err) = mixpanel_clone.track(&event_name, properties).await {
-                        eprintln!("Failed to track app launch: {err}");
-                    }
-                }
-                Err(err) => {
-                    eprintln!("Failed to serialize app launch event: {err}");
-                }
-            }
-        });
+pub fn init(analytics: &Analytics) {
+    if matches!(analytics, Analytics::Off) {
+        return;
     }
+    let analytics = analytics.clone();
+    tauri::async_runtime::spawn(async move {
+        // App launch precedes any host, so it carries no payload at all.
+        if let Err(err) = track_event(&analytics, &MixpanelEvent::AppLaunched).await {
+            eprintln!("Failed to track app launch: {err}");
+        }
+    });
 }
 
 #[cfg(test)]
@@ -232,6 +277,64 @@ mod tests {
 
     /// The accessor the crash-report cell reads. Exhaustive by construction —
     /// the compiler rejects a new variant that does not answer this.
+    /// The dry-run and off arms are reachable and never fail the caller — a
+    /// telemetry sink must not be able to break the command it rides on. This
+    /// exercises the arms; that the line reaches a terminal is not something a
+    /// test can see.
+    #[tokio::test]
+    async fn the_silent_arms_never_fail_the_caller() -> Result {
+        track_event(&Analytics::DryRun, &MixpanelEvent::AppLaunched).await?;
+        track_event(&Analytics::Off, &MixpanelEvent::AppLaunched).await?;
+        Ok(())
+    }
+
+    /// A dry run is only useful if what it prints is what would have been sent.
+    /// These assert the line carries the wire *name* and the wire *properties* —
+    /// so a developer reading the console is reading the payload, and a payload
+    /// bug is visible there rather than hidden behind a friendlier rendering.
+    #[test]
+    fn dry_run_reports_the_wire_name_and_properties() -> Result {
+        let line = dry_run_line(&MixpanelEvent::UserLoggedIn(LoginEvent {
+            host: host(),
+            flow: LoginFlow::OAuth,
+        }))?;
+
+        assert!(line.contains("user_logged_in"), "wire name missing: {line}");
+        assert!(
+            line.contains("example.quilt.dev"),
+            "host property missing: {line}"
+        );
+        assert!(line.contains("oauth"), "flow property missing: {line}");
+
+        Ok(())
+    }
+
+    /// An event with no payload prints no properties object — the same
+    /// distinction the wire form makes, kept visible rather than smoothed into an
+    /// empty `{}`.
+    #[test]
+    fn dry_run_omits_properties_when_the_event_has_none() -> Result {
+        let line = dry_run_line(&MixpanelEvent::AppLaunched)?;
+
+        assert!(line.ends_with("app_launched"), "unexpected trailer: {line}");
+
+        Ok(())
+    }
+
+    /// An unattributed event still prints, with an explicit null — the emitter
+    /// failed to supply context and that must be readable, not invisible.
+    #[test]
+    fn dry_run_shows_an_absent_host_as_null() -> Result {
+        let line = dry_run_line(&MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+            None,
+        )))?;
+
+        assert!(line.contains("package_pushed"), "wire name missing: {line}");
+        assert!(line.contains("null"), "absent host not visible: {line}");
+
+        Ok(())
+    }
+
     #[test]
     fn test_host_accessor_matches_the_payload() {
         assert_eq!(

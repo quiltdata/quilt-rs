@@ -41,7 +41,14 @@ pub fn sentry_config(version: &Version, host: AmbientHost) -> Option<sentry::Cli
         // through the setters. `dsn` is assigned directly because the `dsn` setter
         // takes a `&str` and panics on a malformed value — `get_sentry_dsn` already
         // parsed it and warns instead.
-        let mut options = tag_host(host).release(version.to_string());
+        //
+        // A constant `environment`, because only a release build ever gets here —
+        // see [`Sinks`](crate::telemetry::Sinks). Separating *kinds* of release
+        // (an internal build from a customer's) is a distinct question and wants
+        // more than two values, so it belongs to whoever takes that on.
+        let mut options = tag_host(host)
+            .release(version.to_string())
+            .environment("production");
         options.dsn = Some(dsn);
         options
     })
