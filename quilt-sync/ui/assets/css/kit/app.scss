@@ -2,5 +2,7 @@
 // chrome. Not yet linked from index.html — v1 keeps its own theme.css until the
 // v2 page exists. This entrypoint exists so the split stays visible: gallery
 // and app share `modules`, and only the gallery adds `chrome`.
+@use 'normalize';
 @use 'tokens';
+@use 'base';
 @use 'modules';

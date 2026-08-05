@@ -1,0 +1,46 @@
+/*
+ * Our opinions, layered on top of modern-normalize.
+ *
+ * `_normalize.scss` runs first and owns the cross-browser floor: box-sizing,
+ * font inheritance on form controls, `body { margin: 0 }`, and a long tail of
+ * small fixes (`::-moz-focus-inner` on buttons, `button { text-transform: none }`,
+ * `[type=search]` appearance, `summary { display: list-item }`). None of that is
+ * repeated here — this file is only what modern-normalize deliberately leaves
+ * to the application.
+ *
+ * Global by necessity: every rule targets an element selector, and CSS Modules
+ * can only scope classes. Keep it small — anything that is one component's
+ * business belongs in that component's module.
+ */
+
+/* Document baseline in our tokens; overrides normalize's `html` floors. */
+body {
+  background: var(--q-canvas-page);
+  color: var(--q-fg-default);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+}
+
+/* Every button here is styled, so strip native chrome: one that forgets its
+ * module renders as bare text — a visible reminder rather than a subtly-wrong
+ * native widget. */
+button {
+  appearance: none;
+  background: none;
+  border: 0;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* One focus ring, declared once so a component that forgets still gets one.
+ * `:focus-visible` so a mouse click leaves nothing behind. A component may
+ * restyle it; nothing may remove it. */
+:focus-visible {
+  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
+  outline-offset: var(--q-focus-ring-offset);
+}

@@ -6,9 +6,8 @@ license.workspace = true
 homepage.workspace = true
 publish = false
 
-# Two binaries, declared explicitly because adding one disables cargo's
-# auto-discovery of the other. `gallery` is the debug component harness; it lives
-# in `src/` rather than `src/bin/` so `mod kit;` resolves normally.
+# Both declared, because adding one `[[bin]]` disables auto-discovery of the
+# other. `gallery` sits in `src/`, not `src/bin/`, so `mod kit;` resolves.
 [[bin]]
 name = "quilt-sync-ui"
 path = "src/main.rs"
@@ -33,16 +32,10 @@ quilt-uri = { path = "../../quilt-uri" }
 send_wrapper = "0.6.0"
 stylance = "0.8.4"
 
-# CSS Modules. `stylance-cli` scans `folders` recursively for `*.module.scss`,
-# hashes each
-# class name, and concatenates everything into `output_file` — so a component
-# declares its own stylesheet in Rust (`import_crate_style!`) and there is no
-# hand-maintained list of stylesheets anywhere.
-#
-# The output is generated, gitignored, and rebuilt by Trunk's pre_build hook.
-# Tokens and the gallery's chrome stay OUT of this: tokens declare `:root`
-# custom properties and chrome styles `body`, and CSS Modules can only scope
-# class selectors.
+# CSS Modules. `stylance-cli` scans `folders` recursively, hashes each class, and
+# concatenates into `output_file` — so a component declares its own stylesheet
+# from Rust and no list of stylesheets exists. Output is generated and
+# gitignored; Trunk's pre_build hook rebuilds it.
 [package.metadata.stylance]
 output_file = "./assets/css/kit/_modules.scss"
 folders = ["./src/kit/"]

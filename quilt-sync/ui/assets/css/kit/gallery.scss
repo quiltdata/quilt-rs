@@ -8,6 +8,8 @@
 // Tokens and chrome stay hand-written and global on purpose: tokens declare
 // `:root` custom properties and chrome styles `body`, neither of which a CSS
 // Module can scope.
+@use 'normalize';
 @use 'tokens';
+@use 'base';
 @use 'modules';
 @use 'chrome';

@@ -5,12 +5,9 @@ filehash = false
 
 [watch]
 watch = ["src", "index.html", "gallery.html", "assets"]
-# Both entries are GENERATED INTO a watched directory, so without ignoring them
-# each build would rewrite them, the watcher would notice, and Trunk would
-# rebuild forever. `json-editor.js` (esbuild) set the precedent; `_modules.scss`
-# (stylance) is the same shape. The *sources* are watched — edit
-# `src/kit/**/style.module.scss` and the rebuild picks it up.
-ignore = ["assets/js/json-editor.js", "assets/css/kit/_modules.scss"]
+# Generated into a watched directory: without the ignore, each build rewrites
+# them, the watcher fires, and Trunk rebuilds forever. Sources stay watched.
+ignore = ["assets/js/json-editor.js", "assets/css/kit/_modules.scss", "assets/css/kit/_normalize.scss"]
 
 # Bundle vanilla-jsoneditor before Trunk compiles the WASM crate.
 # The glue JS source lives in js/; the output lands in assets/js/
@@ -18,16 +15,11 @@ ignore = ["assets/js/json-editor.js", "assets/css/kit/_modules.scss"]
 [[hooks]]
 stage = "pre_build"
 command = "sh"
-command_arguments = ["-c", "npm install --prefer-offline --no-audit --no-fund && npx esbuild js/json-editor-glue.js --bundle --format=iife --outfile=assets/js/json-editor.js"]
+command_arguments = ["-c", "npm install --prefer-offline --no-audit --no-fund && npx esbuild js/json-editor-glue.js --bundle --format=iife --outfile=assets/js/json-editor.js && cp node_modules/modern-normalize/modern-normalize.css assets/css/kit/_normalize.scss"]
 
-# CSS Modules: hash every class in `src/kit/**/*.module.scss` and concatenate them
-# into the generated `assets/css/kit/_modules.scss`, which the scss entrypoints
-# `@use`. Must run before the build so sass sees a current file — hence
-# pre_build rather than a watch of its own.
-#
-# `stylance` comes from `cargo install stylance-cli`. If it is missing the build
-# fails loudly here, which is the failure mode we want: silently skipping it
-# would produce a page whose classes resolve to nothing.
+# CSS Modules. Runs before sass so the generated partial is current. Needs
+# `cargo install stylance-cli`; a missing tool fails the build here, which is
+# wanted — skipping it would render every class as nothing.
 [[hooks]]
 stage = "pre_build"
 command = "stylance"
