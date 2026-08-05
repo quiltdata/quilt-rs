@@ -201,6 +201,13 @@ impl Queued {
         self.event.host()
     }
 
+    /// The event's wire name, for a test that wants to see what was handed over
+    /// without reaching into the payload.
+    #[cfg(test)]
+    pub fn name(&self) -> String {
+        event_payload(&self.event).map_or_else(|_| "<unserializable>".to_owned(), |(name, _)| name)
+    }
+
     /// The wire form, with the queue's own two properties merged in beside the
     /// event's and the install's.
     fn wire(&self, install_id: Option<&InstallId>) -> crate::Result<Event> {
