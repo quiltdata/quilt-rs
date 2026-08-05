@@ -16,6 +16,7 @@ pub mod tracing;
 pub use event::MixpanelEvent;
 pub use install_id::InstallId;
 pub use mixpanel::Analytics;
+pub use sentry::Faults;
 pub use tracing::LogsDir;
 
 pub mod prelude {
@@ -79,8 +80,11 @@ pub struct Telemetry {
     host: AmbientHost,
     /// This install's identity, on every analytics event and every crash report
     /// so the two can be read together. `None` when it could not be persisted —
-    /// see [`install_id::load`].
+    /// see [`InstallId::load`].
     install_id: Option<InstallId>,
+    /// Where a fault goes. A field rather than a direct call to the crash SDK, so
+    /// that "this path reported a fault" is observable — see [`Faults`].
+    faults: Faults,
 }
 
 impl Telemetry {
@@ -98,6 +102,7 @@ impl Telemetry {
                 .map(::sentry::init),
             host,
             install_id,
+            faults: Faults::resolve(sinks),
         }
     }
 
@@ -135,7 +140,7 @@ impl Telemetry {
         if let Err(err) =
             mixpanel::track_event(&self.analytics, &event, self.install_id.as_ref()).await
         {
-            Sentry::capture_error(&err);
+            self.report_error(&err);
         }
     }
 
@@ -145,8 +150,8 @@ impl Telemetry {
     /// Keep `message` a constant: the crash reporter groups by it, so the
     /// variable part belongs in the host tag ([`Self::add_host`]) rather than in
     /// the text, or one anomaly becomes one issue per host.
-    pub fn report_anomaly(message: &str) {
-        Sentry::capture_message(message, Sentry::Level::Warning);
+    pub fn report_anomaly(&self, message: &str) {
+        self.faults.anomaly(message);
     }
 
     /// Report a fault to the crash reporter without failing the caller.
@@ -155,8 +160,16 @@ impl Telemetry {
     /// name its deployment and cannot. Reporting it as a fault keeps the
     /// analytics vocabulary free of error events, which would need their own
     /// design for what an error is allowed to say.
-    pub fn report_error(err: &(dyn std::error::Error + Send + Sync + 'static)) {
-        Sentry::capture_error(err);
+    pub fn report_error(&self, err: &(dyn std::error::Error + Send + Sync + 'static)) {
+        self.faults.error(err);
+    }
+
+    /// What was reported through [`Self::report_anomaly`] and
+    /// [`Self::report_error`] — the seam that made this unit worth doing. Without
+    /// it a path can claim to report a fault and no test can tell.
+    #[cfg(test)]
+    pub fn reported_faults(&self) -> Vec<String> {
+        self.faults.reported()
     }
 
     pub fn init(&self) {
@@ -181,6 +194,9 @@ impl Default for Telemetry {
             analytics: Analytics::Off,
             host: Arc::new(Mutex::new(None)),
             install_id: None,
+            // Recording rather than printing, so a test can assert what a path
+            // reported instead of a developer reading it go by.
+            faults: Faults::Recorded(Arc::new(Mutex::new(Vec::new()))),
         }
     }
 }
