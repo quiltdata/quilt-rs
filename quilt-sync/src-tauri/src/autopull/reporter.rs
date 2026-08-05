@@ -297,7 +297,7 @@ impl TelemetryReporter {
     fn emit(&self, event: MixpanelEvent) {
         let handle = self.handle.clone();
         tauri::async_runtime::spawn(async move {
-            handle.state::<Telemetry>().track(event).await;
+            handle.state::<Telemetry>().track(event);
         });
     }
 }

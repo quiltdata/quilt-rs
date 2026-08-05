@@ -3,13 +3,24 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
-use mixpanel_rs::{Config, Mixpanel};
+use mixpanel_rs::{Config, Event, Mixpanel};
+use quilt_uri::Host;
 use serde_json::Value;
+use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::env;
 use crate::error::TelemetryError;
 use crate::telemetry::{InstallId, MixpanelEvent, Sinks};
+
+/// How many events may wait to be sent before the queue starts refusing.
+///
+/// Bounded on purpose: an unbounded queue turns a stuck sender into unbounded
+/// memory. Large enough that a burst of user actions never reaches it, small
+/// enough that a genuinely stuck sender is a bounded leak.
+pub const QUEUE_DEPTH: usize = 1024;
 
 /// The event as Mixpanel receives it: its name, and its properties.
 ///
@@ -110,10 +121,22 @@ impl DeliveryFailure {
     pub fn classify(err: &crate::Error) -> Self {
         use mixpanel_rs::error::Error as Mp;
 
-        let crate::Error::Telemetry(TelemetryError::Mixpanel(err)) = err else {
-            // Anything that is not the client's own error never reached the
-            // network — a payload we could not serialize is not a bad connection.
+        let crate::Error::Telemetry(err) = err else {
+            // Nothing outside telemetry reaches this, and an unrecognised failure
+            // is safer treated as ours than as the network's.
             return Self::Refused;
+        };
+
+        // Exhaustive over our own errors as well as the client's, so a new one
+        // cannot inherit an answer by falling through. That is precisely how a
+        // timeout once read as a refusal.
+        let err = match err {
+            // A timeout *did* reach the network — it simply got no verdict, which
+            // is the user's connection rather than our payload.
+            TelemetryError::SendTimeout(_) => return Self::Unreachable,
+            // A payload we could not even serialize never left the process.
+            TelemetryError::Serialize(_) => return Self::Refused,
+            TelemetryError::Mixpanel(err) => err,
         };
 
         match err {
@@ -134,6 +157,68 @@ impl DeliveryFailure {
             | Mp::ApiHttpError(..)
             | Mp::MaxRetriesReached(_) => Self::Unreachable,
         }
+    }
+}
+
+/// How many events one request carries at most.
+///
+/// The ingest API's own ceiling is higher; this is about latency, not its limit.
+/// A queue that has fallen behind should catch up in several requests rather than
+/// one enormous one, so a single failure loses less.
+const BATCH: usize = 25;
+
+/// How long one request may take before it is abandoned.
+///
+/// Wraps the send rather than configuring the client, because the analytics client
+/// builds its own HTTP client with no timeout and exposes no knob for one. Without
+/// this a hung socket holds a queued batch forever — which used to hold a *user's
+/// click* forever, before emission moved off the request path.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// An event on its way out, stamped at the moment it happened.
+///
+/// The stamp is the point. Once events are queued, the API's receipt time is no
+/// longer when the user acted — a batch sent after a delay would report the delay.
+/// The idempotency key is the same argument for retries: the client retries a
+/// failed request, so without a key a delivered-but-unacknowledged batch counts
+/// twice.
+pub struct Queued {
+    event: MixpanelEvent,
+    at: SystemTime,
+    insert_id: Uuid,
+}
+
+impl Queued {
+    pub fn now(event: MixpanelEvent) -> Self {
+        Self {
+            event,
+            at: SystemTime::now(),
+            insert_id: Uuid::new_v4(),
+        }
+    }
+
+    pub fn host(&self) -> Option<&Host> {
+        self.event.host()
+    }
+
+    /// The wire form, with the queue's own two properties merged in beside the
+    /// event's and the install's.
+    fn wire(&self, install_id: Option<&InstallId>) -> crate::Result<Event> {
+        let (event, properties) = wire_payload(&self.event, install_id)?;
+        let mut properties = properties.unwrap_or_default();
+
+        // Seconds since the epoch is what the ingest API reads `time` as. A clock
+        // before 1970 is not worth a failure path: falling back to omitting the
+        // stamp lets the server date it, which is what happened before anyway.
+        if let Ok(since_epoch) = self.at.duration_since(SystemTime::UNIX_EPOCH) {
+            properties.insert("time".to_owned(), Value::from(since_epoch.as_secs()));
+        }
+        properties.insert(
+            "$insert_id".to_owned(),
+            Value::String(self.insert_id.to_string()),
+        );
+
+        Ok(Event { event, properties })
     }
 }
 
@@ -181,41 +266,68 @@ fn dry_run_line(event: &MixpanelEvent, install_id: Option<&InstallId>) -> crate:
     })
 }
 
-pub async fn track_event(
+/// Drain the queue until the sender is dropped, sending what it holds in batches.
+///
+/// **This is the single consumer** of the channel — the "sc" of `mpsc`. One task is
+/// what makes requests never overlap and order survive; a second would give both
+/// away.
+///
+/// `recv` *awaits* the first event of a batch, so an idle app costs nothing rather
+/// than polling. `try_recv` then takes whatever else is already waiting without
+/// waiting for more, so a quiet app sends one event immediately instead of holding
+/// it for a batch that may never fill, while a busy one coalesces.
+///
+/// The loop ends when every sender is dropped and the channel closes, which is how
+/// the task retires at shutdown rather than needing to be told.
+///
+/// Failures are handed to `on_failure` rather than reported here, because deciding
+/// what a failure deserves is not this loop's business — see
+/// [`DeliveryFailure`].
+pub async fn run_sender(
+    analytics: Analytics,
+    install_id: Option<InstallId>,
+    mut queue: mpsc::Receiver<Queued>,
+    on_failure: impl Fn(&crate::Error),
+) {
+    while let Some(first) = queue.recv().await {
+        let mut batch = vec![first];
+        while batch.len() < BATCH {
+            match queue.try_recv() {
+                Ok(next) => batch.push(next),
+                Err(_) => break,
+            }
+        }
+
+        if let Err(err) = send_batch(&analytics, install_id.as_ref(), batch).await {
+            on_failure(&err);
+        }
+    }
+}
+
+async fn send_batch(
     analytics: &Analytics,
-    event: &MixpanelEvent,
     install_id: Option<&InstallId>,
+    batch: Vec<Queued>,
 ) -> crate::Result<()> {
     match analytics {
         Analytics::Live(mixpanel) => {
-            let (event_name, properties) = wire_payload(event, install_id)?;
-            mixpanel.track(&event_name, properties).await?;
+            let events = batch
+                .iter()
+                .map(|queued| queued.wire(install_id))
+                .collect::<crate::Result<Vec<_>>>()?;
+
+            tokio::time::timeout(SEND_TIMEOUT, mixpanel.track_batch(events))
+                .await
+                .map_err(|_| TelemetryError::SendTimeout(SEND_TIMEOUT.as_secs()))??;
         }
-        // Deliberately `eprintln!` and not `info!`: this is console output for
-        // whoever is running the app, not application logging, and routing it
-        // through the subscriber would subject it to the very filter default a
-        // developer is often here to observe. It also matches how this module
-        // already reports its configuration.
-        Analytics::DryRun => eprintln!("{}", dry_run_line(event, install_id)?),
+        Analytics::DryRun => {
+            for queued in &batch {
+                eprintln!("{}", dry_run_line(&queued.event, install_id)?);
+            }
+        }
         Analytics::Off => {}
     }
     Ok(())
-}
-
-pub fn init(analytics: &Analytics, install_id: Option<InstallId>) {
-    if matches!(analytics, Analytics::Off) {
-        return;
-    }
-    let analytics = analytics.clone();
-    tauri::async_runtime::spawn(async move {
-        // App launch precedes any host, so it carries none — but it does carry an
-        // identity, which is what makes a launch countable as a person's.
-        if let Err(err) =
-            track_event(&analytics, &MixpanelEvent::AppLaunched, install_id.as_ref()).await
-        {
-            eprintln!("Failed to track app launch: {err}");
-        }
-    });
 }
 
 #[cfg(test)]
@@ -451,6 +563,137 @@ mod tests {
         Ok(())
     }
 
+    /// Queueing is what creates the need for a client-side stamp: without it a
+    /// batch sent after a delay is dated by its arrival, so the delay reads as when
+    /// the user acted. The idempotency key is the same argument for the client's
+    /// own retries.
+    #[test]
+    fn a_queued_event_carries_its_own_time_and_an_idempotency_key() -> Result {
+        let before = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_secs();
+
+        let queued = Queued::now(MixpanelEvent::AppLaunched);
+        let wire = queued.wire(None)?;
+
+        let stamped = wire
+            .properties
+            .get("time")
+            .and_then(Value::as_u64)
+            .expect("a client-side stamp");
+        assert!(
+            stamped >= before,
+            "stamped {stamped} before the test started at {before}"
+        );
+
+        let key = wire
+            .properties
+            .get("$insert_id")
+            .and_then(Value::as_str)
+            .expect("an idempotency key");
+        assert!(Uuid::parse_str(key).is_ok(), "not a uuid: {key}");
+
+        Ok(())
+    }
+
+    /// Two events are two keys, or the ingest API would fold them into one.
+    #[test]
+    fn each_event_gets_its_own_idempotency_key() -> Result {
+        let one = Queued::now(MixpanelEvent::AppLaunched).wire(None)?;
+        let other = Queued::now(MixpanelEvent::AppLaunched).wire(None)?;
+
+        assert_ne!(
+            one.properties.get("$insert_id"),
+            other.properties.get("$insert_id")
+        );
+
+        Ok(())
+    }
+
+    /// The queue's properties sit beside the event's and the install's rather than
+    /// replacing them — four facts from three owners, all on one event.
+    #[test]
+    fn queueing_does_not_displace_the_event_or_the_identity() -> Result {
+        let id = install_id();
+
+        let wire = Queued::now(MixpanelEvent::UserLoggedIn(LoginEvent {
+            host: host(),
+            flow: LoginFlow::OAuth,
+        }))
+        .wire(Some(&id))?;
+
+        assert_eq!(wire.event, "user_logged_in");
+        assert_eq!(wire.properties.get("host"), Some(&host_value()));
+        assert_eq!(
+            wire.properties.get("distinct_id"),
+            Some(&Value::String(id.as_str().to_owned()))
+        );
+        assert!(wire.properties.contains_key("time"));
+        assert!(wire.properties.contains_key("$insert_id"));
+
+        Ok(())
+    }
+
+    /// What the queue holds when the process exits is **lost**, and the bound on
+    /// that loss is what makes it acceptable: an event is taken from the queue as
+    /// soon as a batch starts, so an idle app is carrying nothing.
+    ///
+    /// Asserted rather than left implicit because "accepted" reads like "delivered"
+    /// and it is not. Solved properly by persisting the queue, not by flushing on
+    /// exit — which would block quit on a network call to recover the last action
+    /// or two.
+    #[test]
+    fn accepting_an_event_is_not_delivering_it() {
+        let (queue, receiver) = mpsc::channel(QUEUE_DEPTH);
+
+        queue
+            .try_send(Queued::now(MixpanelEvent::AppLaunched))
+            .expect("accepted");
+
+        // Dropping both halves is what process exit does to a detached sender: the
+        // event was accepted, nothing sent it, and nothing reports that.
+        drop(receiver);
+        drop(queue);
+
+        // And the queue refuses rather than blocking once nothing is draining —
+        // the property that keeps a dead sender from becoming a stalled click.
+        let (queue, receiver) = mpsc::channel::<Queued>(1);
+        drop(receiver);
+        assert!(
+            queue
+                .try_send(Queued::now(MixpanelEvent::AppLaunched))
+                .is_err(),
+            "a closed queue must refuse immediately, never wait"
+        );
+    }
+
+    /// The sender drains what is waiting and stops when the queue closes, rather
+    /// than spinning or hanging — a dropped sender must end the task.
+    #[tokio::test]
+    async fn the_sender_drains_the_queue_and_stops_when_it_closes() {
+        let (queue, receiver) = mpsc::channel(QUEUE_DEPTH);
+
+        for _ in 0..3 {
+            queue
+                .try_send(Queued::now(MixpanelEvent::AppLaunched))
+                .expect("room in the queue");
+        }
+        drop(queue);
+
+        let failures = std::sync::Mutex::new(Vec::new());
+        run_sender(Analytics::Off, None, receiver, |err| {
+            failures.lock().unwrap().push(err.to_string());
+        })
+        .await;
+
+        assert!(
+            failures.lock().unwrap().is_empty(),
+            "the off sink cannot fail: {:?}",
+            failures.lock().unwrap()
+        );
+    }
+
     /// A verdict from the API is our bug; no verdict is somebody's network. The
     /// split decides what reaches the crash reporter, so it is worth pinning per
     /// variant rather than by category.
@@ -494,6 +737,25 @@ mod tests {
     fn a_serialization_failure_counts_as_a_refusal() {
         let err = crate::Error::from(TelemetryError::Serialize("bad shape".to_owned()));
         assert_eq!(DeliveryFailure::classify(&err), DeliveryFailure::Refused);
+    }
+
+    /// A timeout *did* reach the network and got no verdict, so it is the user's
+    /// connection, not our payload.
+    ///
+    /// This regressed once and the existing coverage did not catch it: the timeout
+    /// borrowed the serialization error, which classifies as a refusal, so a slow
+    /// network filed a false fault **and spent the one refusal report a run is
+    /// allowed** — swallowing any genuine refusal later in the same run. The
+    /// per-variant tests passed throughout, because the variant they exercised was
+    /// not the one the timeout used.
+    #[test]
+    fn a_timeout_is_the_network_not_our_payload() {
+        let err = crate::Error::from(TelemetryError::SendTimeout(10));
+        assert_eq!(
+            DeliveryFailure::classify(&err),
+            DeliveryFailure::Unreachable,
+            "a timeout must not be reported as our bug"
+        );
     }
 
     /// Autosync gets its **own** names rather than folding into the manual
@@ -580,8 +842,18 @@ mod tests {
     /// test can see.
     #[tokio::test]
     async fn the_silent_arms_never_fail_the_caller() -> Result {
-        track_event(&Analytics::DryRun, &MixpanelEvent::AppLaunched, None).await?;
-        track_event(&Analytics::Off, &MixpanelEvent::AppLaunched, None).await?;
+        send_batch(
+            &Analytics::DryRun,
+            None,
+            vec![Queued::now(MixpanelEvent::AppLaunched)],
+        )
+        .await?;
+        send_batch(
+            &Analytics::Off,
+            None,
+            vec![Queued::now(MixpanelEvent::AppLaunched)],
+        )
+        .await?;
         Ok(())
     }
 

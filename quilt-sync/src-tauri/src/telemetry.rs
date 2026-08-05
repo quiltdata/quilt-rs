@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::mpsc;
+
 use ::sentry as Sentry;
 use quilt_uri::Host;
 use semver::Version;
@@ -93,7 +95,56 @@ pub struct Telemetry {
     /// so it fails every event until someone fixes it. Reporting each would turn
     /// one misconfiguration into one crash report per user action, and the first
     /// carries the whole signal.
-    refusal_reported: AtomicBool,
+    ///
+    /// Shared rather than owned, because the background sender is where failures
+    /// are now discovered and it holds its own handle.
+    refusal_reported: Arc<AtomicBool>,
+    /// Hands an event to the sender.
+    ///
+    /// `mpsc` is multi-producer, single-consumer: **many** callers push — any
+    /// command handler, on any thread, plus the autosync loop — and exactly **one**
+    /// task pops, which is why requests never overlap and order survives.
+    ///
+    /// Two properties this relies on. Pushing is *synchronous*, which is what lets
+    /// [`Self::track`] be sync at all. And the channel is *bounded*, so `try_send`
+    /// fails at once when full instead of blocking: a stuck sender must never
+    /// become a stalled click, nor unbounded memory.
+    ///
+    /// **Accepted is not delivered.** The queue is in memory and the sender is a
+    /// detached task, so events still waiting when the process exits are lost —
+    /// in practice the last action or two, since an idle app drains almost
+    /// immediately. Deliberately not solved with a flush on exit: that would block
+    /// quit on a network call to recover very little, and a queue persisted to disk
+    /// answers both this and an offline session with one mechanism.
+    queue: mpsc::Sender<mixpanel::Queued>,
+    /// The single consumer's half, until [`Self::init`] hands it to that task.
+    ///
+    /// `Option` because it is given away exactly once — there is only one consumer,
+    /// so taking it is what makes a second sender impossible rather than merely
+    /// unwise.
+    ///
+    /// Held here rather than spawned in the constructor because the async runtime
+    /// is not up yet at that point — the same reason app launch was already
+    /// reported from `init`. Events pushed before then wait in the channel rather
+    /// than being lost.
+    pending: Mutex<Option<mpsc::Receiver<mixpanel::Queued>>>,
+}
+
+/// Report a failed send, or decline to.
+///
+/// A free function because both the caller's thread and the background sender need
+/// it, and the sender owns its own clones of what it reads.
+fn report_delivery_failure(faults: &Faults, refusal_reported: &AtomicBool, err: &crate::Error) {
+    match mixpanel::DeliveryFailure::classify(err) {
+        mixpanel::DeliveryFailure::Refused => {
+            if !refusal_reported.swap(true, Ordering::Relaxed) {
+                faults.error(err);
+            }
+        }
+        mixpanel::DeliveryFailure::Unreachable => {
+            warn!("telemetry: event not delivered: {err}");
+        }
+    }
 }
 
 impl Telemetry {
@@ -101,6 +152,8 @@ impl Telemetry {
         // The cell outlives the client and is read by its event hook, so it has
         // to exist before the client is built.
         let host: AmbientHost = Arc::new(Mutex::new(None));
+
+        let (queue, pending) = mpsc::channel(mixpanel::QUEUE_DEPTH);
 
         Self {
             analytics: Analytics::resolve(sinks),
@@ -112,7 +165,9 @@ impl Telemetry {
             host,
             install_id,
             faults: Faults::resolve(sinks),
-            refusal_reported: AtomicBool::new(false),
+            refusal_reported: Arc::new(AtomicBool::new(false)),
+            queue,
+            pending: Mutex::new(Some(pending)),
         }
     }
 
@@ -143,14 +198,21 @@ impl Telemetry {
     /// Which events can name one is a property of each event's payload type, so
     /// there is nothing to pass here: an app-lifecycle or debug event has no
     /// host to give, and a deployment-bearing one carries it already.
-    pub async fn track(&self, event: MixpanelEvent) {
-        if let Some(host) = event.host() {
+    ///
+    /// **Synchronous, and that is the point.** Handing an event to a queue cannot
+    /// fail slowly, so no caller waits on a network call to finish its own work —
+    /// and a caller that is itself synchronous can emit at all, which is what lets
+    /// the outcome of a command be reported from the one place that knows it.
+    pub fn track(&self, event: MixpanelEvent) {
+        let queued = mixpanel::Queued::now(event);
+        if let Some(host) = queued.host() {
             self.add_host(host);
         }
-        if let Err(err) =
-            mixpanel::track_event(&self.analytics, &event, self.install_id.as_ref()).await
-        {
-            self.report_delivery_failure(&err);
+        // A full queue means the sender is not draining, which is already the
+        // problem; dropping the newest event is the cheapest way to stay bounded,
+        // and it is logged rather than reported because it is a symptom.
+        if self.queue.try_send(queued).is_err() {
+            warn!("telemetry: queue full or closed, event dropped");
         }
     }
 
@@ -174,24 +236,10 @@ impl Telemetry {
         self.faults.error(err);
     }
 
-    /// Decide what a failed send deserves.
-    ///
-    /// A **refusal** is our bug and must be visible, but only once: it fails every
-    /// event alike, so the second report says nothing the first did not. Anything
-    /// **unreachable** is somebody's network — logged, never reported, or the crash
-    /// reporter fills with other people's tunnels and the refusals drown among
-    /// them.
-    fn report_delivery_failure(&self, err: &crate::Error) {
-        match mixpanel::DeliveryFailure::classify(err) {
-            mixpanel::DeliveryFailure::Refused => {
-                if !self.refusal_reported.swap(true, Ordering::Relaxed) {
-                    self.report_error(err);
-                }
-            }
-            mixpanel::DeliveryFailure::Unreachable => {
-                warn!("telemetry: event not delivered: {err}");
-            }
-        }
+    /// The sender's failure decision, reachable from a test without a runtime.
+    #[cfg(test)]
+    fn report_delivery_failure_for_test(&self, err: &crate::Error) {
+        report_delivery_failure(&self.faults, &self.refusal_reported, err);
     }
 
     /// What was reported through [`Self::report_anomaly`] and
@@ -202,8 +250,36 @@ impl Telemetry {
         self.faults.reported()
     }
 
+    /// Start the sender, then report the launch.
+    ///
+    /// Separate from construction because the async runtime is not up yet at that
+    /// point. Until this runs, events queue rather than being lost — which is why
+    /// app launch can be reported here despite being the earliest thing that
+    /// happens.
     pub fn init(&self) {
-        mixpanel::init(&self.analytics, self.install_id.clone());
+        let Some(queue) = self
+            .pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.take())
+        else {
+            error!("telemetry: sender already started");
+            return;
+        };
+
+        let analytics = self.analytics.clone();
+        let install_id = self.install_id.clone();
+        let faults = self.faults.clone();
+        let refusal_reported = Arc::clone(&self.refusal_reported);
+
+        tauri::async_runtime::spawn(async move {
+            mixpanel::run_sender(analytics, install_id, queue, move |err| {
+                report_delivery_failure(&faults, &refusal_reported, err);
+            })
+            .await;
+        });
+
+        self.track(MixpanelEvent::AppLaunched);
     }
 
     /// Returns the current global maximum log level as a human-readable string.
@@ -219,6 +295,7 @@ impl Default for Telemetry {
     /// any shipped build is. Constructing the fields directly keeps [`Sinks`]
     /// describing only the two builds that exist.
     fn default() -> Self {
+        let (queue, pending) = mpsc::channel(mixpanel::QUEUE_DEPTH);
         Self {
             _sentry: None,
             analytics: Analytics::Off,
@@ -227,7 +304,9 @@ impl Default for Telemetry {
             // Recording rather than printing, so a test can assert what a path
             // reported instead of a developer reading it go by.
             faults: Faults::Recorded(Arc::new(Mutex::new(Vec::new()))),
-            refusal_reported: AtomicBool::new(false),
+            refusal_reported: Arc::new(AtomicBool::new(false)),
+            queue,
+            pending: Mutex::new(Some(pending)),
         }
     }
 }
@@ -253,7 +332,7 @@ mod tests {
         let telemetry = Telemetry::default();
 
         for _ in 0..5 {
-            telemetry.report_delivery_failure(&refusal());
+            telemetry.report_delivery_failure_for_test(&refusal());
         }
 
         let reported = telemetry.reported_faults();
@@ -271,7 +350,7 @@ mod tests {
     fn an_unreachable_api_is_never_reported() {
         let telemetry = Telemetry::default();
 
-        telemetry.report_delivery_failure(&crate::Error::from(
+        telemetry.report_delivery_failure_for_test(&crate::Error::from(
             mixpanel_rs::error::Error::MaxRetriesReached("gave up".to_owned()),
         ));
 
@@ -284,20 +363,31 @@ mod tests {
 
     /// And a network failure must not consume the one refusal report — otherwise
     /// the first flaky tunnel masks a real misconfiguration for the whole run.
+    ///
+    /// Both kinds of not-reaching-the-API are exercised, because this exact property
+    /// regressed once through the kind that was missing: a send timeout borrowed the
+    /// serialization error, classified as a refusal, and spent the report.
     #[test]
     fn a_network_failure_does_not_spend_the_refusal_report() {
-        let telemetry = Telemetry::default();
+        for network in [
+            crate::Error::from(mixpanel_rs::error::Error::ApiServerError(503)),
+            crate::Error::from(crate::error::TelemetryError::SendTimeout(10)),
+        ] {
+            let telemetry = Telemetry::default();
 
-        telemetry.report_delivery_failure(&crate::Error::from(
-            mixpanel_rs::error::Error::ApiServerError(503),
-        ));
-        telemetry.report_delivery_failure(&refusal());
+            telemetry.report_delivery_failure_for_test(&network);
+            assert!(
+                telemetry.reported_faults().is_empty(),
+                "{network} is not a fault to report"
+            );
 
-        assert_eq!(
-            telemetry.reported_faults().len(),
-            1,
-            "the refusal still got through"
-        );
+            telemetry.report_delivery_failure_for_test(&refusal());
+            assert_eq!(
+                telemetry.reported_faults().len(),
+                1,
+                "the refusal still got through after {network}"
+            );
+        }
     }
 
     /// Tests build with `debug_assertions` on, so this pins the branch a

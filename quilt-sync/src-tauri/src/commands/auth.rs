@@ -135,9 +135,7 @@ async fn erase_auth_command(
     // Every logout leaves exactly one signal, and which one says what happened.
     match &erased {
         Ok(ErasedAuth::Removed(host)) => {
-            tracing
-                .track(MixpanelEvent::AuthErased(AuthEvent { host: host.clone() }))
-                .await;
+            tracing.track(MixpanelEvent::AuthErased(AuthEvent { host: host.clone() }));
         }
         // No event, because nothing was erased — but the settings page offers a
         // logout only for hosts it listed from these very directories, so a
@@ -396,9 +394,7 @@ pub(super) async fn switch_role_command(
     adopt_role(m, roles, &host, info.clone()).await;
     watcher.clear_role_denied_pauses().await;
 
-    tracing
-        .track(MixpanelEvent::RoleSwitched(AuthEvent { host }))
-        .await;
+    tracing.track(MixpanelEvent::RoleSwitched(AuthEvent { host }));
 
     Ok(RolesData::from(info))
 }
@@ -443,12 +439,10 @@ async fn login_command(
     let host = quilt_uri::Host::from_str(host)?;
     model::login(m, &host, code).await?;
 
-    tracing
-        .track(MixpanelEvent::UserLoggedIn(LoginEvent {
-            host,
-            flow: LoginFlow::Legacy,
-        }))
-        .await;
+    tracing.track(MixpanelEvent::UserLoggedIn(LoginEvent {
+        host,
+        flow: LoginFlow::Legacy,
+    }));
 
     Ok(())
 }
@@ -495,9 +489,7 @@ pub async fn login_oauth(
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
 
-    tracing
-        .track(MixpanelEvent::OAuthLoginInitiated(AuthEvent { host }))
-        .await;
+    tracing.track(MixpanelEvent::OAuthLoginInitiated(AuthEvent { host }));
 
     Ok(format!("Opening browser for OAuth login to {host_str}"))
 }
