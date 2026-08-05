@@ -99,13 +99,27 @@ pub struct Telemetry {
     /// Shared rather than owned, because the background sender is where failures
     /// are now discovered and it holds its own handle.
     refusal_reported: Arc<AtomicBool>,
-    /// Hands an event to the sender. Bounded, so a stuck sender is a bounded leak.
+    /// Hands an event to the sender.
+    ///
+    /// `mpsc` is multi-producer, single-consumer: **many** callers push — any
+    /// command handler, on any thread, plus the autosync loop — and exactly **one**
+    /// task pops, which is why requests never overlap and order survives.
+    ///
+    /// Two properties this relies on. Pushing is *synchronous*, which is what lets
+    /// [`Self::track`] be sync at all. And the channel is *bounded*, so `try_send`
+    /// fails at once when full instead of blocking: a stuck sender must never
+    /// become a stalled click, nor unbounded memory.
     queue: mpsc::Sender<mixpanel::Queued>,
-    /// The receiving half, until [`Self::init`] gives it to the sender task.
+    /// The single consumer's half, until [`Self::init`] hands it to that task.
+    ///
+    /// `Option` because it is given away exactly once — there is only one consumer,
+    /// so taking it is what makes a second sender impossible rather than merely
+    /// unwise.
     ///
     /// Held here rather than spawned in the constructor because the async runtime
     /// is not up yet at that point — the same reason app launch was already
-    /// reported from `init`.
+    /// reported from `init`. Events pushed before then wait in the channel rather
+    /// than being lost.
     pending: Mutex<Option<mpsc::Receiver<mixpanel::Queued>>>,
 }
 

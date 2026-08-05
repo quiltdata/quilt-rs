@@ -256,10 +256,17 @@ fn dry_run_line(event: &MixpanelEvent, install_id: Option<&InstallId>) -> crate:
 
 /// Drain the queue until the sender is dropped, sending what it holds in batches.
 ///
-/// One task, so requests never overlap and order is preserved. `recv` awaits the
-/// first event of a batch and `try_recv` takes whatever else is already waiting, so
-/// a quiet app sends one event immediately rather than holding it for a batch that
-/// may never fill, while a busy one coalesces.
+/// **This is the single consumer** of the channel — the "sc" of `mpsc`. One task is
+/// what makes requests never overlap and order survive; a second would give both
+/// away.
+///
+/// `recv` *awaits* the first event of a batch, so an idle app costs nothing rather
+/// than polling. `try_recv` then takes whatever else is already waiting without
+/// waiting for more, so a quiet app sends one event immediately instead of holding
+/// it for a batch that may never fill, while a busy one coalesces.
+///
+/// The loop ends when every sender is dropped and the channel closes, which is how
+/// the task retires at shutdown rather than needing to be told.
 ///
 /// Failures are handed to `on_failure` rather than reported here, because deciding
 /// what a failure deserves is not this loop's business — see
