@@ -31,6 +31,7 @@ mod gallery {
     pub mod countdown;
     pub mod host_row;
     pub mod list_toolbar;
+    pub mod recent_files;
     pub mod search_input;
     pub mod select;
     pub mod state_strip;
@@ -45,6 +46,8 @@ use crate::gallery::card::CardStories;
 use crate::gallery::countdown::CountdownStories;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
+use crate::gallery::recent_files::RecentFilesScene;
+use crate::gallery::recent_files::RecentFilesStories;
 use crate::gallery::search_input::SearchInputStories;
 use crate::gallery::select::SelectStories;
 use crate::gallery::state_strip::StateStripScene;
@@ -95,8 +98,10 @@ fn Gallery() -> impl IntoView {
         ("HostRow", view! { <HostRowStories /> }.into_any()),
         ("ViewToggle", view! { <ViewToggleStories /> }.into_any()),
         ("SearchInput", view! { <SearchInputStories /> }.into_any()),
+        ("Recent files parts", view! { <RecentFilesStories /> }.into_any()),
         ("Scene · state strip", view! { <StateStripScene /> }.into_any()),
         ("Scene · list toolbar", view! { <ListToolbarScene /> }.into_any()),
+        ("Scene · recent files", view! { <RecentFilesScene /> }.into_any()),
     ];
 
     let index: Vec<&'static str> = sections.iter().map(|(label, _)| *label).collect();

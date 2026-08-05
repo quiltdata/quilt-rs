@@ -9,11 +9,17 @@ body {
   padding: var(--q-space-7);
 }
 
-/* Sticky index beside one long scroll, rather than tabs. */
+/* Sticky index beside one long scroll, rather than tabs.
+ *
+ * The shell is wider than the page cap ON PURPOSE: the index and its gap are
+ * added to `--q-container`, not taken out of it. Otherwise the nav eats ~200px of
+ * the content column and every scene renders ~1000px wide while claiming to show a
+ * region at the width the real page gives it — which is the one thing a scene
+ * exists to be honest about. */
 .g-shell {
   display: flex;
   gap: var(--q-space-6);
-  max-width: var(--q-container);
+  max-width: calc(var(--q-container) + 170px + var(--q-space-6));
   margin: 0 auto;
   align-items: flex-start;
 }
@@ -47,7 +53,7 @@ body {
   background: var(--q-overlay-hover);
 }
 
-.g-main { flex: 1 1 auto; min-width: 0; }
+.g-main { flex: 1 1 auto; min-width: 0; max-width: var(--q-container); }
 
 /* Jumping to a section should not put its heading flush against the top. */
 .g-anchor { scroll-margin-top: var(--q-space-6); }

@@ -1,0 +1,76 @@
+/*
+ * File row. Path, package tag, time, and three actions.
+ *
+ * The row itself opens the file; the tag navigates to its package. Two
+ * destinations, so the row cannot be an anchor — nested `<a>` is invalid — and the
+ * children stop propagation instead.
+ *
+ * Plain at rest, per the kit's rule: no link colour, no chevron. The row's own
+ * background tint on hover is the affordance — no underline, because the tint
+ * already says it and two signals for one target is noise.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  padding: 5px 2px;
+  border-bottom: 1px solid var(--q-border-muted);
+  cursor: pointer;
+}
+
+.root:hover {
+  background: var(--q-overlay-hover);
+}
+
+/* Truncates from the LEFT, so the filename survives. Deep paths differ only at
+ * their end — `runs/…/A01_Specimen_001_A1_A01.fcs` — and right-truncation would
+ * make every row in a directory read identically.
+ *
+ * `direction: rtl` is the only way to move the ellipsis without measuring text.
+ * The cost is that a path *starting* with punctuation can reorder oddly; ours
+ * start with a word, so it does not bite. */
+.path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--q-font-mono);
+}
+
+/* A chip, which is what keeps it distinguishable from the path without spending
+ * colour — the two targets differ by shape, not by tint. */
+.tag {
+  flex: none;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--q-space-2);
+  border: 1px solid var(--q-border-muted);
+  border-radius: var(--q-radius-pill);
+  color: var(--q-fg-muted);
+  text-decoration: none;
+}
+
+/* The chip has to distinguish *itself* being hovered from its row being hovered,
+ * and it cannot do that with a tint alone — the row is already tinted, and the
+ * two would just add up. So it goes solid and gains a border: against the row's
+ * flat tint, a filled chip reads as lifted. No underline needed. */
+.tag:hover {
+  background: var(--q-canvas-default);
+  border-color: var(--q-border-strong);
+  color: var(--q-fg-default);
+}
+
+/* Always visible, not revealed on hover. The cost is three glyphs on every row;
+ * the gain is that the actions are discoverable without hovering, survive a
+ * screenshot, and are obvious to anyone who navigates by keyboard. */
+.actions {
+  display: flex;
+  flex: none;
+  gap: 1px;
+}
