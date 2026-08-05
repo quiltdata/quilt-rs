@@ -20,6 +20,9 @@ pub struct DiagnosticInfo {
     pub home_dir: String,
     pub logs_dir: PathBuf,
     pub auth_hosts: Vec<String>,
+    /// This install's identity, so a report a user emails in can be lined up
+    /// against that install's event stream and its crash reports.
+    pub install_id: Option<String>,
 }
 
 /// Typed shape of `metadata.json` stored inside a diagnostic zip.
@@ -30,6 +33,10 @@ struct DiagnosticMetadata {
     data_dir: String,
     home_dir: String,
     authenticated_hosts: Vec<String>,
+    /// Absent on an install whose identity could not be persisted, so a missing
+    /// value here means "no identity", never "an older export".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    install_id: Option<String>,
 }
 
 impl DiagnosticMetadata {
@@ -40,6 +47,7 @@ impl DiagnosticMetadata {
             data_dir: info.data_dir.display().to_string(),
             home_dir: info.home_dir.clone(),
             authenticated_hosts: info.auth_hosts.clone(),
+            install_id: info.install_id.clone(),
         }
     }
 }
@@ -49,6 +57,7 @@ pub async fn collect(
     app_handle: &tauri::AppHandle,
     m: &Model,
     app: &App,
+    install_id: Option<&crate::telemetry::InstallId>,
 ) -> Result<DiagnosticInfo, Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_hosts = quilt::paths::list_auth_hosts(&local_data_dir);
@@ -70,6 +79,7 @@ pub async fn collect(
         home_dir,
         logs_dir: app.logs_dir.path().to_path_buf(),
         auth_hosts,
+        install_id: install_id.map(|id| id.as_str().to_string()),
     })
 }
 
@@ -98,6 +108,9 @@ pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
                 scope.set_extra("os", m.os.clone().into());
                 scope.set_extra("data_dir", m.data_dir.clone().into());
                 scope.set_extra("home_dir", m.home_dir.clone().into());
+                if let Some(ref install_id) = m.install_id {
+                    scope.set_extra("install_id", install_id.clone().into());
+                }
                 scope.set_extra(
                     "authenticated_hosts",
                     serde_json::json!(m.authenticated_hosts),
@@ -223,6 +236,7 @@ mod tests {
             home_dir: "/home/tester".to_string(),
             logs_dir,
             auth_hosts,
+            install_id: Some("test-install-id".to_string()),
         }
     }
 

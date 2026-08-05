@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::env;
 use crate::error::TelemetryError;
-use crate::telemetry::{MixpanelEvent, Sinks};
+use crate::telemetry::{InstallId, MixpanelEvent, Sinks};
 
 /// The event as Mixpanel receives it: its name, and its properties.
 ///
@@ -86,11 +86,37 @@ fn mixpanel_config() -> Option<(String, Config)> {
     })
 }
 
-/// The event as a dry run reports it — the **same** name and properties
-/// [`event_payload`] hands the live path, so a developer reads the payload
-/// rather than a paraphrase of it that could drift from it.
-fn dry_run_line(event: &MixpanelEvent) -> crate::Result<String> {
+/// The event as the ingest API receives it: what the event says, plus this
+/// install's identity.
+///
+/// Kept separate from [`event_payload`] so the two stay honest about whose fact
+/// each property is. The event's own payload is a property of the *event*, pinned
+/// by its own tests; `distinct_id` is a property of the *install* and belongs to
+/// nothing the vocabulary describes. An event with no payload of its own still
+/// gets a properties object here, because it still has an identity.
+fn wire_payload(
+    event: &MixpanelEvent,
+    install_id: Option<&InstallId>,
+) -> crate::Result<(String, Option<HashMap<String, Value>>)> {
     let (name, properties) = event_payload(event)?;
+
+    let Some(install_id) = install_id else {
+        return Ok((name, properties));
+    };
+
+    let mut properties = properties.unwrap_or_default();
+    properties.insert(
+        "distinct_id".to_string(),
+        Value::String(install_id.as_str().to_string()),
+    );
+    Ok((name, Some(properties)))
+}
+
+/// The event as a dry run reports it — the **same** name and properties the live
+/// path sends, identity included, so a developer reads the payload rather than a
+/// paraphrase of it that could drift from it.
+fn dry_run_line(event: &MixpanelEvent, install_id: Option<&InstallId>) -> crate::Result<String> {
+    let (name, properties) = wire_payload(event, install_id)?;
     Ok(match properties {
         Some(properties) => {
             // `properties` came from `serde_json::to_value`, so re-serializing it
@@ -104,10 +130,14 @@ fn dry_run_line(event: &MixpanelEvent) -> crate::Result<String> {
     })
 }
 
-pub async fn track_event(analytics: &Analytics, event: &MixpanelEvent) -> crate::Result<()> {
+pub async fn track_event(
+    analytics: &Analytics,
+    event: &MixpanelEvent,
+    install_id: Option<&InstallId>,
+) -> crate::Result<()> {
     match analytics {
         Analytics::Live(mixpanel) => {
-            let (event_name, properties) = event_payload(event)?;
+            let (event_name, properties) = wire_payload(event, install_id)?;
             mixpanel.track(&event_name, properties).await?;
         }
         // Deliberately `eprintln!` and not `info!`: this is console output for
@@ -115,20 +145,23 @@ pub async fn track_event(analytics: &Analytics, event: &MixpanelEvent) -> crate:
         // through the subscriber would subject it to the very filter default a
         // developer is often here to observe. It also matches how this module
         // already reports its configuration.
-        Analytics::DryRun => eprintln!("{}", dry_run_line(event)?),
+        Analytics::DryRun => eprintln!("{}", dry_run_line(event, install_id)?),
         Analytics::Off => {}
     }
     Ok(())
 }
 
-pub fn init(analytics: &Analytics) {
+pub fn init(analytics: &Analytics, install_id: Option<InstallId>) {
     if matches!(analytics, Analytics::Off) {
         return;
     }
     let analytics = analytics.clone();
     tauri::async_runtime::spawn(async move {
-        // App launch precedes any host, so it carries no payload at all.
-        if let Err(err) = track_event(&analytics, &MixpanelEvent::AppLaunched).await {
+        // App launch precedes any host, so it carries none — but it does carry an
+        // identity, which is what makes a launch countable as a person's.
+        if let Err(err) =
+            track_event(&analytics, &MixpanelEvent::AppLaunched, install_id.as_ref()).await
+        {
             eprintln!("Failed to track app launch: {err}");
         }
     });
@@ -277,14 +310,104 @@ mod tests {
 
     /// The accessor the crash-report cell reads. Exhaustive by construction —
     /// the compiler rejects a new variant that does not answer this.
+    fn install_id() -> InstallId {
+        // Constructed through `load` so the test cannot drift from the real
+        // shape: nothing else may mint an identity.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        crate::telemetry::install_id::load(dir.path()).expect("an id")
+    }
+
+    /// The identity rides on the wire, and it rides on an event that has no
+    /// payload of its own — which is the case that matters most, since app launch
+    /// is the head of every funnel and is exactly what could not be counted
+    /// before.
+    #[test]
+    fn the_identity_reaches_a_payloadless_event() -> Result {
+        let id = install_id();
+
+        let (name, props) = wire_payload(&MixpanelEvent::AppLaunched, Some(&id))?;
+
+        assert_eq!(name, "app_launched");
+        let props = props.expect("an identity, even with no payload of its own");
+        assert_eq!(
+            props.get("distinct_id"),
+            Some(&Value::String(id.as_str().to_string()))
+        );
+        assert_eq!(props.len(), 1, "nothing else is invented: {props:?}");
+
+        Ok(())
+    }
+
+    /// The identity is added beside the event's own properties, never instead of
+    /// them — the host rule and the identity are independent facts.
+    #[test]
+    fn the_identity_does_not_displace_the_event_payload() -> Result {
+        let id = install_id();
+
+        let (name, props) = wire_payload(
+            &MixpanelEvent::UserLoggedIn(LoginEvent {
+                host: host(),
+                flow: LoginFlow::OAuth,
+            }),
+            Some(&id),
+        )?;
+
+        assert_eq!(name, "user_logged_in");
+        let props = props.expect("payload and identity");
+        assert_eq!(props.get("host"), Some(&host_value()));
+        assert_eq!(props.get("flow"), Some(&Value::String("oauth".to_string())));
+        assert_eq!(
+            props.get("distinct_id"),
+            Some(&Value::String(id.as_str().to_string()))
+        );
+
+        Ok(())
+    }
+
+    /// With no identity the event still goes, unchanged — an install that could
+    /// not persist one is unattributed, never silent. Anything else would lose the
+    /// events of exactly the machines having trouble.
+    #[test]
+    fn an_event_without_an_identity_is_unchanged() -> Result {
+        assert_eq!(
+            wire_payload(&MixpanelEvent::AppLaunched, None)?,
+            event_payload(&MixpanelEvent::AppLaunched)?,
+        );
+        assert_eq!(
+            wire_payload(
+                &MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(None)),
+                None
+            )?,
+            event_payload(&MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+                None
+            )))?,
+        );
+
+        Ok(())
+    }
+
+    /// The dry run shows the identity, which is how it gets verified locally at
+    /// all — the rig would be blind to the one property added here otherwise.
+    #[test]
+    fn the_dry_run_shows_the_identity() -> Result {
+        let id = install_id();
+
+        let line = dry_run_line(&MixpanelEvent::AppLaunched, Some(&id))?;
+
+        assert!(line.contains("app_launched"), "wire name missing: {line}");
+        assert!(line.contains(id.as_str()), "identity missing: {line}");
+
+        Ok(())
+    }
+
     /// The dry-run and off arms are reachable and never fail the caller — a
     /// telemetry sink must not be able to break the command it rides on. This
     /// exercises the arms; that the line reaches a terminal is not something a
     /// test can see.
     #[tokio::test]
     async fn the_silent_arms_never_fail_the_caller() -> Result {
-        track_event(&Analytics::DryRun, &MixpanelEvent::AppLaunched).await?;
-        track_event(&Analytics::Off, &MixpanelEvent::AppLaunched).await?;
+        track_event(&Analytics::DryRun, &MixpanelEvent::AppLaunched, None).await?;
+        track_event(&Analytics::Off, &MixpanelEvent::AppLaunched, None).await?;
         Ok(())
     }
 
@@ -294,10 +417,13 @@ mod tests {
     /// bug is visible there rather than hidden behind a friendlier rendering.
     #[test]
     fn dry_run_reports_the_wire_name_and_properties() -> Result {
-        let line = dry_run_line(&MixpanelEvent::UserLoggedIn(LoginEvent {
-            host: host(),
-            flow: LoginFlow::OAuth,
-        }))?;
+        let line = dry_run_line(
+            &MixpanelEvent::UserLoggedIn(LoginEvent {
+                host: host(),
+                flow: LoginFlow::OAuth,
+            }),
+            None,
+        )?;
 
         assert!(line.contains("user_logged_in"), "wire name missing: {line}");
         assert!(
@@ -314,7 +440,7 @@ mod tests {
     /// empty `{}`.
     #[test]
     fn dry_run_omits_properties_when_the_event_has_none() -> Result {
-        let line = dry_run_line(&MixpanelEvent::AppLaunched)?;
+        let line = dry_run_line(&MixpanelEvent::AppLaunched, None)?;
 
         assert!(line.ends_with("app_launched"), "unexpected trailer: {line}");
 
@@ -325,9 +451,10 @@ mod tests {
     /// failed to supply context and that must be readable, not invisible.
     #[test]
     fn dry_run_shows_an_absent_host_as_null() -> Result {
-        let line = dry_run_line(&MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+        let line = dry_run_line(
+            &MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(None)),
             None,
-        )))?;
+        )?;
 
         assert!(line.contains("package_pushed"), "wire name missing: {line}");
         assert!(line.contains("null"), "absent host not visible: {line}");
