@@ -635,6 +635,39 @@ mod tests {
         Ok(())
     }
 
+    /// What the queue holds when the process exits is **lost**, and the bound on
+    /// that loss is what makes it acceptable: an event is taken from the queue as
+    /// soon as a batch starts, so an idle app is carrying nothing.
+    ///
+    /// Asserted rather than left implicit because "accepted" reads like "delivered"
+    /// and it is not. Solved properly by persisting the queue, not by flushing on
+    /// exit — which would block quit on a network call to recover the last action
+    /// or two.
+    #[test]
+    fn accepting_an_event_is_not_delivering_it() {
+        let (queue, receiver) = mpsc::channel(QUEUE_DEPTH);
+
+        queue
+            .try_send(Queued::now(MixpanelEvent::AppLaunched))
+            .expect("accepted");
+
+        // Dropping both halves is what process exit does to a detached sender: the
+        // event was accepted, nothing sent it, and nothing reports that.
+        drop(receiver);
+        drop(queue);
+
+        // And the queue refuses rather than blocking once nothing is draining —
+        // the property that keeps a dead sender from becoming a stalled click.
+        let (queue, receiver) = mpsc::channel::<Queued>(1);
+        drop(receiver);
+        assert!(
+            queue
+                .try_send(Queued::now(MixpanelEvent::AppLaunched))
+                .is_err(),
+            "a closed queue must refuse immediately, never wait"
+        );
+    }
+
     /// The sender drains what is waiting and stops when the queue closes, rather
     /// than spinning or hanging — a dropped sender must end the task.
     #[tokio::test]

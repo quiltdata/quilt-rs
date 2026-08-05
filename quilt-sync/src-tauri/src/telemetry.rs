@@ -109,6 +109,13 @@ pub struct Telemetry {
     /// [`Self::track`] be sync at all. And the channel is *bounded*, so `try_send`
     /// fails at once when full instead of blocking: a stuck sender must never
     /// become a stalled click, nor unbounded memory.
+    ///
+    /// **Accepted is not delivered.** The queue is in memory and the sender is a
+    /// detached task, so events still waiting when the process exits are lost —
+    /// in practice the last action or two, since an idle app drains almost
+    /// immediately. Deliberately not solved with a flush on exit: that would block
+    /// quit on a network call to recover very little, and a queue persisted to disk
+    /// answers both this and an offline session with one mechanism.
     queue: mpsc::Sender<mixpanel::Queued>,
     /// The single consumer's half, until [`Self::init`] hands it to that task.
     ///
