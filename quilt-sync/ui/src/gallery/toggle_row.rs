@@ -18,10 +18,10 @@ pub fn ToggleRowStories() -> impl IntoView {
     view! {
         <Story
             title="ToggleRow"
-            note="The whole row toggles — the wrapper is a `label`, and browsers do forward a \
-                  label click to a checkbox (unlike a select). Which is why the trailing slot \
-                  must never be interactive: a control in there would be swallowed and toggle \
-                  the checkbox instead."
+            note="The label and its text toggle; the trailing slot does not. Click a countdown \
+                  or 'nothing to publish' and nothing happens — those are information, not \
+                  controls, and flipping autosync because you clicked a clock would be a bad \
+                  surprise. Hover the trailing slot too: the checkbox does not react."
         >
             <Cell wide=true label="on">
                 <Card title="State">

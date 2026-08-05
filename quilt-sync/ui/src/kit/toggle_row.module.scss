@@ -2,13 +2,14 @@
  * ToggleRow. A checkbox, a label with a sub-label, and a trailing slot for a
  * countdown or an idle note.
  *
- * The wrapper is a `<label>`, and here that is enough: browsers *do* forward a
- * label click to a checkbox — unlike a select, where they refuse to synthesise
- * opening the dropdown. So the whole row toggles.
+ * Only the left part is a `<label>`; the trailing slot is its sibling. Browsers
+ * do forward a label click to a checkbox — unlike a select — so wrapping the
+ * whole row would have worked, but then clicking the countdown or "nothing to
+ * publish" would flip the setting. Those are information, not controls.
  *
- * Consequence for callers: the trailing slot must NOT be interactive. Anything
- * clickable in there would be swallowed by the label and toggle the checkbox
- * instead. A countdown and a line of text are fine; a button is not.
+ * The label still fills everything up to the trailing slot, so the target stays
+ * generous. Hover feedback lives on the label too, so the inert area does not
+ * highlight the checkbox either.
  */
 
 .root {
@@ -16,12 +17,25 @@
   align-items: flex-start;
   gap: var(--q-space-2);
   padding: var(--q-space-2) 0;
-  cursor: pointer;
 }
 
 .root.disabled {
-  cursor: not-allowed;
   color: var(--q-fg-disabled);
+}
+
+/* The clickable part: indicator plus text, filling the row up to the trailing
+ * slot. */
+.main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.root.disabled .main {
+  cursor: not-allowed;
 }
 
 /* The real checkbox: focusable, labelled, in the accessibility tree — but not
@@ -68,8 +82,14 @@
   color: var(--q-fg-on-emphasis);
 }
 
-.root:hover:not(.disabled) .indicator {
+/* Hover feedback belongs to the label, not the row: hovering the inert trailing
+ * slot must not suggest the checkbox is about to change. */
+.main:hover .indicator {
   border-color: var(--q-fg-muted);
+}
+
+.root.disabled .main:hover .indicator {
+  border-color: var(--q-border-muted);
 }
 
 /* The ring goes on the box, because the input it belongs to is off-screen. */
@@ -107,11 +127,13 @@
   color: var(--q-fg-disabled);
 }
 
-/* Right-aligned and never shrinking: a countdown that reflows as its digits
- * change is worse than one that is simply wide enough. Tabular figures keep the
- * digits from jittering. */
+/* Inert by design — outside the label, so clicking it does nothing, and the
+ * cursor says so. Never shrinks: a countdown that reflows as its digits change is
+ * worse than one that is simply wide enough, and tabular figures stop the digits
+ * jittering. */
 .trailing {
   flex: none;
+  cursor: default;
   padding-left: var(--q-space-2);
   color: var(--q-fg-muted);
   font-variant-numeric: tabular-nums;
