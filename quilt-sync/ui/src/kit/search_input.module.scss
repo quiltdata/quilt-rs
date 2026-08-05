@@ -1,0 +1,92 @@
+/*
+ * Search field. A native `type="search"` input in a bordered wrapper, with the
+ * platform's own clear button suppressed in favour of one we can theme and place.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px var(--q-space-2);
+  border: 1px solid var(--q-border-default);
+  border-radius: var(--q-radius-md);
+  background: var(--q-canvas-default);
+  color: var(--q-fg-default);
+}
+
+.root:hover {
+  border-color: var(--q-border-strong);
+}
+
+/* The ring goes on the wrapper, so the icon and the clear button are inside it
+ * rather than beside a ringed input. */
+.root:focus-within {
+  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
+  outline-offset: var(--q-focus-ring-offset);
+  border-color: var(--q-border-strong);
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fg-muted);
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.field {
+  flex: 1 1 auto;
+  min-width: 0;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.field:focus-visible {
+  outline: none;
+}
+
+.field::placeholder {
+  color: var(--q-fg-muted);
+  opacity: 1;
+}
+
+/* WebKit draws its own cancel button inside `type="search"`. It is unthemeable and
+ * differs per platform, so it goes and ours takes its place. */
+.field::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+/* Only rendered when there is something to clear — a permanently visible clear
+ * button on an empty field is a control that does nothing. */
+.clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--q-radius-sm);
+  color: var(--q-fg-muted);
+  cursor: pointer;
+}
+
+.clear:hover {
+  background: var(--q-overlay-hover);
+  color: var(--q-fg-default);
+}
+
+.clear svg {
+  width: 11px;
+  height: 11px;
+}

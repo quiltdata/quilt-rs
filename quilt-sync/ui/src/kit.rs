@@ -16,8 +16,10 @@ pub mod button;
 pub mod card;
 pub mod countdown;
 pub mod host_row;
+pub mod search_input;
 pub mod select;
 pub mod toggle_row;
+pub mod view_toggle;
 
 pub use button::Button;
 pub use button::ButtonSize;
@@ -25,5 +27,7 @@ pub use button::ButtonVariant;
 pub use card::Card;
 pub use countdown::Countdown;
 pub use host_row::HostRow;
+pub use search_input::SearchInput;
 pub use select::Select;
 pub use toggle_row::ToggleRow;
+pub use view_toggle::ViewToggle;
