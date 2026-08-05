@@ -80,10 +80,61 @@ fn mixpanel_config() -> Option<(String, Config)> {
     token.map(|token| {
         let config = Config {
             secret,
+            // Without this the client does not ask the ingest API to say whether
+            // it *accepted* the event, so it never reads the status field and a
+            // rejected event returns HTTP 200 and is reported as a success. A
+            // malformed property would fail silently, forever.
+            verbose: true,
             ..Default::default()
         };
         (token, config)
     })
+}
+
+/// Whether a failed send means **we** are wrong, or the network was.
+///
+/// The distinction decides whether a fault is worth reporting. A refusal is a bug
+/// in what we sent — a bad token, a property the API will not take — and it fails
+/// *every* event until someone fixes it, so it must be visible. A transport
+/// failure is somebody's wifi; reporting those would fill the crash reporter with
+/// other people's tunnels and bury the refusals among them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryFailure {
+    /// The ingest API took the request and refused the event.
+    Refused,
+    /// The request never got a verdict.
+    Unreachable,
+}
+
+impl DeliveryFailure {
+    pub fn classify(err: &crate::Error) -> Self {
+        use mixpanel_rs::error::Error as Mp;
+
+        let crate::Error::Telemetry(TelemetryError::Mixpanel(err)) = err else {
+            // Anything that is not the client's own error never reached the
+            // network — a payload we could not serialize is not a bad connection.
+            return Self::Refused;
+        };
+
+        match err {
+            // A verdict came back, and it was no. `ApiClientError` is what the
+            // verbose response parses a non-`1` status into.
+            Mp::ApiClientError(..)
+            | Mp::ApiUnexpectedResponse(_)
+            | Mp::ApiPayloadTooLarge
+            | Mp::JsonError(_)
+            | Mp::UrlError(_)
+            | Mp::TimeError => Self::Refused,
+
+            // No verdict: the request failed, was throttled, or the server was
+            // unwell. Retried by the client first; this is what is left after.
+            Mp::HttpError(_)
+            | Mp::ApiServerError(_)
+            | Mp::ApiRateLimitError(_)
+            | Mp::ApiHttpError(..)
+            | Mp::MaxRetriesReached(_) => Self::Unreachable,
+        }
+    }
 }
 
 /// The event as the ingest API receives it: what the event says, plus this
@@ -398,6 +449,51 @@ mod tests {
         assert!(line.contains(id.as_str()), "identity missing: {line}");
 
         Ok(())
+    }
+
+    /// A verdict from the API is our bug; no verdict is somebody's network. The
+    /// split decides what reaches the crash reporter, so it is worth pinning per
+    /// variant rather than by category.
+    #[test]
+    fn a_refusal_and_an_unreachable_api_are_told_apart() {
+        use mixpanel_rs::error::Error as Mp;
+
+        let refused = [
+            Mp::ApiClientError(400, "no such token".to_owned()),
+            Mp::ApiUnexpectedResponse("not json".to_owned()),
+            Mp::ApiPayloadTooLarge,
+        ];
+        for err in refused {
+            let err = crate::Error::from(err);
+            assert_eq!(
+                DeliveryFailure::classify(&err),
+                DeliveryFailure::Refused,
+                "the API answered, and said no: {err}"
+            );
+        }
+
+        let unreachable = [
+            Mp::ApiServerError(503),
+            Mp::ApiRateLimitError(Some(30)),
+            Mp::MaxRetriesReached("gave up".to_owned()),
+            Mp::ApiHttpError(502, "bad gateway".to_owned()),
+        ];
+        for err in unreachable {
+            let err = crate::Error::from(err);
+            assert_eq!(
+                DeliveryFailure::classify(&err),
+                DeliveryFailure::Unreachable,
+                "no verdict came back: {err}"
+            );
+        }
+    }
+
+    /// A failure that never reached the network is ours by definition — a payload
+    /// we could not even serialize is not the user's connection.
+    #[test]
+    fn a_serialization_failure_counts_as_a_refusal() {
+        let err = crate::Error::from(TelemetryError::Serialize("bad shape".to_owned()));
+        assert_eq!(DeliveryFailure::classify(&err), DeliveryFailure::Refused);
     }
 
     /// Autosync gets its **own** names rather than folding into the manual
