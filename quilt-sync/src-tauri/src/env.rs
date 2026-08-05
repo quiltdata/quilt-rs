@@ -74,17 +74,6 @@ pub fn mixpanel_api_secret() -> Option<String> {
     get_var("MIXPANEL_API_SECRET")
 }
 
-/// Whether a local build has opted in to live telemetry.
-///
-/// Deliberately absent from [`get_var`]'s build-time match: a released binary
-/// cannot carry this, so it can only ever come from the runtime environment or
-/// the `.env` a developer wrote. Any value but `0` opts in — the variable's
-/// presence is the signal, and requiring an exact spelling would only make the
-/// opt-in fail silently.
-pub fn telemetry_dev_opt_in() -> bool {
-    get_var("QUILTSYNC_TELEMETRY_DEV").is_some_and(|value| value != "0")
-}
-
 #[cfg(test)]
 mod tests {
     use serial_test::serial;

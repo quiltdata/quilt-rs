@@ -1,7 +1,7 @@
 use semver::Version;
 
 use crate::env;
-use crate::telemetry::{AmbientHost, Sinks};
+use crate::telemetry::AmbientHost;
 
 fn get_sentry_dsn() -> Option<sentry::types::Dsn> {
     env::sentry_dsn().and_then(|dsn_str| {
@@ -31,11 +31,7 @@ fn tag_host(host: AmbientHost) -> sentry::ClientOptions {
     sentry::ClientOptions::new().before_send(before_send)
 }
 
-pub fn sentry_config(
-    version: &Version,
-    sinks: Sinks,
-    host: AmbientHost,
-) -> Option<sentry::ClientOptions> {
+pub fn sentry_config(version: &Version, host: AmbientHost) -> Option<sentry::ClientOptions> {
     let dsn = get_sentry_dsn();
     if dsn.is_none() {
         eprintln!("No SENTRY_DSN configured, Sentry disabled");
@@ -45,14 +41,14 @@ pub fn sentry_config(
         // through the setters. `dsn` is assigned directly because the `dsn` setter
         // takes a `&str` and panics on a malformed value — `get_sentry_dsn` already
         // parsed it and warns instead.
-        let mut options = tag_host(host).release(version.to_string());
-        // Without this, a local build's crashes are indistinguishable from a
-        // user's. The `None` arm is unreachable here — a disabled build never
-        // reaches this function — but it is the compiler's business to know that,
-        // not this call site's to assume it.
-        if let Some(environment) = sinks.environment() {
-            options = options.environment(environment);
-        }
+        //
+        // A constant `environment`, because only a release build ever gets here —
+        // see [`Sinks`](crate::telemetry::Sinks). Separating *kinds* of release
+        // (an internal build from a customer's) is a distinct question and wants
+        // more than two values, so it belongs to whoever takes that on.
+        let mut options = tag_host(host)
+            .release(version.to_string())
+            .environment("production");
         options.dsn = Some(dsn);
         options
     })

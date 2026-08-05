@@ -32,59 +32,41 @@ pub mod prelude {
 /// instead, on whatever thread the event leaves from.
 pub type AmbientHost = Arc<Mutex<Option<Host>>>;
 
-/// Whether the sinks are live, and which build of *ourselves* they report as.
+/// Where this build's telemetry goes — decided by the build profile alone.
 ///
-/// A release build reports as production against the credentials baked in at
-/// build time. A local build is silent unless a developer opts in
-/// ([`env::telemetry_dev_opt_in`]), and when it does it reports separately, so
-/// this traffic is never counted as a user's.
+/// **Nothing leaves a local build.** Analytics dry-runs to the terminal (see
+/// [`mixpanel::Analytics`]) and the crash reporter is not constructed at all, so
+/// no configuration, environment variable, or stray `.env` credential can make a
+/// developer's machine emit. That is why this needs no opt-in: an opt-in guards a
+/// risk, and there is none left to guard.
 ///
-/// Two things keep the separation structural rather than conventional. The
-/// opt-in has no build-time form, so no released binary can carry it; and a
-/// local build's credentials can only come from the `.env` that
-/// [`env::init`](crate::env::init) loads under `debug_assertions`, so pointing a
-/// dev build at the real sinks takes a deliberate act.
+/// The crash reporter is the asymmetric half. It has no dry run — the SDK either
+/// holds a client or it does not — so rather than gate it on a flag, a local build
+/// simply never builds one. The cost is that crash-side behaviour (breadcrumbs,
+/// stack traces, release health) stays release-verified; the alternative was a
+/// `.env` DSN quietly shipping a developer's crashes, which is the thing a
+/// deliberate act was supposed to prevent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sinks {
     /// Release build: the sinks configured at build time.
     Production,
-    /// Local build with an explicit opt-in: the sinks a developer configured.
+    /// Local build: analytics dry-runs, the crash reporter is absent.
     Development,
-    Disabled,
 }
 
 impl Sinks {
-    /// Decide from the build profile and the developer's opt-in.
-    ///
-    /// The invariant worth protecting: a developer who does nothing gets
-    /// `Disabled`. Enabling telemetry locally is always an act, never a default.
     pub fn resolve() -> Self {
         if cfg!(debug_assertions) {
-            if crate::env::telemetry_dev_opt_in() {
-                Self::Development
-            } else {
-                Self::Disabled
-            }
+            Self::Development
         } else {
             Self::Production
         }
     }
 
-    pub fn is_enabled(self) -> bool {
-        !matches!(self, Self::Disabled)
-    }
-
-    /// The `environment` an outgoing report is attributed to, so internal
-    /// traffic is filterable at the sink rather than only by convention.
-    ///
-    /// Only the crash sink uses this. Analytics needs no equivalent, because a
-    /// local build sends nothing at all — see [`mixpanel::Analytics`].
-    pub fn environment(self) -> Option<&'static str> {
-        match self {
-            Self::Production => Some("production"),
-            Self::Development => Some("development"),
-            Self::Disabled => None,
-        }
+    /// Whether a crash client is built. True only for a release build — see the
+    /// type's note on why a local build never reports crashes.
+    pub fn reports_crashes(self) -> bool {
+        matches!(self, Self::Production)
     }
 }
 
@@ -103,14 +85,9 @@ impl Telemetry {
 
         Self {
             analytics: Analytics::resolve(sinks),
-            // The crash sink has no dry run — the SDK either holds a client or it
-            // does not — so a local build reaches it only if a developer supplies
-            // a DSN, and then reports as `development`. That is deliberate: it
-            // keeps crash-side behaviour testable by someone who has a spare
-            // project, without requiring one.
             _sentry: sinks
-                .is_enabled()
-                .then(|| sentry::sentry_config(version, sinks, Arc::clone(&host)))
+                .reports_crashes()
+                .then(|| sentry::sentry_config(version, Arc::clone(&host)))
                 .flatten()
                 .map(::sentry::init),
             host,
@@ -179,12 +156,16 @@ impl Telemetry {
 
 #[cfg(test)]
 impl Default for Telemetry {
+    /// A test double, built as one rather than resolved from a build mode: a test
+    /// wants a `Telemetry` that neither sends nor prints, which is not something
+    /// any shipped build is. Constructing the fields directly keeps [`Sinks`]
+    /// describing only the two builds that exist.
     fn default() -> Self {
-        // Tests never build a client: `Disabled` short-circuits before any
-        // credential is read, so a test cannot emit even if the environment
-        // happens to carry a token.
-        let version = semver::Version::new(0, 0, 0);
-        Self::new(&version, Sinks::Disabled)
+        Self {
+            _sentry: None,
+            analytics: Analytics::Off,
+            host: Arc::new(Mutex::new(None)),
+        }
     }
 }
 
@@ -194,116 +175,63 @@ mod tests {
 
     use super::*;
 
-    /// Tests build with `debug_assertions` on, so [`Sinks::resolve`] takes its
-    /// local-build branch here — which is the branch worth pinning: the opt-in
-    /// is the only thing between a developer and live telemetry.
+    /// Tests build with `debug_assertions` on, so this pins the branch a
+    /// developer actually runs.
+    #[test]
+    fn a_local_build_resolves_to_development() {
+        assert_eq!(Sinks::resolve(), Sinks::Development);
+    }
+
+    /// The invariant, and the reason no opt-in is needed: a local build cannot
+    /// emit **even holding real credentials**. Analytics dry-runs and no crash
+    /// client is constructed, so there is nothing for a stray `.env` to switch on.
     ///
-    /// `#[serial]` because these mutate the process environment, which races any
+    /// `#[serial]` because this mutates the process environment, which races any
     /// concurrent reader — the same reason [`crate::env`]'s tests are serial.
     #[test]
     #[serial]
-    fn a_local_build_is_silent_until_it_opts_in() {
-        unsafe {
-            std::env::remove_var("QUILTSYNC_TELEMETRY_DEV");
-        }
-        assert_eq!(
-            Sinks::resolve(),
-            Sinks::Disabled,
-            "a developer who sets nothing must get no telemetry"
-        );
-
-        unsafe {
-            std::env::set_var("QUILTSYNC_TELEMETRY_DEV", "1");
-        }
-        assert_eq!(Sinks::resolve(), Sinks::Development);
-
-        // `0` is the one value that reads as "no", so the opt-in can be left in
-        // a `.env` and switched off without deleting the line.
-        unsafe {
-            std::env::set_var("QUILTSYNC_TELEMETRY_DEV", "0");
-        }
-        assert_eq!(Sinks::resolve(), Sinks::Disabled);
-
-        unsafe {
-            std::env::remove_var("QUILTSYNC_TELEMETRY_DEV");
-        }
-    }
-
-    /// The last link before the network: an opted-in build with a token really
-    /// does construct an analytics client. Without this, every other test here
-    /// could pass while the rig emitted nothing.
-    ///
-    /// `SENTRY_DSN` is deliberately left unset — initializing the crash client
-    /// would spawn a real transport thread, and the analytics half is what proves
-    /// the wiring.
-    /// An opted-in local build reaches the dry run — and reaches it *even with a
-    /// token present*, which is the property that makes the isolation
-    /// structural. A developer holding real credentials still cannot emit from
-    /// their laptop.
-    #[test]
-    #[serial]
-    fn an_opted_in_build_dry_runs_even_holding_a_token() {
-        unsafe {
-            std::env::set_var("QUILTSYNC_TELEMETRY_DEV", "1");
-            std::env::set_var("MIXPANEL_PROJECT_TOKEN", "a-token-that-must-not-be-used");
-            std::env::remove_var("SENTRY_DSN");
-        }
-
-        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve());
-        assert!(
-            matches!(telemetry.analytics, Analytics::DryRun),
-            "a local build must never construct a live client, token or not"
-        );
-
-        unsafe {
-            std::env::remove_var("QUILTSYNC_TELEMETRY_DEV");
-            std::env::remove_var("MIXPANEL_PROJECT_TOKEN");
-        }
-    }
-
-    /// An empty value is not an opt-in: `get_var` treats empty as unset, so
-    /// `QUILTSYNC_TELEMETRY_DEV=` in a `.env` stays silent rather than enabling
-    /// telemetry on a blank line.
-    #[test]
-    #[serial]
-    fn an_empty_opt_in_is_not_an_opt_in() {
-        unsafe {
-            std::env::set_var("QUILTSYNC_TELEMETRY_DEV", "");
-        }
-        assert_eq!(Sinks::resolve(), Sinks::Disabled);
-        unsafe {
-            std::env::remove_var("QUILTSYNC_TELEMETRY_DEV");
-        }
-    }
-
-    /// The invariant this module exists to protect: enabling telemetry on a
-    /// local build is an act. `resolve` is compiled per profile, so this asserts
-    /// the branch that actually shipped rather than both.
-    #[test]
     #[allow(
         clippy::used_underscore_binding,
         reason = "`_sentry` is underscore-prefixed because it is held only for its Drop; \
                   whether it was constructed at all is exactly what this test asserts"
     )]
-    fn disabled_sinks_build_no_client() {
-        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::Disabled);
+    fn a_local_build_cannot_emit_even_holding_credentials() {
+        unsafe {
+            std::env::set_var("MIXPANEL_PROJECT_TOKEN", "a-token-that-must-not-be-used");
+            std::env::set_var("SENTRY_DSN", "https://public@example.invalid/1");
+        }
+
+        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve());
+        assert!(
+            matches!(telemetry.analytics, Analytics::DryRun),
+            "a local build must never construct a live analytics client"
+        );
+        assert!(
+            telemetry._sentry.is_none(),
+            "a local build must never construct a crash client, DSN or not"
+        );
+
+        unsafe {
+            std::env::remove_var("MIXPANEL_PROJECT_TOKEN");
+            std::env::remove_var("SENTRY_DSN");
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::used_underscore_binding,
+        reason = "see `a_local_build_cannot_emit_even_holding_credentials`"
+    )]
+    fn the_test_double_builds_nothing() {
+        let telemetry = Telemetry::default();
         assert!(matches!(telemetry.analytics, Analytics::Off));
         assert!(telemetry._sentry.is_none());
     }
 
+    /// Only a release build reports crashes — the asymmetry the type documents.
     #[test]
-    fn only_disabled_is_silent() {
-        assert!(!Sinks::Disabled.is_enabled());
-        assert!(Sinks::Production.is_enabled());
-        assert!(Sinks::Development.is_enabled());
-    }
-
-    /// A silent build reports no environment, and the two live ones never share
-    /// one — that separation is the whole point of the variant split.
-    #[test]
-    fn live_sinks_report_distinct_environments() {
-        assert_eq!(Sinks::Disabled.environment(), None);
-        assert_eq!(Sinks::Production.environment(), Some("production"));
-        assert_eq!(Sinks::Development.environment(), Some("development"));
+    fn only_a_release_build_reports_crashes() {
+        assert!(Sinks::Production.reports_crashes());
+        assert!(!Sinks::Development.reports_crashes());
     }
 }

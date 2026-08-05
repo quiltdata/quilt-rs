@@ -60,7 +60,6 @@ pub enum Analytics {
 impl Analytics {
     pub fn resolve(sinks: Sinks) -> Self {
         match sinks {
-            Sinks::Disabled => Self::Off,
             Sinks::Development => Self::DryRun,
             Sinks::Production => mixpanel_config().map_or(Self::Off, |(token, config)| {
                 Self::Live(Arc::new(Mixpanel::init(&token, Some(config))))
