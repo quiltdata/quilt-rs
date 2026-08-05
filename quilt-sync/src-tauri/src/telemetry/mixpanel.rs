@@ -314,7 +314,7 @@ mod tests {
         // Constructed through `load` so the test cannot drift from the real
         // shape: nothing else may mint an identity.
         let dir = tempfile::TempDir::new().expect("tempdir");
-        crate::telemetry::install_id::load(dir.path()).expect("an id")
+        InstallId::load(dir.path()).expect("an id")
     }
 
     /// The identity rides on the wire, and it rides on an event that has no

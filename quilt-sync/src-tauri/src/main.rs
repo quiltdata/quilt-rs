@@ -77,7 +77,7 @@ fn main() {
             let telemetry = telemetry::Telemetry::new(
                 &package_info.version,
                 sinks,
-                telemetry::install_id::load(&data_dir),
+                telemetry::InstallId::load(&data_dir),
             );
 
             // This is for runtime registering

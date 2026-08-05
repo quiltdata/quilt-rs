@@ -48,60 +48,68 @@ impl InstallId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-}
 
-fn path_in(data_dir: &Path) -> PathBuf {
-    data_dir.join(FILE_NAME)
-}
+    fn file_path(data_dir: &Path) -> PathBuf {
+        data_dir.join(FILE_NAME)
+    }
 
-/// Write `id` so a crash mid-write cannot leave a truncated value.
-///
-/// Rename within a directory is atomic, so a reader sees either the old file or
-/// the whole new one — never half of one. Without this, an interrupted write
-/// would leave a partial id that reads as a *different* install forever.
-fn persist(path: &Path, id: &str) -> std::io::Result<()> {
-    let staging = path.with_extension("tmp");
-    std::fs::write(&staging, id)?;
-    std::fs::rename(&staging, path)
-}
+    /// Write atomically: temp file + rename.
+    ///
+    /// `create_dir_all` first because this is the **earliest** write into the
+    /// data directory — earlier than the logger, which is otherwise what brings
+    /// it into being. Without it a genuinely fresh install fails to persist and
+    /// its first session goes unattributed, which is the one launch that starts
+    /// every funnel.
+    ///
+    /// Rename within a directory is atomic, so a reader sees either the old file
+    /// or the whole new one, never half of one. An interrupted write would
+    /// otherwise leave a partial value that reads as a *different* install
+    /// forever.
+    fn save(&self, data_dir: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(data_dir)?;
+        let path = Self::file_path(data_dir);
+        let staging = path.with_extension("tmp");
+        std::fs::write(&staging, &self.0)?;
+        std::fs::rename(&staging, &path)
+    }
 
-/// The identity for this install, minting one on first run.
-///
-/// Returns `None` rather than an unpersisted value, and that distinction is the
-/// point: an id that is not on disk would be a *new* id next launch, inflating
-/// the install count precisely when disks are unhappy — which is the worst
-/// moment to also lose confidence in the metric. Better to report no identity
-/// for a run than a false one.
-///
-/// A read that fails for any reason other than absence yields `None` too, and
-/// does **not** mint a replacement: overwriting an existing-but-unreadable id
-/// would discard a real install's history to satisfy one run.
-pub fn load(data_dir: &Path) -> Option<InstallId> {
-    let path = path_in(data_dir);
-
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => {
-            let existing = contents.trim();
-            if !existing.is_empty() {
-                return Some(InstallId(existing.to_string()));
+    /// The identity for this install, minting and persisting one on first run.
+    ///
+    /// `Option` rather than the `Result`-with-defaults the settings modules
+    /// return, because identity has no meaningful default: a fabricated one is
+    /// worse than none. Returning `None` rather than an unpersisted value is the
+    /// same distinction — an id that is not on disk would be a *new* id next
+    /// launch, inflating the install count precisely when disks are unhappy,
+    /// which is the worst moment to also lose confidence in the metric.
+    ///
+    /// A read that fails for any reason other than absence yields `None` too, and
+    /// does **not** mint a replacement: overwriting an existing-but-unreadable id
+    /// would discard a real install's history to satisfy one run.
+    pub fn load(data_dir: &Path) -> Option<Self> {
+        match std::fs::read_to_string(Self::file_path(data_dir)) {
+            Ok(contents) => {
+                let existing = contents.trim();
+                if !existing.is_empty() {
+                    return Some(Self(existing.to_string()));
+                }
+                // An empty file carries no history to protect, so it is treated
+                // as absence and replaced.
+                debug!("install id file is empty, minting a replacement");
             }
-            // An empty file carries no history to protect, so it is treated as
-            // absence and replaced.
-            debug!("install id file is empty, minting a replacement");
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                warn!("could not read install id, reporting none this run: {err}");
+                return None;
+            }
         }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => {
-            warn!("could not read install id, reporting none this run: {err}");
+
+        let minted = Self(Uuid::new_v4().to_string());
+        if let Err(err) = minted.save(data_dir) {
+            warn!("could not persist install id, reporting none this run: {err}");
             return None;
         }
+        Some(minted)
     }
-
-    let minted = Uuid::new_v4().to_string();
-    if let Err(err) = persist(&path, &minted) {
-        warn!("could not persist install id, reporting none this run: {err}");
-        return None;
-    }
-    Some(InstallId(minted))
 }
 
 #[cfg(test)]
@@ -114,10 +122,10 @@ mod tests {
     fn mints_and_persists_on_first_run() {
         let dir = TempDir::new().expect("tempdir");
 
-        let first = load(dir.path()).expect("an id on first run");
+        let first = InstallId::load(dir.path()).expect("an id on first run");
 
         assert!(
-            path_in(dir.path()).exists(),
+            InstallId::file_path(dir.path()).exists(),
             "the id must be on disk, or the next launch invents a new install"
         );
         assert!(
@@ -127,14 +135,36 @@ mod tests {
         );
     }
 
+    /// A genuinely fresh install: the data directory does not exist yet, because
+    /// the identity is loaded before the logger — which is otherwise the thing
+    /// that creates it. Without `create_dir_all` this returned `None`, so the
+    /// *first* session of every install went unattributed, and the identity only
+    /// appeared from the second launch. That is the one launch every funnel starts
+    /// from.
+    #[test]
+    fn mints_on_a_first_run_whose_data_dir_does_not_exist_yet() {
+        let parent = TempDir::new().expect("tempdir");
+        let data_dir = parent.path().join("not-created-yet");
+        assert!(!data_dir.exists(), "the premise of this test");
+
+        let id = InstallId::load(&data_dir).expect("an id on a truly fresh install");
+
+        assert!(InstallId::file_path(&data_dir).exists());
+        assert_eq!(
+            InstallId::load(&data_dir).as_ref(),
+            Some(&id),
+            "and it must be the same identity on the next launch"
+        );
+    }
+
     /// The property the whole design rests on: the same install reports the same
     /// identity every launch.
     #[test]
     fn is_stable_across_loads() {
         let dir = TempDir::new().expect("tempdir");
 
-        let first = load(dir.path()).expect("first");
-        let second = load(dir.path()).expect("second");
+        let first = InstallId::load(dir.path()).expect("first");
+        let second = InstallId::load(dir.path()).expect("second");
 
         assert_eq!(first, second);
     }
@@ -147,8 +177,8 @@ mod tests {
         let other = TempDir::new().expect("tempdir");
 
         assert_ne!(
-            load(one.path()).expect("one"),
-            load(other.path()).expect("other")
+            InstallId::load(one.path()).expect("one"),
+            InstallId::load(other.path()).expect("other")
         );
     }
 
@@ -157,9 +187,12 @@ mod tests {
     #[test]
     fn trims_a_hand_edited_file() {
         let dir = TempDir::new().expect("tempdir");
-        std::fs::write(path_in(dir.path()), "  an-id-with-space\n").expect("write");
+        std::fs::write(InstallId::file_path(dir.path()), "  an-id-with-space\n").expect("write");
 
-        assert_eq!(load(dir.path()).expect("id").as_str(), "an-id-with-space");
+        assert_eq!(
+            InstallId::load(dir.path()).expect("id").as_str(),
+            "an-id-with-space"
+        );
     }
 
     /// An empty file carries no history, so it is replaced rather than honoured
@@ -167,9 +200,9 @@ mod tests {
     #[test]
     fn replaces_an_empty_file() {
         let dir = TempDir::new().expect("tempdir");
-        std::fs::write(path_in(dir.path()), "   ").expect("write");
+        std::fs::write(InstallId::file_path(dir.path()), "   ").expect("write");
 
-        let id = load(dir.path()).expect("a replacement id");
+        let id = InstallId::load(dir.path()).expect("a replacement id");
 
         assert!(!id.as_str().is_empty());
         assert!(Uuid::parse_str(id.as_str()).is_ok());
@@ -181,10 +214,14 @@ mod tests {
     #[test]
     fn honours_an_opaque_existing_value() {
         let dir = TempDir::new().expect("tempdir");
-        std::fs::write(path_in(dir.path()), "not-a-uuid-but-still-an-install").expect("write");
+        std::fs::write(
+            InstallId::file_path(dir.path()),
+            "not-a-uuid-but-still-an-install",
+        )
+        .expect("write");
 
         assert_eq!(
-            load(dir.path()).expect("id").as_str(),
+            InstallId::load(dir.path()).expect("id").as_str(),
             "not-a-uuid-but-still-an-install"
         );
     }
@@ -195,10 +232,11 @@ mod tests {
     #[test]
     fn reports_none_when_it_cannot_persist() {
         let dir = TempDir::new().expect("tempdir");
-        std::fs::create_dir(path_in(dir.path())).expect("occupy the path with a directory");
+        std::fs::create_dir(InstallId::file_path(dir.path()))
+            .expect("occupy the path with a directory");
 
         assert_eq!(
-            load(dir.path()),
+            InstallId::load(dir.path()),
             None,
             "an unpersistable id must be reported as absent, never as a new install"
         );
