@@ -1,0 +1,50 @@
+/*
+ * Queue row. Namespace, state, one action.
+ *
+ * No hover tint and no pointer cursor, unlike the list rows: nothing here responds
+ * to a click on the row, and a tint that promises otherwise is a lie. The button
+ * has its own hover.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  /* Same reason as the list rows: a flex item's automatic minimum size is its
+   * max-content width, so without a definite width a long namespace pushes the row
+   * past its container instead of ellipsising. */
+  width: 100%;
+  gap: var(--q-space-3);
+  padding: 4px 2px;
+  min-height: 30px;
+}
+
+/* Truncates right. The namespace is the row's subject, so it yields space to the
+ * state and the action rather than the other way round — those two are why the row
+ * is here at all, and a clipped verb is worse than a clipped name. */
+.namespace {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A fixed column, unlike `PackageRow`'s ragged one, and for the opposite reason.
+ * There the labels repeat and the odd one out should break the pattern; here every
+ * row differs and the buttons are what the eye travels down, so they get a straight
+ * left edge to travel along. Wide enough for `Choose S3 bucket`, the longest of the
+ * six actions. */
+.action {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  width: 152px;
+}
+
+/* An expanded cause's packages. Indented past the cause's own glyph so the
+ * hierarchy is visible without a connector line, and quieter, because the sub-row
+ * is evidence for the row above rather than a decision of its own. */
+.sub {
+  padding-left: var(--q-space-6);
+  color: var(--q-fg-muted);
+}

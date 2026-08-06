@@ -1,0 +1,100 @@
+/*
+ * Shared cause. Glyph, text with a count, a trailing slot, an expander.
+ *
+ * Wraps rather than truncating, which is the opposite of every other row in the kit.
+ * A cause is a sentence — "No access as analyst on custom.registry.io" — and the end
+ * of it is where the specifics are. Losing that leaves the user with a warning and no
+ * subject. Rows truncate because a namespace is an identifier; this is prose.
+ */
+
+.root {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  gap: var(--q-space-2);
+  padding: 6px 2px;
+  /* Tone comes in as one custom property, set by the modifier below. Only the glyph
+   * and nothing else — the text stays at full contrast, because a cause is the most
+   * important line in the region and tinting it would make it recede. */
+  color: var(--q-fg-default);
+}
+
+.attention { --cause-mark: var(--q-attention-fg); }
+.danger { --cause-mark: var(--q-danger-fg); }
+
+/* 14px against the state labels' 12px: this is a region-level statement, not a row's
+ * trailing annotation, and the size is the only thing saying so.
+ *
+ * `margin-top` rather than `align-items: center`, because the row wraps to two or
+ * three lines and a centred glyph would drift to the middle of the paragraph. */
+.root svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  color: var(--cause-mark);
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: var(--q-line-body);
+}
+
+/* Muted, and part of the same text flow rather than pushed right. The count is a
+ * clause of the sentence — "…— 11 packages" — so it wraps with it. */
+.count {
+  color: var(--q-fg-muted);
+}
+
+/* Holds either a Button or a sentence. `align-items: baseline` is not available
+ * across a flex gap here, so the slot gets the same 1px nudge a button needs to sit
+ * on the text's line. */
+.trailing {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  color: var(--q-fg-muted);
+}
+
+/* The expander is a hit target first and a chevron second: 24px square, so it is
+ * reachable on a touch screen and by an imprecise pointer, with the glyph small
+ * inside it. Same shape as `IconButton`'s Bare — not that component, because it
+ * carries no icon of the caller's and its label is generated from the count. */
+.expander {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--q-radius);
+  background: none;
+  color: var(--q-fg-muted);
+  cursor: pointer;
+}
+
+.expander:hover {
+  background: var(--q-overlay-hover);
+  color: var(--q-fg-default);
+}
+
+.expander svg {
+  width: 13px;
+  height: 13px;
+  /* Not tone-coloured — it is a control, and the tone belongs to the cause. */
+  color: inherit;
+  transition: transform 120ms ease;
+}
+
+.expander[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* Rotation is decoration; `aria-expanded` is the state. Stopping the transition
+ * loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .expander svg { transition: none; }
+}

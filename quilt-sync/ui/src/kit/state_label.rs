@@ -60,12 +60,20 @@ impl StateTone {
     /// whole of Primer's distinction between `StateLabel` and `Label`. A caller
     /// free to pass its own glyph is a caller free to put a tick on a `Danger`.
     ///
+    /// Public because the silhouette belongs to the **tone**, not to this component:
+    /// `CauseRow` states a tone too, and two components drawing two different ticks
+    /// for `Success` would undo the greyscale channel this exists for.
+    ///
+    /// Carries no class, so each consumer sizes and colours it with its own
+    /// `.root svg` rule — 12px here, 14px in a cause row.
+    ///
     /// `aria-hidden`, because it repeats the words — announcing "image, tick,
     /// Latest" is worse than "Latest".
-    fn glyph(self) -> AnyView {
+    #[must_use]
+    pub fn glyph(self) -> AnyView {
         match self {
             Self::Success => view! {
-                <svg class=style::glyph viewBox="0 0 16 16" aria-hidden="true" fill="none"
+                <svg viewBox="0 0 16 16" aria-hidden="true" fill="none"
                     stroke="currentColor" stroke-width="2.2" stroke-linecap="round"
                     stroke-linejoin="round">
                     <path d="M3.2 8.6 6.3 11.7 12.8 4.6" />
@@ -73,21 +81,19 @@ impl StateTone {
             }
             .into_any(),
             Self::Neutral => view! {
-                <svg class=style::glyph viewBox="0 0 16 16" aria-hidden="true"
-                    fill="currentColor">
+                <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
                     <circle cx="8" cy="8" r="3.4" />
                 </svg>
             }
             .into_any(),
             Self::Attention => view! {
-                <svg class=style::glyph viewBox="0 0 16 16" aria-hidden="true"
-                    fill="currentColor">
+                <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
                     <path d="M8 1.9 15.1 14.1H0.9Z" />
                 </svg>
             }
             .into_any(),
             Self::Danger => view! {
-                <svg class=style::glyph viewBox="0 0 16 16" aria-hidden="true" fill="none"
+                <svg viewBox="0 0 16 16" aria-hidden="true" fill="none"
                     stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
                     <path d="M4 4 12 12M12 4 4 12" />
                 </svg>

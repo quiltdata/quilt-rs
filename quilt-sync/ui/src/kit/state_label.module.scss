@@ -37,7 +37,7 @@
  * Step 11 rather than step 12, so the tint lands somewhere. It is a graphical
  * object, not text, so the threshold is 3:1 and the worst pairing (green-11 on
  * green-3) measures 4.21. */
-.glyph {
+.root svg {
   flex: none;
   width: 12px;
   height: 12px;

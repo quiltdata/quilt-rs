@@ -32,6 +32,7 @@ mod gallery {
     pub mod host_row;
     pub mod list_toolbar;
     pub mod packages;
+    pub mod queue;
     pub mod recent_files;
     pub mod search_input;
     pub mod select;
@@ -50,6 +51,8 @@ use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
+use crate::gallery::queue::QueueScene;
+use crate::gallery::queue::QueueStories;
 use crate::gallery::recent_files::RecentFilesScene;
 use crate::gallery::recent_files::RecentFilesStories;
 use crate::gallery::search_input::SearchInputStories;
@@ -105,10 +108,12 @@ fn Gallery() -> impl IntoView {
         ("SearchInput", view! { <SearchInputStories /> }.into_any()),
         ("StateLabel", view! { <StateLabelStories /> }.into_any()),
         ("PackageRow", view! { <PackageRowStories /> }.into_any()),
+        ("Queue parts", view! { <QueueStories /> }.into_any()),
         ("Recent files parts", view! { <RecentFilesStories /> }.into_any()),
         ("Scene · state strip", view! { <StateStripScene /> }.into_any()),
         ("Scene · list toolbar", view! { <ListToolbarScene /> }.into_any()),
         ("Scene · recent files", view! { <RecentFilesScene /> }.into_any()),
+        ("Scene · needs your attention", view! { <QueueScene /> }.into_any()),
         ("Scene · packages", view! { <PackagesScene /> }.into_any()),
     ];
 
