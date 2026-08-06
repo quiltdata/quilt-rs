@@ -366,24 +366,25 @@ async fn drain_buffer(
         return;
     }
 
-    let kept = buffer.take();
+    let kept = buffer.load();
     if kept.is_empty() {
         return;
     }
 
     debug!("telemetry: retrying {} buffered events", kept.len());
-    for (nth, chunk) in kept.chunks(BATCH).enumerate() {
+    for chunk in kept.chunks(BATCH) {
         if let Err(err) = send_wire(analytics, chunk.to_vec()).await {
-            // Back where they came from, and stop: the network went away again mid
-            // drain, so the remaining chunks would fail the same way. Everything
-            // after this chunk goes back too — unattempted, not delivered.
-            keep_if_undelivered(Some(buffer), chunk, &err);
-            if let Some(unattempted) = kept.get((nth + 1) * BATCH..) {
-                buffer.keep(unattempted);
-            }
+            // Nothing to put back: the file still holds this chunk and everything
+            // after it, because a chunk is forgotten only once it is delivered. Stop
+            // rather than continue — the network went away again mid-drain, so the
+            // rest would fail the same way.
             on_failure(&err);
             return;
         }
+        // Only now, and one chunk at a time: an interruption here costs a repeat
+        // send the ingest API deduplicates, where forgetting first would cost the
+        // events themselves.
+        buffer.forget_delivered(chunk.len());
     }
     let _ = install_id;
 }
@@ -967,7 +968,7 @@ mod tests {
             &TelemetryError::SendTimeout(SEND_TIMEOUT.as_secs()).into(),
         );
 
-        assert_eq!(buffer.take().len(), 1);
+        assert_eq!(buffer.load().len(), 1);
     }
 
     /// A refusal is **not** kept. The API answered and said no, so every retry gets
@@ -989,7 +990,7 @@ mod tests {
         );
 
         assert!(
-            buffer.take().is_empty(),
+            buffer.load().is_empty(),
             "a refusal was buffered, so it will be retried forever"
         );
     }

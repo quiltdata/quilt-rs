@@ -84,22 +84,25 @@ impl Buffer {
         self.write_lines(&lines);
     }
 
-    /// Take everything kept, leaving the buffer empty.
+    /// Read everything kept, **leaving it on disk**.
     ///
-    /// Removes before returning, so a caller cannot read the same events twice; a
-    /// send that then fails puts them back through [`Self::keep`]. The other order
-    /// would risk delivering an event and keeping it anyway, which the API's
-    /// idempotency key would cover but which no reader should have to know.
-    pub fn take(&self) -> Vec<Event> {
+    /// Non-destructive on purpose, and an earlier revision of this had it the other
+    /// way round on the reasoning that a caller must not be able to read the same
+    /// events twice. That reasoning ignored the interruption that matters: nothing
+    /// runs when this app exits, so between a destructive read and a delivery there
+    /// is a window in which the only copy is a local `Vec` — and a quit inside it
+    /// loses the whole buffer, including sessions' worth of events that had already
+    /// survived being offline.
+    ///
+    /// So the file is authoritative until a delivery is *confirmed*, and
+    /// [`Self::forget_delivered`] is what shortens it. The cost is the mirror-image
+    /// risk — delivered, then interrupted before the file is trimmed, so the events
+    /// are sent again — and that one is already paid for: every event carries the
+    /// idempotency key the ingest API dedupes on, which exists for exactly this.
+    /// Losing events is permanent; sending one twice is not.
+    pub fn load(&self) -> Vec<Event> {
         let lines = self.read_lines();
         if lines.is_empty() {
-            return Vec::new();
-        }
-
-        if let Err(err) = std::fs::remove_file(&self.path) {
-            // Leaving the file behind would replay these events on the next send.
-            // Reporting nothing and keeping them is safer than the reverse.
-            warn!("telemetry: could not clear the buffer, leaving it for a later attempt: {err}");
             return Vec::new();
         }
 
@@ -119,6 +122,19 @@ impl Buffer {
         }
 
         events
+    }
+
+    /// Drop the first `count` events, having seen them delivered.
+    ///
+    /// A prefix rather than a set, because delivery walks the file in order — so this
+    /// needs no identity matching and cannot half-remove a batch.
+    pub fn forget_delivered(&self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        let lines = self.read_lines();
+        let remaining = lines.get(count..).unwrap_or_default();
+        self.write_lines(remaining);
     }
 
     fn read_lines(&self) -> Vec<String> {
@@ -190,7 +206,7 @@ mod tests {
         let buffer = Buffer::new(dir.path());
 
         buffer.keep(&[event("first"), event("second")]);
-        let taken = buffer.take();
+        let taken = buffer.load();
 
         assert_eq!(names(&taken), vec!["first", "second"]);
         assert_eq!(
@@ -200,15 +216,48 @@ mod tests {
         );
     }
 
-    /// Taking empties it, so a later successful send cannot replay the same events.
+    /// **Reading does not empty it.** The regression a reviewer caught: with a
+    /// destructive read, the only copy of the events between reading and delivering
+    /// is a local `Vec` — and since nothing runs when this app exits, a quit in that
+    /// window loses the whole buffer, sessions of it. The file stays authoritative
+    /// until a delivery is confirmed.
     #[test]
-    fn taking_empties_the_buffer() {
+    fn reading_leaves_the_events_on_disk() {
         let dir = tempfile::tempdir().expect("tempdir");
         let buffer = Buffer::new(dir.path());
-
         buffer.keep(&[event("only")]);
-        assert_eq!(buffer.take().len(), 1);
-        assert!(buffer.take().is_empty(), "the buffer replayed its contents");
+
+        assert_eq!(buffer.load().len(), 1);
+        assert_eq!(
+            buffer.load().len(),
+            1,
+            "an interrupted drain would have lost these"
+        );
+    }
+
+    /// Confirming delivery is what shortens the file, and only by what was delivered.
+    #[test]
+    fn forgetting_drops_only_the_delivered_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let buffer = Buffer::new(dir.path());
+        buffer.keep(&[event("first"), event("second"), event("third")]);
+
+        buffer.forget_delivered(2);
+
+        assert_eq!(names(&buffer.load()), vec!["third"]);
+    }
+
+    /// Forgetting everything leaves nothing, so an install that recovers is clean.
+    #[test]
+    fn forgetting_all_of_them_empties_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let buffer = Buffer::new(dir.path());
+        buffer.keep(&[event("first"), event("second")]);
+
+        buffer.forget_delivered(2);
+
+        assert!(buffer.load().is_empty());
+        assert!(!buffer.path.exists(), "an empty buffer left a file behind");
     }
 
     /// Keeping accumulates across failures rather than replacing — an offline
@@ -221,7 +270,7 @@ mod tests {
         buffer.keep(&[event("first")]);
         buffer.keep(&[event("second")]);
 
-        assert_eq!(names(&buffer.take()), vec!["first", "second"]);
+        assert_eq!(names(&buffer.load()), vec!["first", "second"]);
     }
 
     /// Past the bound the oldest go, and the newest are what remain.
@@ -235,7 +284,7 @@ mod tests {
             .collect();
         buffer.keep(&events);
 
-        let taken = buffer.take();
+        let taken = buffer.load();
         assert_eq!(taken.len(), MAX_BUFFERED);
         assert_eq!(
             taken.first().map(|e| e.event.as_str()),
@@ -259,7 +308,7 @@ mod tests {
         let contents = std::fs::read_to_string(&buffer.path).expect("written");
         std::fs::write(&buffer.path, format!("{{ not json\n{contents}")).expect("write");
 
-        assert_eq!(names(&buffer.take()), vec!["kept"]);
+        assert_eq!(names(&buffer.load()), vec!["kept"]);
     }
 
     /// An install that has never been offline has no file, which is not an error.
@@ -267,19 +316,6 @@ mod tests {
     fn a_missing_buffer_is_empty() {
         let dir = tempfile::tempdir().expect("tempdir");
 
-        assert!(Buffer::new(dir.path()).take().is_empty());
-    }
-
-    /// Emptying it removes the file rather than leaving a zero-length one, so an
-    /// install that recovers leaves nothing behind.
-    #[test]
-    fn an_emptied_buffer_leaves_no_file() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let buffer = Buffer::new(dir.path());
-
-        buffer.keep(&[event("only")]);
-        let _ = buffer.take();
-
-        assert!(!buffer.path.exists());
+        assert!(Buffer::new(dir.path()).load().is_empty());
     }
 }
