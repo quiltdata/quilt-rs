@@ -154,18 +154,30 @@ pub trait QuiltModel {
         Ok(package.install_paths(paths).await?)
     }
 
-    /// TODO(sync-entire-package/u-desktop-plumbing): the scope passed here must
-    /// become the package's stored `SyncScope` combined (logical and) with the
-    /// experimental gate, on this path and on the autopull tick. Until it lands the
-    /// app asks for the narrow scope, so behaviour is exactly as before.
+    /// `scope` is resolved by the caller through
+    /// [`resolve_sync_scope`](crate::experimental_settings::resolve_sync_scope)
+    /// — the package's stored choice, honoured only while the experiment is on.
+    /// It is a parameter rather than something read in here so the two paths
+    /// that pull (a user's button, the autopull tick) resolve it the same way
+    /// and a mocked model can drive either.
     async fn package_pull(
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
+        scope: SyncScope,
     ) -> Result<quilt_uri::ManifestUri, Error> {
-        Ok(package
-            .pull(host_config, SyncScope::IndividualFiles)
-            .await?)
+        Ok(package.pull(host_config, scope).await?)
+    }
+
+    /// Persist a package's standing [`SyncScope`]. Storage only — what a pull
+    /// actually does with it still goes through `resolve_sync_scope`.
+    async fn package_set_sync_scope(
+        &self,
+        package: &quilt::InstalledPackage,
+        scope: SyncScope,
+    ) -> Result<(), Error> {
+        package.set_sync_scope(scope).await?;
+        Ok(())
     }
 
     /// Dry-run classifier: what would `package_pull` do right now? Delegates

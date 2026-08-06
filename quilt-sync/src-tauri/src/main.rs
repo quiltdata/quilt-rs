@@ -20,6 +20,7 @@ mod commands;
 mod commit_message;
 mod env;
 mod error;
+mod experimental_settings;
 mod fswatcher;
 mod model;
 mod notify;
@@ -111,6 +112,14 @@ fn main() {
                     autopull::AutosyncSettings::default(),
                 ))
             });
+            let experimental_settings =
+                tauri::async_runtime::block_on(experimental_settings::init(&data_dir))
+                    .unwrap_or_else(|err| {
+                        error!("Failed to load experimental settings, using defaults: {err}");
+                        std::sync::Arc::new(tokio::sync::RwLock::new(
+                            experimental_settings::ExperimentalSettings::default(),
+                        ))
+                    });
             let fswatcher_settings = tauri::async_runtime::block_on(fswatcher::init_settings(
                 &data_dir,
             ))
@@ -144,12 +153,14 @@ fn main() {
                 autosync_settings.clone(),
                 window_mode.clone(),
                 publish_settings.clone(),
+                experimental_settings.clone(),
                 reporter.clone(),
             );
             fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
             app.manage(publish_settings);
             app.manage(autosync_settings);
             app.manage(fswatcher_settings);
+            app.manage(experimental_settings);
             app.manage(window_mode);
             app.manage(watcher);
 
@@ -222,6 +233,7 @@ fn main() {
             commands::package_commit,
             commands::package_commit_and_push,
             commands::package_install_paths,
+            commands::package_set_sync_scope,
             commands::package_publish,
             commands::package_pull,
             commands::package_pull_outcome,
@@ -230,6 +242,7 @@ fn main() {
             commands::update_autosync_settings,
             commands::get_autosync_snapshot,
             commands::update_fswatcher_settings,
+            commands::update_experimental_settings,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,

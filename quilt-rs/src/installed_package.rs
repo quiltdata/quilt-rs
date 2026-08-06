@@ -470,6 +470,18 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         })
     }
 
+    /// Record this package's standing [`SyncScope`].
+    ///
+    /// Storage only, and deliberately separate from [`Self::pull`]: writing the
+    /// choice and acting on it are different decisions, made by different
+    /// callers. Nothing in this crate reads the stored value back.
+    pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
+        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        lineage.sync_scope = scope;
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(())
+    }
+
     /// `scope` comes from the caller, not from the package's stored
     /// [`SyncScope`]. Both faces of this engine —
     /// the desktop app and the `quilt` CLI — reach pull through here, and only

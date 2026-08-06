@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use crate::commit_message;
 use crate::error::Error;
+use crate::experimental_settings::ExperimentalSettings;
+use crate::experimental_settings::resolve_sync_scope;
 use crate::publish_settings::PublishSettings;
 use crate::quilt;
 use crate::telemetry::prelude::*;
@@ -271,12 +273,20 @@ pub async fn package_pull(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
+    experimental: &ExperimentalSettings,
 ) -> Result<(), Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
         .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    model.package_pull(&installed_package, host_config).await?;
+    let stored = model
+        .get_installed_package_lineage(&installed_package)
+        .await?
+        .sync_scope;
+    let scope = resolve_sync_scope(stored, experimental);
+    model
+        .package_pull(&installed_package, host_config, scope)
+        .await?;
     Ok(())
 }
 
