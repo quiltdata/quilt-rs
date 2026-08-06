@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use super::entries::{EntriesToolbar, EntryRow};
 use super::selection::{RemoteSelection, all_selected, partially_selected, resolve, toggled_all};
 use super::status_banner::StatusBanner;
-use super::sync_scope::{STANDING_SCOPE_LINE, SyncScopeBand};
+use super::sync_scope::{ALL_DOWNLOADED_LINE, STANDING_SCOPE_LINE, SyncScopeBand};
 use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
 use crate::components::{
@@ -127,6 +127,13 @@ pub(super) fn InstalledPackageContent(
     let syncs_entire_package = data.syncs_entire_package;
     let whole_package = scope_gate && syncs_entire_package;
     let pending_count = remote_paths.with_value(std::collections::BTreeSet::len);
+    // What fills the toolbar's left slot once there is nothing to download.
+    // `None` off the gate: an un-gated package's page stays exactly as it was.
+    let slot_caption = match (scope_gate, whole_package) {
+        (false, _) => None,
+        (true, true) => Some(STANDING_SCOPE_LINE),
+        (true, false) => Some(ALL_DOWNLOADED_LINE),
+    };
 
     // Install selected paths. The resolved selection is already remote-only and
     // already narrowed to what the package still offers, so it is the path list
@@ -350,7 +357,7 @@ pub(super) fn InstalledPackageContent(
                         <EntriesToolbar
                             below_sync_scope=scope_gate
                             whole_package=whole_package
-                            standing_line=STANDING_SCOPE_LINE
+                            caption=slot_caption
                             has_remote_entries=has_remote_entries
                             on_select_all=on_select_all
                             all_selected=all_remote_selected

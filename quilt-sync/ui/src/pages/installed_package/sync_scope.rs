@@ -21,6 +21,14 @@ use crate::components::Notification;
 /// here would give two places to keep honest.
 pub(super) const STANDING_SCOPE_LINE: &str = "Files added later are downloaded too.";
 
+/// The same slot under *individual-file* scope, once nothing is left to fetch.
+///
+/// Its sibling above states a **rule**; this states a **fact**, and the
+/// difference is the point of having both. Under individual-file scope the next
+/// revision can add a file and this stops being true — which is exactly the gap
+/// the other scope closes. So it reports the present and promises nothing.
+pub(super) const ALL_DOWNLOADED_LINE: &str = "All files are downloaded.";
+
 /// What to say once the scope is stored.
 ///
 /// Leads with **saved**, this app's idiom for a written preference, because the
@@ -135,7 +143,7 @@ pub(super) fn SyncScopeBand(
 
 #[cfg(test)]
 mod tests {
-    use super::{STANDING_SCOPE_LINE, scope_saved_message};
+    use super::{ALL_DOWNLOADED_LINE, STANDING_SCOPE_LINE, scope_saved_message};
 
     /// The page's own source, so the markup rules below are checkable on the
     /// host target where the Leptos view is never rendered.
@@ -193,6 +201,22 @@ mod tests {
             );
         }
         assert!(STANDING_SCOPE_LINE.contains("later"));
+    }
+
+    /// The two captions for the same slot must not be interchangeable: one
+    /// promises something about files that do not exist yet, the other reports
+    /// the present. Under individual-file scope the next revision can falsify
+    /// "all files are downloaded", so it must not borrow the standing line's
+    /// forward-looking wording.
+    #[test]
+    fn the_complete_caption_promises_nothing_about_later_files() {
+        assert_ne!(ALL_DOWNLOADED_LINE, STANDING_SCOPE_LINE);
+        for word in ["later", "will", "from now on"] {
+            assert!(
+                !ALL_DOWNLOADED_LINE.to_lowercase().contains(word),
+                "{ALL_DOWNLOADED_LINE:?} should not mention {word}"
+            );
+        }
     }
 
     /// **The misread this message exists to avoid.** Picking the scope stores a

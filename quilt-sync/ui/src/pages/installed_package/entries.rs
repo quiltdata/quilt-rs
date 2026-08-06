@@ -25,8 +25,10 @@ pub(super) fn EntriesToolbar(
     /// download control under the narrow scope, a whole-package download while
     /// files are still pending, and the standing-scope line once they are not.
     whole_package: bool,
-    /// What that slot says when whole-package scope has nothing left to fetch.
-    standing_line: &'static str,
+    /// What the left slot says when there is nothing left to fetch. `None`
+    /// leaves it empty, which is the pre-experiment behaviour and what an
+    /// un-gated package still gets.
+    caption: Option<&'static str>,
     has_remote_entries: bool,
     on_select_all: impl Fn(leptos::ev::Event) + 'static,
     all_selected: Memo<bool>,
@@ -54,13 +56,18 @@ pub(super) fn EntriesToolbar(
     view! {
         <div class=toolbar_class>
             <div class="container">
-                {if whole_package && !has_remote_entries {
-                    // Caught up. The list below already shows what is on disk,
-                    // so this states the only thing it cannot: later arrivals
-                    // come too. It also keeps the slot from going empty.
-                    view! {
-                        <span class="value default scope-standing-line">{standing_line}</span>
-                    }
+                {if !has_remote_entries {
+                    // Caught up, so there is no control to offer. The list
+                    // below already shows what is on disk; the caption states
+                    // the thing it cannot — whether that is a standing rule or
+                    // just the present fact — and keeps the slot from going
+                    // empty.
+                    caption
+                        .map(|text| {
+                            view! {
+                                <span class="value default scope-standing-line">{text}</span>
+                            }
+                        })
                         .into_any()
                 } else if has_remote_entries {
                     {
@@ -431,7 +438,7 @@ mod tests {
                 <EntriesToolbar
                     below_sync_scope=false
                     whole_package=false
-                    standing_line="Files added later are downloaded too."
+                    caption=None
                     has_remote_entries=true
                     on_select_all=|_| {}
                     all_selected=Memo::new(move |_| all)
