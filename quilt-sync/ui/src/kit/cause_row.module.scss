@@ -13,7 +13,7 @@
   width: 100%;
   /* Matches `QueueRow`'s gap, which is what makes the two rows' text start at the
    * same x — both lead with a 24px column and this gap follows it. */
-  gap: var(--q-space-3);
+  gap: var(--q-space-2);
   /* The 2px left padding matches `QueueRow`'s exactly, and it has to: the disclosure
    * column starts after it in both rows, so 2px here and 0 there would misalign the
    * chevron against the bullets by 2px — small, and visible the moment the rows are

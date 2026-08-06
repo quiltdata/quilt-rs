@@ -13,7 +13,7 @@
    * max-content width, so without a definite width a long namespace pushes the row
    * past its container instead of ellipsising. */
   width: 100%;
-  gap: var(--q-space-3);
+  gap: var(--q-space-2);
   padding: 4px 2px;
   min-height: 30px;
 }
@@ -72,6 +72,6 @@
  * indent step, the same unit a tree uses, rather than a number chosen to look right.
  * Quieter too, because it is evidence and not a decision of its own. */
 .sub {
-  padding-left: calc(24px + var(--q-space-3));
+  padding-left: calc(24px + var(--q-space-2));
   color: var(--q-fg-muted);
 }

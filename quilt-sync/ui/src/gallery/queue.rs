@@ -212,17 +212,19 @@ fn CauseRowStory() -> impl IntoView {
                 />
             </Cell>
             <Cell full=true label="expanded — the caller renders what it reveals">
-                <CauseRow
-                    text="No access as analyst on custom.registry.io, 3 packages in s3://team-bucket"
-                    count=3
-                    expanded=role
-                    trailing=view! { "Change your role in Accounts, above." }.into_any()
-                />
-                <Show when=move || role.get()>
-                    <QueueRow namespace="team/rnaseq-batch-2026-07-31" sub=true />
-                    <QueueRow namespace="team/imaging-cohort-b" sub=true />
-                    <QueueRow namespace="team/spatial-pilot" sub=true />
-                </Show>
+                <div class="g-rows">
+                    <CauseRow
+                        text="No access as analyst on custom.registry.io, 3 packages in s3://team-bucket"
+                        count=3
+                        expanded=role
+                        trailing=view! { "Change your role in Accounts, above." }.into_any()
+                    />
+                    <Show when=move || role.get()>
+                        <QueueRow namespace="team/rnaseq-batch-2026-07-31" sub=true />
+                        <QueueRow namespace="team/imaging-cohort-b" sub=true />
+                        <QueueRow namespace="team/spatial-pilot" sub=true />
+                    </Show>
+                </div>
             </Cell>
             <Cell full=true label="count of one — singular">
                 <CauseRow
