@@ -11,9 +11,9 @@ use crate::Scene;
 use crate::Story;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
+use crate::kit::Card;
 use crate::kit::CauseRow;
 use crate::kit::QueueRow;
-use crate::kit::SectionLabel;
 use crate::kit::StateTone;
 use crate::kit::ZeroLine;
 
@@ -30,11 +30,36 @@ use crate::kit::ZeroLine;
 ///   exists: resolving is a binary package-level choice, and a button labelled Merge
 ///   promises git semantics the product deliberately does not have.
 const ACTIONS: &[(&str, &str, StateTone, &str)] = &[
-    ("org/dataset-c", "conflicts in 2 files", StateTone::Danger, "Publish"),
-    ("team/dataset-f", "Changed in both places", StateTone::Danger, "Resolve"),
-    ("user/package-e", "Newer revision available", StateTone::Attention, "Get latest"),
-    ("user/package-b", "2 files changed", StateTone::Neutral, "Publish"),
-    ("local/my-data", "No S3 bucket yet", StateTone::Attention, "Choose S3 bucket"),
+    (
+        "org/dataset-c",
+        "conflicts in 2 files",
+        StateTone::Danger,
+        "Publish",
+    ),
+    (
+        "team/dataset-f",
+        "Changed in both places",
+        StateTone::Danger,
+        "Resolve",
+    ),
+    (
+        "user/package-e",
+        "Newer revision available",
+        StateTone::Attention,
+        "Get latest",
+    ),
+    (
+        "user/package-b",
+        "2 files changed",
+        StateTone::Neutral,
+        "Publish",
+    ),
+    (
+        "local/my-data",
+        "No S3 bucket yet",
+        StateTone::Attention,
+        "Choose S3 bucket",
+    ),
 ];
 
 fn action(label: &'static str, variant: ButtonVariant) -> AnyView {
@@ -48,32 +73,23 @@ fn action(label: &'static str, variant: ButtonVariant) -> AnyView {
 
 #[component]
 pub fn QueueStories() -> impl IntoView {
-    view! { <LabelsStory /><QueueRowStory /><CauseRowStory /> }
+    view! { <ZeroLineStory /><QueueRowStory /><CauseRowStory /> }
 }
 
 #[component]
-fn LabelsStory() -> impl IntoView {
+fn ZeroLineStory() -> impl IntoView {
     view! {
         <Story
-            title="SectionLabel · ZeroLine"
-            note="The label is sentence case in the source and upper-cased in CSS — typing \
-                  it in capitals would make some screen readers spell it as an initialism. \
-                  Its count must be DERIVED: the design mock reads (17) above 19 rows, \
-                  which is what a hand-written count does the first time the rows change. \
+            title="ZeroLine"
+            note="The state most users see most days, and it must stay one line \
+                  (acceptance criterion 8) — a full-height empty state here would push the \
+                  package list below the fold in order to say that nothing is wrong. \
                   \
-                  ZeroLine is the state most users see most days, and it must stay one \
-                  line (acceptance criterion 8) — a full-height empty state here would \
-                  push the package list below the fold in order to say nothing is wrong."
+                  The region's heading and count are `Card`'s, not a component of their \
+                  own: a `SectionLabel` existed here briefly and was deleted once the \
+                  regions became cards, because Card's title already had exactly that \
+                  treatment. See the Card story for the count states."
         >
-            <Cell label="with a count">
-                <SectionLabel text="Needs your attention" count=19 />
-            </Cell>
-            <Cell label="count of one">
-                <SectionLabel text="Needs your attention" count=1 />
-            </Cell>
-            <Cell label="no count">
-                <SectionLabel text="Needs your attention" />
-            </Cell>
             <Cell full=true label="the healthy queue">
                 <ZeroLine text="Everything is Latest — 43 packages" />
             </Cell>
@@ -101,8 +117,10 @@ fn QueueRowStory() -> impl IntoView {
                   The row does not navigate — the list below is where you go to a \
                   package, the queue is where you decide about one — so there is no hover \
                   tint promising otherwise, and one tab stop per row, which is the button. \
-                  Actions sit in a fixed 152px column, wide enough for Choose S3 bucket, \
-                  so the buttons have a straight left edge to read down."
+                  Actions hug their labels at the region's right edge, so the right edges \
+                  line up and the left ones follow the verb's length — and the leading \
+                  bullet fills the column a CauseRow uses for its expander, which is what \
+                  keeps a cause and a package aligned on their text."
         >
             {ACTIONS
                 .iter()
@@ -263,52 +281,56 @@ pub fn QueueRegion() -> impl IntoView {
     let total = move || 11 + 3 + ACTIONS.len();
 
     view! {
-        <div>
-            <SectionLabel text="Needs your attention" count=total() />
-            <CauseRow
-                text="Signed out from custom.registry.io"
-                count=11
-                expanded=signed_out
-                trailing=view! {
-                    <Button on_click=|_| ()>
-                        "Sign in"
-                    </Button>
-                }
-                    .into_any()
-            />
-            <Show when=move || signed_out.get()>
-                {["user/package-x", "user/package-y", "org/shared-set"]
-                    .into_iter()
-                    .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
-                    .collect_view()}
-                <QueueRow namespace="…and 8 more" sub=true />
-            </Show>
-            <CauseRow
-                text="No access as analyst on custom.registry.io, 3 packages in s3://team-bucket"
-                count=3
-                expanded=role
-                trailing=view! { "Change your role in Accounts, above." }.into_any()
-            />
-            <Show when=move || role.get()>
-                {["team/rnaseq-batch-2026-07-31", "team/imaging-cohort-b", "team/spatial-pilot"]
-                    .into_iter()
-                    .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
-                    .collect_view()}
-            </Show>
-            {ACTIONS
-                .iter()
-                .map(|&(namespace, state, tone, label)| {
-                    view! {
-                        <QueueRow
-                            namespace=namespace
-                            state=state
-                            tone=tone
-                            action=action(label, ButtonVariant::Default)
-                        />
+        // One wrapper child, so `Card`'s between-children hairline does not fire: a
+        // queue is a list of decisions, and dividing every row would make it read as a
+        // table of data.
+        <Card title="Needs your attention" count=total()>
+            <div>
+                <CauseRow
+                    text="Signed out from custom.registry.io"
+                    count=11
+                    expanded=signed_out
+                    trailing=view! {
+                        <Button on_click=|_| ()>
+                            "Sign in"
+                        </Button>
                     }
-                })
-                .collect_view()}
-        </div>
+                        .into_any()
+                />
+                <Show when=move || signed_out.get()>
+                    {["user/package-x", "user/package-y", "org/shared-set"]
+                        .into_iter()
+                        .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
+                        .collect_view()}
+                    <QueueRow namespace="…and 8 more" sub=true />
+                </Show>
+                <CauseRow
+                    text="No access as analyst on custom.registry.io, 3 packages in s3://team-bucket"
+                    count=3
+                    expanded=role
+                    trailing=view! { "Change your role in Accounts, above." }.into_any()
+                />
+                <Show when=move || role.get()>
+                    {["team/rnaseq-batch-2026-07-31", "team/imaging-cohort-b", "team/spatial-pilot"]
+                        .into_iter()
+                        .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
+                        .collect_view()}
+                </Show>
+                {ACTIONS
+                    .iter()
+                    .map(|&(namespace, state, tone, label)| {
+                        view! {
+                            <QueueRow
+                                namespace=namespace
+                                state=state
+                                tone=tone
+                                action=action(label, ButtonVariant::Default)
+                            />
+                        }
+                    })
+                    .collect_view()}
+            </div>
+        </Card>
     }
 }
 
@@ -333,8 +355,9 @@ pub fn QueueScene() -> impl IntoView {
                   on. One line, no count — counting to zero would be noise — and the \
                   package list starts immediately below rather than a screen down."
         >
-            <SectionLabel text="Needs your attention" />
-            <ZeroLine text="Everything is Latest — 43 packages" />
+            <Card title="Needs your attention">
+                <ZeroLine text="Everything is Latest — 43 packages" />
+            </Card>
         </Scene>
     }
 }

@@ -22,9 +22,9 @@ use crate::Scene;
 use crate::gallery::packages::PackagesRegion;
 use crate::gallery::queue::QueueRegion;
 use crate::gallery::state_strip::StateStripRegion;
+use crate::kit::Card;
 use crate::kit::IconButton;
 use crate::kit::Layout;
-use crate::kit::SectionLabel;
 use crate::kit::ZeroLine;
 
 fn refresh_icon() -> AnyView {
@@ -96,10 +96,12 @@ pub fn PageScene() -> impl IntoView {
                 // `QueueRegion` behind a flag — "is anything wrong" is the caller's
                 // question, and a region that answered it for itself would need the
                 // data this gallery does not have.
-                <div>
-                    <SectionLabel text="Needs your attention" />
+                //
+                // No count: counting to zero is noise, and `Card`'s count is optional
+                // for exactly this row of the design.
+                <Card title="Needs your attention">
                     <ZeroLine text="Everything is Latest — 43 packages" />
-                </div>
+                </Card>
                 <PackagesRegion />
             </Layout>
         </Scene>

@@ -53,8 +53,7 @@ pub fn Button(
     children: Children,
 ) -> impl IntoView {
     let is_loading = Signal::derive(move || loading.get().unwrap_or(false));
-    let is_disabled =
-        Signal::derive(move || disabled.get().unwrap_or(false) || is_loading.get());
+    let is_disabled = Signal::derive(move || disabled.get().unwrap_or(false) || is_loading.get());
 
     // One computed `class`: Leptos permits a single `class=` per element, and
     // the module consts are plain `&'static str`, so this is just joining them.

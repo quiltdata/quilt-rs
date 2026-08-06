@@ -16,9 +16,17 @@ pub fn CardStories() -> impl IntoView {
     view! {
         <Story
             title="Card"
-            note="A titled container. The card draws the hairline between any two children, \
-                  so a card holding a mix of row types stays evenly divided — which a rule \
-                  inside one row's module could not do. Look at the two-child case for that."
+            note="The page's four regions are all one of these — both state-strip blocks, \
+                  the queue and the list — which is what makes the page read as a page \
+                  rather than as two widgets above some loose text. The rows were measured \
+                  against this surface too: their hairlines and hover tint assume \
+                  --q-canvas-default under them. \
+                  \
+                  The card draws the hairline between any two children, so a card holding a \
+                  mix of row types stays evenly divided — which a rule inside one row's \
+                  module could not do. Pass ONE wrapper child to opt out, as the queue does. \
+                  The count is optional and must be derived from the rows; the title is \
+                  optional too, for the list card, whose ViewToggle already names the view."
         >
             <Cell wide=true label="two rows — hairline is the card's, not the row's">
                 <Card title="Autosync">
@@ -47,6 +55,21 @@ pub fn CardStories() -> impl IntoView {
             </Cell>
             <Cell wide=true label="long title">
                 <Card title="Autosync and background publishing">
+                    <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
+                </Card>
+            </Cell>
+            <Cell wide=true label="with a count — the queue's header">
+                <Card title="Needs your attention" count=19>
+                    <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
+                </Card>
+            </Cell>
+            <Cell wide=true label="count of one">
+                <Card title="Needs your attention" count=1>
+                    <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
+                </Card>
+            </Cell>
+            <Cell wide=true label="no title — the list card, named by its own ViewToggle">
+                <Card>
                     <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                 </Card>
             </Cell>

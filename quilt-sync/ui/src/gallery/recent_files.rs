@@ -288,10 +288,26 @@ fn Empties() -> impl IntoView {
 /// The fixture set, newest first.
 fn fixtures() -> Vec<(&'static str, &'static str, f64)> {
     vec![
-        ("runs/2026-08-04/plate-07/A01_Specimen_001_A1_A01.fcs", "user/package-b", 2.0 * MINUTE),
-        ("runs/2026-08-04/plate-07/A02_Specimen_001_A2_A02.fcs", "user/package-b", 18.0 * MINUTE),
-        ("analysis/qc/summary-by-well-normalised.parquet", "org/dataset-c", 41.0 * MINUTE),
-        ("notebooks/2026-08-04-qc-review-cohort-b.ipynb", "org/dataset-c", 1.5 * HOUR),
+        (
+            "runs/2026-08-04/plate-07/A01_Specimen_001_A1_A01.fcs",
+            "user/package-b",
+            2.0 * MINUTE,
+        ),
+        (
+            "runs/2026-08-04/plate-07/A02_Specimen_001_A2_A02.fcs",
+            "user/package-b",
+            18.0 * MINUTE,
+        ),
+        (
+            "analysis/qc/summary-by-well-normalised.parquet",
+            "org/dataset-c",
+            41.0 * MINUTE,
+        ),
+        (
+            "notebooks/2026-08-04-qc-review-cohort-b.ipynb",
+            "org/dataset-c",
+            1.5 * HOUR,
+        ),
         ("README.md", "user/package-b", 3.0 * HOUR),
         (
             "derived/2026-08/counts_matrix_filtered_log1p.h5ad",

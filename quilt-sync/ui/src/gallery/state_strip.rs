@@ -47,7 +47,7 @@ pub fn StateStripRegion() -> impl IntoView {
     view! {
         // No breakpoint and no media query: `flex-wrap` alone drops the second card
         // under the first when the window cannot hold both.
-        <div style="display:flex; gap:var(--q-space-3); flex-wrap:wrap;">
+        <div class="g-strip">
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"

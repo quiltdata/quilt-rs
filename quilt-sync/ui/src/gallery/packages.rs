@@ -11,6 +11,7 @@ use crate::Scene;
 use crate::Story;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
+use crate::kit::Card;
 use crate::kit::EmptyState;
 use crate::kit::GroupHeader;
 use crate::kit::ListToolbar;
@@ -40,7 +41,11 @@ fn StatesStory() -> impl IntoView {
     let states: Vec<(&str, StateTone, f64)> = vec![
         ("Latest", StateTone::Success, 2.0 * HOUR),
         ("Not the latest", StateTone::Attention, 3.0 * DAY),
-        ("Newer revision available", StateTone::Attention, 20.0 * MINUTE),
+        (
+            "Newer revision available",
+            StateTone::Attention,
+            20.0 * MINUTE,
+        ),
         ("2 files changed", StateTone::Neutral, 8.0 * MINUTE),
         ("conflicts in 2 files", StateTone::Danger, 40.0 * MINUTE),
         ("Changed in both places", StateTone::Danger, 5.0 * HOUR),
@@ -162,15 +167,69 @@ fn EdgesStory() -> impl IntoView {
 fn fixtures() -> Vec<(&'static str, &'static str, &'static str, StateTone, f64)> {
     let latest = ("Latest", StateTone::Success);
     let mut rows: Vec<(&str, &str, &str, StateTone, f64)> = vec![
-        ("s3://my-bucket", "user/package-a", "2 files changed", StateTone::Neutral, 8.0 * MINUTE),
-        ("s3://my-bucket", "user/package-b", "Newer revision available", StateTone::Attention, 20.0 * MINUTE),
-        ("s3://my-bucket", "user/qc-plates-2026-08", latest.0, latest.1, 2.0 * HOUR),
-        ("s3://my-bucket", "user/scratch", latest.0, latest.1, 5.0 * HOUR),
-        ("s3://my-bucket", "user/reference-genomes", latest.0, latest.1, 26.0 * HOUR),
-        ("s3://team-bucket", "team/rnaseq-batch-2026-07-31-reprocessed-v2", "No access", StateTone::Danger, 3.0 * DAY),
-        ("s3://team-bucket", "team/imaging-cohort-b", "No access", StateTone::Danger, 9.0 * DAY),
-        ("s3://org-archive", "org/dataset-c", latest.0, latest.1, 21.0 * DAY),
-        ("s3://org-archive", "org/dataset-d", latest.0, latest.1, 70.0 * DAY),
+        (
+            "s3://my-bucket",
+            "user/package-a",
+            "2 files changed",
+            StateTone::Neutral,
+            8.0 * MINUTE,
+        ),
+        (
+            "s3://my-bucket",
+            "user/package-b",
+            "Newer revision available",
+            StateTone::Attention,
+            20.0 * MINUTE,
+        ),
+        (
+            "s3://my-bucket",
+            "user/qc-plates-2026-08",
+            latest.0,
+            latest.1,
+            2.0 * HOUR,
+        ),
+        (
+            "s3://my-bucket",
+            "user/scratch",
+            latest.0,
+            latest.1,
+            5.0 * HOUR,
+        ),
+        (
+            "s3://my-bucket",
+            "user/reference-genomes",
+            latest.0,
+            latest.1,
+            26.0 * HOUR,
+        ),
+        (
+            "s3://team-bucket",
+            "team/rnaseq-batch-2026-07-31-reprocessed-v2",
+            "No access",
+            StateTone::Danger,
+            3.0 * DAY,
+        ),
+        (
+            "s3://team-bucket",
+            "team/imaging-cohort-b",
+            "No access",
+            StateTone::Danger,
+            9.0 * DAY,
+        ),
+        (
+            "s3://org-archive",
+            "org/dataset-c",
+            latest.0,
+            latest.1,
+            21.0 * DAY,
+        ),
+        (
+            "s3://org-archive",
+            "org/dataset-d",
+            latest.0,
+            latest.1,
+            70.0 * DAY,
+        ),
     ];
     // Pad the healthy bucket, because five green rows and forty green rows are
     // different design questions and only one of them is ours.
@@ -235,65 +294,70 @@ pub fn PackagesRegion() -> impl IntoView {
     let sort = RwSignal::new("Recently changed".to_string());
 
     view! {
-        <div>
-            <ListToolbar>
-                <ViewToggle
-                    label="List view"
-                    name="packages-view"
-                    options=vec!["Packages".to_string(), "Recent files".to_string()]
-                    selected=view_mode
-                />
-                <SearchInput value=query label="Search packages" placeholder="Search…" />
-                <Select
-                    label="Group"
-                    options=vec![
-                        "Bucket".to_string(),
-                        "Prefix".to_string(),
-                        "None".to_string(),
-                    ]
-                    selected=group
-                    visible_label=true
-                />
-                <Select
-                    label="Sort"
-                    options=vec!["Recently changed".to_string(), "Name".to_string()]
-                    selected=sort
-                    visible_label=true
-                />
-                <Button variant=ButtonVariant::Primary on_click=|_| ()>
-                    "Create package"
-                </Button>
-            </ListToolbar>
-            {move || {
-                let rows = fixtures();
-                if group.get() == "Bucket" {
-                    let mut order: Vec<&'static str> = Vec::new();
-                    for (bucket, ..) in &rows {
-                        if !order.contains(bucket) {
-                            order.push(*bucket);
-                        }
-                    }
-                    order
-                        .into_iter()
-                        .map(|bucket| {
-                            let group_rows: Vec<_> = rows
-                                .iter()
-                                .copied()
-                                .filter(|(b, ..)| *b == bucket)
-                                .collect();
-                            view! {
-                                {header(bucket, group_rows.len())}
-                                {group_rows.into_iter().map(row).collect_view()}
+        // No title: the ViewToggle names the view, and a card headed `Packages` above a
+        // Packages / Recent files switch says it twice. One wrapper child, so the
+        // card's between-children hairline does not double the rows' own.
+        <Card>
+            <div>
+                <ListToolbar>
+                    <ViewToggle
+                        label="List view"
+                        name="packages-view"
+                        options=vec!["Packages".to_string(), "Recent files".to_string()]
+                        selected=view_mode
+                    />
+                    <SearchInput value=query label="Search packages" placeholder="Search…" />
+                    <Select
+                        label="Group"
+                        options=vec![
+                            "Bucket".to_string(),
+                            "Prefix".to_string(),
+                            "None".to_string(),
+                        ]
+                        selected=group
+                        visible_label=true
+                    />
+                    <Select
+                        label="Sort"
+                        options=vec!["Recently changed".to_string(), "Name".to_string()]
+                        selected=sort
+                        visible_label=true
+                    />
+                    <Button variant=ButtonVariant::Primary on_click=|_| ()>
+                        "Create package"
+                    </Button>
+                </ListToolbar>
+                {move || {
+                    let rows = fixtures();
+                    if group.get() == "Bucket" {
+                        let mut order: Vec<&'static str> = Vec::new();
+                        for (bucket, ..) in &rows {
+                            if !order.contains(bucket) {
+                                order.push(*bucket);
                             }
-                                .into_any()
-                        })
-                        .collect_view()
-                        .into_any()
-                } else {
-                    rows.into_iter().map(row).collect_view().into_any()
-                }
-            }}
-        </div>
+                        }
+                        order
+                            .into_iter()
+                            .map(|bucket| {
+                                let group_rows: Vec<_> = rows
+                                    .iter()
+                                    .copied()
+                                    .filter(|(b, ..)| *b == bucket)
+                                    .collect();
+                                view! {
+                                    {header(bucket, group_rows.len())}
+                                    {group_rows.into_iter().map(row).collect_view()}
+                                }
+                                    .into_any()
+                            })
+                            .collect_view()
+                            .into_any()
+                    } else {
+                        rows.into_iter().map(row).collect_view().into_any()
+                    }
+                }}
+            </div>
+        </Card>
     }
 }
 

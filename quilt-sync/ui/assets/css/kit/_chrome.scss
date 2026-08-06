@@ -128,3 +128,14 @@ body {
  * several rows in one cell lay out shoulder to shoulder and overflow. `width: 100%`
  * because the stack is itself a flex item and would otherwise size to content. */
 .g-rows { display: flex; flex-direction: column; width: 100%; min-width: 0; }
+
+/* The state strip's two-card row. This is page layout rather than gallery chrome, and
+ * it moves into the region's own stylesheet when the real page is built — it lives here
+ * only because the region is still a gallery component.
+ *
+ * `flex: 1 1 300px` used to sit on `Card` itself, where it was the parent's layout in
+ * the child, and wrong the moment a card entered the page's flex column: there
+ * `flex-basis` sizes the height, so every card asked to be 300px tall. `min-width: 0`
+ * lets a card shrink below 300px rather than overflowing a narrow window. */
+.g-strip { display: flex; gap: var(--q-space-3); flex-wrap: wrap; }
+.g-strip > * { flex: 1 1 300px; min-width: 0; }

@@ -15,7 +15,13 @@ pub fn SelectStories() -> impl IntoView {
     let one = RwSignal::new("analyst".to_string());
     let off = RwSignal::new("Bucket".to_string());
 
-    let axes = || vec!["Bucket".to_string(), "Prefix".to_string(), "None".to_string()];
+    let axes = || {
+        vec![
+            "Bucket".to_string(),
+            "Prefix".to_string(),
+            "None".to_string(),
+        ]
+    };
     let sorts = || vec!["Changed".to_string(), "Name".to_string()];
     let roles = || {
         vec![

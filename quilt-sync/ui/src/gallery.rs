@@ -39,8 +39,8 @@ mod gallery {
     pub mod select;
     pub mod state_label;
     pub mod state_strip;
-    pub mod view_toggle;
     pub mod toggle_row;
+    pub mod view_toggle;
 }
 
 use leptos::prelude::*;
@@ -61,8 +61,8 @@ use crate::gallery::search_input::SearchInputStories;
 use crate::gallery::select::SelectStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::StateStripScene;
-use crate::gallery::view_toggle::ViewToggleStories;
 use crate::gallery::toggle_row::ToggleRowStories;
+use crate::gallery::view_toggle::ViewToggleStories;
 use kit::Button;
 
 fn main() {
@@ -111,11 +111,26 @@ fn Gallery() -> impl IntoView {
         ("StateLabel", view! { <StateLabelStories /> }.into_any()),
         ("PackageRow", view! { <PackageRowStories /> }.into_any()),
         ("Queue parts", view! { <QueueStories /> }.into_any()),
-        ("Recent files parts", view! { <RecentFilesStories /> }.into_any()),
-        ("Scene · state strip", view! { <StateStripScene /> }.into_any()),
-        ("Scene · list toolbar", view! { <ListToolbarScene /> }.into_any()),
-        ("Scene · recent files", view! { <RecentFilesScene /> }.into_any()),
-        ("Scene · needs your attention", view! { <QueueScene /> }.into_any()),
+        (
+            "Recent files parts",
+            view! { <RecentFilesStories /> }.into_any(),
+        ),
+        (
+            "Scene · state strip",
+            view! { <StateStripScene /> }.into_any(),
+        ),
+        (
+            "Scene · list toolbar",
+            view! { <ListToolbarScene /> }.into_any(),
+        ),
+        (
+            "Scene · recent files",
+            view! { <RecentFilesScene /> }.into_any(),
+        ),
+        (
+            "Scene · needs your attention",
+            view! { <QueueScene /> }.into_any(),
+        ),
         ("Scene · packages", view! { <PackagesScene /> }.into_any()),
         ("Scene · whole page", view! { <PageScene /> }.into_any()),
     ];
