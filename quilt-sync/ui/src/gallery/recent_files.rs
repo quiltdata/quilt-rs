@@ -53,7 +53,74 @@ fn gear_icon() -> AnyView {
 
 #[component]
 pub fn RecentFilesStories() -> impl IntoView {
-    view! { <Times /> <Icons /> <Groups /> <Empties /> }
+    view! { <Rows /> <Times /> <Icons /> <Groups /> <Empties /> }
+}
+
+/// `FileRow` had no story until now — it existed only inside the scene, which meant
+/// its edges could not be reviewed and it could not be put beside a `PackageRow` at
+/// the same width. Full-width cells, because a row in a 530px cell answers a
+/// question the page never asks.
+#[component]
+fn Rows() -> impl IntoView {
+    let row = |path: &'static str, package: &'static str, elapsed: f64| {
+        view! {
+            <FileRow
+                path=path
+                package=package
+                package_href="#recent-files-parts"
+                at=ago(elapsed)
+                on_open=|_| ()
+                on_reveal=|_| ()
+                on_open_catalog=|_| ()
+                on_copy_uri=|_| ()
+            />
+        }
+    };
+
+    view! {
+        <Story
+            title="FileRow"
+            note="Compare against PackageRow directly above — same width, opposite \
+                  truncation. A path truncates from the LEFT so the filename survives; a \
+                  namespace truncates from the right. This row is a div with \
+                  role=\"button\", not an anchor, because it has three actions and a second \
+                  link inside it and nested anchors are invalid. Both rows share the 80px \
+                  time column, which is the thing to check here: if a phrase ellipsises, \
+                  the column wants 96px."
+        >
+            <Cell full=true label="ordinary">
+                {row("analysis/qc/summary-by-well.parquet", "org/dataset-c", 41.0 * MINUTE)}
+            </Cell>
+            <Cell full=true label="deep path — truncates left, filename survives">
+                {row(
+                    "runs/2026-08-04/plate-07/wells/row-a/A01_Specimen_001_A1_A01.fcs",
+                    "user/package-b",
+                    2.0 * MINUTE,
+                )}
+            </Cell>
+            <Cell full=true label="long namespace — the chip caps at 30% and truncates too">
+                {row(
+                    "derived/2026-08/counts_matrix_filtered_log1p.h5ad",
+                    "team/rnaseq-batch-2026-07-31-reprocessed-v2-and-then-some",
+                    5.0 * HOUR,
+                )}
+            </Cell>
+            <Cell full=true label="short path — nothing truncates, actions still sit right">
+                {row("README.md", "user/package-a", 3.0 * HOUR)}
+            </Cell>
+            <Cell full=true label="the 80px time column against its worst cases">
+                {[
+                    ("just now", 10.0 * 1000.0),
+                    ("23 hours ago", 23.0 * HOUR),
+                    ("3 weeks ago", 21.0 * DAY),
+                    ("2 months ago", 70.0 * DAY),
+                ]
+                    .into_iter()
+                    .map(|(phrase, elapsed)| row(phrase, "user/package-a", elapsed))
+                    .collect_view()}
+            </Cell>
+        </Story>
+    }
 }
 
 #[component]

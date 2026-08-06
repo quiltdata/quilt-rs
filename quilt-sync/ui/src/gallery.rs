@@ -213,9 +213,17 @@ pub fn Cell(
     /// column's width reads as something it is not.
     #[prop(optional)]
     wide: bool,
+    /// Span every column. For list rows, whose behaviour *is* what they do with the
+    /// width they are given. Wins over `wide` if both are set.
+    #[prop(optional)]
+    full: bool,
     children: Children,
 ) -> impl IntoView {
-    let class = if wide { "g-cell g-cell--wide" } else { "g-cell" };
+    let class = match (full, wide) {
+        (true, _) => "g-cell g-cell--full",
+        (false, true) => "g-cell g-cell--wide",
+        (false, false) => "g-cell",
+    };
     view! {
         <div class=class>
             <span class="g-cell__label">{label}</span>

@@ -66,7 +66,7 @@ fn StatesStory() -> impl IntoView {
                 .into_iter()
                 .map(|(state, tone, elapsed)| {
                     view! {
-                        <Cell wide=true label=state>
+                        <Cell full=true label=state>
                             <PackageRow
                                 namespace="user/package-a"
                                 href="#packagerow"
@@ -93,7 +93,7 @@ fn EdgesStory() -> impl IntoView {
                   worst-case phrase set, and if any of those ellipsise the column wants 96px \
                   or the phrases want shortening."
         >
-            <Cell wide=true label="long namespace truncates right, state keeps its place">
+            <Cell full=true label="long namespace truncates right, state keeps its place">
                 <PackageRow
                     namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix"
                     href="#packagerow"
@@ -102,7 +102,7 @@ fn EdgesStory() -> impl IntoView {
                     tone=StateTone::Attention
                 />
             </Cell>
-            <Cell wide=true label="no recorded time — a word, never a blank cell">
+            <Cell full=true label="no recorded time — a word, never a blank cell">
                 <PackageRow
                     namespace="user/package-a"
                     href="#packagerow"
@@ -110,7 +110,7 @@ fn EdgesStory() -> impl IntoView {
                     tone=StateTone::Attention
                 />
             </Cell>
-            <Cell wide=true label="the 80px time column against its worst cases">
+            <Cell full=true label="the 80px time column against its worst cases">
                 {[
                     ("just now", 10.0 * 1000.0),
                     ("18 min ago", 18.0 * MINUTE),
