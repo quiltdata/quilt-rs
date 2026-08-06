@@ -43,6 +43,22 @@
   }
 }
 
+/*
+ * The standing-scope line replaces the download control in the toolbar's left
+ * slot, and reads as a caption for the list below it — so it starts in the
+ * *label* column, where "Select all" and every row's filename start, rather
+ * than out at the container edge where a control would.
+ *
+ * Nothing fills the control column beside it, deliberately. The column below
+ * is nothing but checkboxes, so a tick there would be read as one; and the
+ * line states a standing rule about later arrivals, which has no conventional
+ * glyph. An empty control column says "no control here", which is true.
+ */
+.qui-entries-toolbar .scope-standing-line {
+  /* 24px inset + 16px control + its 24px gap — `.select-all`'s own metrics. */
+  padding-left: 64px;
+}
+
 /* The entries toolbar sticks below the band rather than on top of it. */
 .qui-entries-toolbar.below-sync-scope {
   top: calc(128px + var(--qui-scope-band-height));

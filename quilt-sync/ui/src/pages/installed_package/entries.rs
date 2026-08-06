@@ -58,7 +58,10 @@ pub(super) fn EntriesToolbar(
                     // Caught up. The list below already shows what is on disk,
                     // so this states the only thing it cannot: later arrivals
                     // come too. It also keeps the slot from going empty.
-                    view! { <span class="value default">{standing_line}</span> }.into_any()
+                    view! {
+                        <span class="value default scope-standing-line">{standing_line}</span>
+                    }
+                        .into_any()
                 } else if has_remote_entries {
                     {
                         let install_btn_class = Memo::new(move |_| {
