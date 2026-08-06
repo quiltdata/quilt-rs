@@ -17,7 +17,7 @@ pub mod mixpanel;
 pub mod sentry;
 pub mod tracing;
 
-pub use event::MixpanelEvent;
+pub use event::{Failure, MixpanelEvent};
 pub use install_id::InstallId;
 pub use mixpanel::Analytics;
 pub use sentry::Faults;
