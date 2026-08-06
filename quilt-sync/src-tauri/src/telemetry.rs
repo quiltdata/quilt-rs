@@ -10,6 +10,7 @@ use semver::Version;
 use crate::Result;
 use crate::telemetry::prelude::*;
 
+pub mod buffer;
 pub mod diagnostics;
 pub mod event;
 pub mod install_id;
@@ -17,6 +18,7 @@ pub mod mixpanel;
 pub mod sentry;
 pub mod tracing;
 
+pub use buffer::Buffer;
 pub use event::{Failure, MixpanelEvent};
 pub use install_id::InstallId;
 pub use mixpanel::Analytics;
@@ -128,6 +130,10 @@ pub struct Telemetry {
     /// reported from `init`. Events pushed before then wait in the channel rather
     /// than being lost.
     pending: Mutex<Option<mpsc::Receiver<mixpanel::Queued>>>,
+
+    /// Where undelivered events wait for a network — see [`Buffer`]. `None` for a
+    /// build with nowhere to persist to, and for tests.
+    buffer: Option<Buffer>,
 }
 
 /// Report a failed send, or decline to.
@@ -148,7 +154,12 @@ fn report_delivery_failure(faults: &Faults, refusal_reported: &AtomicBool, err: 
 }
 
 impl Telemetry {
-    pub fn new(version: &Version, sinks: Sinks, install_id: Option<InstallId>) -> Self {
+    pub fn new(
+        version: &Version,
+        sinks: Sinks,
+        install_id: Option<InstallId>,
+        buffer: Option<Buffer>,
+    ) -> Self {
         // The cell outlives the client and is read by its event hook, so it has
         // to exist before the client is built.
         let host: AmbientHost = Arc::new(Mutex::new(None));
@@ -168,6 +179,7 @@ impl Telemetry {
             refusal_reported: Arc::new(AtomicBool::new(false)),
             queue,
             pending: Mutex::new(Some(pending)),
+            buffer,
         }
     }
 
@@ -224,6 +236,15 @@ impl Telemetry {
     /// the text, or one anomaly becomes one issue per host.
     pub fn report_anomaly(&self, message: &str) {
         self.faults.anomaly(message);
+    }
+
+    /// Report a panic raised in the frontend, which has no crash client of its own.
+    ///
+    /// The frontend is a WASM module in a webview: its panic hook can reach the
+    /// browser console and nothing else, so before this a UI panic was visible only
+    /// to someone with the inspector open — which no user has.
+    pub fn report_ui_panic(&self, message: &str) {
+        self.faults.ui_panic(message);
     }
 
     /// Report a fault to the crash reporter without failing the caller.
@@ -293,9 +314,10 @@ impl Telemetry {
         let install_id = self.install_id.clone();
         let faults = self.faults.clone();
         let refusal_reported = Arc::clone(&self.refusal_reported);
+        let buffer = self.buffer.clone();
 
         tauri::async_runtime::spawn(async move {
-            mixpanel::run_sender(analytics, install_id, queue, move |err| {
+            mixpanel::run_sender(analytics, install_id, buffer, queue, move |err| {
                 report_delivery_failure(&faults, &refusal_reported, err);
             })
             .await;
@@ -329,6 +351,9 @@ impl Default for Telemetry {
             refusal_reported: Arc::new(AtomicBool::new(false)),
             queue,
             pending: Mutex::new(Some(pending)),
+            // No buffer: a test asserting what was queued must not also write files,
+            // and the buffer has its own tests.
+            buffer: None,
         }
     }
 }
@@ -438,7 +463,7 @@ mod tests {
             std::env::set_var("SENTRY_DSN", "https://public@example.invalid/1");
         }
 
-        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve(), None);
+        let telemetry = Telemetry::new(&Version::new(0, 0, 0), Sinks::resolve(), None, None);
         assert!(
             matches!(telemetry.analytics, Analytics::DryRun),
             "a local build must never construct a live analytics client"

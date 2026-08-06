@@ -14,6 +14,32 @@ extern "C" {
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen)]
     fn tauri_listen_raw(event: &str, handler: &js_sys::Function) -> js_sys::Promise;
+
+    /// The same `invoke`, bound so a throw comes back as a value.
+    ///
+    /// Its own binding because its one caller runs where nothing may throw — see
+    /// [`invoke_and_forget`]. Without `catch`, a missing `window.__TAURI__` (a
+    /// browser test harness, say) would propagate a JS exception out of a panic
+    /// hook.
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke, catch)]
+    fn tauri_invoke_catching(cmd: &str, args: JsValue) -> Result<js_sys::Promise, JsValue>;
+}
+
+/// Call a command and ignore the outcome — no `await`, no future, no unwinding.
+///
+/// For the one caller that cannot await: a **panic hook**. Awaiting means driving a
+/// Rust future, and a panicking WASM module traps as soon as the hook returns, so a
+/// queued future would never run. Calling the JS function posts the IPC message
+/// synchronously; dropping the promise loses only the acknowledgement, which there is
+/// nothing left to do with.
+///
+/// Every failure is swallowed deliberately. This runs while the module is already
+/// dying, and the panic it is reporting is more informative than anything that could
+/// go wrong here.
+pub fn invoke_and_forget<A: Serialize>(cmd: &str, args: &A) {
+    if let Ok(args_js) = serde_wasm_bindgen::to_value(args) {
+        let _ = tauri_invoke_catching(cmd, args_js);
+    }
 }
 
 /// Call a Tauri command with typed arguments and return type.
@@ -145,5 +171,21 @@ impl Drop for EventListener {
             }
             ListenerState::Cancelled | ListenerState::Done => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    /// Firing a command where no Tauri bridge exists must be silent.
+    ///
+    /// This test environment *is* that case — a browser with no `window.__TAURI__` —
+    /// which is why it can assert the property at all. It matters because the one
+    /// caller is a panic hook: a throw here would replace the panic being reported
+    /// with a failure to report it.
+    #[wasm_bindgen_test]
+    fn invoking_without_a_tauri_bridge_does_not_throw() {
+        super::invoke_and_forget("report_ui_panic", &serde_json::json!({"message": "x"}));
     }
 }

@@ -79,6 +79,7 @@ fn main() {
                 &package_info.version,
                 sinks,
                 telemetry::InstallId::load(&data_dir),
+                Some(telemetry::Buffer::new(&data_dir)),
             );
 
             // This is for runtime registering
@@ -256,6 +257,7 @@ fn main() {
             commands::get_revision_message,
             commands::check_for_update,
             commands::download_and_install_update,
+            commands::report_ui_panic,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

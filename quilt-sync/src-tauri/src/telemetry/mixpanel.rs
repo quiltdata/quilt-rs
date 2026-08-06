@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 use crate::env;
 use crate::error::TelemetryError;
+use crate::telemetry::buffer::Buffer;
+use crate::telemetry::prelude::*;
 use crate::telemetry::{InstallId, MixpanelEvent, Sinks};
 
 /// How many events may wait to be sent before the queue starts refusing.
@@ -293,6 +295,7 @@ fn dry_run_line(event: &MixpanelEvent, install_id: Option<&InstallId>) -> crate:
 pub async fn run_sender(
     analytics: Analytics,
     install_id: Option<InstallId>,
+    buffer: Option<Buffer>,
     mut queue: mpsc::Receiver<Queued>,
     on_failure: impl Fn(&crate::Error),
 ) {
@@ -305,31 +308,130 @@ pub async fn run_sender(
             }
         }
 
-        if let Err(err) = send_batch(&analytics, install_id.as_ref(), batch).await {
-            on_failure(&err);
+        // Wired before sending, because the wire form is what a failure has to keep
+        // — it carries the timestamp and idempotency key stamped at emission, so a
+        // replay is dated when the user acted rather than when the network returned.
+        let events = match batch
+            .iter()
+            .map(|queued| queued.wire(install_id.as_ref()))
+            .collect::<crate::Result<Vec<_>>>()
+        {
+            Ok(events) => events,
+            Err(err) => {
+                // Not a delivery failure and never worth buffering: sending
+                // serializes the same value, so a retry fails identically.
+                on_failure(&err);
+                continue;
+            }
+        };
+
+        match send_batch(&analytics, install_id.as_ref(), &batch, events.clone()).await {
+            Ok(()) => {
+                drain_buffer(
+                    &analytics,
+                    install_id.as_ref(),
+                    buffer.as_ref(),
+                    &on_failure,
+                )
+                .await;
+            }
+            Err(err) => {
+                keep_if_undelivered(buffer.as_ref(), &events, &err);
+                on_failure(&err);
+            }
         }
+    }
+}
+
+/// Retry what an earlier offline session kept, on the back of a send that just
+/// proved there is a network.
+///
+/// The trigger is a successful send rather than a timer, deliberately. A timer would
+/// poll a network it has no reason to think has changed — and the log-volume lesson
+/// is that anything on a timer runs at an unbounded rate. A success is *evidence*,
+/// and it arrives exactly when the buffer becomes drainable.
+async fn drain_buffer(
+    analytics: &Analytics,
+    install_id: Option<&InstallId>,
+    buffer: Option<&Buffer>,
+    on_failure: &impl Fn(&crate::Error),
+) {
+    let Some(buffer) = buffer else { return };
+
+    // Only a sink that actually delivers may consume the buffer. A local build shares
+    // the app data directory with an installed one, so without this a developer's
+    // `cargo tauri dev` would drain a real install's undelivered events and print
+    // them to a terminal — losing exactly what this unit exists to keep.
+    if !matches!(analytics, Analytics::Live(_)) {
+        return;
+    }
+
+    let kept = buffer.load();
+    if kept.is_empty() {
+        return;
+    }
+
+    debug!("telemetry: retrying {} buffered events", kept.len());
+    for chunk in kept.chunks(BATCH) {
+        if let Err(err) = send_wire(analytics, chunk.to_vec()).await {
+            // Nothing to put back: the file still holds this chunk and everything
+            // after it, because a chunk is forgotten only once it is delivered. Stop
+            // rather than continue — the network went away again mid-drain, so the
+            // rest would fail the same way.
+            on_failure(&err);
+            return;
+        }
+        // Only now, and one chunk at a time: an interruption here costs a repeat
+        // send the ingest API deduplicates, where forgetting first would cost the
+        // events themselves.
+        buffer.forget_delivered(chunk.len());
+    }
+    let _ = install_id;
+}
+
+/// Keep a batch only when nothing decided its fate.
+///
+/// A refusal is *not* buffered: the ingest API answered and said no, so every retry
+/// gets the same answer and the buffer would fill with events that can never leave.
+/// Only a failure with no verdict — a dead network, a timeout — is worth keeping,
+/// which is the same line [`DeliveryFailure`] already draws for whose fault it is.
+fn keep_if_undelivered(buffer: Option<&Buffer>, events: &[Event], err: &crate::Error) {
+    let Some(buffer) = buffer else { return };
+    if matches!(DeliveryFailure::classify(err), DeliveryFailure::Unreachable) {
+        buffer.keep(events);
     }
 }
 
 async fn send_batch(
     analytics: &Analytics,
     install_id: Option<&InstallId>,
-    batch: Vec<Queued>,
+    batch: &[Queued],
+    events: Vec<Event>,
 ) -> crate::Result<()> {
     match analytics {
-        Analytics::Live(mixpanel) => {
-            let events = batch
-                .iter()
-                .map(|queued| queued.wire(install_id))
-                .collect::<crate::Result<Vec<_>>>()?;
+        Analytics::Live(_) => send_wire(analytics, events).await,
+        Analytics::DryRun => {
+            for queued in batch {
+                eprintln!("{}", dry_run_line(&queued.event, install_id)?);
+            }
+            Ok(())
+        }
+        Analytics::Off => Ok(()),
+    }
+}
 
+/// Send already-wired events — the one path a replay and a fresh batch share, so
+/// neither can acquire a property the other lacks.
+async fn send_wire(analytics: &Analytics, events: Vec<Event>) -> crate::Result<()> {
+    match analytics {
+        Analytics::Live(mixpanel) => {
             tokio::time::timeout(SEND_TIMEOUT, mixpanel.track_batch(events))
                 .await
                 .map_err(|_| TelemetryError::SendTimeout(SEND_TIMEOUT.as_secs()))??;
         }
         Analytics::DryRun => {
-            for queued in &batch {
-                eprintln!("{}", dry_run_line(&queued.event, install_id)?);
+            for event in &events {
+                eprintln!("telemetry(dry-run replay) {}", event.event);
             }
         }
         Analytics::Off => {}
@@ -689,9 +791,15 @@ mod tests {
         drop(queue);
 
         let failures = std::sync::Mutex::new(Vec::new());
-        run_sender(Analytics::Off, None, receiver, |err| {
-            failures.lock().unwrap().push(err.to_string());
-        })
+        run_sender(
+            Analytics::Off,
+            None,
+            None,
+            receiver,
+            |err: &crate::Error| {
+                failures.lock().unwrap().push(err.to_string());
+            },
+        )
         .await;
 
         assert!(
@@ -843,24 +951,64 @@ mod tests {
         Ok(())
     }
 
+    /// A dead network keeps the batch: that is the whole point of the buffer, and
+    /// the failure it exists for.
+    #[test]
+    fn a_failure_with_no_verdict_is_kept() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let buffer = Buffer::new(dir.path());
+        let events = vec![Event {
+            event: "app_launched".to_owned(),
+            properties: HashMap::new(),
+        }];
+
+        keep_if_undelivered(
+            Some(&buffer),
+            &events,
+            &TelemetryError::SendTimeout(SEND_TIMEOUT.as_secs()).into(),
+        );
+
+        assert_eq!(buffer.load().len(), 1);
+    }
+
+    /// A refusal is **not** kept. The API answered and said no, so every retry gets
+    /// the same answer — buffering it would fill the file with events that can never
+    /// leave, and hide the real refusals behind them.
+    #[test]
+    fn a_refusal_is_not_kept() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let buffer = Buffer::new(dir.path());
+        let events = vec![Event {
+            event: "app_launched".to_owned(),
+            properties: HashMap::new(),
+        }];
+
+        keep_if_undelivered(
+            Some(&buffer),
+            &events,
+            &TelemetryError::Serialize("bad property".to_owned()).into(),
+        );
+
+        assert!(
+            buffer.load().is_empty(),
+            "a refusal was buffered, so it will be retried forever"
+        );
+    }
+
     /// The dry-run and off arms are reachable and never fail the caller — a
     /// telemetry sink must not be able to break the command it rides on. This
     /// exercises the arms; that the line reaches a terminal is not something a
     /// test can see.
     #[tokio::test]
     async fn the_silent_arms_never_fail_the_caller() -> Result {
-        send_batch(
-            &Analytics::DryRun,
-            None,
-            vec![Queued::now(MixpanelEvent::AppLaunched)],
-        )
-        .await?;
-        send_batch(
-            &Analytics::Off,
-            None,
-            vec![Queued::now(MixpanelEvent::AppLaunched)],
-        )
-        .await?;
+        let batch = vec![Queued::now(MixpanelEvent::AppLaunched)];
+        let wired = batch
+            .iter()
+            .map(|queued| queued.wire(None))
+            .collect::<crate::Result<Vec<_>>>()?;
+
+        send_batch(&Analytics::DryRun, None, &batch, wired.clone()).await?;
+        send_batch(&Analytics::Off, None, &batch, wired).await?;
         Ok(())
     }
 
