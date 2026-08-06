@@ -1,17 +1,30 @@
 /*
  * Two-tier token layer.
  *
- * TIER 1 — vendored Radix scales. Copied from the generator; regenerate and
- *          replace wholesale rather than editing a step. Not for use directly.
+ * TIER 1 — vendored Radix scales. Copied verbatim; regenerate and replace
+ *          wholesale rather than editing a step. Not for use directly.
  * TIER 2 — semantic roles. The only tier component CSS may reference.
  *
  * That split is what makes dark mode and a colourblind-safe variant a matter of
  * re-pointing tier 2. Additive — `theme.css` is untouched, so v1 is unaffected.
  *
- * Hex only: the generator's `oklch()`/display-p3 twins were dropped, since both
+ * Hex only: the generator's `oklch()`/display-p3 twins were dropped, since these
  * scales sit far inside sRGB and two copies of every value drift. Worth
  * reconsidering per-scale if a saturated one is added — that is where sRGB
  * clips — but hex still governs contrast review.
+ *
+ * `blue` and `gray` are CUSTOM, from the Radix custom-scale generator, tinted to
+ * the brand navy. `green` / `amber` / `red` are STOCK, copied from
+ * `@radix-ui/colors` 3.0.0 (`green.css`, `amber.css`, `red.css` and their `-dark`
+ * twins), because status colour must not be brand-tinted: a green pulled toward
+ * navy stops reading as "good", which is the only job it has. The dark blue and
+ * gray here are stock too, so this is the existing pattern rather than a new one.
+ *
+ * No alpha (`a1`–`a12`) steps for the status scales, unlike blue and gray. Those
+ * two need alpha because `--q-overlay-*` paints over a surface the component
+ * cannot know; a status fill always sits on a card or a row and is measured
+ * against it, so a solid step keeps the contrast figures below true. Add the
+ * alpha block only when something needs a status tint over an unknown backdrop.
  */
 
 /* ═════════════════════════════════════════════════════════════════════════
@@ -88,6 +101,54 @@
   --color-background: #fafafa;
 }
 
+/* success (green) */
+:root, .light, .light-theme {
+  --green-1: #fbfefc;
+  --green-2: #f4fbf6;
+  --green-3: #e6f6eb;
+  --green-4: #d6f1df;
+  --green-5: #c4e8d1;
+  --green-6: #adddc0;
+  --green-7: #8eceaa;
+  --green-8: #5bb98b;
+  --green-9: #30a46c;
+  --green-10: #2b9a66;
+  --green-11: #218358;
+  --green-12: #193b2d;
+}
+
+/* attention (amber) */
+:root, .light, .light-theme {
+  --amber-1: #fefdfb;
+  --amber-2: #fefbe9;
+  --amber-3: #fff7c2;
+  --amber-4: #ffee9c;
+  --amber-5: #fbe577;
+  --amber-6: #f3d673;
+  --amber-7: #e9c162;
+  --amber-8: #e2a336;
+  --amber-9: #ffc53d;
+  --amber-10: #ffba18;
+  --amber-11: #ab6400;
+  --amber-12: #4f3422;
+}
+
+/* danger (red) */
+:root, .light, .light-theme {
+  --red-1: #fffcfc;
+  --red-2: #fff7f7;
+  --red-3: #feebec;
+  --red-4: #ffdbdc;
+  --red-5: #ffcdce;
+  --red-6: #fdbdbe;
+  --red-7: #f4a9aa;
+  --red-8: #eb8e90;
+  --red-9: #e5484d;
+  --red-10: #dc3e42;
+  --red-11: #ce2c31;
+  --red-12: #641723;
+}
+
 /* ═════════════════════════════════════════════════════════════════════════
  * TIER 1 — DARK
  *
@@ -161,12 +222,49 @@
   --gray-track: #6c6e79;
 
   --color-background: #111;
-}
 
-/* TIER 1 — `success` / `attention` / `danger` are NOT YET GENERATED, in either
- * theme. StatePill needs them for ten states across four tones. Until they
- * exist the tier-2 names point at grey, so a `Latest` pill reads as unfinished
- * — an invented green would read as done and ship wrong. */
+  /* success (green) */
+  --green-1: #0e1512;
+  --green-2: #121b17;
+  --green-3: #132d21;
+  --green-4: #113b29;
+  --green-5: #174933;
+  --green-6: #20573e;
+  --green-7: #28684a;
+  --green-8: #2f7c57;
+  --green-9: #30a46c;
+  --green-10: #33b074;
+  --green-11: #3dd68c;
+  --green-12: #b1f1cb;
+
+  /* attention (amber) */
+  --amber-1: #16120c;
+  --amber-2: #1d180f;
+  --amber-3: #302008;
+  --amber-4: #3f2700;
+  --amber-5: #4d3000;
+  --amber-6: #5c3d05;
+  --amber-7: #714f19;
+  --amber-8: #8f6424;
+  --amber-9: #ffc53d;
+  --amber-10: #ffd60a;
+  --amber-11: #ffca16;
+  --amber-12: #ffe7b3;
+
+  /* danger (red) */
+  --red-1: #191111;
+  --red-2: #201314;
+  --red-3: #3b1219;
+  --red-4: #500f1c;
+  --red-5: #611623;
+  --red-6: #72232d;
+  --red-7: #8c333a;
+  --red-8: #b54548;
+  --red-9: #e5484d;
+  --red-10: #ec5d5e;
+  --red-11: #ff9592;
+  --red-12: #ffd1d9;
+}
 
 /* ═════════════════════════════════════════════════════════════════════════
  * TIER 2 — semantic roles. Component CSS reads ONLY these.
@@ -231,21 +329,56 @@
   --q-focus-ring-width: 2px;
   --q-focus-ring-offset: 2px;
 
-  /* status — PLACEHOLDER, see the TIER 1 note above */
-  --q-success-fg: var(--gray-11);
-  --q-success-emphasis: var(--gray-9);
-  --q-success-subtle: var(--gray-3);
-  --q-success-border: var(--gray-6);
+  /* ─── TONES ───────────────────────────────────────────────────────────────
+   * Four tones, four roles each, so a component can swap tone by swapping three
+   * variables. `neutral` is one of them and reads from grey: `StatePill` needs a
+   * "nothing is wrong, here is a number" tone, and without it that tone would be
+   * the one case whose CSS looked different from the other three.
+   *
+   * TWO text roles per tone, and the difference is not cosmetic. Step 11 is the
+   * scale's text step and is AA against steps 1–2 — NOT against step 3. Measured
+   * against the tone's own `subtle` fill: green 4.21:1 and amber 4.25:1, both
+   * under 4.5. So text on a status fill uses step 12, at 10.5–13.7:1 in both
+   * themes. Same reason `--q-fg-subtle` was deleted: the scale offers two text
+   * steps and the third level people reach for is the one that fails.
+   *
+   * `fg` (step 11) on --q-canvas-default: 4.72 / 4.61 / 5.21 / 6.57 light,
+   *   9.36 / 11.46 / 8.33 / 8.42 dark. Bare status text, untinted surface only.
+   *   CAUTION: a hover overlay is enough to break it — attention on a
+   *   hover-tinted card measures 4.01:1. Status text on a hoverable row needs
+   *   `fg-on-subtle`, or a fill under it.
+   * `fg-on-subtle` (step 12) on the tone's `subtle`: 11.00 / 10.47 / 10.84 /
+   *   13.67 light, 11.45 / 12.98 / 11.95 / 13.57 dark.
+   *
+   * NO `emphasis` role. A solid step-9 fill has no foreground that passes: white
+   * measures 3.16 on green-9, 1.58 on amber-9, 3.91 on red-9, and step 12 over
+   * step 9 is worse in dark. Radix ships those pairings for large or bold text,
+   * which is a decision no component has needed yet — so the token does not
+   * exist rather than existing and being wrong. `Notification` is the likely
+   * first caller; it should pick a fill deliberately and measure it.
+   *
+   * Border is step 7, not 6. Against a white card step 6 measures 1.43:1 for
+   * amber — an edge that is not there. Step 7 is Radix's element-border step and
+   * is what makes the pale light-theme fills read as a shape at all. */
+  --q-neutral-fg: var(--gray-11);
+  --q-neutral-fg-on-subtle: var(--gray-12);
+  --q-neutral-subtle: var(--gray-3);
+  --q-neutral-border: var(--gray-7);
 
-  --q-attention-fg: var(--gray-11);
-  --q-attention-emphasis: var(--gray-9);
-  --q-attention-subtle: var(--gray-3);
-  --q-attention-border: var(--gray-6);
+  --q-success-fg: var(--green-11);
+  --q-success-fg-on-subtle: var(--green-12);
+  --q-success-subtle: var(--green-3);
+  --q-success-border: var(--green-7);
 
-  --q-danger-fg: var(--gray-11);
-  --q-danger-emphasis: var(--gray-9);
-  --q-danger-subtle: var(--gray-3);
-  --q-danger-border: var(--gray-6);
+  --q-attention-fg: var(--amber-11);
+  --q-attention-fg-on-subtle: var(--amber-12);
+  --q-attention-subtle: var(--amber-3);
+  --q-attention-border: var(--amber-7);
+
+  --q-danger-fg: var(--red-11);
+  --q-danger-fg-on-subtle: var(--red-12);
+  --q-danger-subtle: var(--red-3);
+  --q-danger-border: var(--red-7);
 
   /* SPACE — a 4px grid, mirroring v1's `--q-ui-size-*` but named by multiples of
    * the unit rather than by half-steps (`--q-space-3` reads better than

@@ -33,9 +33,14 @@
 }
 
 /* Signed out is not an error in the row's own right — the row is fine, the
- * session is gone — but it is the one state that needs to be noticed. */
+ * session is gone — but it is the one state that needs to be noticed. Attention,
+ * not danger: signing in is something you do, and the queue files it under
+ * `[Sign in]` rather than under a failure. Red would claim something broke.
+ *
+ * `fg` and not `fg-on-subtle` because this row never hovers, which is the
+ * condition attached to that token. */
 .warning {
-  color: var(--q-danger-fg);
+  color: var(--q-attention-fg);
 }
 
 .trailing {

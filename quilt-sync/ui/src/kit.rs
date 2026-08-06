@@ -24,6 +24,7 @@ pub mod list_toolbar;
 pub mod relative_time;
 pub mod search_input;
 pub mod select;
+pub mod state_pill;
 pub mod toggle_row;
 pub mod view_toggle;
 
@@ -42,5 +43,7 @@ pub use list_toolbar::ListToolbar;
 pub use relative_time::RelativeTime;
 pub use search_input::SearchInput;
 pub use select::Select;
+pub use state_pill::StatePill;
+pub use state_pill::StateTone;
 pub use toggle_row::ToggleRow;
 pub use view_toggle::ViewToggle;

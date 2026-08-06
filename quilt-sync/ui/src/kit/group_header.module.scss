@@ -22,7 +22,8 @@
 }
 
 /* Attention tone, because an annotation only ever exists to say something is
- * wrong with the whole group. Grey until the status scales land. */
+ * wrong with the whole group. A header is not hoverable, which is what makes
+ * `fg` rather than `fg-on-subtle` safe here — see the tone block in `_tokens`. */
 .annotation {
   color: var(--q-attention-fg);
   min-width: 0;

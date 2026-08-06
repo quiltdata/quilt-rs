@@ -1,0 +1,83 @@
+/*
+ * The state vocabulary made visual. Ten labels, four tones.
+ *
+ * Each tone sets four private properties and `.root` paints from them, so the
+ * tone classes are data and the layout exists once. That also means a
+ * colourblind-safe or high-contrast override only has to re-point tier 2 — no
+ * rule in this file mentions a colour by name.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  /* 5px, not a grid step: the gap between a 12px glyph and its label is optical,
+   * and 4px reads as touching while 8px reads as two things. Same reasoning as
+   * Button's 5px/12px padding. */
+  gap: 5px;
+  padding: 0 var(--q-space-2) 0 6px;
+  border: 1px solid var(--pill-edge);
+  border-radius: var(--q-radius-pill);
+  background: var(--pill-fill);
+  color: var(--pill-text);
+  font-size: var(--q-text-body);
+  line-height: 20px;
+  /* Never truncates and never shrinks. Every label in the vocabulary is short by
+   * design, and half a state is worse than a state that pushes the row: "conflicts
+   * in 2 files" clipped to "conflicts in…" has lost the number that made it worth
+   * showing. If a pill overflows, the label is wrong, not the pill. */
+  white-space: nowrap;
+}
+
+/* The glyph is the tone's second channel. Tier 1 lightness-matches step 11 across
+ * hues on purpose, so the four tones are near-identical in greyscale and hue is
+ * doing all the work — which is exactly what the design record forbids. A
+ * silhouette survives desaturation: tick, dot, triangle, cross.
+ *
+ * Step 11 rather than step 12, so the tint lands somewhere. It is a graphical
+ * object, not text, so the threshold is 3:1 and the worst pairing (green-11 on
+ * green-3) measures 4.21. */
+.glyph {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--pill-mark);
+}
+
+/* ─── TONES ───────────────────────────────────────────────────────────────────
+ * `subtle` is step 3, the lightest of the three fills that pass AA under step-12
+ * text (step 4 measures 9.7:1 worst case and step 5 8.8:1, so either is a legal
+ * swap in `_tokens` if this reads too pale). Step 3 because a pill is repeated
+ * once per row and the border carries the shape.
+ *
+ * Contrast measurement cannot settle that choice, and it is worth saying why: a
+ * pale yellow and white differ in chroma far more than in luminance, so every
+ * fill step scores a near-identical 1.1–1.4:1 against the card. The numbers say
+ * the text is legible; only looking says whether the tint is visible. */
+.ok {
+  --pill-fill: var(--q-success-subtle);
+  --pill-edge: var(--q-success-border);
+  --pill-text: var(--q-success-fg-on-subtle);
+  --pill-mark: var(--q-success-fg);
+}
+
+.neutral {
+  --pill-fill: var(--q-neutral-subtle);
+  --pill-edge: var(--q-neutral-border);
+  --pill-text: var(--q-neutral-fg-on-subtle);
+  --pill-mark: var(--q-neutral-fg);
+}
+
+.attention {
+  --pill-fill: var(--q-attention-subtle);
+  --pill-edge: var(--q-attention-border);
+  --pill-text: var(--q-attention-fg-on-subtle);
+  --pill-mark: var(--q-attention-fg);
+}
+
+.danger {
+  --pill-fill: var(--q-danger-subtle);
+  --pill-edge: var(--q-danger-border);
+  --pill-text: var(--q-danger-fg-on-subtle);
+  --pill-mark: var(--q-danger-fg);
+}
