@@ -64,11 +64,17 @@ pub(super) fn EntriesToolbar(
                         .into_any()
                 } else if has_remote_entries {
                     {
+                        // Whole-package scope hides the select-all beside it,
+                        // so the button would otherwise sit out at the container
+                        // edge while the line that replaces it starts in the
+                        // label column — the same slot jumping sideways between
+                        // its two states.
                         let install_btn_class = Memo::new(move |_| {
-                            if checked_count.get() > 0 {
-                                "qui-button primary"
-                            } else {
-                                "qui-button"
+                            match (checked_count.get() > 0, whole_package) {
+                                (true, true) => "qui-button primary scope-slot-indent",
+                                (true, false) => "qui-button primary",
+                                (false, true) => "qui-button scope-slot-indent",
+                                (false, false) => "qui-button",
                             }
                         });
                         view! {

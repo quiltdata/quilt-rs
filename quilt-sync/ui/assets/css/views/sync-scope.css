@@ -59,6 +59,15 @@
   padding-left: 64px;
 }
 
+/*
+ * The download control takes the same offset under whole-package scope, where
+ * the select-all beside it is gone. Both states of that slot then start in the
+ * same column, so it does not jump sideways as the last file lands.
+ */
+.qui-entries-toolbar .scope-slot-indent {
+  margin-left: 64px;
+}
+
 /* The entries toolbar sticks below the band rather than on top of it. */
 .qui-entries-toolbar.below-sync-scope {
   top: calc(128px + var(--qui-scope-band-height));
