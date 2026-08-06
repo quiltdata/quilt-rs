@@ -141,7 +141,7 @@ fn Groups() -> impl IntoView {
             <Cell wide=true label="count of one">
                 <GroupHeader title="Local only" count=1 />
             </Cell>
-            <Cell wide=true label="annotated — the packages view's bucket axis (grey until the status scales land)">
+            <Cell wide=true label="annotated — the packages view's bucket axis, in the attention tone">
                 <GroupHeader title="s3://team-bucket" count=3 annotation="no access as analyst" />
             </Cell>
             <Cell wide=true label="long title truncates, count survives">
