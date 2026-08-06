@@ -87,16 +87,32 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
 /// logs. The default directives are not user input and are pinned by a test that
 /// asserts what the built filter *admits*, not merely that they parse.
 ///
-/// The variable **replaces** rather than extends, so a developer reasoning about
-/// what they will get has one string to read instead of a merge to work out.
+/// The variable **replaces** rather than extends, which is a correctness
+/// requirement and not only a legibility one. Adding the defaults *after* an
+/// override is how this first went wrong: a later directive supersedes an earlier
+/// one for the same target, so `QUILTSYNC_LOG=quilt_sync=trace` lost to the
+/// built-in `quilt_sync=debug` and the override was silently ignored. Replacing
+/// cannot lose that way, and a developer has one string to read instead of a merge
+/// to work out.
+///
+/// A narrow override is therefore genuinely narrow: it drops the trailing
+/// dependency floor along with everything else, which is ordinary `RUST_LOG`
+/// behaviour and what someone naming a single target is asking for.
 fn filter(directives: &str) -> EnvFilter {
     let from_env = std::env::var(LOG_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty());
 
+    build_filter(from_env.as_deref(), directives)
+}
+
+/// The half of [`filter`] that does not read the environment, so the precedence
+/// rule above can be tested without mutating process-global state from a test that
+/// runs in parallel with every other one.
+fn build_filter(from_env: Option<&str>, directives: &str) -> EnvFilter {
     EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
-        .parse_lossy(from_env.as_deref().unwrap_or(directives))
+        .parse_lossy(from_env.unwrap_or(directives))
 }
 
 pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
@@ -229,6 +245,48 @@ mod tests {
             Some(LevelFilter::INFO),
             "the crash sink admits {crash:?}, so there will be no breadcrumbs"
         );
+    }
+
+    /// An override wins for a target the defaults already name.
+    ///
+    /// The regression this pins: the defaults were once added *after* the override,
+    /// and a later directive supersedes an earlier one for the same target, so
+    /// `quilt_sync=trace` lost to the built-in `quilt_sync=debug` — the override was
+    /// accepted, parsed, and then quietly outvoted. `quilt_sync` is the likeliest
+    /// target anyone raises and the one the defaults already pin, so it is exactly
+    /// the case that failed.
+    ///
+    /// The **rendered filter** is what this has to assert. Checked against the buggy
+    /// construction, `max_level_hint` still reported `TRACE` while the directive
+    /// itself had been superseded — the hint is a coarse ceiling, not the per-target
+    /// decision, so it cannot see an outvoted directive.
+    #[test]
+    fn an_override_beats_a_default_for_the_same_target() {
+        let rendered = build_filter(Some("quilt_sync=trace"), FILE_DIRECTIVES).to_string();
+
+        assert!(
+            rendered.contains("quilt_sync=trace"),
+            "{rendered:?} lost the override"
+        );
+        assert!(
+            !rendered.contains("quilt_sync=debug"),
+            "{rendered:?} still carries the default the override was meant to replace"
+        );
+    }
+
+    /// An empty or absent override leaves the defaults intact, so the mechanism that
+    /// makes the override narrow cannot narrow anything by accident.
+    #[test]
+    fn no_override_leaves_the_defaults_alone() {
+        for override_ in [None, Some(""), Some("   ")] {
+            let rendered =
+                build_filter(override_.filter(|v| !v.trim().is_empty()), FILE_DIRECTIVES)
+                    .to_string();
+            assert!(
+                rendered.contains("quilt_sync=debug"),
+                "{override_:?} cost the file filter the app's own crate: {rendered:?}"
+            );
+        }
     }
 
     /// The file keeps more than the crash reporter, which is the point of filtering
