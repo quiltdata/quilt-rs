@@ -252,8 +252,9 @@ fn CauseRowStory() -> impl IntoView {
     }
 }
 
+/// The region itself, so the whole-page scene composes this code rather than a copy.
 #[component]
-pub fn QueueScene() -> impl IntoView {
+pub fn QueueRegion() -> impl IntoView {
     let signed_out = RwSignal::new(false);
     let role = RwSignal::new(false);
 
@@ -262,16 +263,7 @@ pub fn QueueScene() -> impl IntoView {
     let total = move || 11 + 3 + ACTIONS.len();
 
     view! {
-        <Scene
-            title="Scene · needs your attention"
-            note="Shared causes first, then per-package rows in precedence order. Both \
-                  expanders work — open them and watch what nineteen items actually costs \
-                  in vertical space, because the region above the package list is the \
-                  thing this design spends to buy. \
-                  \
-                  Read down the buttons: five different verbs, one per row, each true of \
-                  the row it sits on. That column is what replaces 43 rows of Publish."
-        >
+        <div>
             <SectionLabel text="Needs your attention" count=total() />
             <CauseRow
                 text="Signed out from custom.registry.io"
@@ -316,6 +308,24 @@ pub fn QueueScene() -> impl IntoView {
                     }
                 })
                 .collect_view()}
+        </div>
+    }
+}
+
+#[component]
+pub fn QueueScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · needs your attention"
+            note="Shared causes first, then per-package rows in precedence order. Both \
+                  expanders work — open them and watch what nineteen items actually costs \
+                  in vertical space, because the region above the package list is the \
+                  thing this design spends to buy. \
+                  \
+                  Read down the buttons: five different verbs, one per row, each true of \
+                  the row it sits on. That column is what replaces 43 rows of Publish."
+        >
+            <QueueRegion />
         </Scene>
         <Scene
             title="Scene · nothing needs you"

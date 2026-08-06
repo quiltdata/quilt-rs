@@ -32,6 +32,7 @@ mod gallery {
     pub mod host_row;
     pub mod list_toolbar;
     pub mod packages;
+    pub mod page;
     pub mod queue;
     pub mod recent_files;
     pub mod search_input;
@@ -51,6 +52,7 @@ use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
+use crate::gallery::page::PageScene;
 use crate::gallery::queue::QueueScene;
 use crate::gallery::queue::QueueStories;
 use crate::gallery::recent_files::RecentFilesScene;
@@ -115,6 +117,7 @@ fn Gallery() -> impl IntoView {
         ("Scene · recent files", view! { <RecentFilesScene /> }.into_any()),
         ("Scene · needs your attention", view! { <QueueScene /> }.into_any()),
         ("Scene · packages", view! { <PackagesScene /> }.into_any()),
+        ("Scene · whole page", view! { <PageScene /> }.into_any()),
     ];
 
     let index: Vec<&'static str> = sections.iter().map(|(label, _)| *label).collect();

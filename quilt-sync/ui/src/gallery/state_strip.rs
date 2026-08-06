@@ -22,11 +22,6 @@ fn in_secs(secs: f64) -> Signal<Option<f64>> {
 
 #[component]
 pub fn StateStripScene() -> impl IntoView {
-    let pull = RwSignal::new(true);
-    let publish = RwSignal::new(true);
-    let role = RwSignal::new("analyst".to_string());
-    let out_role = RwSignal::new("analyst".to_string());
-
     view! {
         <Scene
             title="Scene · state strip"
@@ -35,7 +30,24 @@ pub fn StateStripScene() -> impl IntoView {
                   pending, and otherwise says so — a blank would leave the user guessing \
                   between broken, working, and nothing to do. The countdown is live."
         >
-            <div style="display:flex; gap:var(--q-space-3); flex-wrap:wrap;">
+            <StateStripRegion />
+        </Scene>
+    }
+}
+
+/// The region itself, so the whole-page scene composes this code rather than a copy of
+/// it. Two mockups of one region drift the first time either is edited.
+#[component]
+pub fn StateStripRegion() -> impl IntoView {
+    let pull = RwSignal::new(true);
+    let publish = RwSignal::new(true);
+    let role = RwSignal::new("analyst".to_string());
+    let out_role = RwSignal::new("analyst".to_string());
+
+    view! {
+        // No breakpoint and no media query: `flex-wrap` alone drops the second card
+        // under the first when the window cannot hold both.
+        <div style="display:flex; gap:var(--q-space-3); flex-wrap:wrap;">
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
@@ -78,6 +90,5 @@ pub fn StateStripScene() -> impl IntoView {
                     />
                 </Card>
             </div>
-        </Scene>
     }
 }

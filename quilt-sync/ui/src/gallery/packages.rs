@@ -226,27 +226,16 @@ fn row(entry: (&'static str, &'static str, &'static str, StateTone, f64)) -> Any
     .into_any()
 }
 
+/// The region itself, so the whole-page scene composes this code rather than a copy.
 #[component]
-pub fn PackagesScene() -> impl IntoView {
+pub fn PackagesRegion() -> impl IntoView {
     let view_mode = RwSignal::new("Packages".to_string());
     let query = RwSignal::new(String::new());
     let group = RwSignal::new("Bucket".to_string());
     let sort = RwSignal::new("Recently changed".to_string());
 
     view! {
-        <Scene
-            title="Scene · packages"
-            note="Seventeen rows at the real ratio: three need something, the rest are \
-                  Latest. THE OPEN QUESTION IS HERE — does a column of Latest read as a \
-                  calm list, or as a wall of green that spends the signal the tone was \
-                  bought for? Switch the theme; light and dark disagree about this more \
-                  than about anything else in the kit. \
-                  \
-                  The toolbar differs from the files view: this one adds Sort and Create \
-                  package, and Group offers Bucket / Prefix / None rather than \
-                  None / Package. ListToolbar holds nothing itself, which is what lets \
-                  the two views compose different controls."
-        >
+        <div>
             <ListToolbar>
                 <ViewToggle
                     label="List view"
@@ -304,6 +293,27 @@ pub fn PackagesScene() -> impl IntoView {
                     rows.into_iter().map(row).collect_view().into_any()
                 }
             }}
+        </div>
+    }
+}
+
+#[component]
+pub fn PackagesScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · packages"
+            note="Seventeen rows at the real ratio: three need something, the rest are \
+                  Latest. THE OPEN QUESTION IS HERE — does a column of Latest read as a \
+                  calm list, or as a wall of green that spends the signal the tone was \
+                  bought for? Switch the theme; light and dark disagree about this more \
+                  than about anything else in the kit. \
+                  \
+                  The toolbar differs from the files view: this one adds Sort and Create \
+                  package, and Group offers Bucket / Prefix / None rather than \
+                  None / Package. ListToolbar holds nothing itself, which is what lets \
+                  the two views compose different controls."
+        >
+            <PackagesRegion />
         </Scene>
         <Scene
             title="Scene · packages, no results"
