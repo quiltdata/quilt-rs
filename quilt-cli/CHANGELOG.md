@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.1] - 2026-08-06
+
+### quilt-rs
+
+- Log levels rearranged and long file-list dumps replaced with summaries: a `RUST_LOG=debug` log is roughly 100× smaller. `RUST_LOG=quilt_rs=trace` brings the per-file detail back (<https://github.com/quiltdata/quilt-rs/pull/828>)
+
 ## [v0.29.0] - 2026-07-30
 
 ### Added
