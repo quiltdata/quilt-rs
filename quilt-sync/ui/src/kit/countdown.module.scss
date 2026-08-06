@@ -33,14 +33,14 @@
 .arc {
   stroke: var(--q-accent-emphasis);
   stroke-dasharray: var(--cd-circumference);
-  animation: sweep var(--cd-duration) linear var(--cd-delay) 1 forwards;
+  animation: countdown-sweep var(--cd-duration) linear var(--cd-delay) 1 forwards;
 }
 
 .repeat {
   animation-iteration-count: infinite;
 }
 
-@keyframes sweep {
+@keyframes countdown-sweep {
   from {
     stroke-dashoffset: var(--cd-circumference);
   }

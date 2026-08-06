@@ -1,0 +1,52 @@
+/*
+ * A ring with one quadrant missing, rotating. Drawn with a border rather than an SVG or a
+ * conic gradient: three sides in `currentColor` and one transparent is the cheapest ring
+ * that inherits its colour from the text it sits beside, and it needs no viewBox and no
+ * per-theme value.
+ *
+ * `spinner-rotate`, not `spin`. Keyframe names are global across the concatenated bundle
+ * — see the note in `kit.rs`.
+ */
+
+.inline {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  /* A circle, not a rounded box: `--q-radius` is for boxes and this is neither square
+   * nor a box. Same exemption Button's spinner takes. */
+  animation: spinner-rotate 620ms linear infinite;
+  /* Sits on the text's baseline rather than hanging below it. */
+  vertical-align: -2px;
+}
+
+.region {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border-width: 2.5px;
+  /* Centred with room around it. The margin is the component's, unusually, because a
+   * region spinner IS the region's content — there is nothing else for the space to
+   * belong to. */
+  margin: var(--q-space-8) auto;
+  color: var(--q-fg-muted);
+  vertical-align: baseline;
+}
+
+@keyframes spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+/* Keep the ring, stop the rotation, dim it — so a frozen ring reads as inactive rather
+ * than as a rendering bug. Identical treatment to Button's spinner and IconButton's
+ * spinning glyph; a fourth spelling of this would be the thing that drifts. */
+@media (prefers-reduced-motion: reduce) {
+  .inline {
+    animation: none;
+    border-top-color: currentcolor;
+    opacity: 0.45;
+  }
+}

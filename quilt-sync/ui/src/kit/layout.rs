@@ -14,11 +14,11 @@
 //!
 //! - **Breadcrumbs** — the main page is the root, so its trail is one item, and a
 //!   breadcrumb of one is decoration. The first v2 page with a parent adds them.
-//! - **Notification host** — `Notification` is not built. A host with nothing to host
-//!   would be an empty div plus a prop nobody can pass.
-//! - **`ui_locked`** — the same: the overlay wants a `Spinner`, also not built.
+//! - **`ui_locked`** — its overlay wants a decision about whether a modal spinner is even
+//!   the right answer, given the page already reports work per region. `Spinner` exists
+//!   now, so this is a design question rather than a missing part.
 //!
-//! Adding them is additive, and each has a reason to wait rather than a gap to fill.
+//! The notification host is no longer among them — see `notification` below.
 
 use leptos::prelude::*;
 
@@ -31,6 +31,13 @@ pub fn Layout(
     /// no opinion about which page needs which controls.
     #[prop(optional)]
     actions: Option<AnyView>,
+    /// A `Notification`, when there is one. In the flow directly under the appbar, so it
+    /// pushes the page down rather than floating over it — the design bans anchored
+    /// positioning, and a bar cannot be missed by someone looking at the bottom of a long
+    /// list. A slot rather than the signal itself, so the layout stays ignorant of what
+    /// kinds exist and who dismisses them.
+    #[prop(optional)]
+    notification: Option<AnyView>,
     children: Children,
 ) -> impl IntoView {
     view! {
@@ -47,6 +54,10 @@ pub fn Layout(
                     {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}
                 </div>
             </header>
+            {notification
+                .map(|notification| {
+                    view! { <div class=style::notice>{notification}</div> }
+                })}
             <main class=style::main>{children()}</main>
         </div>
     }

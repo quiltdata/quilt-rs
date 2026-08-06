@@ -67,7 +67,7 @@ fn Bars() -> impl IntoView {
                 <Skeleton width="100%" height="64px" />
             </Cell>
             <Cell wide=true label="three bars — a paragraph's worth, ragged like real text">
-                <div class="g-rows">
+                <div class="g-bars">
                     <Skeleton width="72%" />
                     <Skeleton width="88%" />
                     <Skeleton width="46%" />

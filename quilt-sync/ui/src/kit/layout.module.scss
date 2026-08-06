@@ -48,6 +48,16 @@
   gap: var(--q-space-2);
 }
 
+/* The notification's own row: width-capped like the appbar's contents and the page column,
+ * so a bar lines up with the regions rather than with the window. Only the top padding is
+ * the row's — the bottom gap belongs to whatever follows, and `.main`'s padding already
+ * provides it. */
+.notice {
+  max-width: var(--q-container);
+  margin: 0 auto;
+  padding: var(--q-space-4) var(--q-space-4) 0;
+}
+
 /* The page column, and the one place the gap between regions is set. Regions carry no
  * outer margin of their own: one of them spacing itself would look right alone and
  * wrong beside the others, and there would be no single place to change the rhythm. */

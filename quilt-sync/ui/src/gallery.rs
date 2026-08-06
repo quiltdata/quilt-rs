@@ -29,6 +29,7 @@ mod gallery {
     pub mod button;
     pub mod card;
     pub mod countdown;
+    pub mod feedback;
     pub mod host_row;
     pub mod list_toolbar;
     pub mod packages;
@@ -49,6 +50,8 @@ use leptos::prelude::*;
 use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
 use crate::gallery::countdown::CountdownStories;
+use crate::gallery::feedback::FeedbackStories;
+use crate::gallery::feedback::NotificationScene;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::packages::PackageRowStories;
@@ -114,10 +117,15 @@ fn Gallery() -> impl IntoView {
         ("StateLabel", view! { <StateLabelStories /> }.into_any()),
         ("PackageRow", view! { <PackageRowStories /> }.into_any()),
         ("Skeleton", view! { <SkeletonStories /> }.into_any()),
+        ("Feedback", view! { <FeedbackStories /> }.into_any()),
         ("Queue parts", view! { <QueueStories /> }.into_any()),
         (
             "Recent files parts",
             view! { <RecentFilesStories /> }.into_any(),
+        ),
+        (
+            "Scene · a notification in place",
+            view! { <NotificationScene /> }.into_any(),
         ),
         (
             "Scene · state strip",

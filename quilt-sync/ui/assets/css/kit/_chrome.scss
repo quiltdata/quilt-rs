@@ -129,6 +129,12 @@ body {
  * because the stack is itself a flex item and would otherwise size to content. */
 .g-rows { display: flex; flex-direction: column; width: 100%; min-width: 0; }
 
+/* A stack of skeleton BARS, which is not the same thing as a stack of rows and must not
+ * share `.g-rows`. Rows carry their own padding and a dividing rule, so any gap between
+ * them would be a double gap; bars stand in for lines of text and need the leading that
+ * text would have had. */
+.g-bars { display: flex; flex-direction: column; gap: var(--q-space-2); width: 100%; }
+
 /* The state strip's two-card row. This is page layout rather than gallery chrome, and
  * it moves into the region's own stylesheet when the real page is built — it lives here
  * only because the region is still a gallery component.

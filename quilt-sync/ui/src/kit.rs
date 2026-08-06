@@ -11,6 +11,12 @@
 //!
 //! Each component is a `<name>.rs` with its stylesheet beside it as
 //! `<name>.module.scss` (see `Cargo.toml` for how those are bundled).
+//!
+//! **`@keyframes` names are global.** `stylance` hashes class names, not keyframe
+//! names, and every module is concatenated into one stylesheet — so two components
+//! defining `spin` would silently share whichever definition came last. Prefix every
+//! keyframe with its component: `button-spin`, `icon-spin`, `countdown-sweep`,
+//! `skeleton-pulse`, `spinner-rotate`.
 
 pub mod button;
 pub mod card;
@@ -23,12 +29,14 @@ pub mod host_row;
 pub mod icon_button;
 pub mod layout;
 pub mod list_toolbar;
+pub mod notification;
 pub mod package_row;
 pub mod queue_row;
 pub mod relative_time;
 pub mod search_input;
 pub mod select;
 pub mod skeleton;
+pub mod spinner;
 pub mod state_label;
 pub mod toggle_row;
 pub mod view_toggle;
@@ -48,6 +56,8 @@ pub use icon_button::IconButton;
 pub use icon_button::IconButtonVariant;
 pub use layout::Layout;
 pub use list_toolbar::ListToolbar;
+pub use notification::NoticeKind;
+pub use notification::Notification;
 pub use package_row::PackageRow;
 pub use package_row::PackageRowSkeleton;
 pub use queue_row::QueueRow;
@@ -56,6 +66,8 @@ pub use relative_time::RelativeTime;
 pub use search_input::SearchInput;
 pub use select::Select;
 pub use skeleton::Skeleton;
+pub use spinner::Spinner;
+pub use spinner::SpinnerVariant;
 pub use state_label::StateLabel;
 pub use state_label::StateTone;
 pub use toggle_row::ToggleRow;

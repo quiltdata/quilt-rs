@@ -129,10 +129,10 @@
   border-radius: 50%;
   border: 2px solid currentcolor;
   border-top-color: transparent;
-  animation: spin 620ms linear infinite;
+  animation: button-spin 620ms linear infinite;
 }
 
-@keyframes spin {
+@keyframes button-spin {
   to { transform: rotate(360deg); }
 }
 
