@@ -27,14 +27,7 @@ pub(super) const STANDING_SCOPE_LINE: &str = "Files added later are downloaded t
 #[component]
 pub(super) fn SyncScopeBand(
     namespace: String,
-    /// The package's remote URI. `install_paths` addresses a package by URI,
-    /// not by namespace — a local-only package has none, and also has nothing
-    /// remote to catch up on.
-    uri: Option<String>,
     entire_package: bool,
-    /// Remote entries not yet downloaded — what switching *in* catches up on.
-    /// Empty once the package has caught up.
-    pending: Memo<Vec<String>>,
     /// Whether a status banner sits above. Must be the **same** value the
     /// entries toolbar gets: both bands are sticky, and they derive their
     /// offsets from it — if they disagree, whichever sticks higher covers the
@@ -60,55 +53,30 @@ pub(super) fn SyncScopeBand(
         ui_locked.set(true);
         whole.set(want_whole);
         let ns = namespace.clone();
-        let pkg_uri = uri.clone();
-        // Switching *in* is one act, not two: a mode that left files unfetched
-        // would be asserting something the app had not made true — the same
-        // defect as *Select all* never meaning download-all. Switching *out*
-        // downloads and deletes nothing; ending a standing scope is not a
-        // request to give back what it already fetched.
-        let catch_up: Vec<String> = if want_whole {
-            pending.get_untracked()
-        } else {
-            Vec::new()
-        };
+        // Storing the scope is the whole of it. Fetching the backlog is the
+        // toolbar's `Download all files` button, one deliberate press away —
+        // the scope is a standing choice about future updates, and the bytes
+        // already outstanding can be gigabytes. The screen is honest about the
+        // gap without this doing it silently: while files are pending the
+        // toolbar shows that button, so the state reads "scope on, N files
+        // outstanding, press this" rather than a claim with no way to resolve
+        // it. Switching *out* likewise touches no files.
         leptos::task::spawn_local(async move {
-            let stored = commands::package_set_sync_scope(ns.clone(), want_whole).await;
-            if let Err(e) = stored {
-                whole.set(!want_whole);
-                busy.set(false);
-                ui_locked.set(false);
-                notification.set(Some(Notification::Error(e)));
-                return;
-            }
-            // The scope is already saved, so a failed catch-up leaves the mode
-            // on and the files pending — which is exactly the state the
-            // download button in the toolbar below exists to retry from. It
-            // must not silently un-choose the mode.
-            let message = match (catch_up.is_empty(), pkg_uri) {
-                (true, _) | (_, None) => {
-                    format!("Now syncing the entire package. {STANDING_SCOPE_LINE}")
-                }
-                (false, Some(pkg_uri)) => {
-                    let count = catch_up.len();
-                    match commands::package_install_paths(pkg_uri, catch_up).await {
-                        Ok(_) => format!(
-                            "Downloaded {count} file{}. {STANDING_SCOPE_LINE}",
-                            if count == 1 { "" } else { "s" }
-                        ),
-                        Err(e) => {
-                            busy.set(false);
-                            ui_locked.set(false);
-                            notification.set(Some(Notification::Error(e)));
-                            refetch.notify();
-                            return;
-                        }
-                    }
-                }
-            };
+            let stored = commands::package_set_sync_scope(ns, want_whole).await;
             busy.set(false);
             ui_locked.set(false);
-            if want_whole {
-                notification.set(Some(Notification::Success(message)));
+            match stored {
+                Ok(()) => {
+                    if want_whole {
+                        notification.set(Some(Notification::Success(format!(
+                            "Now syncing the entire package. {STANDING_SCOPE_LINE}"
+                        ))));
+                    }
+                }
+                Err(e) => {
+                    whole.set(!want_whole);
+                    notification.set(Some(Notification::Error(e)));
+                }
             }
             refetch.notify();
         });

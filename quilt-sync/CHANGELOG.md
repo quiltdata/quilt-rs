@@ -13,7 +13,7 @@
 
 ### Added
 
-- Experimental, off by default: Settings → Experimental → "Enable entire-package sync" adds a per-package choice on the installed-package page — sync individual files, or sync the entire package. Under whole-package sync a pull also downloads files a teammate added, instead of listing them and leaving them; switching it on downloads what's already listed, and switching it off stops fetching more without removing anything
+- Experimental, off by default: Settings → Experimental → "Enable entire-package sync" adds a per-package choice on the installed-package page — sync individual files, or sync the entire package. Under whole-package sync a pull also downloads files a teammate added, instead of listing them and leaving them; switching it on doesn't move any bytes by itself — the toolbar offers "Download all files" for what's already listed — and switching it off stops fetching more without removing anything
 
 ## [v0.20.1] - 2026-08-03
 

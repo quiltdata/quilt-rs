@@ -118,9 +118,6 @@ pub(super) fn InstalledPackageContent(
     // turn it back off.
     let scope_gate = data.entire_package_sync_enabled;
     let namespace_for_scope = data.namespace.clone();
-    // `install_paths` addresses a package by URI, the same value the toolbar's
-    // own download control passes.
-    let uri_for_scope = uri.as_ref().map(std::string::ToString::to_string);
     // One value, both sticky bands. They stack by deriving their `top` from
     // it, so a disagreement here is the two overlapping.
     let with_status = matches!(
@@ -129,11 +126,6 @@ pub(super) fn InstalledPackageContent(
     ) || no_access_reason.is_some();
     let syncs_entire_package = data.syncs_entire_package;
     let whole_package = scope_gate && syncs_entire_package;
-    // What switching *into* whole-package scope catches up on. Under the narrow
-    // scope this is also just "every remote entry", which is what the selection
-    // already resolves to when nothing has been unticked.
-    let pending_downloads =
-        Memo::new(move |_| remote_paths.with_value(|remote| remote.iter().cloned().collect()));
 
     // Install selected paths. The resolved selection is already remote-only and
     // already narrowed to what the package still offers, so it is the path list
@@ -344,10 +336,8 @@ pub(super) fn InstalledPackageContent(
                     <Show when=move || scope_gate>
                         <SyncScopeBand
                             namespace=namespace_for_scope.clone()
-                            uri=uri_for_scope.clone()
                             with_status=with_status
                             entire_package=syncs_entire_package
-                            pending=pending_downloads
                             notification=notification
                             ui_locked=ui_locked
                             refetch=refetch
