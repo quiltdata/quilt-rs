@@ -61,6 +61,31 @@ pub(super) fn resolve(selection: &RemoteSelection, remote: &BTreeSet<String>) ->
     }
 }
 
+/// What is ticked, accounting for the package's sync scope.
+///
+/// Under whole-package scope there **is** no selection: the scope covers every
+/// remote entry by definition, so a [`RemoteSelection`] left over from
+/// individual-file mode must not narrow it. Without this, unticking a file and
+/// then switching scope leaves the stale subset driving three things at once —
+/// what the download control sends, whether it is enabled at all, and which
+/// rows draw ticked — so the control labelled *Download all files* quietly
+/// sends a subset, and an emptied one disables it outright with files still
+/// pending and every means of re-selecting them hidden.
+///
+/// The scope decides *whether* there is a choice; [`resolve`] decides what the
+/// choice is when there is one.
+pub(super) fn resolve_for_scope(
+    selection: &RemoteSelection,
+    remote: &BTreeSet<String>,
+    whole_package: bool,
+) -> BTreeSet<String> {
+    if whole_package {
+        remote.clone()
+    } else {
+        resolve(selection, remote)
+    }
+}
+
 /// Whether every remote entry is ticked — the header checkbox's checked state.
 ///
 /// False with no remote entries at all: there is nothing to have selected, and
@@ -123,7 +148,8 @@ pub(super) fn toggled_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        RemoteSelection, all_selected, partially_selected, resolve, toggled_all, toggled_path,
+        RemoteSelection, all_selected, partially_selected, resolve, resolve_for_scope, toggled_all,
+        toggled_path,
     };
     use std::collections::BTreeSet;
 
@@ -137,6 +163,33 @@ mod tests {
         assert_eq!(RemoteSelection::default(), RemoteSelection::All);
         let remote = set(["a.csv", "b.csv"]);
         assert_eq!(resolve(&RemoteSelection::default(), &remote), remote);
+    }
+
+    /// **Whole-package scope overrides a leftover subset.** Unticking files and
+    /// then switching scope must not leave the old picks driving the download
+    /// control that now says *all files* — the emptied case is the sharp one,
+    /// since it would disable the only control left while files are pending.
+    /// Both scopes asserted on the same input, so this cannot pass by the two
+    /// behaving alike.
+    #[test]
+    fn whole_package_scope_ignores_a_leftover_subset() {
+        let remote = set(["a.csv", "b.csv", "c.csv"]);
+
+        for leftover in [
+            RemoteSelection::Subset(set(["a.csv"])),
+            RemoteSelection::Subset(BTreeSet::new()),
+        ] {
+            assert_eq!(
+                resolve_for_scope(&leftover, &remote, true),
+                remote,
+                "whole-package covers everything, whatever {leftover:?} says"
+            );
+            assert_eq!(
+                resolve_for_scope(&leftover, &remote, false),
+                resolve(&leftover, &remote),
+                "individual-file scope still honours the pick"
+            );
+        }
     }
 
     /// Picking nothing is a decision, not an absence of one: an explicit empty

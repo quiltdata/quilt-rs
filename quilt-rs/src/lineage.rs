@@ -152,6 +152,36 @@ impl DomainLineageIo {
         Ok(package_lineage)
     }
 
+    /// Apply `edit` to one package's entry within a **single** read of the
+    /// domain, then write.
+    ///
+    /// Every lineage mutation here is a read-modify-write over the whole file
+    /// with no cross-operation lock, so concurrent writers are last-writer-wins
+    /// on a package's entry. This does not fix that — it narrows it. A caller
+    /// that reads the entry, does other work, then writes it back holds a stale
+    /// copy for the whole of that work and clobbers anything that landed
+    /// meanwhile; going through here the stale window is the two local file
+    /// operations below.
+    ///
+    /// Use it for a field update that does not depend on other work. A caller
+    /// that must compute from the entry and then write it (pull, commit) cannot
+    /// use this and keeps the wider window.
+    pub async fn edit_package_lineage(
+        &self,
+        storage: &(impl Storage + Sync),
+        namespace: &Namespace,
+        edit: impl FnOnce(&mut PackageLineage),
+    ) -> Res<PackageLineage> {
+        let mut domain_lineage = self.read(storage).await?;
+        let package = domain_lineage.packages.get_mut(namespace).ok_or_else(|| {
+            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
+        })?;
+        edit(package);
+        let updated = package.clone();
+        self.write(storage, domain_lineage).await?;
+        Ok(updated)
+    }
+
     pub async fn set_home(
         &self,
         storage: &(impl Storage + Sync),
@@ -197,6 +227,19 @@ pub struct PackageLineageIo {
 }
 
 impl PackageLineageIo {
+    /// See [`DomainLineageIo::edit_package_lineage`] — a field update inside a
+    /// single read, for callers that do not need to compute from the entry
+    /// first.
+    pub async fn edit(
+        &self,
+        storage: &(impl Storage + Sync),
+        edit: impl FnOnce(&mut PackageLineage),
+    ) -> Res<PackageLineage> {
+        self.domain_lineage
+            .edit_package_lineage(storage, &self.namespace, edit)
+            .await
+    }
+
     #[must_use]
     pub fn new(domain_lineage: DomainLineageIo, namespace: Namespace) -> Self {
         PackageLineageIo {
@@ -604,6 +647,67 @@ mod tests {
             &updated_package_lineage
         );
 
+        Ok(())
+    }
+
+    /// The narrow edit reads the domain, changes one field, and writes — so a
+    /// value another writer put in the same entry *before* that read survives,
+    /// which is the point of not holding a copy across other work.
+    #[test(tokio::test)]
+    async fn edit_package_lineage_preserves_the_rest_of_the_entry() -> Res {
+        let storage = MockStorage::default();
+        let namespace = Namespace::from(("foo", "bar"));
+        let lineage_io = DomainLineageIo::new(PathBuf::from("lineage.json"));
+        lineage_io
+            .write(
+                &storage,
+                DomainLineage {
+                    home: Home::from("/home/user/quilt"),
+                    packages: BTreeMap::from([(namespace.clone(), PackageLineage::default())]),
+                },
+            )
+            .await?;
+
+        // Stand in for a concurrent operation that advanced the entry.
+        lineage_io
+            .edit_package_lineage(&storage, &namespace, |l| {
+                l.base_hash = "advanced".to_string();
+            })
+            .await?;
+
+        let updated = lineage_io
+            .edit_package_lineage(&storage, &namespace, |l| {
+                l.sync_scope = package::SyncScope::EntirePackage;
+            })
+            .await?;
+
+        assert_eq!(updated.sync_scope, package::SyncScope::EntirePackage);
+        assert_eq!(
+            updated.base_hash, "advanced",
+            "the scope write must not roll back the other writer"
+        );
+        Ok(())
+    }
+
+    /// A package that is not installed is an error, not a silent insert.
+    #[test(tokio::test)]
+    async fn edit_package_lineage_refuses_an_unknown_namespace() -> Res {
+        let storage = MockStorage::default();
+        let lineage_io = DomainLineageIo::new(PathBuf::from("lineage.json"));
+        lineage_io
+            .write(&storage, DomainLineage::new("/home/user/quilt"))
+            .await?;
+
+        let err = lineage_io
+            .edit_package_lineage(&storage, &Namespace::from(("no", "such")), |l| {
+                l.sync_scope = package::SyncScope::EntirePackage;
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InstallPackage(InstallPackageError::NotInstalled(_))
+        ));
         Ok(())
     }
 
