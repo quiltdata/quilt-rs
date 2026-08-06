@@ -121,6 +121,12 @@ pub(super) fn InstalledPackageContent(
     // `install_paths` addresses a package by URI, the same value the toolbar's
     // own download control passes.
     let uri_for_scope = uri.as_ref().map(std::string::ToString::to_string);
+    // One value, both sticky bands. They stack by deriving their `top` from
+    // it, so a disagreement here is the two overlapping.
+    let with_status = matches!(
+        data.status.as_str(),
+        "ahead" | "behind" | "diverged" | "error"
+    ) || no_access_reason.is_some();
     let syncs_entire_package = data.syncs_entire_package;
     let whole_package = scope_gate && syncs_entire_package;
     // What switching *into* whole-package scope catches up on. Under the narrow
@@ -339,6 +345,7 @@ pub(super) fn InstalledPackageContent(
                         <SyncScopeBand
                             namespace=namespace_for_scope.clone()
                             uri=uri_for_scope.clone()
+                            with_status=with_status
                             entire_package=syncs_entire_package
                             pending=pending_downloads
                             notification=notification
@@ -362,8 +369,7 @@ pub(super) fn InstalledPackageContent(
                             filter_ignored=filter_ignored
                             ignored_count=ignored_count
                             unmodified_count=unmodified_count
-                            with_status=matches!(data.status.as_str(), "ahead" | "behind" | "diverged" | "error")
-                                || no_access_reason.is_some()
+                            with_status=with_status
                         />
                     </Show>
 

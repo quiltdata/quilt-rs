@@ -35,10 +35,20 @@ pub(super) fn SyncScopeBand(
     /// Remote entries not yet downloaded — what switching *in* catches up on.
     /// Empty once the package has caught up.
     pending: Memo<Vec<String>>,
+    /// Whether a status banner sits above. Must be the **same** value the
+    /// entries toolbar gets: both bands are sticky, and they derive their
+    /// offsets from it — if they disagree, whichever sticks higher covers the
+    /// other.
+    with_status: bool,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
 ) -> impl IntoView {
+    let band_class = if with_status {
+        "qui-entries-toolbar qui-sync-scope with-status"
+    } else {
+        "qui-entries-toolbar qui-sync-scope"
+    };
     let whole = RwSignal::new(entire_package);
     let busy = RwSignal::new(false);
 
@@ -107,7 +117,7 @@ pub(super) fn SyncScopeBand(
     let pick_whole = on_pick;
 
     view! {
-        <div class="qui-entries-toolbar qui-sync-scope with-status">
+        <div class=band_class>
             <div class="container">
                 <label class="radio-option">
                     <input
@@ -147,8 +157,8 @@ mod tests {
     /// file counts the assertion that does the counting.
     fn band_markup() -> &'static str {
         let start = SOURCE
-            .find(r#"<div class="qui-entries-toolbar qui-sync-scope"#)
-            .expect("the band still renders a toolbar div");
+            .find("<div class=band_class>")
+            .expect("the band still renders its toolbar div");
         let rest = &SOURCE[start..];
         &rest[..rest.find("#[cfg(test)]").expect("tests follow the markup")]
     }

@@ -10,8 +10,10 @@
  */
 
 .qui-page-installed-package {
-  /* 16px padding x2 + a 24px control row (16px box + 4px x2). */
-  --qui-scope-band-height: 56px;
+  /* 16px padding x2, a 24px control row (16px box + 4px x2), 1px border —
+     the same vertical rhythm as the entries toolbar's own box. Forced on the
+     band below rather than measured, so the offset cannot drift from it. */
+  --qui-scope-band-height: 57px;
 }
 
 .qui-entries-toolbar.qui-sync-scope {
