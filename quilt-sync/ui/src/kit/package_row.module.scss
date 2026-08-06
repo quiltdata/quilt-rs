@@ -11,6 +11,15 @@
 .root {
   display: flex;
   align-items: center;
+  /* Fills its container and truncates inside, at any width — which is a row's job,
+   * not its parent's. Without this the row is only correct in a block parent: as a
+   * flex item it would size to content, and a flex item's automatic minimum size is
+   * its max-content width, so a long namespace would push the row past its
+   * container instead of ellipsising. A definite `width` clamps that automatic
+   * minimum, which is the whole mechanism.
+   *
+   * Found in the gallery, where a two-column cell IS the narrow-window case. */
+  width: 100%;
   gap: var(--q-space-3);
   padding: 5px 2px;
   border-bottom: 1px solid var(--q-border-muted);

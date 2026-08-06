@@ -108,6 +108,20 @@ fn Rows() -> impl IntoView {
             <Cell full=true label="short path — nothing truncates, actions still sit right">
                 {row("README.md", "user/package-a", 3.0 * HOUR)}
             </Cell>
+            <Cell wide=true label="narrow — two columns, roughly a narrow window">
+                {row(
+                    "runs/2026-08-04/plate-07/wells/row-a/A01_Specimen_001_A1_A01.fcs",
+                    "user/package-b",
+                    2.0 * MINUTE,
+                )}
+            </Cell>
+            <Cell wide=true label="narrow · long namespace — chip and path compete for the row">
+                {row(
+                    "derived/2026-08/counts_matrix_filtered_log1p.h5ad",
+                    "team/rnaseq-batch-2026-07-31-reprocessed-v2-and-then-some",
+                    5.0 * HOUR,
+                )}
+            </Cell>
             <Cell full=true label="the 80px time column against its worst cases">
                 {[
                     ("just now", 10.0 * 1000.0),

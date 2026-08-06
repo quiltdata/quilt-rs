@@ -110,6 +110,24 @@ fn EdgesStory() -> impl IntoView {
                     tone=StateTone::Attention
                 />
             </Cell>
+            <Cell wide=true label="narrow — two columns, roughly a narrow window">
+                <PackageRow
+                    namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2"
+                    href="#packagerow"
+                    changed_at=ago(4.0 * DAY)
+                    state="Newer revision available"
+                    tone=StateTone::Attention
+                />
+            </Cell>
+            <Cell wide=true label="narrow · short state — the namespace gets the slack back">
+                <PackageRow
+                    namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2"
+                    href="#packagerow"
+                    changed_at=ago(2.0 * HOUR)
+                    state="Latest"
+                    tone=StateTone::Success
+                />
+            </Cell>
             <Cell full=true label="the 80px time column against its worst cases">
                 {[
                     ("just now", 10.0 * 1000.0),

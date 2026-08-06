@@ -13,6 +13,10 @@
 .root {
   display: flex;
   align-items: center;
+  /* Fills its container and truncates inside, at any width. Same reasoning as
+   * `PackageRow` — see the note there; a flex item's automatic minimum size is its
+   * max-content width unless a definite `width` clamps it. */
+  width: 100%;
   gap: var(--q-space-3);
   padding: 5px 2px;
   border-bottom: 1px solid var(--q-border-muted);

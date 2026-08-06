@@ -91,17 +91,15 @@ body {
  * misrepresents it: the state strip gives each one roughly half the window. */
 .g-cell--wide { grid-column: span 2; }
 
-/* Full width, for LIST ROWS. A row's whole behaviour is what it does with the
- * width it is given — where the namespace truncates, whether the time column and
- * the state still fit — and two grid columns is not that width. Judging a row in a
- * 530px cell answers a question the page never asks.
+/* Full width, for LIST ROWS at the width the page actually gives them. Rows are
+ * reviewed at BOTH widths: a two-column cell is roughly the narrow-window case, and
+ * a row that only works at page width is broken.
  *
- * The body has to go back to `block` as well: `.g-cell__body` is a flex container
- * that deliberately does not stretch its child, which is right for a button and
- * wrong for a row, whose own `display: flex` fills its parent only if that parent
- * is a block. */
+ * No override of `.g-cell__body` here. It deliberately does not stretch its child —
+ * a button has to show its intrinsic width or truncation cannot be judged — and a
+ * row that needed the parent changed was a row with a bug. Both rows now declare
+ * `width: 100%`, which is correct in the app too. */
 .g-cell--full { grid-column: 1 / -1; }
-.g-cell--full .g-cell__body { display: block; }
 
 .g-cell {
   border: 1px solid var(--q-border-muted);
