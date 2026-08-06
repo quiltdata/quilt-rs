@@ -9,6 +9,13 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.1] - 2026-08-06
+
+### Changed
+
+- Rearranged log levels: anything that runs once per file, or once per status computation, is now `trace` rather than `debug`. `RUST_LOG=quilt_rs=trace` brings it back (<https://github.com/quiltdata/quilt-rs/pull/828>)
+- Replaced whole-collection dumps with short summaries — the package-status line used to print every file it walked. Together with the level changes, a `RUST_LOG=debug` log is roughly 100× smaller (<https://github.com/quiltdata/quilt-rs/pull/828>)
+
 ## [v0.34.0] - 2026-07-30
 
 ### Added
