@@ -277,6 +277,7 @@ mod tests {
                     base_hash: "abcdef".to_string(),
                     latest_hash: "abcdef".to_string(),
                     paths: std::collections::BTreeMap::new(),
+                    ..Default::default()
                 },
             );
         }

@@ -32,6 +32,7 @@ pub use package::CommitState;
 pub use package::LineagePaths;
 pub use package::PackageLineage;
 pub use package::PathState;
+pub use package::SyncScope;
 
 mod home;
 pub use home::Home;
@@ -346,6 +347,47 @@ mod tests {
         assert!(!json.contains("remote"));
     }
 
+    /// A record written before the sync scope existed still parses, and reads
+    /// as the sparse-checkout default — the whole reason adopting the field
+    /// costs no migration.
+    #[test]
+    fn a_record_without_a_sync_scope_reads_as_individual_files() {
+        let json = r#"{
+            "commit": null,
+            "base_hash": "",
+            "latest_hash": "",
+            "paths": {}
+        }"#;
+        let lineage: PackageLineage = serde_json::from_str(json).unwrap();
+        assert_eq!(lineage.sync_scope, SyncScope::IndividualFiles);
+        assert!(!lineage.sync_scope.covers_untracked());
+    }
+
+    /// And the other direction: an opted-in package round-trips.
+    #[test]
+    fn an_entire_package_scope_survives_a_round_trip() {
+        let lineage = PackageLineage {
+            sync_scope: SyncScope::EntirePackage,
+            ..PackageLineage::default()
+        };
+        let json = serde_json::to_string(&lineage).unwrap();
+        assert!(json.contains(r#""sync_scope":"entire_package""#), "{json}");
+
+        let parsed: PackageLineage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.sync_scope, SyncScope::EntirePackage);
+        assert!(parsed.sync_scope.covers_untracked());
+    }
+
+    /// The default scope writes **no key**, so turning the feature on does not
+    /// rewrite `sync_scope` into the record of every installed package — and
+    /// dropping the field later erases it on the next write, since the record
+    /// is re-serialized whole.
+    #[test]
+    fn the_default_scope_writes_no_key() {
+        let json = serde_json::to_string(&PackageLineage::default()).unwrap();
+        assert!(!json.contains("sync_scope"), "{json}");
+    }
+
     #[test(tokio::test)]
     async fn test_domain_lineage_from_file() -> Res {
         let storage = MockStorage::default();
@@ -411,6 +453,7 @@ mod tests {
                                     .into(),
                                 },
                             )]),
+                            ..PackageLineage::default()
                         },
                     )]),
                 },
@@ -454,6 +497,7 @@ mod tests {
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),
+            ..PackageLineage::default()
         };
 
         // Create a domain lineage with a package
@@ -516,6 +560,7 @@ mod tests {
             base_hash: "abcdef".to_string(),
             latest_hash: "abcdef".to_string(),
             paths: BTreeMap::new(),
+            ..PackageLineage::default()
         };
 
         // Write the package lineage
