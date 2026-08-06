@@ -6,10 +6,9 @@
 # echo .os-specific-file >> ~/.gitignore
 # ```
 
-# Trunk build output (keep .gitkeep so the directory exists for cargo clippy;
-# tauri::generate_context!() panics if frontendDist is missing)
-ui/dist/*
-!ui/dist/.gitkeep
+# Trunk build output. Nothing here is tracked: the directory has to exist for
+# tauri::generate_context!(), and src-tauri/build.rs creates it.
+ui/dist/
 
 # Bundled by esbuild during trunk build (see ui/Trunk.toml hook)
 ui/assets/js/json-editor.js
