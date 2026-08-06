@@ -139,7 +139,7 @@ pub async fn debug_dot_quilt(
 }
 
 fn debug_logs_command(app: &app::App) -> Result<(), Error> {
-    let logs_dir = &app.logs_dir;
+    let logs_dir = &app.logging.dir;
     opener::open_browser(logs_dir.path())?;
     Ok(())
 }

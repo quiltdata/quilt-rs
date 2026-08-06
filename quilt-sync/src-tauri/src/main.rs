@@ -88,7 +88,7 @@ fn main() {
                 }
             }
 
-            let logs_dir = telemetry::Telemetry::init_file_logging(&data_dir)?;
+            let logging = telemetry::Telemetry::init_file_logging(&data_dir)?;
 
             telemetry.init();
 
@@ -126,7 +126,7 @@ fn main() {
             app.manage(commands::WorkflowRulesCache::default());
             app.manage(commands::RoleCache::default());
             app.manage(sync::Mutex::new(app.handle().clone()));
-            app.manage(App::new(package_info, logs_dir));
+            app.manage(App::new(package_info, logging));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
             // The watcher reads `Model` via `app_handle.state::<Model>()`
