@@ -251,12 +251,19 @@ pub async fn create_status(
         quiltignore.as_ref(),
     )
     .await?;
+    // A **count**, never the collection. Debug-formatting this vector wrote about
+    // 52 KB per call, and status is recomputed for every installed package on every
+    // autosync tick — 88% of a 211 MiB log from one statement. The names are in the
+    // per-path `trace` above for anyone who needs them.
     debug!(
-        "✔️ Located files in working directory {:?}",
-        locate_result.files
+        "✔️ Located {} files in working directory",
+        locate_result.files.len()
     );
     let changes = fingerprint_files(storage, locate_result.files, host_config).await?;
-    debug!("✔️ Computed file fingerprints {:?}", changes);
+    // Likewise a count. This one is bounded by *changed* files rather than all of
+    // them, so it stayed small in the sample — but the bound is the user's working
+    // habits, not a limit, and a bulk edit makes it the same problem.
+    debug!("✔️ Computed fingerprints for {} files", changes.len());
 
     // Collect ignored files with their matched pattern (captured during the walk)
     let ignored_files: Vec<(PathBuf, String, u64)> = locate_result
