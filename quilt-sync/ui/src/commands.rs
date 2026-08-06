@@ -37,6 +37,10 @@ pub struct InstalledPackageData {
     pub unmodified_count: usize,
     pub filter_unmodified: bool,
     pub filter_ignored: bool,
+    /// This package's standing sync scope.
+    pub syncs_entire_package: bool,
+    /// Whether the experiment that offers the scope control is on.
+    pub entire_package_sync_enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -238,6 +242,14 @@ impl Default for FsWatcherSettingsData {
     }
 }
 
+/// Opt-ins for behaviour that is not finished being designed. Everything here
+/// is off unless the user went looking for it.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperimentalSettingsData {
+    pub entire_package_sync: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -253,6 +265,7 @@ pub struct SettingsData {
     pub publish: PublishSettingsData,
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
+    pub experimental: ExperimentalSettingsData,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -735,6 +748,42 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
         enabled: bool,
     }
     tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
+}
+
+/// Turn the entire-package sync experiment on or off. Reveals the per-package
+/// scope control; downloads nothing by itself.
+pub async fn update_experimental_settings(entire_package_sync: bool) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        entire_package_sync: bool,
+    }
+    tauri::invoke(
+        "update_experimental_settings",
+        &Args {
+            entire_package_sync,
+        },
+    )
+    .await
+}
+
+/// Record whether a package keeps its whole contents. Storage only — catching
+/// up on files already listed is a separate `package_install_paths` call.
+pub async fn package_set_sync_scope(namespace: String, entire_package: bool) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        entire_package: bool,
+    }
+    tauri::invoke(
+        "package_set_sync_scope",
+        &Args {
+            namespace,
+            entire_package,
+        },
+    )
+    .await
 }
 
 /// Payload of the `fswatcher-subscriber-error` Tauri event. Surfaced as a

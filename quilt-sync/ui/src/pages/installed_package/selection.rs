@@ -29,13 +29,12 @@ pub(super) enum RemoteSelection {
     /// Every remote entry the package offers — including ones that arrive in a
     /// later refresh.
     ///
-    /// `chosen` records whether the user *acted* to select everything or merely
-    /// left the screen as it opened. **Nothing reads it yet**: both values
-    /// resolve identically. It is carried because the distinction is otherwise
-    /// unreadable from the UI, and because the always-download-new-files opt-in
-    /// (a package updated on the remote does not fetch its new paths) needs
-    /// exactly this state to read.
-    All { chosen: bool },
+    /// This once carried a `chosen` flag distinguishing a deliberate *Select
+    /// all* from the screen's opening state, reserved for the
+    /// always-download-new-files opt-in. That opt-in exists now and asks
+    /// outright — see the [sync scope](super::sync_scope) control — so nothing
+    /// has to infer intent from a click sequence, and the flag is gone.
+    All,
     /// A hand-picked set of paths — possibly empty, which is the user's decision
     /// to pick nothing and must not spring back to everything.
     Subset(BTreeSet<String>),
@@ -44,7 +43,7 @@ pub(super) enum RemoteSelection {
 impl Default for RemoteSelection {
     /// Where the screen opens: everything ticked, not yet asked for.
     fn default() -> Self {
-        Self::All { chosen: false }
+        Self::All
     }
 }
 
@@ -57,7 +56,7 @@ impl Default for RemoteSelection {
 /// Nothing has to notice the change and prune.
 pub(super) fn resolve(selection: &RemoteSelection, remote: &BTreeSet<String>) -> BTreeSet<String> {
     match selection {
-        RemoteSelection::All { .. } => remote.clone(),
+        RemoteSelection::All => remote.clone(),
         RemoteSelection::Subset(picked) => picked.intersection(remote).cloned().collect(),
     }
 }
@@ -83,8 +82,9 @@ pub(super) fn partially_selected(selected: &BTreeSet<String>, remote: &BTreeSet<
 /// What a click on the header checkbox stores next: clear when everything is
 /// already ticked, otherwise take everything.
 ///
-/// Taking everything always yields [`RemoteSelection::All`] with `chosen` set —
-/// the click *is* the user asking for everything, whatever state it replaced.
+/// Taking everything always yields [`RemoteSelection::All`], whatever state it
+/// replaced — the click is a request for every remote entry, and `All` is the
+/// only way to say that without pinning today's names.
 pub(super) fn toggled_all(
     selection: &RemoteSelection,
     remote: &BTreeSet<String>,
@@ -92,7 +92,7 @@ pub(super) fn toggled_all(
     if all_selected(&resolve(selection, remote), remote) {
         RemoteSelection::Subset(BTreeSet::new())
     } else {
-        RemoteSelection::All { chosen: true }
+        RemoteSelection::All
     }
 }
 
@@ -114,7 +114,7 @@ pub(super) fn toggled_path(
         picked.insert(path.to_owned());
     }
     if all_selected(&picked, remote) {
-        RemoteSelection::All { chosen: true }
+        RemoteSelection::All
     } else {
         RemoteSelection::Subset(picked)
     }
@@ -131,13 +131,10 @@ mod tests {
         names.iter().map(|n| (*n).to_owned()).collect()
     }
 
-    /// The screen opens with everything ticked, and says it was not asked for.
+    /// The screen opens with everything ticked.
     #[test]
-    fn the_screen_opens_at_everything_unasked_for() {
-        assert_eq!(
-            RemoteSelection::default(),
-            RemoteSelection::All { chosen: false }
-        );
+    fn the_screen_opens_at_everything() {
+        assert_eq!(RemoteSelection::default(), RemoteSelection::All);
         let remote = set(["a.csv", "b.csv"]);
         assert_eq!(resolve(&RemoteSelection::default(), &remote), remote);
     }
@@ -161,7 +158,7 @@ mod tests {
         let before = set(["a.csv"]);
         let after = set(["a.csv", "new.csv"]);
 
-        let everything = RemoteSelection::All { chosen: true };
+        let everything = RemoteSelection::All;
         assert_eq!(resolve(&everything, &before), set(["a.csv"]));
         assert_eq!(resolve(&everything, &after), set(["a.csv", "new.csv"]));
 
@@ -177,13 +174,12 @@ mod tests {
         assert_eq!(resolve(&picked, &set(["kept.csv"])), set(["kept.csv"]));
     }
 
-    /// The header click clears a full selection and fills anything else — and
-    /// filling is always the user *asking*, so it records `chosen`.
+    /// The header click clears a full selection and fills anything else.
     #[test]
     fn the_header_click_clears_when_full_and_fills_otherwise() {
         let remote = set(["a.csv", "b.csv"]);
 
-        let full = RemoteSelection::All { chosen: false };
+        let full = RemoteSelection::All;
         assert_eq!(
             toggled_all(&full, &remote),
             RemoteSelection::Subset(BTreeSet::new())
@@ -195,8 +191,8 @@ mod tests {
         ] {
             assert_eq!(
                 toggled_all(&from, &remote),
-                RemoteSelection::All { chosen: true },
-                "filling from {from:?} records that the user asked"
+                RemoteSelection::All,
+                "filling from {from:?} takes everything"
             );
         }
     }
@@ -207,7 +203,7 @@ mod tests {
     fn unticking_from_everything_pins_the_rest() {
         let remote = set(["a.csv", "b.csv", "c.csv"]);
         assert_eq!(
-            toggled_path(&RemoteSelection::All { chosen: true }, &remote, "b.csv"),
+            toggled_path(&RemoteSelection::All, &remote, "b.csv"),
             RemoteSelection::Subset(set(["a.csv", "c.csv"]))
         );
     }
@@ -221,7 +217,7 @@ mod tests {
         let one_short = RemoteSelection::Subset(set(["a.csv"]));
         assert_eq!(
             toggled_path(&one_short, &remote, "b.csv"),
-            RemoteSelection::All { chosen: true }
+            RemoteSelection::All
         );
         // The contrast: one short of full stays a subset.
         assert_eq!(
@@ -238,7 +234,7 @@ mod tests {
         let stale = RemoteSelection::Subset(set(["a.csv", "gone.csv"]));
         assert_eq!(
             toggled_path(&stale, &remote, "b.csv"),
-            RemoteSelection::All { chosen: true },
+            RemoteSelection::All,
             "a.csv + b.csv is every remote entry; gone.csv is not carried"
         );
     }

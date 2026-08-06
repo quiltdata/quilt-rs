@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use super::entries::{EntriesToolbar, EntryRow};
 use super::selection::{RemoteSelection, all_selected, partially_selected, resolve, toggled_all};
 use super::status_banner::StatusBanner;
+use super::sync_scope::{STANDING_SCOPE_LINE, SyncScopeBand};
 use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
 use crate::components::{
@@ -111,6 +112,19 @@ pub(super) fn InstalledPackageContent(
     let checked_count = Memo::new(move |_| selected.with(BTreeSet::len));
 
     let show_toolbar = has_remote_entries || ignored_count > 0 || unmodified_count > 0;
+    // The scope band renders regardless of `has_remote_entries`: once a package
+    // has caught up there is nothing left to list, and the band is then the only
+    // thing on screen stating a scope that keeps applying — and the only way to
+    // turn it back off.
+    let scope_gate = data.entire_package_sync_enabled;
+    let namespace_for_scope = data.namespace.clone();
+    let syncs_entire_package = data.syncs_entire_package;
+    let whole_package = scope_gate && syncs_entire_package;
+    // What switching *into* whole-package scope catches up on. Under the narrow
+    // scope this is also just "every remote entry", which is what the selection
+    // already resolves to when nothing has been unticked.
+    let pending_downloads =
+        Memo::new(move |_| remote_paths.with_value(|remote| remote.iter().cloned().collect()));
 
     // Install selected paths. The resolved selection is already remote-only and
     // already narrowed to what the package still offers, so it is the path list
@@ -318,8 +332,21 @@ pub(super) fn InstalledPackageContent(
                 // ── Entries form ──
                 <div class="form" data-testid="installed-package-entries">
                     // ── Entries toolbar ──
+                    <Show when=move || scope_gate>
+                        <SyncScopeBand
+                            namespace=namespace_for_scope.clone()
+                            entire_package=syncs_entire_package
+                            pending=pending_downloads
+                            notification=notification
+                            ui_locked=ui_locked
+                            refetch=refetch
+                        />
+                    </Show>
+
                     <Show when=move || show_toolbar>
                         <EntriesToolbar
+                            whole_package=whole_package
+                            standing_line=STANDING_SCOPE_LINE
                             has_remote_entries=has_remote_entries
                             on_select_all=on_select_all
                             all_selected=all_remote_selected
@@ -343,6 +370,7 @@ pub(super) fn InstalledPackageContent(
                             let:item
                         >
                             <EntryRow
+                                whole_package=whole_package
                                 entry=item.1
                                 pkg_uri=uri.clone()
                                 selection=selection
