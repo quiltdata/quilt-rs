@@ -19,6 +19,7 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::io::remote::WorkflowsConfig;
 use quilt_rs::io::remote::fetch_workflows_config_for_bucket;
+use quilt_rs::lineage::SyncScope;
 use quilt_rs::workflow::WorkflowRules;
 
 use quilt_uri::Host;
@@ -163,7 +164,7 @@ pub trait QuiltModel {
         host_config: Option<HostConfig>,
     ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(package
-            .pull(host_config, quilt::lineage::SyncScope::IndividualFiles)
+            .pull(host_config, SyncScope::IndividualFiles)
             .await?)
     }
 

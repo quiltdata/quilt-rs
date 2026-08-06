@@ -471,7 +471,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// `scope` comes from the caller, not from the package's stored
-    /// [`SyncScope`](crate::lineage::SyncScope). Both faces of this engine —
+    /// [`SyncScope`]. Both faces of this engine —
     /// the desktop app and the `quilt` CLI — reach pull through here, and only
     /// one of them has a setting; reading the field at this level would let
     /// state the app wrote change what the CLI does.
