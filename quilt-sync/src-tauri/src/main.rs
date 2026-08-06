@@ -78,6 +78,7 @@ fn main() {
                 &package_info.version,
                 sinks,
                 telemetry::InstallId::load(&data_dir),
+                Some(telemetry::Buffer::new(&data_dir)),
             );
 
             // This is for runtime registering
