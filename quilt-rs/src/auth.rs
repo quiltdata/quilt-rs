@@ -30,6 +30,7 @@ use quilt_uri::Host;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
+use tracing::trace;
 use tracing::warn;
 
 mod graphql;
@@ -782,12 +783,17 @@ impl<S: Storage + Send + Sync> Auth<S> {
         http_client: &T,
         host: &Host,
     ) -> Res<Credentials> {
-        info!("⏳ Getting or refreshing credentials for {}", host);
+        // `trace`: this is called on the path of every remote operation, so it
+        // fires roughly once a second under autosync and the answer is almost
+        // always "the cached ones are fine". The outcomes worth a line are the
+        // *unusual* ones below — no credentials, or a refresh — which stay louder.
+        trace!("⏳ Getting or refreshing credentials for {}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
 
         match auth_io.read_credentials().await {
             Ok(Some(creds)) => {
-                debug!("✔️ Found valid credentials for {}", host);
+                // A cache hit is the normal case and says nothing.
+                trace!("✔️ Found valid credentials for {}", host);
                 return Ok(creds);
             }
             Ok(None) => {

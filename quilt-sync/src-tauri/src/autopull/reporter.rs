@@ -355,23 +355,62 @@ impl StatusReporter for TelemetryReporter {
 
 pub struct TauriEventReporter {
     handle: tauri::AppHandle,
+    logged: SeenFingerprints,
+}
+
+/// Remembers the last status fingerprint *logged* per package.
+///
+/// A tick recomputes status whether or not anything moved, so the log filled with
+/// the same answer several times a second — near-zero information at real cost. The
+/// fingerprint already exists to tell "same observation" from "different one", for
+/// the UI's benefit; a log reader wants the same distinction.
+///
+/// Logging only, never emission: the UI dedupes for itself and must keep receiving
+/// every event, or a consumer that missed one would wait forever for a repeat that
+/// never comes.
+#[derive(Default)]
+struct SeenFingerprints(std::sync::Mutex<std::collections::BTreeMap<Namespace, String>>);
+
+impl SeenFingerprints {
+    /// Whether this observation differs from the last one seen for `namespace`.
+    ///
+    /// A poisoned lock answers "yes": a duplicate line is a better failure than a
+    /// silence that hides a real change.
+    fn is_news(&self, namespace: &Namespace, fingerprint: &str) -> bool {
+        let Ok(mut seen) = self.0.lock() else {
+            return true;
+        };
+        seen.insert(namespace.clone(), fingerprint.to_owned())
+            .is_none_or(|previous| previous != fingerprint)
+    }
 }
 
 impl TauriEventReporter {
     pub fn new(handle: tauri::AppHandle) -> Self {
-        Self { handle }
+        Self {
+            handle,
+            logged: SeenFingerprints::default(),
+        }
     }
 }
 
 impl StatusReporter for TauriEventReporter {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
-        // `debug`, not `info`: one line per package per tick. It is a progress
-        // signal — the same reason it is not a countable event — and at info it
-        // filled the log with hundreds of "up_to_date, no changes" a minute.
-        debug!(
-            "autosync: namespace={namespace} status={} has_changes={}",
-            event.status, event.has_changes,
-        );
+        // Only when the observation actually changed. A tick recomputes status
+        // several times a second and almost always finds the same thing, so logging
+        // each one buys nothing and costs a line — this is a progress signal, which
+        // is also why it is not a countable event.
+        if self.logged.is_news(namespace, &event.fingerprint) {
+            debug!(
+                "autosync: namespace={namespace} status={} has_changes={}",
+                event.status, event.has_changes,
+            );
+        } else {
+            trace!(
+                "autosync: namespace={namespace} unchanged ({})",
+                event.status
+            );
+        }
         if let Err(err) = self.handle.emit(STATUS_EVENT, &event) {
             warn!("autosync: failed to emit {STATUS_EVENT}: {err}");
         }
@@ -431,6 +470,39 @@ struct LoginRequiredEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dedup that keeps an idle app quiet: the first observation is news, an
+    /// identical repeat is not, and a change is news again.
+    ///
+    /// Without this the log carried the same `up_to_date, no changes` several times
+    /// a second — the whole answer to "why is this file always growing".
+    #[test]
+    fn an_unchanged_observation_is_not_news_twice() {
+        let seen = SeenFingerprints::default();
+        let ns: Namespace = ("acme", "demo").into();
+
+        assert!(seen.is_news(&ns, "fp-1"), "the first is always news");
+        assert!(!seen.is_news(&ns, "fp-1"), "an identical repeat is not");
+        assert!(!seen.is_news(&ns, "fp-1"), "and stays not, however often");
+        assert!(seen.is_news(&ns, "fp-2"), "a change is news again");
+        assert!(!seen.is_news(&ns, "fp-2"), "then settles");
+    }
+
+    /// Per package, not global — two packages reporting the same state must both be
+    /// heard, or one would silence the other.
+    #[test]
+    fn packages_are_tracked_apart() {
+        let seen = SeenFingerprints::default();
+        let one: Namespace = ("acme", "one").into();
+        let other: Namespace = ("acme", "other").into();
+
+        assert!(seen.is_news(&one, "same"));
+        assert!(
+            seen.is_news(&other, "same"),
+            "a second package's first observation is its own news"
+        );
+        assert!(!seen.is_news(&one, "same"));
+    }
 
     /// Hex of an ASCII string — mirrors the per-byte encoding the fingerprint
     /// applies to a path, for asserting a path appears hex-encoded in a digest.

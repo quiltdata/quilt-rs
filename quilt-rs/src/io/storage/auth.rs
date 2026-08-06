@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 use tracing::debug;
+use tracing::trace;
 use tracing::warn;
 
 use crate::io::storage::LocalStorage;
@@ -110,7 +111,7 @@ impl<S: Storage + Sync> AuthIo<S> {
 
     pub async fn read_credentials(&self) -> Res<Option<Credentials>> {
         let credentials_path = self.credentials_path();
-        debug!("⏳ Reading credentials from {:?}", credentials_path);
+        trace!("⏳ Reading credentials from {:?}", credentials_path);
 
         if !self.storage.exists(&credentials_path).await {
             warn!("No credentials file found");
@@ -125,7 +126,8 @@ impl<S: Storage + Sync> AuthIo<S> {
             return Ok(None);
         }
 
-        debug!("✔️ Successfully read valid credentials");
+        // The same cache hit, one layer down. Two lines for one uneventful read.
+        trace!("✔️ Successfully read valid credentials");
 
         Ok(Some(credentials))
     }

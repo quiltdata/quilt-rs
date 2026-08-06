@@ -24,7 +24,7 @@ pub use sentry::Faults;
 pub use tracing::{Logging, LogsDir};
 
 pub mod prelude {
-    pub use tracing::{debug, error, info, warn};
+    pub use tracing::{debug, error, info, trace, warn};
 }
 
 /// The deployment the app was last seen working with, shared with the Sentry

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use ignore::gitignore::Gitignore;
-use tracing::debug;
 use tracing::trace;
 use tracing::warn;
 
@@ -198,7 +197,11 @@ pub async fn create_status(
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
-    debug!(
+    // `trace`: this runs on a timer, several times a second across packages, and
+    // the answer is almost always the same. The signal worth a debug line is "the
+    // status *changed*", which the caller emits once it can tell — it holds the
+    // fingerprint and the previous value, and this function holds neither.
+    trace!(
         "⏳ Creating status for working directory: {}",
         package_home.as_ref().display()
     );
@@ -272,7 +275,7 @@ pub async fn create_status(
     status.ignored_files = ignored_files;
     status.junky_changes = junky_changes;
     status.most_recent_mtime = locate_result.most_recent_mtime;
-    debug!(
+    trace!(
         // `walked` earns its place by distinguishing two readings of "0 changes":
         // nothing changed, or we looked at nothing — a wrong or empty working
         // directory. Everything else here is the outcome.
