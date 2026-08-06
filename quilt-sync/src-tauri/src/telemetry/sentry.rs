@@ -57,6 +57,32 @@ impl Faults {
         }
     }
 
+    /// Report a panic that happened in the **frontend**.
+    ///
+    /// Its own method rather than [`Self::anomaly`], because both of that one's
+    /// rules are inverted here. The level is `Error`, since a panic is a fault
+    /// rather than a suspicious condition. And the message *varies on purpose*: the
+    /// crash reporter groups by it, so distinct panics become distinct issues —
+    /// which is exactly what an anomaly must avoid and exactly what a panic wants.
+    pub fn ui_panic(&self, message: &str) {
+        match self {
+            Self::Live => {
+                // Tagged rather than folded into the message: the tag is what
+                // separates a WASM panic from a Rust-side one in a search, without
+                // making two panics with the same cause into two issues.
+                sentry::with_scope(
+                    |scope| scope.set_tag("source", "ui"),
+                    || {
+                        sentry::capture_message(message, sentry::Level::Error);
+                    },
+                );
+            }
+            Self::DryRun => eprintln!("telemetry(dry-run) ui panic: {message}"),
+            #[cfg(test)]
+            Self::Recorded(recorded) => Self::record(recorded, format!("ui panic: {message}")),
+        }
+    }
+
     /// Report a fault the caller is not failing on.
     pub fn error(&self, err: &(dyn std::error::Error + Send + Sync + 'static)) {
         match self {
@@ -198,6 +224,21 @@ mod tests {
                 "anomaly: a constant message".to_owned(),
                 "fault: something broke".to_owned()
             ]
+        );
+    }
+
+    /// A UI panic is recorded distinguishably from the other two kinds, because
+    /// where it came from is the first thing a reader needs and the payload alone
+    /// cannot say.
+    #[test]
+    fn records_a_ui_panic_as_its_own_kind() {
+        let faults = recorder();
+
+        faults.ui_panic("panicked at ui/src/pages.rs:12:5:\nnope");
+
+        assert_eq!(
+            faults.reported(),
+            vec!["ui panic: panicked at ui/src/pages.rs:12:5:\nnope".to_owned()]
         );
     }
 
