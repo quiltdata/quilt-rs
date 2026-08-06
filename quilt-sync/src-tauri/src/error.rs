@@ -50,6 +50,16 @@ pub enum TelemetryError {
 
     #[error("Mixpanel serialization error: {0}")]
     Serialize(String),
+
+    /// A send abandoned before the ingest API answered.
+    ///
+    /// Its own variant rather than borrowing another, because how a failure is
+    /// *classified* follows from its variant: a timeout reached the network and got
+    /// no verdict, which is the user's connection and not our bug. Filed under a
+    /// serialization error it would read as a refusal, raise a false fault, and
+    /// spend the one refusal report a run is allowed.
+    #[error("Mixpanel send timed out after {0}s")]
+    SendTimeout(u64),
 }
 
 #[derive(thiserror::Error, Debug)]

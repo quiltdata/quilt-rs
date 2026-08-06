@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 
 use ignore::gitignore::Gitignore;
-use tracing::debug;
-use tracing::info;
+use tracing::trace;
 use tracing::warn;
 
 use crate::Error;
@@ -198,7 +197,11 @@ pub async fn create_status(
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
-    info!(
+    // `trace`: this runs on a timer, several times a second across packages, and
+    // the answer is almost always the same. The signal worth a debug line is "the
+    // status *changed*", which the caller emits once it can tell — it holds the
+    // fingerprint and the previous value, and this function holds neither.
+    trace!(
         "⏳ Creating status for working directory: {}",
         package_home.as_ref().display()
     );
@@ -210,10 +213,14 @@ pub async fn create_status(
     // installed entries marked as "installed" (initially as "downloading")
     // modified entries marked as "modified", etc
 
-    debug!("⏳ Collecting paths from lineage");
+    trace!("⏳ Collecting paths from lineage");
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
-        debug!("🔍 Checking manifest for path: {}", path.display());
+        // `trace`, not `debug`: this fires once per *file*, and status is recomputed
+        // for every installed package on every autosync tick. At debug it was 86%
+        // of a real log — thirty thousand lines in ten minutes — which made the
+        // file useless to read and buried everything else.
+        trace!("🔍 Checking manifest for path: {}", path.display());
         match manifest.get_record(path) {
             Some(row) => {
                 orig_paths.insert(path.clone(), row.clone());
@@ -236,7 +243,7 @@ pub async fn create_status(
             }
         }
     }
-    debug!("✔️ Found {} paths in lineage", orig_paths.len());
+    trace!("✔️ Found {} paths in lineage", orig_paths.len());
 
     let quiltignore = quiltignore::load(package_home.as_ref())?;
     let locate_result = locate_files_in_package_home(
@@ -247,12 +254,9 @@ pub async fn create_status(
         quiltignore.as_ref(),
     )
     .await?;
-    debug!(
-        "✔️ Located files in working directory {:?}",
-        locate_result.files
-    );
+    // Captured before the vector is consumed; reported once, on the outcome line.
+    let walked = locate_result.files.len();
     let changes = fingerprint_files(storage, locate_result.files, host_config).await?;
-    debug!("✔️ Computed file fingerprints {:?}", changes);
 
     // Collect ignored files with their matched pattern (captured during the walk)
     let ignored_files: Vec<(PathBuf, String, u64)> = locate_result
@@ -267,13 +271,21 @@ pub async fn create_status(
         .filter_map(|path| junk::check(path).map(|m| (path.clone(), m.pattern)))
         .collect();
 
-    debug!("⏳ Creating package status");
     let mut status = InstalledPackageStatus::new(lineage.clone().into(), changes);
     status.ignored_files = ignored_files;
     status.junky_changes = junky_changes;
     status.most_recent_mtime = locate_result.most_recent_mtime;
-    info!(
-        "✔️ Status created with {} changes, {} ignored, {} junky",
+    trace!(
+        // `walked` earns its place by distinguishing two readings of "0 changes":
+        // nothing changed, or we looked at nothing — a wrong or empty working
+        // directory. Everything else here is the outcome.
+        //
+        // One line per status computation, and that is the budget. There used to be
+        // a second reporting the *input*, which duplicated `ignored` and dumped the
+        // whole file list; the only fact it carried alone is the count now in front.
+        // Names live in the per-path `trace` above, for one package at a time.
+        "✔️ Status: {} files walked, {} changes, {} ignored, {} junky",
+        walked,
         status.changes.len(),
         status.ignored_files.len(),
         status.junky_changes.len(),
@@ -283,6 +295,7 @@ pub async fn create_status(
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use test_log::test;
 

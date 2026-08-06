@@ -9,11 +9,14 @@ mod commands;
 mod components;
 mod error_handler;
 mod pages;
+mod panic_report;
 mod tauri;
 mod util;
 
 fn main() {
     console_error_panic_hook::set_once();
+    // After the console hook, so it chains onto it rather than being replaced by it.
+    panic_report::install();
     mount_to_body(App);
 }
 

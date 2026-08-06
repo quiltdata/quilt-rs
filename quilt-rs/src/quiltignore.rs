@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use tracing::debug;
+use tracing::trace;
 
 use crate::error::FsError;
 use crate::{Error, Res};
@@ -15,7 +15,10 @@ pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
     if !path.is_file() {
         return Ok(None);
     }
-    debug!("Loading {}", path.display());
+    // `trace`: loaded once per status computation, which runs on a timer across
+    // every package. It was 44% of an otherwise-quiet log. That the ignore file was
+    // read is not news; what it *excluded* is, and the status line carries that count.
+    trace!("Loading {}", path.display());
     let mut builder = GitignoreBuilder::new(dir);
     if let Some(err) = builder.add(&path) {
         return Err(Error::Fs(FsError::Read {

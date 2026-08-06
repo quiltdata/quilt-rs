@@ -20,6 +20,9 @@ pub struct DiagnosticInfo {
     pub home_dir: String,
     pub logs_dir: PathBuf,
     pub auth_hosts: Vec<String>,
+    /// This install's identity, so a report a user emails in can be lined up
+    /// against that install's event stream and its crash reports.
+    pub install_id: Option<String>,
 }
 
 /// Typed shape of `metadata.json` stored inside a diagnostic zip.
@@ -30,6 +33,16 @@ struct DiagnosticMetadata {
     data_dir: String,
     home_dir: String,
     authenticated_hosts: Vec<String>,
+    /// `null` on an install whose identity could not be persisted — written, not
+    /// omitted, so that "this install has no identity" and "this export predates
+    /// the field" are different bytes rather than the same absence. `serde(default)`
+    /// is what lets the older shape still parse.
+    ///
+    /// The same rule the event vocabulary follows: an unattributed event reports a
+    /// null host rather than dropping the property, because a reader cannot divide
+    /// by a value that was never written.
+    #[serde(default)]
+    install_id: Option<String>,
 }
 
 impl DiagnosticMetadata {
@@ -40,6 +53,7 @@ impl DiagnosticMetadata {
             data_dir: info.data_dir.display().to_string(),
             home_dir: info.home_dir.clone(),
             authenticated_hosts: info.auth_hosts.clone(),
+            install_id: info.install_id.clone(),
         }
     }
 }
@@ -49,6 +63,7 @@ pub async fn collect(
     app_handle: &tauri::AppHandle,
     m: &Model,
     app: &App,
+    install_id: Option<&crate::telemetry::InstallId>,
 ) -> Result<DiagnosticInfo, Error> {
     let local_data_dir = app_handle.path().app_local_data_dir()?;
     let auth_hosts = quilt::paths::list_auth_hosts(&local_data_dir);
@@ -68,8 +83,9 @@ pub async fn collect(
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         data_dir: local_data_dir,
         home_dir,
-        logs_dir: app.logs_dir.path().to_path_buf(),
+        logs_dir: app.logging.dir.path().to_path_buf(),
         auth_hosts,
+        install_id: install_id.map(|id| id.as_str().to_owned()),
     })
 }
 
@@ -98,6 +114,9 @@ pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
                 scope.set_extra("os", m.os.clone().into());
                 scope.set_extra("data_dir", m.data_dir.clone().into());
                 scope.set_extra("home_dir", m.home_dir.clone().into());
+                if let Some(ref install_id) = m.install_id {
+                    scope.set_extra("install_id", install_id.clone().into());
+                }
                 scope.set_extra(
                     "authenticated_hosts",
                     serde_json::json!(m.authenticated_hosts),
@@ -223,6 +242,7 @@ mod tests {
             home_dir: "/home/tester".to_string(),
             logs_dir,
             auth_hosts,
+            install_id: Some("test-install-id".to_string()),
         }
     }
 
@@ -334,6 +354,44 @@ mod tests {
             serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
         assert!(parsed.authenticated_hosts.is_empty());
         assert_eq!(parsed, DiagnosticMetadata::from_info(&info));
+    }
+
+    /// An install with no identity writes `install_id: null` rather than omitting
+    /// the key, so a reader can tell it apart from an export that predates the
+    /// field — and an export that *does* predate it still parses.
+    ///
+    /// Without the first half, "no identity" and "older export" are the same
+    /// bytes, and the field answers neither question.
+    #[test]
+    fn an_absent_identity_is_written_as_null_not_omitted() {
+        let data_tmp = TempDir::new().expect("data tempdir");
+        let logs_tmp = TempDir::new().expect("logs tempdir");
+
+        let mut info = make_info(
+            data_tmp.path().to_path_buf(),
+            logs_tmp.path().to_path_buf(),
+            Vec::new(),
+        );
+        info.install_id = None;
+
+        let zip_path = save_diagnostic_zip(&info).expect("save zip");
+        let entries = read_zip_entries(&zip_path);
+        let raw: serde_json::Value =
+            serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
+
+        assert_eq!(
+            raw.get("install_id"),
+            Some(&serde_json::Value::Null),
+            "an unattributed install must say so, not stay silent: {raw}"
+        );
+
+        // The older shape — no key at all — still reads, which is what
+        // `serde(default)` buys and why omitting is not needed for compatibility.
+        let legacy =
+            br#"{"version":"v","os":"o","data_dir":"d","home_dir":"h","authenticated_hosts":[]}"#;
+        let parsed: DiagnosticMetadata =
+            serde_json::from_slice(legacy).expect("an export predating the field must still parse");
+        assert_eq!(parsed.install_id, None);
     }
 
     #[test]

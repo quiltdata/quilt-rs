@@ -3,7 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::Res;
 use crate::flow;
@@ -195,11 +195,14 @@ impl LocalDomain {
     }
 
     pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
-        debug!("Listing installed packages");
+        // A pair of lines for a lookup that runs on every tick. The count is the
+        // only part worth keeping, and only when it is surprising — so both go to
+        // `trace` and the status line reports what was found.
+        trace!("Listing installed packages");
         let lineage = self.lineage.read(&self.storage).await?;
         let namespaces = lineage.namespaces();
 
-        debug!("Found {} installed packages", namespaces.len());
+        trace!("Found {} installed packages", namespaces.len());
         let mut packages = Vec::with_capacity(namespaces.len());
         for namespace in namespaces {
             packages.push(self.create_installed_package(namespace)?);
@@ -211,10 +214,10 @@ impl LocalDomain {
         &self,
         namespace: &Namespace,
     ) -> Res<Option<InstalledPackage>> {
-        debug!("Looking up installed package: {}", namespace);
+        trace!("Looking up installed package: {}", namespace);
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
-            debug!("Found installed package: {}", namespace);
+            trace!("Found installed package: {}", namespace);
             Ok(Some(self.create_installed_package(namespace.to_owned())?))
         } else {
             debug!("Package not found: {}", namespace);

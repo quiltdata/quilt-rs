@@ -157,6 +157,14 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         assert_eq!(published[0].1, "Add file.txt");
     }
     {
+        // Attribution, not just compilation: the host reported is the package's
+        // own origin, which is what makes a per-deployment autosync count mean
+        // anything.
+        let hosts = reporter.hosts.lock().unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].to_string(), "catalog.dev");
+    }
+    {
         let statuses = reporter.statuses.lock().unwrap();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].1.status, "up_to_date");
@@ -674,6 +682,11 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
     let logins = reporter.logins.lock().unwrap();
     assert_eq!(logins.len(), 1);
     assert_eq!(logins[0].as_ref(), Some(&host));
+    assert_eq!(
+        *reporter.login_blocks.lock().unwrap(),
+        vec![LoginBlock::Began],
+        "the first discovery starts the episode"
+    );
     Ok(())
 }
 

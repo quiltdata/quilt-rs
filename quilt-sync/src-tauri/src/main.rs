@@ -64,12 +64,22 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let package_info = app.package_info();
-            let enable = if cfg!(debug_assertions) {
-                None
-            } else {
-                Some(())
-            };
-            let telemetry = telemetry::Telemetry::new(&package_info.version, enable);
+
+            // Resolved before the sinks are built: the crash client's event hook
+            // captures the identity when the client is constructed, so it has to
+            // be known first or crashes would go out unattributed.
+            let data_dir = app
+                .path()
+                .app_local_data_dir()
+                .expect("Failed to resolve data dir");
+
+            let sinks = telemetry::Sinks::resolve();
+            let telemetry = telemetry::Telemetry::new(
+                &package_info.version,
+                sinks,
+                telemetry::InstallId::load(&data_dir),
+                Some(telemetry::Buffer::new(&data_dir)),
+            );
 
             // This is for runtime registering
             #[cfg(desktop)]
@@ -79,12 +89,7 @@ fn main() {
                 }
             }
 
-            let data_dir = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to resolve data dir");
-
-            let logs_dir = telemetry::Telemetry::init_file_logging(&data_dir)?;
+            let logging = telemetry::Telemetry::init_file_logging(&data_dir)?;
 
             telemetry.init();
 
@@ -122,13 +127,19 @@ fn main() {
             app.manage(commands::WorkflowRulesCache::default());
             app.manage(commands::RoleCache::default());
             app.manage(sync::Mutex::new(app.handle().clone()));
-            app.manage(App::new(package_info, logs_dir));
+            app.manage(App::new(package_info, logging));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
             // The watcher reads `Model` via `app_handle.state::<Model>()`
             // so it can spawn after `Model` is registered above.
+            // Telemetry wraps the UI reporter rather than replacing it: the
+            // engine's outcomes reach the window exactly as before, and telemetry
+            // observes them on the way past.
             let reporter: Arc<dyn StatusReporter> =
-                Arc::new(TauriEventReporter::new(app.handle().clone()));
+                Arc::new(autopull::reporter::TelemetryReporter::wrapping(
+                    Arc::new(TauriEventReporter::new(app.handle().clone())),
+                    app.handle().clone(),
+                ));
             let (watcher, status_rx) = Watcher::spawn(
                 app.handle().clone(),
                 autosync_settings.clone(),
@@ -233,6 +244,7 @@ fn main() {
             commands::get_revision_message,
             commands::check_for_update,
             commands::download_and_install_update,
+            commands::report_ui_panic,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

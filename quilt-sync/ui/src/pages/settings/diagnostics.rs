@@ -116,7 +116,7 @@ pub(super) fn DiagnosticsSection(
                 </Show>
 
                 <p class="crash-report-description">
-                    "Sends app version, OS, directory paths, authenticated host names, log files, and OAuth client IDs."
+                    "Sends app version, OS, directory paths, authenticated host names, log files, OAuth client IDs, and this installation's anonymous ID."
                 </p>
             </div>
         </section>
