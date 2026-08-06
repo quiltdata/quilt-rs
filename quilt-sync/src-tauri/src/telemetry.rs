@@ -21,7 +21,7 @@ pub use event::MixpanelEvent;
 pub use install_id::InstallId;
 pub use mixpanel::Analytics;
 pub use sentry::Faults;
-pub use tracing::LogsDir;
+pub use tracing::{Logging, LogsDir};
 
 pub mod prelude {
     pub use tracing::{debug, error, info, warn};
@@ -177,7 +177,7 @@ impl Telemetry {
         self.install_id.as_ref()
     }
 
-    pub fn init_file_logging(base_path: &std::path::Path) -> Result<LogsDir> {
+    pub fn init_file_logging(base_path: &std::path::Path) -> Result<Logging> {
         tracing::init_file_logging(base_path)
     }
 
