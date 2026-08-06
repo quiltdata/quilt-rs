@@ -152,7 +152,23 @@ pub fn sentry_config(
         // more than two values, so it belongs to whoever takes that on.
         let mut options = stamp_event(install_id, host)
             .release(version.to_string())
-            .environment("production");
+            .environment("production")
+            // Off by default, and it is most of a report's value: without it the
+            // anomaly reports and every user-filed report arrive with no trace, so
+            // they say that something happened and nothing about where.
+            .attach_stacktrace(true);
+        // Release health stays **off**, which is a decision rather than the default
+        // going unexamined twice.
+        //
+        // Two reasons, and either alone is enough. This sink is for errors: a count
+        // of app runs is an analytics question, and answering it here would put the
+        // same question in two places with two definitions. And the mechanics are
+        // worse than they look — the SDK enqueues a session only from its `Drop`, so
+        // *ending* a session is what sends it, and Tauri's `run` never returns (it
+        // ends the process with `std::process::exit`, running no destructor). Turning
+        // this on therefore means doing work on the way out: an HTTP request, and a
+        // quit that blocks on it. A quit must close the app, not wait on a network
+        // round trip that might leave something half-written.
         options.dsn = Some(dsn);
         options
     })
@@ -192,6 +208,46 @@ mod tests {
     fn only_the_recorder_reports() {
         assert!(Faults::Live.reported().is_empty());
         assert!(Faults::DryRun.reported().is_empty());
+    }
+
+    /// The three options this unit exists for, asserted on the built value rather
+    /// than trusted from the source — each was a default nobody chose, and a
+    /// builder call that silently stopped applying would look identical here.
+    ///
+    /// `#[serial]` because it writes the process environment, which every other
+    /// reader of it races with.
+    #[test]
+    #[serial_test::serial]
+    fn the_defaults_that_were_never_decisions_are_set() {
+        // Structurally valid and unroutable: the client is never constructed from
+        // it here, but `get_sentry_dsn` parses it and would warn and yield `None`.
+        const DSN: &str = "https://0123456789abcdef0123456789abcdef@o0.ingest.invalid/0";
+
+        // SAFETY: `#[serial]` keeps this off any other thread reading the env.
+        unsafe { std::env::set_var("SENTRY_DSN", DSN) };
+        let options = sentry_config(
+            &Version::new(1, 2, 3),
+            None,
+            std::sync::Arc::new(std::sync::Mutex::new(None)),
+        );
+        unsafe { std::env::remove_var("SENTRY_DSN") };
+
+        let options = options.expect("a DSN was configured");
+        assert!(
+            options.attach_stacktrace,
+            "reports would arrive with no trace, which is most of their value"
+        );
+        assert!(
+            !options.auto_session_tracking,
+            "release health is off on purpose: counting runs is an analytics \
+             question, and turning it on would mean flushing a session at exit"
+        );
+        assert_eq!(
+            options.environment.as_deref(),
+            Some("production"),
+            "an unset environment cannot separate a release from anything else"
+        );
+        assert_eq!(options.release.as_deref(), Some("1.2.3"));
     }
 
     /// A local build has no crash client, so its faults go to the console rather
