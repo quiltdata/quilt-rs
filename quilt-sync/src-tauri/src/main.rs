@@ -243,6 +243,7 @@ fn main() {
             commands::get_revision_message,
             commands::check_for_update,
             commands::download_and_install_update,
+            commands::report_ui_panic,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

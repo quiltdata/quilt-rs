@@ -226,6 +226,15 @@ impl Telemetry {
         self.faults.anomaly(message);
     }
 
+    /// Report a panic raised in the frontend, which has no crash client of its own.
+    ///
+    /// The frontend is a WASM module in a webview: its panic hook can reach the
+    /// browser console and nothing else, so before this a UI panic was visible only
+    /// to someone with the inspector open — which no user has.
+    pub fn report_ui_panic(&self, message: &str) {
+        self.faults.ui_panic(message);
+    }
+
     /// Report a fault to the crash reporter without failing the caller.
     ///
     /// For the case an event cannot describe: an emitter that should be able to

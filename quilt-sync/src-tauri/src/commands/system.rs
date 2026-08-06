@@ -443,3 +443,85 @@ pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), St
         .map_err(|e| e.to_string())?;
     app.restart();
 }
+
+/// How much of a panic message reaches the crash reporter.
+///
+/// A payload is whatever was formatted into `panic!` — plausibly a `Debug` dump of
+/// a large value — and it becomes an issue's title, so it is bounded here rather
+/// than at the sink. Generous enough that the message and its location survive.
+const MAX_PANIC_MESSAGE: usize = 1024;
+
+/// Bound the message at a character boundary, marking that it was cut.
+fn bounded(message: &str) -> String {
+    if message.chars().count() <= MAX_PANIC_MESSAGE {
+        return message.to_owned();
+    }
+    // By characters, not bytes: slicing a multi-byte character in half would panic
+    // while reporting a panic.
+    let kept: String = message.chars().take(MAX_PANIC_MESSAGE).collect();
+    format!("{kept}… (truncated)")
+}
+
+/// Report a panic the frontend caught in its own hook.
+///
+/// The frontend is a WASM module in a webview with no crash client of its own, so
+/// its panic hook could reach the browser console and nothing else. Bridging it
+/// here is the only way a UI panic reaches anybody.
+///
+/// Both sinks on purpose, at two levels. `warn!` puts it in the log file and leaves
+/// a breadcrumb; the explicit report is what becomes an issue. Logging it at `error!`
+/// instead would file a *second* issue through the crash-sink layer, since that is
+/// what an error-level event does — one panic, two reports.
+#[tauri::command]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Tauri's command macro dictates the signature: an argument is deserialized \
+              into an owned value and state is injected by value. Sync rather than async \
+              because there is nothing to await, and an async command taking state would \
+              have to return a Result it could never populate."
+)]
+pub fn report_ui_panic(message: String, tracing: tauri::State<'_, crate::telemetry::Telemetry>) {
+    let message = bounded(&message);
+    warn!("UI panic: {message}");
+    tracing.report_ui_panic(&message);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A short message is passed through untouched — the common case, and the one a
+    /// reader of the issue title needs to be exact.
+    #[test]
+    fn a_short_panic_message_is_untouched() {
+        let message = "panicked at ui/src/pages.rs:12:5:\nassertion failed";
+        assert_eq!(bounded(message), message);
+    }
+
+    /// A long one is cut and *says* it was cut, so nobody reads a truncated payload
+    /// as the whole story.
+    #[test]
+    fn a_long_panic_message_is_cut_and_marked() {
+        let bounded = bounded(&"x".repeat(MAX_PANIC_MESSAGE * 3));
+
+        assert!(bounded.ends_with("… (truncated)"));
+        assert_eq!(
+            bounded.chars().count(),
+            MAX_PANIC_MESSAGE + "… (truncated)".chars().count()
+        );
+    }
+
+    /// Cutting by characters rather than bytes, because slicing a multi-byte
+    /// character in half would panic *while reporting a panic* — the one failure
+    /// this path must not have.
+    #[test]
+    fn cutting_a_multibyte_message_does_not_panic() {
+        // Four bytes per character, so a byte-indexed cut would land mid-character.
+        let message = "🙀".repeat(MAX_PANIC_MESSAGE * 2);
+
+        let bounded = bounded(&message);
+
+        assert!(bounded.starts_with('🙀'));
+        assert!(bounded.ends_with("… (truncated)"));
+    }
+}
