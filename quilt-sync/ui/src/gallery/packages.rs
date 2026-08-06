@@ -129,27 +129,29 @@ fn EdgesStory() -> impl IntoView {
                 />
             </Cell>
             <Cell full=true label="the 80px time column against its worst cases">
-                {[
-                    ("just now", 10.0 * 1000.0),
-                    ("18 min ago", 18.0 * MINUTE),
-                    ("23 hours ago", 23.0 * HOUR),
-                    ("yesterday", 30.0 * HOUR),
-                    ("3 weeks ago", 21.0 * DAY),
-                    ("2 months ago", 70.0 * DAY),
-                ]
-                    .into_iter()
-                    .map(|(phrase, elapsed)| {
-                        view! {
-                            <PackageRow
-                                namespace=format!("expected “{phrase}”")
-                                href="#packagerow"
-                                changed_at=ago(elapsed)
-                                state="Latest"
-                                tone=StateTone::Success
-                            />
-                        }
-                    })
-                    .collect_view()}
+                <div class="g-rows">
+                    {[
+                        ("just now", 10.0 * 1000.0),
+                        ("18 min ago", 18.0 * MINUTE),
+                        ("23 hours ago", 23.0 * HOUR),
+                        ("yesterday", 30.0 * HOUR),
+                        ("3 weeks ago", 21.0 * DAY),
+                        ("2 months ago", 70.0 * DAY),
+                    ]
+                        .into_iter()
+                        .map(|(phrase, elapsed)| {
+                            view! {
+                                <PackageRow
+                                    namespace=format!("expected “{phrase}”")
+                                    href="#packagerow"
+                                    changed_at=ago(elapsed)
+                                    state="Latest"
+                                    tone=StateTone::Success
+                                />
+                            }
+                        })
+                        .collect_view()}
+                </div>
             </Cell>
         </Story>
     }

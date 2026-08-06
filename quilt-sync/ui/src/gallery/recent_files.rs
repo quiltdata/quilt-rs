@@ -122,16 +122,31 @@ fn Rows() -> impl IntoView {
                     5.0 * HOUR,
                 )}
             </Cell>
+            // The expected phrase is spelled in words, not digits. An earlier version
+            // used "23 hours ago" as the path and it rendered as "hours ago 23" — the
+            // `direction: rtl` that moves the ellipsis to the left also reorders a
+            // leading number under the bidi algorithm. The next cell keeps a real
+            // case of that hazard on the page instead of hiding it.
             <Cell full=true label="the 80px time column against its worst cases">
-                {[
-                    ("just now", 10.0 * 1000.0),
-                    ("23 hours ago", 23.0 * HOUR),
-                    ("3 weeks ago", 21.0 * DAY),
-                    ("2 months ago", 70.0 * DAY),
-                ]
-                    .into_iter()
-                    .map(|(phrase, elapsed)| row(phrase, "user/package-a", elapsed))
-                    .collect_view()}
+                <div class="g-rows">
+                    {[
+                        ("check/just-now.txt", 10.0 * 1000.0),
+                        ("check/twenty-three-hours-ago.txt", 23.0 * HOUR),
+                        ("check/three-weeks-ago.txt", 21.0 * DAY),
+                        ("check/two-months-ago.txt", 70.0 * DAY),
+                    ]
+                        .into_iter()
+                        .map(|(path, elapsed)| row(path, "user/package-a", elapsed))
+                        .collect_view()}
+                </div>
+            </Cell>
+            <Cell full=true label="paths that START with a number — the rtl truncation hazard">
+                <div class="g-rows">
+                    {["2026/08/04-summary.csv", "2026-08-04-run.log", "0001_plate.fcs"]
+                        .into_iter()
+                        .map(|path| row(path, "user/package-a", 3.0 * HOUR))
+                        .collect_view()}
+                </div>
             </Cell>
         </Story>
     }

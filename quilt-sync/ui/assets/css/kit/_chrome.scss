@@ -122,3 +122,9 @@ body {
 .g-cell__body { display: flex; align-items: flex-start; min-width: 0; }
 
 .g-inline { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* A stack of list rows inside ONE cell. `.g-cell__body` is a flex row, which is
+ * right for putting controls side by side and wrong for a list — without this,
+ * several rows in one cell lay out shoulder to shoulder and overflow. `width: 100%`
+ * because the stack is itself a flex item and would otherwise size to content. */
+.g-rows { display: flex; flex-direction: column; width: 100%; min-width: 0; }
