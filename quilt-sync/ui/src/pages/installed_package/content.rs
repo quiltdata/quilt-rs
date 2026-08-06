@@ -126,6 +126,7 @@ pub(super) fn InstalledPackageContent(
     ) || no_access_reason.is_some();
     let syncs_entire_package = data.syncs_entire_package;
     let whole_package = scope_gate && syncs_entire_package;
+    let pending_count = remote_paths.with_value(std::collections::BTreeSet::len);
 
     // Install selected paths. The resolved selection is already remote-only and
     // already narrowed to what the package still offers, so it is the path list
@@ -337,6 +338,7 @@ pub(super) fn InstalledPackageContent(
                         <SyncScopeBand
                             namespace=namespace_for_scope.clone()
                             with_status=with_status
+                            pending=pending_count
                             entire_package=syncs_entire_package
                             notification=notification
                             ui_locked=ui_locked

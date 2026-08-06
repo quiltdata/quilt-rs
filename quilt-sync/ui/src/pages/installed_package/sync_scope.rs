@@ -21,9 +21,28 @@ use crate::components::Notification;
 /// here would give two places to keep honest.
 pub(super) const STANDING_SCOPE_LINE: &str = "Files added later are downloaded too.";
 
-/// The scope band. `entire_package` is the package's standing choice; changing
-/// it writes through immediately and, when switching *to* whole-package, also
-/// downloads whatever is currently listed.
+/// What to say once the scope is stored.
+///
+/// Leads with **saved**, this app's idiom for a written preference, because the
+/// failure to avoid is the message reading as *a sync just started*: nothing has
+/// been fetched, and the sentence must not imply otherwise. The rest names the
+/// durable effect, and — only when there is a backlog to act on — the control
+/// that clears it.
+#[must_use]
+fn scope_saved_message(pending: usize) -> String {
+    if pending == 0 {
+        "Sync scope saved. New files will be downloaded from now on.".to_owned()
+    } else {
+        format!(
+            "Sync scope saved. New files will be downloaded from now on — press \
+             Download all files for the {pending} file{} already listed.",
+            if pending == 1 { "" } else { "s" }
+        )
+    }
+}
+
+/// The scope band. `entire_package` is the package's standing choice; picking a
+/// scope writes it through and moves no bytes.
 #[component]
 pub(super) fn SyncScopeBand(
     namespace: String,
@@ -33,6 +52,10 @@ pub(super) fn SyncScopeBand(
     /// offsets from it — if they disagree, whichever sticks higher covers the
     /// other.
     with_status: bool,
+    /// Remote entries not yet downloaded, for the message only: what the user
+    /// must press the download control for. Zero means the package is already
+    /// complete and there is nothing to point them at.
+    pending: usize,
     notification: RwSignal<Option<Notification>>,
     ui_locked: RwSignal<bool>,
     refetch: Trigger,
@@ -68,9 +91,7 @@ pub(super) fn SyncScopeBand(
             match stored {
                 Ok(()) => {
                     if want_whole {
-                        notification.set(Some(Notification::Success(format!(
-                            "Now syncing the entire package. {STANDING_SCOPE_LINE}"
-                        ))));
+                        notification.set(Some(Notification::Success(scope_saved_message(pending))));
                     }
                 }
                 Err(e) => {
@@ -114,7 +135,7 @@ pub(super) fn SyncScopeBand(
 
 #[cfg(test)]
 mod tests {
-    use super::STANDING_SCOPE_LINE;
+    use super::{STANDING_SCOPE_LINE, scope_saved_message};
 
     /// The page's own source, so the markup rules below are checkable on the
     /// host target where the Leptos view is never rendered.
@@ -172,5 +193,40 @@ mod tests {
             );
         }
         assert!(STANDING_SCOPE_LINE.contains("later"));
+    }
+
+    /// **The misread this message exists to avoid.** Picking the scope stores a
+    /// preference and fetches nothing, so the toast must not read as a sync
+    /// having started — no past-tense download claim, and no bare "syncing".
+    #[test]
+    fn the_saved_message_never_claims_a_download_ran() {
+        for pending in [0, 1, 7] {
+            let msg = scope_saved_message(pending).to_lowercase();
+            assert!(
+                msg.starts_with("sync scope saved."),
+                "leads with the preference-written idiom: {msg:?}"
+            );
+            assert!(!msg.contains("downloaded the"), "{msg:?}");
+            assert!(!msg.contains("now syncing"), "{msg:?}");
+        }
+    }
+
+    /// It points at the control only when there is something for it to do, and
+    /// counts what that is. Both arms asserted, so this cannot pass by the
+    /// branch collapsing to one message.
+    #[test]
+    fn the_saved_message_names_the_control_only_with_a_backlog() {
+        let complete = scope_saved_message(0);
+        assert!(
+            !complete.contains("Download all files"),
+            "nothing to press: {complete:?}"
+        );
+
+        let one = scope_saved_message(1);
+        assert!(one.contains("Download all files"), "{one:?}");
+        assert!(one.contains("1 file already listed"), "singular: {one:?}");
+
+        let many = scope_saved_message(7);
+        assert!(many.contains("7 files already listed"), "plural: {many:?}");
     }
 }
