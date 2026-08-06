@@ -195,11 +195,14 @@ impl LocalDomain {
     }
 
     pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
-        debug!("Listing installed packages");
+        // A pair of lines for a lookup that runs on every tick. The count is the
+        // only part worth keeping, and only when it is surprising — so both go to
+        // `trace` and the status line reports what was found.
+        trace!("Listing installed packages");
         let lineage = self.lineage.read(&self.storage).await?;
         let namespaces = lineage.namespaces();
 
-        debug!("Found {} installed packages", namespaces.len());
+        trace!("Found {} installed packages", namespaces.len());
         let mut packages = Vec::with_capacity(namespaces.len());
         for namespace in namespaces {
             packages.push(self.create_installed_package(namespace)?);
