@@ -74,21 +74,29 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
     Ok(LogsDir::Permanent(logs_dir))
 }
 
-/// Build a filter from `directives`, letting [`LOG_ENV`] override it.
+/// Build a filter from `directives`, or from [`LOG_ENV`] when it is set.
 ///
-/// `parse_lossy` rather than `parse`: a directive typed into an environment
-/// variable is a developer's convenience, and a malformed one should cost them the
-/// override, not the logs.
+/// The whole comma-separated list is parsed at once. Parsing it as a *single*
+/// directive is what broke this the first time: a list is not a directive, so the
+/// parse failed, a fallback silently substituted `warn`, and the log came out empty
+/// — reproducing the exact defect this module exists to fix, inside the code meant
+/// to fix it. Anything that swallows a parse failure here has to be read twice.
+///
+/// `parse_lossy` because a directive typed into an environment variable is a
+/// developer's convenience: a malformed one should cost them the override, not the
+/// logs. The default directives are not user input and are pinned by a test that
+/// asserts what the built filter *admits*, not merely that they parse.
+///
+/// The variable **replaces** rather than extends, so a developer reasoning about
+/// what they will get has one string to read instead of a merge to work out.
 fn filter(directives: &str) -> EnvFilter {
+    let from_env = std::env::var(LOG_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+
     EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
-        .with_env_var(LOG_ENV)
-        .from_env_lossy()
-        .add_directive(
-            directives
-                .parse()
-                .unwrap_or_else(|_| LevelFilter::WARN.into()),
-        )
+        .parse_lossy(from_env.as_deref().unwrap_or(directives))
 }
 
 pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
@@ -199,6 +207,28 @@ mod tests {
                 "{directives:?} lacks the trailing dependency floor, so the log fills with transport noise"
             );
         }
+    }
+
+    /// The **built filter** admits what its directives say — not the directives in
+    /// isolation, which is the gap that let this ship broken once.
+    #[test]
+    fn each_built_filter_admits_what_its_directives_ask_for() {
+        use tracing_subscriber::Layer;
+        use tracing_subscriber::registry::Registry;
+
+        let file = Layer::<Registry>::max_level_hint(&filter(FILE_DIRECTIVES));
+        assert_eq!(
+            file,
+            Some(LevelFilter::DEBUG),
+            "the file filter admits {file:?}, so the log will be near-empty again"
+        );
+
+        let crash = Layer::<Registry>::max_level_hint(&filter(CRASH_SINK_DIRECTIVES));
+        assert_eq!(
+            crash,
+            Some(LevelFilter::INFO),
+            "the crash sink admits {crash:?}, so there will be no breadcrumbs"
+        );
     }
 
     /// The file keeps more than the crash reporter, which is the point of filtering
