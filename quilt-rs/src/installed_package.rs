@@ -27,6 +27,7 @@ use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
+use crate::lineage::SyncScope;
 use crate::lineage::UpstreamState;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
@@ -469,7 +470,16 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         })
     }
 
-    pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
+    /// `scope` comes from the caller, not from the package's stored
+    /// [`SyncScope`](crate::lineage::SyncScope). Both faces of this engine —
+    /// the desktop app and the `quilt` CLI — reach pull through here, and only
+    /// one of them has a setting; reading the field at this level would let
+    /// state the app wrote change what the CLI does.
+    pub async fn pull(
+        &self,
+        host_config_opt: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -503,6 +513,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             package_home,
             snapshot,
             self.namespace.clone(),
+            scope,
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;

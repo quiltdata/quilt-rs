@@ -153,12 +153,18 @@ pub trait QuiltModel {
         Ok(package.install_paths(paths).await?)
     }
 
+    /// TODO(sync-entire-package/u-desktop-plumbing): the scope passed here must
+    /// become the package's stored `SyncScope` combined (logical and) with the
+    /// experimental gate, on this path and on the autopull tick. Until it lands the
+    /// app asks for the narrow scope, so behaviour is exactly as before.
     async fn package_pull(
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
     ) -> Result<quilt_uri::ManifestUri, Error> {
-        Ok(package.pull(host_config).await?)
+        Ok(package
+            .pull(host_config, quilt::lineage::SyncScope::IndividualFiles)
+            .await?)
     }
 
     /// Dry-run classifier: what would `package_pull` do right now? Delegates

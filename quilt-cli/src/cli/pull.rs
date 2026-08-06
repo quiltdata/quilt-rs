@@ -1,4 +1,5 @@
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::lineage::SyncScope;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
@@ -33,7 +34,13 @@ async fn pull_package(
     host_config: Option<HostConfig>,
 ) -> Result<ManifestUri, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        Some(installed_package) => Ok(installed_package.pull(host_config).await?),
+        // Sparse checkout, always. The CLI has no setting for the sync scope
+        // and no surface to show one, so it asks for the narrow scope rather
+        // than honouring whatever a desktop app may have written to this
+        // package's lineage.
+        Some(installed_package) => Ok(installed_package
+            .pull(host_config, SyncScope::IndividualFiles)
+            .await?),
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
