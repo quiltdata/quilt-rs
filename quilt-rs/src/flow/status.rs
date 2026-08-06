@@ -52,6 +52,29 @@ enum WorkdirFile {
     UnSupported,
 }
 
+/// A few names from a collection, with a count of what was left out.
+///
+/// Exists so a log line can hint at *what* without its size growing with the
+/// package. The bound is the point: an unbounded list of anything, written from the
+/// status path, is a log measured in hundreds of megabytes.
+fn sample_paths<'a>(paths: impl Iterator<Item = &'a Path>) -> String {
+    const SHOWN: usize = 3;
+
+    let mut shown = Vec::with_capacity(SHOWN);
+    let mut total = 0usize;
+    for path in paths {
+        total += 1;
+        if shown.len() < SHOWN {
+            shown.push(path.display().to_string());
+        }
+    }
+
+    match total.saturating_sub(shown.len()) {
+        0 => shown.join(", "),
+        rest => format!("{}, … +{rest} more", shown.join(", ")),
+    }
+}
+
 /// Located files and ignored files collected during the directory walk.
 struct LocateResult {
     files: Vec<(PathBuf, WorkdirFile)>,
@@ -251,13 +274,25 @@ pub async fn create_status(
         quiltignore.as_ref(),
     )
     .await?;
-    // A **count**, never the collection. Debug-formatting this vector wrote about
-    // 52 KB per call, and status is recomputed for every installed package on every
-    // autosync tick — 88% of a 211 MiB log from one statement. The names are in the
-    // per-path `trace` above for anyone who needs them.
+    // Counts and a bounded sample — never the collection. Debug-formatting this
+    // vector wrote about 52 KB per call, and status is recomputed for every
+    // installed package on every autosync tick: 88% of a 211 MiB log, from one
+    // statement.
+    //
+    // Shortening each entry does not fix that. The volume is files × calls, and
+    // calls is roughly one a second, so a list of shorter identifiers would still
+    // run to a hundred megabytes an hour. What is affordable is a summary whose
+    // size does not grow with the package.
+    //
+    // The counts answer the question this line is usually read for — did the walk
+    // see what I expected, and did `.quiltignore` eat something — and the sample
+    // shows the shape of the paths involved. Every name is in the per-path `trace`
+    // above for anyone who needs the full set.
     debug!(
-        "✔️ Located {} files in working directory",
-        locate_result.files.len()
+        "✔️ Located {} files ({} ignored) in working directory: {}",
+        locate_result.files.len(),
+        locate_result.ignored_files.len(),
+        sample_paths(locate_result.files.iter().map(|(path, _)| path.as_path()))
     );
     let changes = fingerprint_files(storage, locate_result.files, host_config).await?;
     // Likewise a count. This one is bounded by *changed* files rather than all of
@@ -294,6 +329,41 @@ pub async fn create_status(
 
 #[cfg(test)]
 mod tests {
+    /// The summary's size must not grow with the package — that is the whole
+    /// reason it exists, and the defect it replaced was a list that did.
+    #[test]
+    fn a_sample_is_bounded_however_many_paths_there_are() {
+        let many: Vec<std::path::PathBuf> = (0..10_000)
+            .map(|i| std::path::PathBuf::from(format!("dir/file-{i}.md")))
+            .collect();
+
+        let summary = super::sample_paths(many.iter().map(std::path::PathBuf::as_path));
+
+        assert!(
+            summary.len() < 200,
+            "a summary of 10,000 paths grew to {} bytes: {summary}",
+            summary.len()
+        );
+        assert!(summary.contains("+9997 more"), "{summary}");
+        assert!(
+            summary.contains("file-0.md"),
+            "the sample shows real names: {summary}"
+        );
+    }
+
+    /// A short collection is shown whole, with no misleading "+0 more".
+    #[test]
+    fn a_short_sample_is_shown_whole() {
+        let few = [
+            std::path::PathBuf::from("a.md"),
+            std::path::PathBuf::from("b.md"),
+        ];
+
+        let summary = super::sample_paths(few.iter().map(std::path::PathBuf::as_path));
+
+        assert_eq!(summary, "a.md, b.md");
+    }
+
     use super::*;
     use test_log::test;
 
