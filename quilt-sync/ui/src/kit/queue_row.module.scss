@@ -14,7 +14,14 @@
    * past its container instead of ellipsising. */
   width: 100%;
   gap: var(--q-space-3);
-  padding: 4px 2px;
+  /* Left padding reserves `CauseRow`'s 24px disclosure column plus its 8px gap, so a
+   * cause and a package start their text at the same x. Without it the parent row
+   * would be indented past its own children, which reads as the wrong hierarchy.
+   *
+   * An empty span would do the same job and put an empty element in every row; this
+   * is the same reservation expressed as space. Both numbers live in
+   * `cause_row.module.scss` — change them there and here together. */
+  padding: 4px 2px 4px calc(24px + var(--q-space-2));
   min-height: 30px;
 }
 
@@ -31,9 +38,16 @@
 
 /* A fixed column, unlike `PackageRow`'s ragged one, and for the opposite reason.
  * There the labels repeat and the odd one out should break the pattern; here every
- * row differs and the buttons are what the eye travels down, so they get a straight
- * left edge to travel along. Wide enough for `Choose S3 bucket`, the longest of the
- * six actions. */
+ * row differs and the buttons are what the eye travels down.
+ *
+ * Right-aligned inside it, so the RIGHT edges form the straight line — every action
+ * in the region ends at the region's right edge, including `CauseRow`'s, which is why
+ * its expander had to move off that edge. The left edges stay ragged, which is
+ * correct: they follow the verb's length and the verb is the information.
+ *
+ * 152px is wide enough for `Choose S3 bucket`, the longest of the six actions. It
+ * exists so the state labels to its left do not shuffle horizontally from row to
+ * row. */
 .action {
   flex: none;
   display: flex;
@@ -41,10 +55,11 @@
   width: 152px;
 }
 
-/* An expanded cause's packages. Indented past the cause's own glyph so the
- * hierarchy is visible without a connector line, and quieter, because the sub-row
- * is evidence for the row above rather than a decision of its own. */
+/* An expanded cause's packages. Indented to start where the CAUSE's text starts —
+ * the disclosure column, plus the cause's 14px glyph and its gap — so a sub-row sits
+ * under the sentence it is evidence for rather than merely somewhere to the right.
+ * Quieter too, because it is evidence and not a decision of its own. */
 .sub {
-  padding-left: var(--q-space-6);
+  padding-left: calc(24px + var(--q-space-2) + 14px + var(--q-space-2));
   color: var(--q-fg-muted);
 }

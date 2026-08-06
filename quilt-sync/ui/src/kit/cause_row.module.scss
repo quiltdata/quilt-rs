@@ -12,7 +12,9 @@
   align-items: flex-start;
   width: 100%;
   gap: var(--q-space-2);
-  padding: 6px 2px;
+  /* No left padding: the expander's 24px hit area starts the row, and padding here
+   * would push the disclosure column off the alignment `QueueRow` reserves for it. */
+  padding: 6px 2px 6px 0;
   /* Tone comes in as one custom property, set by the modifier below. Only the glyph
    * and nothing else — the text stays at full contrast, because a cause is the most
    * important line in the region and tinting it would make it recede. */
@@ -25,19 +27,26 @@
 /* 14px against the state labels' 12px: this is a region-level statement, not a row's
  * trailing annotation, and the size is the only thing saying so.
  *
- * `margin-top` rather than `align-items: center`, because the row wraps to two or
- * three lines and a centred glyph would drift to the middle of the paragraph. */
-.root svg {
+ * `.root > svg` and not `.root svg`, or this would also catch the chevron inside the
+ * expander button — which is a control and must not take the tone's colour.
+ *
+ * The row is `flex-start` aligned, not centred, because it wraps to two or three
+ * lines and a centred glyph would drift to the middle of the paragraph. So the glyph
+ * and the text are each nudged to sit on the FIRST line instead: the expander is the
+ * tallest leading item at 24px, and 14px and a 20px line box centre inside it at 5px
+ * and 2px. Derived from the expander's height — change one, change all three. */
+.root > svg {
   flex: none;
   width: 14px;
   height: 14px;
-  margin-top: 2px;
+  margin-top: 5px;
   color: var(--cause-mark);
 }
 
 .text {
   flex: 1 1 auto;
   min-width: 0;
+  margin-top: 2px;
   line-height: var(--q-line-body);
 }
 
@@ -47,21 +56,27 @@
   color: var(--q-fg-muted);
 }
 
-/* Holds either a Button or a sentence. `align-items: baseline` is not available
- * across a flex gap here, so the slot gets the same 1px nudge a button needs to sit
- * on the text's line. */
+/* Holds either a Button or a sentence, and it is the LAST thing in the row — so its
+ * right edge is the row's right edge, which is the edge every action in the region
+ * lines up on. Nothing may follow it. */
 .trailing {
   flex: none;
   display: flex;
   align-items: center;
+  /* 24px so a Button or a sentence centres on the same first line as the glyph and
+   * the text — same derivation as those two. */
+  min-height: 24px;
   gap: var(--q-space-2);
   color: var(--q-fg-muted);
 }
 
-/* The expander is a hit target first and a chevron second: 24px square, so it is
- * reachable on a touch screen and by an imprecise pointer, with the glyph small
+/* The disclosure column. A hit target first and a chevron second: 24px square, so it
+ * is reachable on a touch screen and by an imprecise pointer, with the glyph small
  * inside it. Same shape as `IconButton`'s Bare — not that component, because it
- * carries no icon of the caller's and its label is generated from the count. */
+ * carries no icon of the caller's and its label is generated from the count.
+ *
+ * `QueueRow` reserves this width as left padding, so the two rows' text starts at the
+ * same x. Both must agree; changing it here means changing it there. */
 .expander {
   flex: none;
   display: inline-flex;

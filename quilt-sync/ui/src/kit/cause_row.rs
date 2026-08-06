@@ -77,12 +77,14 @@ pub fn CauseRow(
 
     view! {
         <div class=class>
-            {tone.glyph()}
-            <span class=style::text>
-                {text}
-                <span class=style::count>{format!(" — {packages}")}</span>
-            </span>
-            <span class=style::trailing>{trailing}</span>
+            // Leading, not trailing. The right edge belongs to actions, and every row
+            // in the region has to agree on where that edge is — an expander sitting
+            // after the action pushed this row's button 30px left of the five below
+            // it. A disclosure control also conventionally starts the thing it
+            // expands, as in any file tree, and `QueueRow` reserves the same column
+            // so a cause and a package align on their text rather than the parent
+            // being indented past its own children.
+            //
             // `aria-expanded` and no `aria-controls`: what this reveals is a sibling
             // the caller renders, and we have no id for it. Announcing a control over
             // an element we cannot name would be worse than announcing none.
@@ -99,6 +101,12 @@ pub fn CauseRow(
                     <path d="M4 6.2 8 10.2 12 6.2" />
                 </svg>
             </button>
+            {tone.glyph()}
+            <span class=style::text>
+                {text}
+                <span class=style::count>{format!(" — {packages}")}</span>
+            </span>
+            <span class=style::trailing>{trailing}</span>
         </div>
     }
 }
