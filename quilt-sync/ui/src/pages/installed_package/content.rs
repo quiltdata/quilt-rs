@@ -118,6 +118,9 @@ pub(super) fn InstalledPackageContent(
     // turn it back off.
     let scope_gate = data.entire_package_sync_enabled;
     let namespace_for_scope = data.namespace.clone();
+    // `install_paths` addresses a package by URI, the same value the toolbar's
+    // own download control passes.
+    let uri_for_scope = uri.as_ref().map(std::string::ToString::to_string);
     let syncs_entire_package = data.syncs_entire_package;
     let whole_package = scope_gate && syncs_entire_package;
     // What switching *into* whole-package scope catches up on. Under the narrow
@@ -335,6 +338,7 @@ pub(super) fn InstalledPackageContent(
                     <Show when=move || scope_gate>
                         <SyncScopeBand
                             namespace=namespace_for_scope.clone()
+                            uri=uri_for_scope.clone()
                             entire_package=syncs_entire_package
                             pending=pending_downloads
                             notification=notification
@@ -345,6 +349,7 @@ pub(super) fn InstalledPackageContent(
 
                     <Show when=move || show_toolbar>
                         <EntriesToolbar
+                            below_sync_scope=scope_gate
                             whole_package=whole_package
                             standing_line=STANDING_SCOPE_LINE
                             has_remote_entries=has_remote_entries

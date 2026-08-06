@@ -14,6 +14,11 @@ use crate::util::format_size;
 // ── Entries toolbar ──
 
 #[component]
+#[allow(
+    clippy::fn_params_excessive_bools,
+    reason = "Leptos props are named at every call site, so the mis-ordering \
+              this lint guards against cannot happen here"
+)]
 pub(super) fn EntriesToolbar(
     /// Whether this package is on whole-package scope. It changes what the
     /// left slot holds, and the slot is never left empty: select-all plus the
@@ -35,11 +40,15 @@ pub(super) fn EntriesToolbar(
     ignored_count: usize,
     unmodified_count: usize,
     with_status: bool,
+    /// Whether the sync-scope band is rendered above this toolbar. Both are
+    /// sticky, so the one underneath has to stick lower or the two overlap.
+    below_sync_scope: bool,
 ) -> impl IntoView {
-    let toolbar_class = if with_status {
-        "qui-entries-toolbar with-status"
-    } else {
-        "qui-entries-toolbar"
+    let toolbar_class = match (with_status, below_sync_scope) {
+        (true, true) => "qui-entries-toolbar with-status below-sync-scope",
+        (true, false) => "qui-entries-toolbar with-status",
+        (false, true) => "qui-entries-toolbar below-sync-scope",
+        (false, false) => "qui-entries-toolbar",
     };
 
     view! {
@@ -411,6 +420,7 @@ mod tests {
         let el = mount(move || {
             view! {
                 <EntriesToolbar
+                    below_sync_scope=false
                     whole_package=false
                     standing_line="Files added later are downloaded too."
                     has_remote_entries=true
