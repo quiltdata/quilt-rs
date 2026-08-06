@@ -1,0 +1,73 @@
+//! One installed package, as a list row.
+//!
+//! # The whole row is one link
+//!
+//! An `<a>`, not a `div` with a click handler, and that is the difference from
+//! [`FileRow`](super::FileRow) rather than a detail of it. A package is a *place
+//! you go*; a file is a *thing you act on*. So this row has one destination and no
+//! controls at all — which is what lets it be a real anchor, with middle-click,
+//! open-in-new-tab, the status bar preview and keyboard activation for free.
+//!
+//! `FileRow` cannot do that: it has two destinations and three actions, and nested
+//! `<a>` is invalid, so it pays for its children with a `role="button"` div.
+//!
+//! # Plain at rest
+//!
+//! No link colour, no chevron, no underline — not even on hover, where the row's
+//! background tint is the whole affordance. Link colouring is a document
+//! convention; this is an application, where a row is an object. And a tint on
+//! every row at rest stops signalling anything: forty tinted lines read as the
+//! list's typeface, not as forty invitations.
+
+use leptos::prelude::*;
+
+use super::RelativeTime;
+use super::StateLabel;
+use super::countdown::EpochMillis;
+use super::state_label::StateTone;
+
+stylance::import_crate_style!(style, "src/kit/package_row.module.scss");
+
+#[component]
+pub fn PackageRow(
+    /// `owner/name`. Truncates from the **right**, unlike `FileRow`'s path: a
+    /// namespace is distinguished by its start, and there is no filename at the end
+    /// worth saving.
+    #[prop(into)]
+    namespace: String,
+    /// The package page. A real `href`, so the browser owns the navigation.
+    #[prop(into)]
+    href: String,
+    /// When the package last changed. `None` prints an explicit word rather than
+    /// leaving the column blank — it should not happen, and a blank cell is
+    /// indistinguishable from a cell that failed to render.
+    #[prop(optional)]
+    changed_at: Option<EpochMillis>,
+    /// The state, in the page's words, and its tone. Two props rather than one
+    /// struct: the caller maps a DTO status to this pair in one place, and a struct
+    /// would only move the pairing without checking it.
+    #[prop(into)]
+    state: String,
+    tone: StateTone,
+) -> impl IntoView {
+    view! {
+        <a class=style::root href=href>
+            <span class=style::namespace>{namespace}</span>
+            <span class=style::time>
+                {changed_at
+                    .map_or_else(
+                        || {
+                            view! {
+                                <span title="This package has no recorded change time">
+                                    "unknown"
+                                </span>
+                            }
+                                .into_any()
+                        },
+                        |at| view! { <RelativeTime at=at /> }.into_any(),
+                    )}
+            </span>
+            <StateLabel tone=tone>{state}</StateLabel>
+        </a>
+    }
+}

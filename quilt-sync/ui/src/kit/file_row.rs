@@ -81,7 +81,9 @@ pub fn FileRow(
             >
                 {package}
             </a>
-            <RelativeTime at=at />
+            <span class=style::time>
+                <RelativeTime at=at />
+            </span>
             <span class=style::actions on:click=|ev: MouseEvent| ev.stop_propagation()>
                 <IconButton
                     icon=folder_icon()

@@ -74,6 +74,24 @@
   color: var(--q-fg-default);
 }
 
+/* A fixed 80px column, right-aligned, rather than a slot that hugs its text. The
+ * ellipsis is on this wrapper and not on `RelativeTime`, which keeps that a text
+ * primitive: a relative time used inline in a sentence should still size to its
+ * content, and only a row wants a column.
+ *
+ * 80px is 20 grid units and it is TIGHT — "23 hours ago" and "2 months ago" are
+ * twelve characters and land within a few pixels of the edge at 14px. The last
+ * story cell is a column of the worst-case phrases for exactly this reason; if any
+ * of them ellipsise, this wants 96px, or the phrases want shortening. */
+.time {
+  flex: none;
+  width: 80px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Always visible, not revealed on hover. The cost is three glyphs on every row;
  * the gain is that the actions are discoverable without hovering, survive a
  * screenshot, and are obvious to anyone who navigates by keyboard. */
