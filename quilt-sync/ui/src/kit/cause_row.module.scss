@@ -11,38 +11,21 @@
   display: flex;
   align-items: flex-start;
   width: 100%;
-  gap: var(--q-space-2);
-  /* No left padding: the expander's 24px hit area starts the row, and padding here
-   * would push the disclosure column off the alignment `QueueRow` reserves for it. */
-  padding: 6px 2px 6px 0;
-  /* Tone comes in as one custom property, set by the modifier below. Only the glyph
-   * and nothing else — the text stays at full contrast, because a cause is the most
-   * important line in the region and tinting it would make it recede. */
+  /* Matches `QueueRow`'s gap, which is what makes the two rows' text start at the
+   * same x — both lead with a 24px column and this gap follows it. */
+  gap: var(--q-space-3);
+  /* The 2px left padding matches `QueueRow`'s exactly, and it has to: the disclosure
+   * column starts after it in both rows, so 2px here and 0 there would misalign the
+   * chevron against the bullets by 2px — small, and visible the moment the rows are
+   * adjacent, which they always are. */
+  padding: 6px 2px;
   color: var(--q-fg-default);
 }
 
-.attention { --cause-mark: var(--q-attention-fg); }
-.danger { --cause-mark: var(--q-danger-fg); }
-
-/* 14px against the state labels' 12px: this is a region-level statement, not a row's
- * trailing annotation, and the size is the only thing saying so.
- *
- * `.root > svg` and not `.root svg`, or this would also catch the chevron inside the
- * expander button — which is a control and must not take the tone's colour.
- *
- * The row is `flex-start` aligned, not centred, because it wraps to two or three
- * lines and a centred glyph would drift to the middle of the paragraph. So the glyph
- * and the text are each nudged to sit on the FIRST line instead: the expander is the
- * tallest leading item at 24px, and 14px and a 20px line box centre inside it at 5px
- * and 2px. Derived from the expander's height — change one, change all three. */
-.root > svg {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  margin-top: 5px;
-  color: var(--cause-mark);
-}
-
+/* The row is `flex-start` aligned, not centred, because it wraps to two or three lines
+ * and a centred control would drift to the middle of the paragraph. So the text is
+ * nudged onto the FIRST line instead: the expander is 24px, a 20px line box centres
+ * inside it at 2px. Derived from the expander's height. */
 .text {
   flex: 1 1 auto;
   min-width: 0;
@@ -51,7 +34,10 @@
 }
 
 /* Muted, and part of the same text flow rather than pushed right. The count is a
- * clause of the sentence — "…— 11 packages" — so it wraps with it. */
+ * clause of the sentence — "…— 11 packages" — so it wraps with it.
+ *
+ * This is where a severity tint would go if the region ever wants one back; see the
+ * module doc on why there is no tone here now. */
 .count {
   color: var(--q-fg-muted);
 }
@@ -104,8 +90,10 @@
   transition: transform 120ms ease;
 }
 
+/* Right at rest, down when open — 90 degrees, not 180. The glyph is drawn pointing
+ * right, so this is the only rotation in play. */
 .expander[aria-expanded="true"] svg {
-  transform: rotate(180deg);
+  transform: rotate(90deg);
 }
 
 /* Rotation is decoration; `aria-expanded` is the state. Stopping the transition

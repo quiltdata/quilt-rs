@@ -14,15 +14,32 @@
    * past its container instead of ellipsising. */
   width: 100%;
   gap: var(--q-space-3);
-  /* Left padding reserves `CauseRow`'s 24px disclosure column plus its 8px gap, so a
-   * cause and a package start their text at the same x. Without it the parent row
-   * would be indented past its own children, which reads as the wrong hierarchy.
-   *
-   * An empty span would do the same job and put an empty element in every row; this
-   * is the same reservation expressed as space. Both numbers live in
-   * `cause_row.module.scss` — change them there and here together. */
-  padding: 4px 2px 4px calc(24px + var(--q-space-2));
+  padding: 4px 2px;
   min-height: 30px;
+}
+
+/* The disclosure column, occupied by a bullet rather than left empty. Same 24px as
+ * `CauseRow`'s expander, so a cause and a package start their text at the same x and
+ * the parent is not indented past its own children.
+ *
+ * A bullet rather than blank space because the column is structural: with it, the
+ * region reads as one list whose items either expand or do not. Blank space read as a
+ * missing element. */
+.bullet {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  align-self: stretch;
+}
+
+.bullet::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--q-border-strong);
 }
 
 /* Truncates right. The namespace is the row's subject, so it yields space to the
@@ -40,26 +57,21 @@
  * There the labels repeat and the odd one out should break the pattern; here every
  * row differs and the buttons are what the eye travels down.
  *
- * Right-aligned inside it, so the RIGHT edges form the straight line — every action
- * in the region ends at the region's right edge, including `CauseRow`'s, which is why
- * its expander had to move off that edge. The left edges stay ragged, which is
- * correct: they follow the verb's length and the verb is the information.
- *
- * 152px is wide enough for `Choose S3 bucket`, the longest of the six actions. It
- * exists so the state labels to its left do not shuffle horizontally from row to
- * row. */
+ * No fixed width: the action hugs its label and sits at the region's right edge, so
+ * the RIGHT edges form the straight line and the left edges follow the verb's length.
+ * A fixed column would align the left edges too, at the cost of padding every short
+ * verb out to the width of `Choose S3 bucket` — which buys tidiness with space, and
+ * makes the state labels sit further from the namespace they describe. */
 .action {
   flex: none;
   display: flex;
-  justify-content: flex-end;
-  width: 152px;
 }
 
-/* An expanded cause's packages. Indented to start where the CAUSE's text starts —
- * the disclosure column, plus the cause's 14px glyph and its gap — so a sub-row sits
- * under the sentence it is evidence for rather than merely somewhere to the right.
+/* An expanded cause's packages, indented by exactly one column — the disclosure width
+ * plus its gap — so a sub-row's own bullet sits where the parent's text starts. One
+ * indent step, the same unit a tree uses, rather than a number chosen to look right.
  * Quieter too, because it is evidence and not a decision of its own. */
 .sub {
-  padding-left: calc(24px + var(--q-space-2) + 14px + var(--q-space-2));
+  padding-left: calc(24px + var(--q-space-3));
   color: var(--q-fg-muted);
 }

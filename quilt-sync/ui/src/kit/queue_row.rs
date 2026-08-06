@@ -54,6 +54,10 @@ pub fn QueueRow(
 
     view! {
         <div class=class>
+            // The list bullet, filling the column `CauseRow` uses for its expander.
+            // Empty of text, so it says nothing to a screen reader — the row's own
+            // words are the content and a bullet is not one of them.
+            <span class=style::bullet></span>
             <span class=style::namespace>{namespace}</span>
             {state
                 .zip(tone)

@@ -203,7 +203,6 @@ fn CauseRowStory() -> impl IntoView {
                     text="Signed out from custom.registry.io"
                     count=11
                     expanded=signed_out
-                    tone=StateTone::Danger
                     trailing=view! {
                         <Button on_click=|_| ()>
                             "Sign in"
@@ -217,7 +216,6 @@ fn CauseRowStory() -> impl IntoView {
                     text="No access as analyst on custom.registry.io, 3 packages in s3://team-bucket"
                     count=3
                     expanded=role
-                    tone=StateTone::Attention
                     trailing=view! { "Change your role in Accounts, above." }.into_any()
                 />
                 <Show when=move || role.get()>
@@ -231,7 +229,6 @@ fn CauseRowStory() -> impl IntoView {
                     text="Signed out from open.quiltdata.com"
                     count=1
                     expanded=single
-                    tone=StateTone::Danger
                     trailing=view! {
                         <Button on_click=|_| ()>
                             "Sign in"
@@ -246,7 +243,6 @@ fn CauseRowStory() -> impl IntoView {
                           in s3://quilt-enterprise-eu-west-1-in-progress"
                     count=14
                     expanded=long
-                    tone=StateTone::Attention
                     trailing=view! { "Change your role in Accounts, above." }.into_any()
                 />
             </Cell>
@@ -279,7 +275,6 @@ pub fn QueueScene() -> impl IntoView {
                 text="Signed out from custom.registry.io"
                 count=11
                 expanded=signed_out
-                tone=StateTone::Danger
                 trailing=view! {
                     <Button on_click=|_| ()>
                         "Sign in"
@@ -298,7 +293,6 @@ pub fn QueueScene() -> impl IntoView {
                 text="No access as analyst on custom.registry.io, 3 packages in s3://team-bucket"
                 count=3
                 expanded=role
-                tone=StateTone::Attention
                 trailing=view! { "Change your role in Accounts, above." }.into_any()
             />
             <Show when=move || role.get()>
