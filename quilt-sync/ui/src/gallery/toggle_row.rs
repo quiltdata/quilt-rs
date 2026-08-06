@@ -40,7 +40,15 @@ fn TrailingStates() -> impl IntoView {
                   \
                   It is a StateLabel rather than plain text, so the pause gets the tone's \
                   glyph and survives greyscale like every other attention state on the \
-                  page. The recovery is NOT here — see the paused scene for why."
+                  page. \
+                  \
+                  There is no Resume button, here or anywhere. All six PausedReason \
+                  variants are things the USER must fix — RoleDenied says outright that \
+                  retrying cannot help, and Other is documented as non-transient — so a \
+                  resume control would offer to retry something that pauses again on the \
+                  next tick. The fix always lives in the queue row that named the reason, \
+                  and publishing or resolving clears the pause as a side effect. See the \
+                  two paused scenes."
         >
             <Cell wide=true label="armed — a next tick exists">
                 <Card title="Autosync">

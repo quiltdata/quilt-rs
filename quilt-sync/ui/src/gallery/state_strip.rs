@@ -11,14 +11,15 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::kit::Button;
+use crate::kit::ButtonVariant;
 use crate::kit::Card;
-use crate::kit::CauseRow;
 use crate::kit::Countdown;
 use crate::kit::HostRow;
 use crate::kit::QueueRow;
 use crate::kit::StateLabel;
 use crate::kit::StateTone;
 use crate::kit::ToggleRow;
+use crate::kit::ZeroLine;
 
 fn in_secs(secs: f64) -> Signal<Option<f64>> {
     let at = js_sys::Date::now() + secs * 1000.0;
@@ -98,35 +99,60 @@ pub fn StateStripRegion() -> impl IntoView {
     }
 }
 
-/// The paused case, and the two regions together — because the pairing *is* the
-/// design, and neither half is right alone.
+/// The paused case. Two scenes, because the interesting thing is the difference
+/// between them — and neither one has a `[Resume]` button, which is the correction.
+///
+/// # Every pause reason is the user's to fix
+///
+/// All six `PausedReason` variants require an action, and every one already has a
+/// queue row that carries it:
+///
+/// | Reason | Queue row | Action |
+/// |---|---|---|
+/// | `PendingChanges` | `2 files changed` | `[Publish]` |
+/// | `PendingCommit` | `Revision not published` | `[Publish]` |
+/// | `Diverged` | `Changed in both places` | `[Resolve]` |
+/// | `PullConflict(files)` | `conflicts in N files` | `[Publish]` |
+/// | `RoleDenied { role }` | `No access as analyst` | points at Accounts |
+/// | `Other(msg)` | the message | whatever it names |
+///
+/// `RoleDenied` says outright that *"retrying cannot help — the role has to change
+/// first"*, and `Other` is documented as non-transient. So there is no reason for which
+/// "resume" is the fix, and a `[Resume]` button would offer to retry something that
+/// will pause again on the next tick.
+///
+/// It follows that **a pause is never its own queue row.** It is a consequence of a
+/// state the queue already lists, and listing consequences beside causes would count
+/// the same packages twice — including in the region's own header count.
 #[component]
 pub fn PausedScene() -> impl IntoView {
+    view! { <PausedWithReason /> <PausedStale /> }
+}
+
+/// The paused label used in both scenes, so the two cannot drift apart on the one
+/// thing they are being compared on.
+fn paused() -> AnyView {
+    view! { <StateLabel tone=StateTone::Attention>"Paused"</StateLabel> }.into_any()
+}
+
+#[component]
+fn PausedWithReason() -> impl IntoView {
     let pull = RwSignal::new(true);
     let publish = RwSignal::new(true);
-    let expanded = RwSignal::new(false);
 
     view! {
         <Scene
-            title="Scene · autosync paused"
-            note="The 2026-07-11 report in one screen: autosync stopped on a transient \
-                  error, never re-armed, and said nothing — so every package read \
-                  un-published while the switch read on, and the only recovery was \
-                  restarting the app. \
+            title="Scene · paused, with a reason"
+            note="The ordinary case, and there is no [Resume] anywhere in it. The card \
+                  REPORTS that publishing is on and not operating; the queue already \
+                  EXPLAINS why and carries the fix. Publish those two files and the pause \
+                  clears as a side effect, because committing is one of the seven sites \
+                  that calls clear_paused. \
                   \
-                  The fix is split across two regions on purpose, and the split follows a \
-                  rule the page already has. The CARD REPORTS: it says the setting is on \
-                  and not operating, and carries no control, because the state strip's job \
-                  is to say what is running. The QUEUE ACTS: a paused autosync affecting 13 \
-                  packages is a shared cause with a count and an expander, which is exactly \
-                  what a CauseRow is — and the queue is where the user already looks for \
-                  things that need them. \
-                  \
-                  One control, one scope. Putting [Resume] in both places would be the \
-                  duplication the vocabulary spec bans: a link may appear at two \
-                  granularities because it asserts nothing about what it governs, but a \
-                  control asserts \"the fix is here, at this scope\", so the same control \
-                  twice makes one of them a lie."
+                  So the paused label is a pointer, not a problem of its own: it tells you \
+                  the switch is not lying, and the row below tells you what to do. Adding a \
+                  paused row to the queue would count the same packages twice — once as the \
+                  cause and once as its consequence — including in the header count."
         >
             <div class="g-strip">
                 <Card title="Autosync">
@@ -146,40 +172,80 @@ pub fn PausedScene() -> impl IntoView {
                     />
                     // Checked and enabled, and both matter. The setting is on — what
                     // stopped is the machinery — and flipping it off and on is one of only
-                    // three ways to clear the pause today, so disabling it would take away
-                    // the user's only lever.
+                    // three ways to clear the pause today, so disabling it would remove the
+                    // user's only lever.
                     <ToggleRow
                         label="Publish your changes"
                         sublabel="5 min after your last edit"
                         checked=publish
-                        trailing=view! {
-                            <StateLabel tone=StateTone::Attention>"Paused"</StateLabel>
-                        }
-                            .into_any()
+                        trailing=paused()
                     />
                 </Card>
             </div>
-            <Card title="Needs your attention" count=13>
+            <Card title="Needs your attention" count=1>
                 <div>
-                    <CauseRow
-                        text="Publishing paused after a network error"
-                        count=13
-                        expanded=expanded
-                        trailing=view! {
-                            <Button on_click=|_| ()>
-                                "Resume"
+                    <QueueRow
+                        namespace="user/package-b"
+                        state="2 files changed"
+                        tone=StateTone::Neutral
+                        action=view! {
+                            <Button variant=ButtonVariant::Primary on_click=|_| ()>
+                                "Publish"
                             </Button>
                         }
                             .into_any()
                     />
-                    <Show when=move || expanded.get()>
-                        {["user/package-a", "user/package-b", "org/dataset-c"]
-                            .into_iter()
-                            .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
-                            .collect_view()}
-                        <QueueRow namespace="…and 10 more" sub=true />
-                    </Show>
                 </div>
+            </Card>
+        </Scene>
+    }
+}
+
+#[component]
+fn PausedStale() -> impl IntoView {
+    let stale_pull = RwSignal::new(true);
+    let stale_publish = RwSignal::new(true);
+
+    view! {
+        <Scene
+            title="Scene · paused with nothing to fix — the 2026-07-11 bug"
+            note="THIS IS THE FAILURE STATE, rendered rather than described. The card says \
+                  paused and the queue says everything is Latest, which is a flat \
+                  contradiction — and it is exactly what the 2026-07-11 diagnostic bundle \
+                  showed: data.json had all 13 packages fully synced, commit == null and \
+                  base_hash == latest_hash, so the reason had gone away while the pause \
+                  persisted in memory. The user's only recovery was restarting the app. \
+                  \
+                  It cannot self-heal because autopull's tick skips any namespace already \
+                  in the paused set, so the tick that would prove the condition cleared is \
+                  the one that never runs. \
+                  \
+                  The fix is NOT a button. This state should not be reachable, and \
+                  qhq-usw0 is the bug. The escape hatch is deliberately left out of this \
+                  scene, because drawing one would make a backend defect look like a \
+                  feature — and because the UI cannot tell this case from the one above \
+                  unless the queue and the paused set are derived from ONE resolved state. \
+                  Today they are assembled from two sources, which is what lets them \
+                  disagree."
+        >
+            <div class="g-strip">
+                <Card title="Autosync">
+                    <ToggleRow
+                        label="Get new revisions"
+                        sublabel="Every 30s, when nothing is changed here"
+                        checked=stale_pull
+                        trailing=paused()
+                    />
+                    <ToggleRow
+                        label="Publish your changes"
+                        sublabel="5 min after your last edit"
+                        checked=stale_publish
+                        trailing=paused()
+                    />
+                </Card>
+            </div>
+            <Card title="Needs your attention">
+                <ZeroLine text="Everything is Latest — 13 packages" />
             </Card>
         </Scene>
     }
