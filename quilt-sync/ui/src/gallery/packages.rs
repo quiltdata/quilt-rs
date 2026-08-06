@@ -230,6 +230,17 @@ fn fixtures() -> Vec<(&'static str, &'static str, &'static str, StateTone, f64)>
             latest.1,
             70.0 * DAY,
         ),
+        // Deliberately a `user/` package in someone else's bucket. Without one, every
+        // prefix here would sit in exactly one bucket and the two axes would produce
+        // the same groups with different names — which would hide the reason the
+        // annotation exists on one axis and not the other.
+        (
+            "s3://org-archive",
+            "user/shared-archive",
+            latest.0,
+            latest.1,
+            11.0 * DAY,
+        ),
     ];
     // Pad the healthy bucket, because five green rows and forty green rows are
     // different design questions and only one of them is ours.
@@ -260,15 +271,24 @@ fn fixtures() -> Vec<(&'static str, &'static str, &'static str, StateTone, f64)>
 /// condition is a fixture, but the real page reads the cause off a DTO as an
 /// `Option` and will hit this. Noted rather than fixed: changing the prop would
 /// cost every caller that passes a literal.
-fn header(bucket: &'static str, count: usize) -> AnyView {
-    // Only the bucket axis carries a cause: a prefix spans buckets, so no cause is
-    // a property of the group.
-    if bucket == "s3://team-bucket" {
-        view! { <GroupHeader title=bucket count=count annotation="no access as analyst" /> }
+fn header(title: &'static str, count: usize, bucket_axis: bool) -> AnyView {
+    // Only the bucket axis carries a cause. A prefix spans buckets — `user/` has
+    // packages in two of them here — so no cause can be a property of a prefix group,
+    // and the slot stays empty rather than repeating a per-row problem.
+    if bucket_axis && title == "s3://team-bucket" {
+        view! { <GroupHeader title=title count=count annotation="no access as analyst" /> }
             .into_any()
     } else {
-        view! { <GroupHeader title=bucket count=count /> }.into_any()
+        view! { <GroupHeader title=title count=count /> }.into_any()
     }
+}
+
+/// The namespace's owner segment, with its slash — `user/package-a` groups under
+/// `user/`. Borrowed from a `&'static str`, so the group key needs no allocation.
+fn prefix(namespace: &'static str) -> &'static str {
+    namespace
+        .split_once('/')
+        .map_or(namespace, |(owner, _)| &namespace[..=owner.len()])
 }
 
 fn row(entry: (&'static str, &'static str, &'static str, StateTone, f64)) -> AnyView {
@@ -329,32 +349,44 @@ pub fn PackagesRegion() -> impl IntoView {
                 </ListToolbar>
                 {move || {
                     let rows = fixtures();
-                    if group.get() == "Bucket" {
-                        let mut order: Vec<&'static str> = Vec::new();
-                        for (bucket, ..) in &rows {
-                            if !order.contains(bucket) {
-                                order.push(*bucket);
-                            }
-                        }
-                        order
-                            .into_iter()
-                            .map(|bucket| {
-                                let group_rows: Vec<_> = rows
-                                    .iter()
-                                    .copied()
-                                    .filter(|(b, ..)| *b == bucket)
-                                    .collect();
-                                view! {
-                                    {header(bucket, group_rows.len())}
-                                    {group_rows.into_iter().map(row).collect_view()}
-                                }
-                                    .into_any()
-                            })
-                            .collect_view()
-                            .into_any()
-                    } else {
-                        rows.into_iter().map(row).collect_view().into_any()
+                    let axis = group.get();
+                    if axis == "None" {
+                        return rows.into_iter().map(row).collect_view().into_any();
                     }
+                    let bucket_axis = axis == "Bucket";
+                    // One path for both axes, differing only in the key. Grouping by
+                    // prefix used to fall through to the flat list, which read as
+                    // "sorted by prefix" — the same rows in the same order with no
+                    // headers at all.
+                    let key = move |entry: &(&'static str, &'static str, &str, StateTone, f64)| {
+                        if bucket_axis { entry.0 } else { prefix(entry.1) }
+                    };
+                    // First-appearance order, not sorted: the fixture order is the
+                    // page's sort order, and re-sorting the groups here would hide
+                    // whatever the Sort control did.
+                    let mut order: Vec<&'static str> = Vec::new();
+                    for entry in &rows {
+                        let k = key(entry);
+                        if !order.contains(&k) {
+                            order.push(k);
+                        }
+                    }
+                    order
+                        .into_iter()
+                        .map(|group_key| {
+                            let group_rows: Vec<_> = rows
+                                .iter()
+                                .copied()
+                                .filter(|entry| key(entry) == group_key)
+                                .collect();
+                            view! {
+                                {header(group_key, group_rows.len(), bucket_axis)}
+                                {group_rows.into_iter().map(row).collect_view()}
+                            }
+                                .into_any()
+                        })
+                        .collect_view()
+                        .into_any()
                 }}
             </div>
         </Card>
@@ -375,7 +407,13 @@ pub fn PackagesScene() -> impl IntoView {
                   The toolbar differs from the files view: this one adds Sort and Create \
                   package, and Group offers Bucket / Prefix / None rather than \
                   None / Package. ListToolbar holds nothing itself, which is what lets \
-                  the two views compose different controls."
+                  the two views compose different controls. \
+                  \
+                  All three Group options are live. Switch between Bucket and Prefix and \
+                  watch user/shared-archive move: it is a user/ package in s3://org-archive, \
+                  so the two axes cut the same list differently. That is also why only the \
+                  bucket axis annotates a group with a shared cause — a prefix spans \
+                  buckets, so no cause can be a property of one."
         >
             <PackagesRegion />
         </Scene>
