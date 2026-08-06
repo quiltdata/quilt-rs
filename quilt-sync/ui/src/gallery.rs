@@ -37,6 +37,7 @@ mod gallery {
     pub mod recent_files;
     pub mod search_input;
     pub mod select;
+    pub mod skeleton;
     pub mod state_label;
     pub mod state_strip;
     pub mod toggle_row;
@@ -59,6 +60,7 @@ use crate::gallery::recent_files::RecentFilesScene;
 use crate::gallery::recent_files::RecentFilesStories;
 use crate::gallery::search_input::SearchInputStories;
 use crate::gallery::select::SelectStories;
+use crate::gallery::skeleton::SkeletonStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
 use crate::gallery::state_strip::StateStripScene;
@@ -111,6 +113,7 @@ fn Gallery() -> impl IntoView {
         ("SearchInput", view! { <SearchInputStories /> }.into_any()),
         ("StateLabel", view! { <StateLabelStories /> }.into_any()),
         ("PackageRow", view! { <PackageRowStories /> }.into_any()),
+        ("Skeleton", view! { <SkeletonStories /> }.into_any()),
         ("Queue parts", view! { <QueueStories /> }.into_any()),
         (
             "Recent files parts",

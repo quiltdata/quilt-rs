@@ -17,6 +17,7 @@
 
 use leptos::prelude::*;
 
+use super::Skeleton;
 use super::StateLabel;
 use super::state_label::StateTone;
 
@@ -63,6 +64,29 @@ pub fn QueueRow(
                 .zip(tone)
                 .map(|(state, tone)| view! { <StateLabel tone=tone>{state}</StateLabel> })}
             {action.map(|action| view! { <span class=style::action>{action}</span> })}
+        </div>
+    }
+}
+
+/// The same row with its content unknown. Shares `.root` for the reason
+/// [`PackageRowSkeleton`](super::PackageRowSkeleton) does — equal height, by construction
+/// rather than by copying numbers.
+///
+/// The bullet stays. It is structure rather than data: it holds the column `CauseRow`
+/// uses for its expander, and a skeleton that dropped it would shift every row sideways
+/// when the real content arrived.
+#[component]
+pub fn QueueRowSkeleton() -> impl IntoView {
+    view! {
+        <div class=style::root>
+            <span class=style::bullet></span>
+            <span class=style::namespace>
+                <Skeleton width="32%" />
+            </span>
+            <Skeleton width="120px" height="22px" />
+            <span class=style::action>
+                <Skeleton width="76px" height="26px" />
+            </span>
         </div>
     }
 }

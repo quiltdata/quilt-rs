@@ -68,3 +68,13 @@
  * rows that say "Latest"; leaving it ragged means the forty identical boxes form
  * a pattern and the three that differ break it, which is what scanning a list
  * actually uses. */
+
+/* The skeleton variant, sharing `.root` for its geometry and switching off the two things
+ * that would lie about it: a pointer cursor and a hover tint on something inert. */
+.skeleton {
+  cursor: default;
+}
+
+.skeleton:hover {
+  background: none;
+}

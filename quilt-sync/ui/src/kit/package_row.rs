@@ -22,6 +22,7 @@
 use leptos::prelude::*;
 
 use super::RelativeTime;
+use super::Skeleton;
 use super::StateLabel;
 use super::countdown::EpochMillis;
 use super::state_label::StateTone;
@@ -69,5 +70,31 @@ pub fn PackageRow(
             </span>
             <StateLabel tone=tone>{state}</StateLabel>
         </a>
+    }
+}
+
+/// The same row with its content unknown.
+///
+/// It reuses `PackageRow`'s own `.root` class rather than restating the padding, which is
+/// the only way the two are guaranteed to be the same height — and equal height is the
+/// whole point. A skeleton a few pixels shorter than the row it stands in for makes the
+/// list jump at the exact moment the user starts reading it.
+///
+/// `.skeleton` switches off the affordance: no pointer cursor and no hover tint, because
+/// nothing here responds to a click.
+#[component]
+pub fn PackageRowSkeleton() -> impl IntoView {
+    view! {
+        <div class=format!("{} {}", style::root, style::skeleton)>
+            <span class=style::namespace>
+                <Skeleton width="38%" />
+            </span>
+            <span class=style::time>
+                <Skeleton width="100%" />
+            </span>
+            // 88px is roughly `Latest` in a state label. A percentage would be wrong here:
+            // the label's width is set by its words, not by the row.
+            <Skeleton width="88px" height="22px" />
+        </div>
     }
 }
