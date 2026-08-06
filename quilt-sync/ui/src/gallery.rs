@@ -60,6 +60,7 @@ use crate::gallery::recent_files::RecentFilesStories;
 use crate::gallery::search_input::SearchInputStories;
 use crate::gallery::select::SelectStories;
 use crate::gallery::state_label::StateLabelStories;
+use crate::gallery::state_strip::PausedScene;
 use crate::gallery::state_strip::StateStripScene;
 use crate::gallery::toggle_row::ToggleRowStories;
 use crate::gallery::view_toggle::ViewToggleStories;
@@ -118,6 +119,10 @@ fn Gallery() -> impl IntoView {
         (
             "Scene · state strip",
             view! { <StateStripScene /> }.into_any(),
+        ),
+        (
+            "Scene · autosync paused",
+            view! { <PausedScene /> }.into_any(),
         ),
         (
             "Scene · list toolbar",
