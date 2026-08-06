@@ -241,7 +241,10 @@ pub struct LogReporter;
 
 impl StatusReporter for LogReporter {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
-        info!(
+        // `debug`, not `info`: one line per package per tick. It is a progress
+        // signal — the same reason it is not a countable event — and at info it
+        // filled the log with hundreds of "up_to_date, no changes" a minute.
+        debug!(
             "autosync: namespace={namespace} status={} has_changes={}",
             event.status, event.has_changes,
         );
@@ -362,7 +365,10 @@ impl TauriEventReporter {
 
 impl StatusReporter for TauriEventReporter {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
-        info!(
+        // `debug`, not `info`: one line per package per tick. It is a progress
+        // signal — the same reason it is not a countable event — and at info it
+        // filled the log with hundreds of "up_to_date, no changes" a minute.
+        debug!(
             "autosync: namespace={namespace} status={} has_changes={}",
             event.status, event.has_changes,
         );

@@ -6,7 +6,7 @@ use std::time::SystemTime;
 
 use ignore::gitignore::Gitignore;
 use tracing::debug;
-use tracing::info;
+use tracing::trace;
 use tracing::warn;
 
 use crate::Error;
@@ -198,7 +198,7 @@ pub async fn create_status(
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
-    info!(
+    debug!(
         "⏳ Creating status for working directory: {}",
         package_home.as_ref().display()
     );
@@ -210,10 +210,14 @@ pub async fn create_status(
     // installed entries marked as "installed" (initially as "downloading")
     // modified entries marked as "modified", etc
 
-    debug!("⏳ Collecting paths from lineage");
+    trace!("⏳ Collecting paths from lineage");
     let mut orig_paths = HashMap::new();
     for path in lineage.paths.keys() {
-        debug!("🔍 Checking manifest for path: {}", path.display());
+        // `trace`, not `debug`: this fires once per *file*, and status is recomputed
+        // for every installed package on every autosync tick. At debug it was 86%
+        // of a real log — thirty thousand lines in ten minutes — which made the
+        // file useless to read and buried everything else.
+        trace!("🔍 Checking manifest for path: {}", path.display());
         match manifest.get_record(path) {
             Some(row) => {
                 orig_paths.insert(path.clone(), row.clone());
@@ -272,7 +276,7 @@ pub async fn create_status(
     status.ignored_files = ignored_files;
     status.junky_changes = junky_changes;
     status.most_recent_mtime = locate_result.most_recent_mtime;
-    info!(
+    debug!(
         "✔️ Status created with {} changes, {} ignored, {} junky",
         status.changes.len(),
         status.ignored_files.len(),

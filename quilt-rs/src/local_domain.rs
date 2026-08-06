@@ -3,7 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::Res;
 use crate::flow;
@@ -211,10 +211,10 @@ impl LocalDomain {
         &self,
         namespace: &Namespace,
     ) -> Res<Option<InstalledPackage>> {
-        debug!("Looking up installed package: {}", namespace);
+        trace!("Looking up installed package: {}", namespace);
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
-            debug!("Found installed package: {}", namespace);
+            trace!("Found installed package: {}", namespace);
             Ok(Some(self.create_installed_package(namespace.to_owned())?))
         } else {
             debug!("Package not found: {}", namespace);
