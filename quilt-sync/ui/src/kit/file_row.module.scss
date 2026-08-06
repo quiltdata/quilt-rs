@@ -42,7 +42,15 @@
 }
 
 /* A chip, which is what keeps it distinguishable from the path without spending
- * colour — the two targets differ by shape, not by tint. */
+ * colour — the two targets differ by shape, not by tint. "Shape" means bordered
+ * box against bare mono text; it never meant the corner radius.
+ *
+ * Now the same shape as a `StateLabel`, and NOT one. This reports a package and
+ * links to it; a `StateLabel` reports a state and cannot be clicked. That is
+ * Primer's `Label` / `StateLabel` split, and the two differ where it counts: this
+ * has a hover, a focus ring and an `href`, truncates at 30% because a namespace
+ * can be long, and carries no glyph — it has no tone to pick one from. If a
+ * second caller ever wants this, extract Primer's `Label`, not this one. */
 .tag {
   flex: none;
   max-width: 30%;
@@ -51,7 +59,7 @@
   white-space: nowrap;
   padding: 0 var(--q-space-2);
   border: 1px solid var(--q-border-muted);
-  border-radius: var(--q-radius-pill);
+  border-radius: var(--q-radius);
   color: var(--q-fg-muted);
   text-decoration: none;
 }

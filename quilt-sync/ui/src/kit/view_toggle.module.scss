@@ -17,7 +17,7 @@
   max-width: 100%;
   padding: 2px;
   border: 1px solid var(--q-border-default);
-  border-radius: var(--q-radius-md);
+  border-radius: var(--q-radius);
   background: var(--q-canvas-default);
 }
 
@@ -47,7 +47,11 @@
 .text {
   display: block;
   padding: 3px 11px;
-  border-radius: var(--q-radius-sm);
+  /* The one nested case in the kit: the segment fills the shell's 2px padding, so
+   * its corner sits 2px inside the shell's. An equal radius would bulge against
+   * the outer curve, so it is the outer radius minus the inset — written as the
+   * subtraction rather than as a second token, because that is the actual rule. */
+  border-radius: calc(var(--q-radius) - 2px);
   color: var(--q-fg-muted);
   white-space: nowrap;
   overflow: hidden;

@@ -82,7 +82,7 @@ body {
  * the width the region actually gets, not a column. */
 .g-scene {
   border: 1px dashed var(--q-border-default);
-  border-radius: var(--q-radius-lg);
+  border-radius: var(--q-radius);
   background: var(--q-canvas-page);
   padding: var(--q-space-3);
 }
@@ -93,7 +93,7 @@ body {
 
 .g-cell {
   border: 1px solid var(--q-border-muted);
-  border-radius: var(--q-radius-lg);
+  border-radius: var(--q-radius);
   background: var(--q-canvas-default);
   padding: 9px 11px 12px;
   min-width: 0;

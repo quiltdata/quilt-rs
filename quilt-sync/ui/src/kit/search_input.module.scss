@@ -11,7 +11,7 @@
   min-width: 0;
   padding: 4px var(--q-space-2);
   border: 1px solid var(--q-border-default);
-  border-radius: var(--q-radius-md);
+  border-radius: var(--q-radius);
   background: var(--q-canvas-default);
   color: var(--q-fg-default);
 }
@@ -76,7 +76,7 @@
   flex: none;
   width: 18px;
   height: 18px;
-  border-radius: var(--q-radius-sm);
+  border-radius: var(--q-radius);
   color: var(--q-fg-muted);
   cursor: pointer;
 }

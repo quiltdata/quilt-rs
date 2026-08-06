@@ -405,11 +405,21 @@
    * almost certainly unintentional. Held slightly under so gutters exist. */
   --q-container: 1200px;
 
-  /* SHAPE. One shadow, overlays only — the page is flat and bordered. */
-  --q-radius-sm: 4px;
-  --q-radius-md: 6px;
-  --q-radius-lg: 8px;
-  --q-radius-pill: 999px;
+  /* SHAPE — ONE radius, deliberately. There were four (4/6/8/pill) and no reason
+   * on record for why a card was 8 and a button 6, which is the signature of a
+   * scale nobody chose. Almost-square with the corners taken off, everywhere.
+   *
+   * The one legitimate exception is a shape *nested* against a rounded corner: an
+   * inner radius should be the outer one minus the inset, or the inner curve
+   * bulges against the outer. Write that as `calc(var(--q-radius) - <inset>)` so
+   * the relationship is visible — see `view_toggle`'s selected segment. A second
+   * token would just be a magic number that happens to agree today.
+   *
+   * Genuine circles (`50%`) are not radii and stay where they are: Button's
+   * spinner is a circle because it rotates.
+   *
+   * One shadow, overlays only — the page is flat and bordered. */
+  --q-radius: 4px;
   --q-shadow-overlay: 0 8px 24px rgb(0 0 0 / 14%);
 
   /* TYPE — system stack: no webfont, no FOUT, native on all three platforms.
