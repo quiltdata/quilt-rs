@@ -17,7 +17,10 @@
   gap: 5px;
   padding: 0 var(--q-space-2) 0 6px;
   border: 1px solid var(--tone-edge);
-  border-radius: var(--q-radius-pill);
+  /* Square-ish, not a pill. A pill reads as a chip you can act on — `FileRow`'s
+   * bucket link is one — and this is a read-only report. Sharing the button radius
+   * is the point: same family, different job. */
+  border-radius: var(--q-radius-sm);
   background: var(--tone-fill);
   color: var(--tone-text);
   font-size: var(--q-text-body);
