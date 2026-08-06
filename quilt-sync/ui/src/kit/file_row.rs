@@ -85,19 +85,19 @@ pub fn FileRow(
             <span class=style::actions on:click=|ev: MouseEvent| ev.stop_propagation()>
                 <IconButton
                     icon=folder_icon()
-                    label="Reveal in directory"
+                    aria_label="Reveal in directory"
                     variant=IconButtonVariant::Bare
                     on_click=on_reveal
                 />
                 <IconButton
                     icon=catalog_icon()
-                    label="Open in catalog"
+                    aria_label="Open in catalog"
                     variant=IconButtonVariant::Bare
                     on_click=on_open_catalog
                 />
                 <IconButton
                     icon=copy_icon()
-                    label="Copy Quilt+S3 URI"
+                    aria_label="Copy Quilt+S3 URI"
                     variant=IconButtonVariant::Bare
                     on_click=on_copy_uri
                 />

@@ -331,7 +331,7 @@
 
   /* ─── TONES ───────────────────────────────────────────────────────────────
    * Four tones, four roles each, so a component can swap tone by swapping three
-   * variables. `neutral` is one of them and reads from grey: `StatePill` needs a
+   * variables. `neutral` is one of them and reads from grey: `StateLabel` needs a
    * "nothing is wrong, here is a number" tone, and without it that tone would be
    * the one case whose CSS looked different from the other three.
    *

@@ -22,10 +22,15 @@ pub enum IconButtonVariant {
 pub fn IconButton(
     /// The glyph. Sized by CSS, so callers pass an `svg` without dimensions.
     icon: AnyView,
-    /// Goes to both `aria-label` and `title`. An icon-only control without one is
-    /// unusable with a screen reader and a guess with a mouse.
+    /// The accessible name. Goes to `aria-label` and, because we chose the `title`
+    /// attribute over a tooltip component, to `title` as well — Primer splits those
+    /// into a required `aria-label` plus an optional `description`, and one prop
+    /// doing both jobs is named after the one that is not optional.
+    ///
+    /// An icon-only control without it is unusable with a screen reader and a guess
+    /// with a mouse.
     #[prop(into)]
-    label: String,
+    aria_label: String,
     on_click: impl Fn(MouseEvent) + 'static,
     #[prop(optional)] variant: IconButtonVariant,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
@@ -54,8 +59,8 @@ pub fn IconButton(
         <button
             type="button"
             class=class
-            aria-label=label.clone()
-            title=label
+            aria-label=aria_label.clone()
+            title=aria_label
             disabled=move || is_disabled.get()
             on:click=move |ev| {
                 if !is_disabled.get() {

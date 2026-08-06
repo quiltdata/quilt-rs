@@ -1,18 +1,18 @@
-//! `StatePill` stories — the whole state vocabulary, which is the reason the
+//! `StateLabel` stories — the whole state vocabulary, which is the reason the
 //! gallery exists at all.
 
 use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
-use crate::kit::StatePill;
+use crate::kit::StateLabel;
 use crate::kit::StateTone;
 
 /// Every state the page can put on a row, in the order the vocabulary lists them.
-/// Reviewing this list *is* reviewing the vocabulary: a label that reads badly here
-/// reads badly on the page.
+/// Reviewing this list *is* reviewing the vocabulary: words that read badly here
+/// read badly on the page.
 const STATES: &[(&str, StateTone)] = &[
-    ("Latest", StateTone::Ok),
+    ("Latest", StateTone::Success),
     ("Not the latest", StateTone::Attention),
     ("Newer revision available", StateTone::Attention),
     ("2 files changed", StateTone::Neutral),
@@ -26,7 +26,7 @@ const STATES: &[(&str, StateTone)] = &[
 
 fn tone_name(tone: StateTone) -> &'static str {
     match tone {
-        StateTone::Ok => "Ok",
+        StateTone::Success => "Success",
         StateTone::Neutral => "Neutral",
         StateTone::Attention => "Attention",
         StateTone::Danger => "Danger",
@@ -34,7 +34,7 @@ fn tone_name(tone: StateTone) -> &'static str {
 }
 
 #[component]
-pub fn StatePillStories() -> impl IntoView {
+pub fn StateLabelStories() -> impl IntoView {
     view! { <VocabularyStory /><GreyscaleStory /> }
 }
 
@@ -42,19 +42,19 @@ pub fn StatePillStories() -> impl IntoView {
 fn VocabularyStory() -> impl IntoView {
     view! {
         <Story
-            title="StatePill — the ten states"
-            note="Read the words, not the colours. Each label is what the page says out loud, \
-                  and the tone only sets how loudly. Steps 3 / 7 / 12 of the tone's scale, in \
-                  that order: fill, edge, text. Text is step 12 rather than the scale's own \
-                  text step because 11 on 3 measures 4.21:1 for green and 4.25:1 for amber — \
-                  under AA. Step 12 measures 10.5:1 or better in both themes."
+            title="StateLabel — the ten states"
+            note="Read the words, not the colours. Each one is what the page says out loud, and \
+                  the tone only sets how loudly. Steps 3 / 7 / 12 of the tone's scale, in that \
+                  order: fill, edge, text. Text is step 12 rather than the scale's own text \
+                  step because 11 on 3 measures 4.21:1 for green and 4.25:1 for amber — under \
+                  AA. Step 12 measures 10.5:1 or better in both themes."
         >
             {STATES
                 .iter()
-                .map(|&(label, tone)| {
+                .map(|&(state, tone)| {
                     view! {
                         <Cell label=tone_name(tone)>
-                            <StatePill label=label tone=tone />
+                            <StateLabel tone=tone>{state}</StateLabel>
                         </Cell>
                     }
                 })
@@ -73,45 +73,50 @@ fn GreyscaleStory() -> impl IntoView {
 
     view! {
         <Story
-            title="StatePill — tone without hue"
+            title="StateLabel — tone without hue"
             note="Tier 1 lightness-matches step 11 across hues deliberately, so desaturating \
-                  the four tones leaves four near-identical pills. That is why each tone \
-                  carries a silhouette — tick, dot, triangle, cross. Compare the two cells: \
-                  the greyscale one must still be readable at a glance. If it is not, the \
-                  glyphs are wrong."
+                  the four tones leaves four near-identical boxes. That is why each tone \
+                  carries a silhouette — tick, dot, triangle, cross — and why the tone picks \
+                  it rather than the caller. Compare the two cells: the greyscale one must \
+                  still be readable at a glance. If it is not, the glyphs are wrong."
         >
             <Cell label="in colour" wide=true>
                 <div style=row>
-                    <StatePill label="Latest" tone=StateTone::Ok />
-                    <StatePill label="2 files changed" tone=StateTone::Neutral />
-                    <StatePill label="Not published yet" tone=StateTone::Attention />
-                    <StatePill label="No access" tone=StateTone::Danger />
+                    <StateLabel tone=StateTone::Success>"Latest"</StateLabel>
+                    <StateLabel tone=StateTone::Neutral>"2 files changed"</StateLabel>
+                    <StateLabel tone=StateTone::Attention>"Not published yet"</StateLabel>
+                    <StateLabel tone=StateTone::Danger>"No access"</StateLabel>
                 </div>
             </Cell>
             <Cell label="hue removed — the glyph is all that is left" wide=true>
                 <div style=format!("{row}; {grey}")>
-                    <StatePill label="Latest" tone=StateTone::Ok />
-                    <StatePill label="2 files changed" tone=StateTone::Neutral />
-                    <StatePill label="Not published yet" tone=StateTone::Attention />
-                    <StatePill label="No access" tone=StateTone::Danger />
+                    <StateLabel tone=StateTone::Success>"Latest"</StateLabel>
+                    <StateLabel tone=StateTone::Neutral>"2 files changed"</StateLabel>
+                    <StateLabel tone=StateTone::Attention>"Not published yet"</StateLabel>
+                    <StateLabel tone=StateTone::Danger>"No access"</StateLabel>
                 </div>
             </Cell>
             <Cell label="beside a Latest run — what 43 rows actually look like" wide=true>
                 <div style=row>
                     {(0..7)
                         .map(|i| {
-                            let (label, tone) = if i == 3 {
+                            let (state, tone) = if i == 3 {
                                 ("Changed in both places", StateTone::Danger)
                             } else {
-                                ("Latest", StateTone::Ok)
+                                ("Latest", StateTone::Success)
                             };
-                            view! { <StatePill label=label tone=tone /> }
+                            view! { <StateLabel tone=tone>{state}</StateLabel> }
                         })
                         .collect_view()}
                 </div>
             </Cell>
+            <Cell label="an interpolated count — why children, not a label prop">
+                <StateLabel tone=StateTone::Danger>
+                    {format!("conflicts in {} files", 2)}
+                </StateLabel>
+            </Cell>
             <Cell label="does not truncate — it pushes">
-                <StatePill label="Newer revision available" tone=StateTone::Attention />
+                <StateLabel tone=StateTone::Attention>"Newer revision available"</StateLabel>
             </Cell>
         </Story>
     }

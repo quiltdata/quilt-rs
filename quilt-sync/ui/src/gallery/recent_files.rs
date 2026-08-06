@@ -103,20 +103,20 @@ fn Icons() -> impl IntoView {
         >
             <Cell label="framed — the appbar's pair">
                 <div class="g-inline">
-                    <IconButton icon=refresh_icon() label="Refresh" on_click=|_| () />
-                    <IconButton icon=gear_icon() label="Settings" on_click=|_| () />
+                    <IconButton icon=refresh_icon() aria_label="Refresh" on_click=|_| () />
+                    <IconButton icon=gear_icon() aria_label="Settings" on_click=|_| () />
                 </div>
             </Cell>
             <Cell label="framed · spinning — a fetch in flight">
-                <IconButton icon=refresh_icon() label="Refreshing" on_click=|_| () spinning=true />
+                <IconButton icon=refresh_icon() aria_label="Refreshing" on_click=|_| () spinning=true />
             </Cell>
             <Cell label="framed · disabled">
-                <IconButton icon=refresh_icon() label="Refresh" on_click=|_| () disabled=true />
+                <IconButton icon=refresh_icon() aria_label="Refresh" on_click=|_| () disabled=true />
             </Cell>
             <Cell label="bare — visible here, because no row is hiding it">
                 <IconButton
                     icon=gear_icon()
-                    label="Settings"
+                    aria_label="Settings"
                     variant=IconButtonVariant::Bare
                     on_click=|_| ()
                 />

@@ -32,7 +32,7 @@ pub fn CountdownStories() -> impl IntoView {
                         <Countdown
                             deadline=in_secs(3.0)
                             interval=3_000.0
-                            label="Not a real cadence, kept as the reference for what motion looks like"
+                            aria_label="Not a real cadence, kept as the reference for what motion looks like"
                             repeat=true
                         />
                     }
@@ -44,7 +44,7 @@ pub fn CountdownStories() -> impl IntoView {
                         <Countdown
                             deadline=in_secs(23.0)
                             interval=30_000.0
-                            label="Checks for new revisions every 30 seconds"
+                            aria_label="Checks for new revisions every 30 seconds"
                             repeat=true
                         />
                     }
@@ -56,7 +56,7 @@ pub fn CountdownStories() -> impl IntoView {
                         <Countdown
                             deadline=in_secs(272.0)
                             interval=300_000.0
-                            label="Publishes 5 minutes after your last edit"
+                            aria_label="Publishes 5 minutes after your last edit"
                         />
                     }
                 }}
@@ -67,7 +67,7 @@ pub fn CountdownStories() -> impl IntoView {
                         <Countdown
                             deadline=in_secs(3.0)
                             interval=30_000.0
-                            label="Checks for new revisions every 30 seconds"
+                            aria_label="Checks for new revisions every 30 seconds"
                         />
                     }
                 }}
@@ -78,7 +78,7 @@ pub fn CountdownStories() -> impl IntoView {
                         <Countdown
                             deadline=in_secs(-90.0)
                             interval=30_000.0
-                            label="Checks for new revisions every 30 seconds"
+                            aria_label="Checks for new revisions every 30 seconds"
                         />
                     }
                 }}
@@ -87,7 +87,7 @@ pub fn CountdownStories() -> impl IntoView {
                 <Countdown
                     deadline=Signal::derive(|| None)
                     interval=30_000.0
-                    label="Checks for new revisions every 30 seconds"
+                    aria_label="Checks for new revisions every 30 seconds"
                 />
             </Cell>
         </Story>

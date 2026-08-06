@@ -1,5 +1,5 @@
 /*
- * The state vocabulary made visual. Ten labels, four tones.
+ * The state vocabulary made visual. Ten states, four tones.
  *
  * Each tone sets four private properties and `.root` paints from them, so the
  * tone classes are data and the layout exists once. That also means a
@@ -11,21 +11,21 @@
   display: inline-flex;
   align-items: center;
   flex: none;
-  /* 5px, not a grid step: the gap between a 12px glyph and its label is optical,
+  /* 5px, not a grid step: the gap between a 12px glyph and its words is optical,
    * and 4px reads as touching while 8px reads as two things. Same reasoning as
    * Button's 5px/12px padding. */
   gap: 5px;
   padding: 0 var(--q-space-2) 0 6px;
-  border: 1px solid var(--pill-edge);
+  border: 1px solid var(--tone-edge);
   border-radius: var(--q-radius-pill);
-  background: var(--pill-fill);
-  color: var(--pill-text);
+  background: var(--tone-fill);
+  color: var(--tone-text);
   font-size: var(--q-text-body);
   line-height: 20px;
-  /* Never truncates and never shrinks. Every label in the vocabulary is short by
-   * design, and half a state is worse than a state that pushes the row: "conflicts
-   * in 2 files" clipped to "conflicts in…" has lost the number that made it worth
-   * showing. If a pill overflows, the label is wrong, not the pill. */
+  /* Never truncates and never shrinks. Every state in the vocabulary is short by
+   * design, and half a state is worse than a state that pushes the row:
+   * "conflicts in 2 files" clipped to "conflicts in…" has lost the number that
+   * made it worth showing. If one overflows, the words are wrong, not the box. */
   white-space: nowrap;
 }
 
@@ -41,43 +41,43 @@
   flex: none;
   width: 12px;
   height: 12px;
-  color: var(--pill-mark);
+  color: var(--tone-mark);
 }
 
 /* ─── TONES ───────────────────────────────────────────────────────────────────
  * `subtle` is step 3, the lightest of the three fills that pass AA under step-12
  * text (step 4 measures 9.7:1 worst case and step 5 8.8:1, so either is a legal
- * swap in `_tokens` if this reads too pale). Step 3 because a pill is repeated
- * once per row and the border carries the shape.
+ * swap in `_tokens`). Step 3 because this repeats once per row and the border
+ * carries the shape.
  *
  * Contrast measurement cannot settle that choice, and it is worth saying why: a
  * pale yellow and white differ in chroma far more than in luminance, so every
  * fill step scores a near-identical 1.1–1.4:1 against the card. The numbers say
  * the text is legible; only looking says whether the tint is visible. */
-.ok {
-  --pill-fill: var(--q-success-subtle);
-  --pill-edge: var(--q-success-border);
-  --pill-text: var(--q-success-fg-on-subtle);
-  --pill-mark: var(--q-success-fg);
+.success {
+  --tone-fill: var(--q-success-subtle);
+  --tone-edge: var(--q-success-border);
+  --tone-text: var(--q-success-fg-on-subtle);
+  --tone-mark: var(--q-success-fg);
 }
 
 .neutral {
-  --pill-fill: var(--q-neutral-subtle);
-  --pill-edge: var(--q-neutral-border);
-  --pill-text: var(--q-neutral-fg-on-subtle);
-  --pill-mark: var(--q-neutral-fg);
+  --tone-fill: var(--q-neutral-subtle);
+  --tone-edge: var(--q-neutral-border);
+  --tone-text: var(--q-neutral-fg-on-subtle);
+  --tone-mark: var(--q-neutral-fg);
 }
 
 .attention {
-  --pill-fill: var(--q-attention-subtle);
-  --pill-edge: var(--q-attention-border);
-  --pill-text: var(--q-attention-fg-on-subtle);
-  --pill-mark: var(--q-attention-fg);
+  --tone-fill: var(--q-attention-subtle);
+  --tone-edge: var(--q-attention-border);
+  --tone-text: var(--q-attention-fg-on-subtle);
+  --tone-mark: var(--q-attention-fg);
 }
 
 .danger {
-  --pill-fill: var(--q-danger-subtle);
-  --pill-edge: var(--q-danger-border);
-  --pill-text: var(--q-danger-fg-on-subtle);
-  --pill-mark: var(--q-danger-fg);
+  --tone-fill: var(--q-danger-subtle);
+  --tone-edge: var(--q-danger-border);
+  --tone-text: var(--q-danger-fg-on-subtle);
+  --tone-mark: var(--q-danger-fg);
 }

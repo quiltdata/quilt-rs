@@ -45,7 +45,7 @@ pub fn StateStripScene() -> impl IntoView {
                             <Countdown
                                 deadline=in_secs(23.0)
                                 interval=30_000.0
-                                label="Checks for new revisions every 30 seconds"
+                                aria_label="Checks for new revisions every 30 seconds"
                                 repeat=true
                             />
                         }

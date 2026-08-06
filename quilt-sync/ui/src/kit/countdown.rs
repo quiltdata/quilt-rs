@@ -56,7 +56,7 @@ pub fn Countdown(
     /// component exists to avoid, and the caller is the only thing that knows what
     /// the cycle means anyway.
     #[prop(into)]
-    label: String,
+    aria_label: String,
     /// Loop at the interval. True for the pull tick, which recurs; false for the
     /// publish quiet window, which happens once and then holds full.
     #[prop(optional)]
@@ -94,7 +94,7 @@ pub fn Countdown(
             seed()
                 .map(|(seed, offset)| {
                     let class = class.clone();
-                    let label = label.clone();
+                    let aria_label = aria_label.clone();
                     view! {
                         // `progressbar` rather than an image: a screen reader
                         // reports it on request instead of announcing every tick.
@@ -103,8 +103,8 @@ pub fn Countdown(
                             style=seed
                             viewBox="0 0 16 16"
                             role="progressbar"
-                            aria-label=label.clone()
-                            title=label
+                            aria-label=aria_label.clone()
+                            title=aria_label
                         >
                             <circle
                                 class=style::track
