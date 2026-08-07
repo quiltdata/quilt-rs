@@ -77,7 +77,8 @@ output shown above ([#837](https://github.com/quiltdata/quilt-rs/issues/837)).
 
 When you are ready to share, `quilt login --host <stack>`, then
 `quilt push -n demo/sales --bucket <bucket> --origin <host>`. Collaborators
-run `quilt install quilt+s3://<bucket>#package=demo/sales` and `quilt pull`.
+run `quilt install quilt+s3://<bucket>#package=demo/sales` and
+`quilt pull -n demo/sales`.
 
 ## Why this exists
 

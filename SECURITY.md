@@ -21,8 +21,11 @@ long-term support branches.
 
 ## Scope notes
 
-- Manifests record file metadata (paths, hashes, sizes) and never credentials.
+- Manifests record file metadata such as paths, hashes, and sizes.
   Authentication is handled by AWS credentials and OAuth outside the manifest.
+  Package-level and per-row user metadata accept arbitrary JSON, however, so a
+  manifest can carry whatever a caller put there — treat user metadata as
+  in scope when handling secrets or reviewing an incident.
 - `objects/` and the manifest cache are never pruned by design, so data you
   committed locally may remain on disk after `uninstall`. This is documented
   behavior, not a vulnerability — see
