@@ -11,6 +11,10 @@
 
 ## [v0.21.1] - 2026-08-07
 
+### Fixed
+
+- The packages list stopped re-checking the remote for a package that had not changed. A package showing "behind" made a network round trip roughly once a second — for as long as its row was on screen — because the background watcher re-reports a package's status whether or not anything moved, and the row acted on every report instead of only the ones that differed (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
 ### Added
 
 - Experimental, off by default: Settings → Experimental → "Enable entire-package sync" adds a per-package choice on the installed-package page — sync individual files, or sync the entire package. Under whole-package sync a pull also downloads files a teammate added, instead of listing them and leaving them; switching it on doesn't move any bytes by itself — the toolbar offers "Download all files" for what's already listed — and switching it off stops fetching more without removing anything (<https://github.com/quiltdata/quilt-rs/pull/834>)
