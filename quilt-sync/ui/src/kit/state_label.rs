@@ -115,9 +115,28 @@ pub fn StateLabel(
     /// three of the ten states interpolate a count, which children take without a
     /// `format!` at the call site.
     children: Children,
+    /// The light phase's guess, not yet confirmed by the heavy walk. Draws a dashed edge
+    /// and settles to solid when the real value arrives.
+    ///
+    /// **Dashed rather than dimmed**, which the design record left open. Dimming costs
+    /// contrast on text that was measured to 9.2:1 at worst and would drop it below AA at
+    /// any useful opacity; a dashed edge costs none. That matters because a provisional
+    /// state is still *informative* — it is the light phase's answer, right most of the
+    /// time — so making it harder to read to say "not final" trades the wrong thing.
+    #[prop(optional, into)]
+    provisional: MaybeProp<bool>,
 ) -> impl IntoView {
+    let is_provisional = Signal::derive(move || provisional.get().unwrap_or(false));
+
     // One computed string: Leptos rejects two `class` attributes on an element.
-    let class = format!("{} {}", style::root, tone.class());
+    let class = move || {
+        let base = format!("{} {}", style::root, tone.class());
+        if is_provisional.get() {
+            format!("{base} {}", style::provisional)
+        } else {
+            base
+        }
+    };
 
     view! {
         // A `span`, with no `role` and no `aria-live`. It is text that happens to

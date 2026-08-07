@@ -44,6 +44,20 @@
   color: var(--tone-mark);
 }
 
+/* The light phase's guess. A dashed edge and nothing else — no opacity, no animation.
+ *
+ * Dimming was the other option the design record offered, and it is the wrong one: the
+ * text was measured to 9.2:1 at worst against its own fill, and any opacity low enough to
+ * read as provisional takes it under AA. A dashed border costs no contrast at all. And the
+ * value here is still information — the light phase is right most of the time — so making
+ * it harder to read in order to say "not final" trades away the wrong thing.
+ *
+ * Static, not animated: 43 rows settling one by one is already the activity signal, and
+ * WCAG 2.2.2 rules out blinking text regardless. */
+.provisional {
+  border-style: dashed;
+}
+
 /* ─── TONES ───────────────────────────────────────────────────────────────────
  * `subtle` is step 3, the lightest of the three fills that pass AA under step-12
  * text (step 4 measures 9.7:1 worst case and step 5 8.8:1, so either is a legal

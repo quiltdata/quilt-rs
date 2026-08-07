@@ -133,6 +133,33 @@ fn EdgesStory() -> impl IntoView {
                     tone=StateTone::Success
                 />
             </Cell>
+            <Cell full=true label="provisional — the light phase's guess, dashed until confirmed">
+                <div class="g-rows">
+                    <PackageRow
+                        namespace="user/package-a"
+                        href="#packagerow"
+                        changed_at=ago(2.0 * HOUR)
+                        state="Latest"
+                        tone=StateTone::Success
+                        provisional=true
+                    />
+                    <PackageRow
+                        namespace="user/package-b"
+                        href="#packagerow"
+                        changed_at=ago(20.0 * MINUTE)
+                        state="Newer revision available"
+                        tone=StateTone::Attention
+                        provisional=true
+                    />
+                    <PackageRow
+                        namespace="user/package-c"
+                        href="#packagerow"
+                        changed_at=ago(5.0 * HOUR)
+                        state="Latest"
+                        tone=StateTone::Success
+                    />
+                </div>
+            </Cell>
             <Cell full=true label="the 80px time column against its worst cases">
                 <div class="g-rows">
                     {[
@@ -416,6 +443,33 @@ pub fn PackagesScene() -> impl IntoView {
                   buckets, so no cause can be a property of one."
         >
             <PackagesRegion />
+        </Scene>
+        <Scene
+            title="Scene · a fresh install"
+            note="Zero packages, which is the FIRST thing a new user sees and the one empty \
+                  state that was missing — the other two are 'no results' for a search, \
+                  which is a different situation with a different answer. \
+                  \
+                  This one carries an action, because the user genuinely cannot proceed \
+                  without one and has no way to guess it. 'No results' carries none, \
+                  because they already know how to change their own search."
+        >
+            <Card>
+                <div>
+                    <EmptyState
+                        title="No packages yet"
+                        body="A package is a folder of files that QuiltSync keeps in step with \
+                              an S3 bucket. Create one from a folder you already have, or \
+                              install an existing package from the catalog."
+                        action=view! {
+                            <Button variant=ButtonVariant::Primary on_click=|_| ()>
+                                "Create package"
+                            </Button>
+                        }
+                            .into_any()
+                    />
+                </div>
+            </Card>
         </Scene>
         <Scene
             title="Scene · packages, no results"

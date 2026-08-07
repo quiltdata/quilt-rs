@@ -50,6 +50,14 @@ pub fn PackageRow(
     #[prop(into)]
     state: String,
     tone: StateTone,
+    /// Passed through to the state label: the light phase's guess, awaiting the heavy walk.
+    ///
+    /// The LIST shows provisional states; the QUEUE does not, which is why `QueueRow` has
+    /// no such prop. Adding a row to "needs your attention" on a guess and removing it a
+    /// second later is worse than an empty queue for that second — the queue is where the
+    /// user decides, and a decision offered and withdrawn is not a decision.
+    #[prop(optional, into)]
+    provisional: MaybeProp<bool>,
 ) -> impl IntoView {
     view! {
         <a class=style::root href=href>
@@ -68,7 +76,7 @@ pub fn PackageRow(
                         |at| view! { <RelativeTime at=at /> }.into_any(),
                     )}
             </span>
-            <StateLabel tone=tone>{state}</StateLabel>
+            <StateLabel tone=tone provisional=provisional>{state}</StateLabel>
         </a>
     }
 }
