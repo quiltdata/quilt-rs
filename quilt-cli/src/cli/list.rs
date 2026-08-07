@@ -19,8 +19,26 @@ impl std::fmt::Display for Output {
     }
 }
 
-pub async fn command(m: impl Commands) -> Std {
-    Std::from_result(m.list().await)
+impl Output {
+    fn to_json(&self) -> String {
+        let packages: Vec<_> = self
+            .installed_packages_list
+            .iter()
+            .map(|package| serde_json::json!({ "namespace": package.namespace.to_string() }))
+            .collect();
+        serde_json::json!({ "packages": packages }).to_string()
+    }
+}
+
+pub async fn command(m: impl Commands, json: bool) -> Std {
+    match m.list().await {
+        Ok(output) => Std::Out(if json {
+            output.to_json()
+        } else {
+            output.to_string()
+        }),
+        Err(error) => Std::Err(error),
+    }
 }
 
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
@@ -50,6 +68,15 @@ mod tests {
             assert_eq!(format!("{empty_output}"), "No installed packages");
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_json_empty_list() {
+        let output = Output {
+            installed_packages_list: Vec::new(),
+        };
+
+        assert_eq!(output.to_json(), r#"{"packages":[]}"#);
     }
 
     /// Verifies that list model returns correct output for both empty and populated states:
@@ -86,7 +113,7 @@ mod tests {
         let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 
-        if let Std::Out(output) = command(m).await {
+        if let Std::Out(output) = command(m, false).await {
             assert_eq!(output, format!("InstalledPackage<{}>", pkg::NAMESPACE_STR));
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));

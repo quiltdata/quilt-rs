@@ -17,6 +17,7 @@ async fn main() {
     let args = cli::Args::parse();
     match cli::init(args).await {
         Ok(result) => {
+            let failed = matches!(&result, cli::Std::Err(_));
             let stdout = io::stdout();
             let stderr = io::stderr();
             let mut stdout_handle = stdout.lock();
@@ -24,6 +25,10 @@ async fn main() {
 
             if let Err(err) = print(result, &mut stdout_handle, &mut stderr_handle) {
                 log::error!("Failed to print output: {err}");
+                std::process::exit(1);
+            }
+
+            if failed {
                 std::process::exit(1);
             }
         }

@@ -15,6 +15,7 @@ use quilt_uri::Namespace;
 mod browse;
 mod commit;
 mod create;
+mod history;
 mod install;
 mod list;
 mod login;
@@ -154,7 +155,20 @@ enum Commands {
         host: Host,
     },
     /// List installed packages
-    List,
+    List {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List a package's local revision history
+    Log {
+        /// Namespace of the package. Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Pull
     Pull {
         /// Namespace of the package to pull
@@ -205,6 +219,9 @@ enum Commands {
         /// Namespace of the package. Ex. foo/bar
         #[arg(short, long)]
         namespace: String,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Uninstall package from local domain
     Uninstall {
@@ -322,9 +339,17 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List => {
+        Commands::List { json } => {
             log::info!("Listing installed packages");
-            Ok(list::command(m).await)
+            Ok(list::command(m, json).await)
+        }
+        Commands::Log { namespace, json } => {
+            let args = history::Input {
+                namespace: namespace.try_into()?,
+            };
+
+            log::info!("Logging {args:?}");
+            Ok(history::command(m, args, json).await)
         }
         Commands::Pull { namespace } => {
             let args = pull::Input {
@@ -367,14 +392,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
-        Commands::Status { namespace } => {
+        Commands::Status { namespace, json } => {
             let args = status::Input {
                 namespace: namespace.try_into()?,
                 host_config: None,
             };
 
             log::info!("Status {args:?}");
-            Ok(status::command(m, args).await)
+            Ok(status::command(m, args, json).await)
         }
         Commands::Uninstall { namespace } => {
             let args = uninstall::Input {
@@ -506,6 +531,22 @@ mod tests {
         };
         assert_eq!(host.to_string(), "example.com");
         assert_eq!(set.as_deref(), Some("ReadOnly"));
+    }
+
+    #[test]
+    fn json_flag_is_available_on_read_commands() {
+        let list = Args::try_parse_from(["quilt", "list", "--json"]).unwrap();
+        assert!(matches!(list.command, Commands::List { json: true }));
+
+        let status =
+            Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"]).unwrap();
+        assert!(matches!(
+            status.command,
+            Commands::Status { json: true, .. }
+        ));
+
+        let log = Args::try_parse_from(["quilt", "log", "-n", "demo/sales", "--json"]).unwrap();
+        assert!(matches!(log.command, Commands::Log { json: true, .. }));
     }
 
     #[test]
@@ -830,7 +871,7 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
-            command: Commands::List,
+            command: Commands::List { json: false },
         };
 
         // Test init with invalid permissions
@@ -851,7 +892,7 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
-            command: Commands::List {},
+            command: Commands::List { json: false },
         };
 
         // Test init with empty domain
