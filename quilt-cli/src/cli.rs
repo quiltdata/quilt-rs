@@ -15,6 +15,7 @@ use quilt_uri::Namespace;
 mod browse;
 mod commit;
 mod create;
+mod history;
 mod install;
 mod list;
 mod login;
@@ -155,6 +156,12 @@ enum Commands {
     },
     /// List installed packages
     List,
+    /// List a package's local revision history
+    Log {
+        /// Namespace of the package. Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
+    },
     /// Pull
     Pull {
         /// Namespace of the package to pull
@@ -325,6 +332,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::List => {
             log::info!("Listing installed packages");
             Ok(list::command(m).await)
+        }
+        Commands::Log { namespace } => {
+            let args = history::Input {
+                namespace: namespace.try_into()?,
+            };
+
+            log::info!("Logging {args:?}");
+            Ok(history::command(m, args).await)
         }
         Commands::Pull { namespace } => {
             let args = pull::Input {
