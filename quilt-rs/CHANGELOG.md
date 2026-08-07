@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.35.1-alpha1] - 2026-08-07
+
+### Added
+
+- `LocalDomain::get_lineage` reads the whole lineage record in one go, for callers that want every installed package at once — `list_installed_packages` plus `InstalledPackage::lineage` per package re-reads and re-parses that record once per package (<https://github.com/quiltdata/quilt-rs/pull/846>)
+
 ## [v0.35.0] - 2026-08-07
 
 ### Added

@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.0-alpha1] - 2026-08-07
+
+### Changed
+
+- `quilt list` prints a table of bucket, namespace and upstream status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package. Status comes from the local lineage record, so listing stays offline and reports the last-known remote tip; `quilt status <namespace>` refreshes it (<https://github.com/quiltdata/quilt-rs/pull/846>)
+
 ## [v0.29.2] - 2026-08-07
 
 ### quilt-rs
