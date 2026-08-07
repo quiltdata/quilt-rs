@@ -1,9 +1,15 @@
 # quilt-cli
 
-Command-line interface for [Quilt](https://docs.quilt.bio/) data packages.
+**Version your data like code — on your own laptop.** `quilt` gives the files
+your scripts and AI agents read and write real revisions: immutable,
+content-addressed, visible in `status`, and pushable to S3 when you want them
+shared. No server and no cloud credentials required to start.
+
 Thin wrapper around [`quilt-rs`](../quilt-rs/) — see
 [`docs/architecture.md`](../docs/architecture.md) for what each command does
-under the hood.
+under the hood, and the
+[repository README](https://github.com/quiltdata/quilt-rs#readme) for
+positioning and known limitations.
 
 The binary is named `quilt`.
 
@@ -37,18 +43,26 @@ cargo install quilt-cli
 | `list`      | List installed packages                          |
 | `uninstall` | Remove a package from local tracking             |
 | `login`     | Authenticate against a Quilt stack               |
+| `role`      | Show or switch your active role on a stack        |
 
 Run `quilt <command> --help` for arguments.
 
 ## Global flags
 
 - `--domain <path>` — local domain directory (stores credentials and
-  package metadata). Defaults to
-  `~/.local/share/com.quiltdata.quilt-rs/`.
+  package metadata). Defaults to the platform local-data directory under
+  `com.quiltdata.quilt-sync/`, shared with QuiltSync
+  (`~/.local/share/com.quiltdata.quilt-sync/` on Linux,
+  `~/Library/Application Support/com.quiltdata.quilt-sync/` on macOS).
 - `--home <path>` — directory where packages keep their working files.
   Required on the first invocation against a domain (every command
   validates that a home is set); afterward it is persisted in the
-  domain lineage and may be omitted.
+  domain lineage and may be omitted. See
+  [#838](https://github.com/quiltdata/quilt-rs/issues/838).
+
+Commands log at `INFO` on stdout by default; `RUST_LOG=warn` leaves only
+command output. See
+[#837](https://github.com/quiltdata/quilt-rs/issues/837).
 
 ## Example
 
