@@ -59,7 +59,7 @@
 }
 
 /* ─── TONES ───────────────────────────────────────────────────────────────────
- * `subtle` is step 3, the lightest of the three fills that pass AA under step-12
+ * `muted` is step 3, the lightest of the three fills that pass AA under step-12
  * text (step 4 measures 9.7:1 worst case and step 5 8.8:1, so either is a legal
  * swap in `_tokens`). Step 3 because this repeats once per row and the border
  * carries the shape.
@@ -69,29 +69,29 @@
  * fill step scores a near-identical 1.1–1.4:1 against the card. The numbers say
  * the text is legible; only looking says whether the tint is visible. */
 .success {
-  --tone-fill: var(--q-success-subtle);
-  --tone-edge: var(--q-success-border);
-  --tone-text: var(--q-success-fg-on-subtle);
-  --tone-mark: var(--q-success-fg);
+  --tone-fill: var(--q-bgColor-success-muted);
+  --tone-edge: var(--q-borderColor-success-muted);
+  --tone-text: var(--q-fgColor-success-onMuted);
+  --tone-mark: var(--q-fgColor-success);
 }
 
 .neutral {
-  --tone-fill: var(--q-neutral-subtle);
-  --tone-edge: var(--q-neutral-border);
-  --tone-text: var(--q-neutral-fg-on-subtle);
-  --tone-mark: var(--q-neutral-fg);
+  --tone-fill: var(--q-bgColor-neutral-muted);
+  --tone-edge: var(--q-borderColor-neutral-muted);
+  --tone-text: var(--q-fgColor-neutral-onMuted);
+  --tone-mark: var(--q-fgColor-neutral);
 }
 
 .attention {
-  --tone-fill: var(--q-attention-subtle);
-  --tone-edge: var(--q-attention-border);
-  --tone-text: var(--q-attention-fg-on-subtle);
-  --tone-mark: var(--q-attention-fg);
+  --tone-fill: var(--q-bgColor-attention-muted);
+  --tone-edge: var(--q-borderColor-attention-muted);
+  --tone-text: var(--q-fgColor-attention-onMuted);
+  --tone-mark: var(--q-fgColor-attention);
 }
 
 .danger {
-  --tone-fill: var(--q-danger-subtle);
-  --tone-edge: var(--q-danger-border);
-  --tone-text: var(--q-danger-fg-on-subtle);
-  --tone-mark: var(--q-danger-fg);
+  --tone-fill: var(--q-bgColor-danger-muted);
+  --tone-edge: var(--q-borderColor-danger-muted);
+  --tone-text: var(--q-fgColor-danger-onMuted);
+  --tone-mark: var(--q-fgColor-danger);
 }

@@ -21,24 +21,24 @@
 }
 
 .success {
-  --tone-fill: var(--q-success-subtle);
-  --tone-edge: var(--q-success-border);
-  --tone-text: var(--q-success-fg-on-subtle);
-  --tone-mark: var(--q-success-fg);
+  --tone-fill: var(--q-bgColor-success-muted);
+  --tone-edge: var(--q-borderColor-success-muted);
+  --tone-text: var(--q-fgColor-success-onMuted);
+  --tone-mark: var(--q-fgColor-success);
 }
 
 .warning {
-  --tone-fill: var(--q-attention-subtle);
-  --tone-edge: var(--q-attention-border);
-  --tone-text: var(--q-attention-fg-on-subtle);
-  --tone-mark: var(--q-attention-fg);
+  --tone-fill: var(--q-bgColor-attention-muted);
+  --tone-edge: var(--q-borderColor-attention-muted);
+  --tone-text: var(--q-fgColor-attention-onMuted);
+  --tone-mark: var(--q-fgColor-attention);
 }
 
 .critical {
-  --tone-fill: var(--q-danger-subtle);
-  --tone-edge: var(--q-danger-border);
-  --tone-text: var(--q-danger-fg-on-subtle);
-  --tone-mark: var(--q-danger-fg);
+  --tone-fill: var(--q-bgColor-danger-muted);
+  --tone-edge: var(--q-borderColor-danger-muted);
+  --tone-text: var(--q-fgColor-danger-onMuted);
+  --tone-mark: var(--q-fgColor-danger);
 }
 
 /* `.root > svg`, or this would also catch the dismiss button's cross — which is a control

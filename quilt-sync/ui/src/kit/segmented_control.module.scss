@@ -16,9 +16,9 @@
   display: inline-flex;
   max-width: 100%;
   padding: 2px;
-  border: 1px solid var(--q-border-default);
+  border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
+  background: var(--q-bgColor-default);
 }
 
 .option {
@@ -52,7 +52,7 @@
    * the outer curve, so it is the outer radius minus the inset — written as the
    * subtraction rather than as a second token, because that is the actual rule. */
   border-radius: calc(var(--q-radius) - 2px);
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -60,19 +60,19 @@
 }
 
 .option:hover .text {
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
 }
 
 /* The selected segment is a filled well rather than a coloured label: the control
  * says "one of these" and the fill is what makes the grouping legible without
  * spending accent colour on something that is not an action. */
 .input:checked + .text {
-  background: var(--q-canvas-inset);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-inset);
+  color: var(--q-fgColor-default);
   font-weight: 600;
 }
 
 .input:focus-visible + .text {
-  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
-  outline-offset: var(--q-focus-ring-offset);
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
 }

@@ -19,7 +19,7 @@
   width: 100%;
   gap: var(--q-space-3);
   padding: 5px 2px;
-  border-bottom: 1px solid var(--q-border-muted);
+  border-bottom: 1px solid var(--q-borderColor-muted);
   cursor: pointer;
 }
 
@@ -62,9 +62,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0 var(--q-space-2);
-  border: 1px solid var(--q-border-muted);
+  border: 1px solid var(--q-borderColor-muted);
   border-radius: var(--q-radius);
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   text-decoration: none;
 }
 
@@ -73,9 +73,9 @@
  * two would just add up. So it goes solid and gains a border: against the row's
  * flat tint, a filled chip reads as lifted. No underline needed. */
 .tag:hover {
-  background: var(--q-canvas-default);
-  border-color: var(--q-border-strong);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-default);
+  border-color: var(--q-borderColor-emphasis);
+  color: var(--q-fgColor-default);
 }
 
 /* A fixed 80px column, right-aligned, rather than a slot that hugs its text. The

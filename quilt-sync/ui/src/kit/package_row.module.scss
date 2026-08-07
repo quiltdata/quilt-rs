@@ -22,10 +22,10 @@
   width: 100%;
   gap: var(--q-space-3);
   padding: 5px 2px;
-  border-bottom: 1px solid var(--q-border-muted);
+  border-bottom: 1px solid var(--q-borderColor-muted);
   /* It IS an anchor, so the document conventions have to be switched off
    * explicitly — colour and underline both. */
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
   text-decoration: none;
   cursor: pointer;
 }
@@ -60,7 +60,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 /* The state sits hard right and is deliberately NOT a fixed column. Fixing it

@@ -15,13 +15,13 @@
   gap: var(--q-space-3);
   padding: var(--q-space-10) var(--q-space-4);
   text-align: center;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 .heading {
   font-size: var(--q-text-lead);
   font-weight: 600;
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
 }
 
 /* Held narrow: a centred explanation running the full width of a 1200px window is

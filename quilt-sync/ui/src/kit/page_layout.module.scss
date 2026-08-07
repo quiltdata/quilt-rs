@@ -6,13 +6,13 @@
 
 .root {
   min-height: 100%;
-  background: var(--q-canvas-page);
+  background: var(--q-bgColor-page);
 }
 
 .appbar {
   /* Lighter than the page, like every other raised surface in the kit. */
-  background: var(--q-canvas-default);
-  border-bottom: 1px solid var(--q-border-muted);
+  background: var(--q-bgColor-default);
+  border-bottom: 1px solid var(--q-borderColor-muted);
 }
 
 /* Not `position: sticky`. It would be defensible — the refresh control is useful from

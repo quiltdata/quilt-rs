@@ -13,16 +13,16 @@
   max-height: calc(100vh - var(--q-space-8));
   overflow: auto;
   padding: var(--q-space-4);
-  border: 1px solid var(--q-border-default);
+  border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
   /* The one place a shadow is allowed: the page is flat and bordered, but a modal is
    * genuinely above it and the shadow is what says so. */
   box-shadow: var(--q-shadow-overlay);
 }
 
-/* Not a colour of its own — the page tinted down. `--q-fg-default` at low alpha is a
+/* Not a colour of its own — the page tinted down. `--q-fgColor-default` at low alpha is a
  * near-black in light and a near-white in dark, which is wrong in dark, so this is one of
  * the few places a literal is right: a dark scrim over a dark page still reads as a
  * scrim. */
@@ -36,7 +36,7 @@
   font-weight: 600;
   /* Not upper-cased, unlike Card's title. A card labels a region you are already looking
    * at; a dialog title names the thing you just opened, and it is the first thing read. */
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
 }
 
 .body {

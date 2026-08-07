@@ -20,7 +20,7 @@ pub fn CardStories() -> impl IntoView {
                   the queue and the list — which is what makes the page read as a page \
                   rather than as two widgets above some loose text. The rows were measured \
                   against this surface too: their hairlines and hover tint assume \
-                  --q-canvas-default under them. \
+                  --q-bgColor-default under them. \
                   \
                   The card draws the hairline between any two children, so a card holding a \
                   mix of row types stays evenly divided — which a rule inside one row's \

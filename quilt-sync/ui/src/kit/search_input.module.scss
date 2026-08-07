@@ -10,22 +10,22 @@
   flex: 1 1 auto;
   min-width: 0;
   padding: 4px var(--q-space-2);
-  border: 1px solid var(--q-border-default);
+  border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
 }
 
 .root:hover {
-  border-color: var(--q-border-strong);
+  border-color: var(--q-borderColor-emphasis);
 }
 
 /* The ring goes on the wrapper, so the icon and the clear button are inside it
  * rather than beside a ringed input. */
 .root:focus-within {
-  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
-  outline-offset: var(--q-focus-ring-offset);
-  border-color: var(--q-border-strong);
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+  border-color: var(--q-borderColor-emphasis);
 }
 
 .icon {
@@ -33,7 +33,7 @@
   flex: none;
   width: 14px;
   height: 14px;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 .icon svg {
@@ -57,7 +57,7 @@
 }
 
 .field::placeholder {
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   opacity: 1;
 }
 
@@ -77,13 +77,13 @@
   width: 18px;
   height: 18px;
   border-radius: var(--q-radius);
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   cursor: pointer;
 }
 
 .clear:hover {
   background: var(--q-overlay-hover);
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
 }
 
 .clear svg {

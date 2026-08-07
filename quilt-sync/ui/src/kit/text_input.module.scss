@@ -8,24 +8,24 @@
   width: 100%;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid var(--q-border-default);
+  border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
   font-size: var(--q-text-body);
   line-height: var(--q-line-tight);
 }
 
 .root::placeholder {
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 .root:hover:not(:disabled) {
-  border-color: var(--q-border-strong);
+  border-color: var(--q-borderColor-emphasis);
 }
 
 .root:disabled {
-  color: var(--q-fg-disabled);
+  color: var(--q-fgColor-disabled);
   background: var(--q-overlay-hover);
   cursor: not-allowed;
 }
@@ -34,9 +34,9 @@
  * harder to read at the moment they are trying to fix it — and the border plus the
  * message in `Field` already say it twice. */
 .invalid {
-  border-color: var(--q-danger-border);
+  border-color: var(--q-borderColor-danger-muted);
 }
 
 .invalid:hover:not(:disabled) {
-  border-color: var(--q-danger-fg);
+  border-color: var(--q-fgColor-danger);
 }

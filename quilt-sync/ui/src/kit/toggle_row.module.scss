@@ -20,7 +20,7 @@
 }
 
 .root.disabled {
-  color: var(--q-fg-disabled);
+  color: var(--q-fgColor-disabled);
 }
 
 /* The clickable part: indicator plus text, filling the row up to the trailing
@@ -62,9 +62,9 @@
   width: 17px;
   height: 17px;
   margin-top: 1px;
-  border: 1px solid var(--q-border-strong);
+  border: 1px solid var(--q-borderColor-emphasis);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
+  background: var(--q-bgColor-default);
   color: transparent;
   transition: background-color 120ms ease, border-color 120ms ease;
 }
@@ -75,37 +75,37 @@
 }
 
 .input:checked + .indicator {
-  background: var(--q-accent-emphasis);
-  border-color: var(--q-accent-emphasis);
+  background: var(--q-bgColor-accent-emphasis);
+  border-color: var(--q-bgColor-accent-emphasis);
   /* Safe in both themes: `--blue-contrast` is #fff in each, so the tick never
    * needs a per-theme value. */
-  color: var(--q-fg-on-emphasis);
+  color: var(--q-fgColor-onEmphasis);
 }
 
 /* Hover feedback belongs to the label, not the row: hovering the inert trailing
  * slot must not suggest the checkbox is about to change. */
 .main:hover .indicator {
-  border-color: var(--q-fg-muted);
+  border-color: var(--q-fgColor-muted);
 }
 
 .root.disabled .main:hover .indicator {
-  border-color: var(--q-border-muted);
+  border-color: var(--q-borderColor-muted);
 }
 
 /* The ring goes on the box, because the input it belongs to is off-screen. */
 .input:focus-visible + .indicator {
-  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
-  outline-offset: var(--q-focus-ring-offset);
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
 }
 
 .root.disabled .indicator {
-  border-color: var(--q-border-muted);
+  border-color: var(--q-borderColor-muted);
   background: var(--q-overlay-hover);
 }
 
 .input:checked:disabled + .indicator {
-  background: var(--q-fg-disabled);
-  border-color: var(--q-fg-disabled);
+  background: var(--q-fgColor-disabled);
+  border-color: var(--q-fgColor-disabled);
 }
 
 .text {
@@ -120,11 +120,11 @@
 .sublabel {
   display: block;
   margin-top: 1px;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 .root.disabled .sublabel {
-  color: var(--q-fg-disabled);
+  color: var(--q-fgColor-disabled);
 }
 
 /* Inert by design — outside the label, so clicking it does nothing, and the
@@ -135,11 +135,11 @@
   flex: none;
   cursor: default;
   padding-left: var(--q-space-2);
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .root.disabled .trailing {
-  color: var(--q-fg-disabled);
+  color: var(--q-fgColor-disabled);
 }

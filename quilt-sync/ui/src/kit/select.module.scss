@@ -22,10 +22,10 @@
   gap: 6px;
   max-width: 100%;
   padding: 5px 10px;
-  border: 1px solid var(--q-border-default);
+  border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
   font-size: var(--q-text-body);
   line-height: var(--q-line-tight);
   cursor: pointer;
@@ -34,7 +34,7 @@
 
 .root:hover:not(.disabled) {
   background: var(--q-overlay-hover);
-  border-color: var(--q-border-strong);
+  border-color: var(--q-borderColor-emphasis);
 }
 
 /* The ring belongs around the whole control, so the wrapper takes it and the
@@ -42,20 +42,20 @@
  * clicking a select focuses it *and* opens the dropdown, so a ring on click is
  * expected here rather than noise. */
 .root:focus-within {
-  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
-  outline-offset: var(--q-focus-ring-offset);
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
 }
 
 .root.disabled {
   cursor: not-allowed;
-  color: var(--q-fg-disabled);
-  border-color: var(--q-border-muted);
+  color: var(--q-fgColor-disabled);
+  border-color: var(--q-borderColor-muted);
   background: var(--q-overlay-hover);
 }
 
 .prefix {
   flex: none;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 /* The label always renders; when it is not shown it goes off-screen rather than
@@ -76,7 +76,7 @@
 
 .root.disabled .prefix,
 .root.disabled .caret {
-  color: var(--q-fg-disabled);
+  color: var(--q-fgColor-disabled);
 }
 
 /* Covers the wrapper so any click opens the OS dropdown. Absolute, so it paints
@@ -117,7 +117,7 @@
   flex: none;
   width: 12px;
   height: 12px;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   pointer-events: none;
 }
 

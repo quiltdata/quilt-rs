@@ -15,10 +15,10 @@
   align-items: center;
   gap: 7px;
   padding: 5px 12px;
-  border: 1px solid var(--q-border-default);
+  border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
   cursor: pointer;
   white-space: nowrap;
   max-width: 100%;
@@ -30,7 +30,7 @@
 
 .btn:hover:not(:disabled) {
   background: var(--q-overlay-hover);
-  border-color: var(--q-border-strong);
+  border-color: var(--q-borderColor-emphasis);
 }
 
 .btn:active:not(:disabled) {
@@ -44,8 +44,8 @@
 
 .btn:disabled {
   cursor: not-allowed;
-  color: var(--q-fg-disabled);
-  border-color: var(--q-border-muted);
+  color: var(--q-fgColor-disabled);
+  border-color: var(--q-borderColor-muted);
   background: var(--q-overlay-hover);
 }
 
@@ -94,28 +94,28 @@
 
 /* ── primary ──────────────────────────────────────────────────────────── */
 .primary {
-  background: var(--q-accent-emphasis);
-  border-color: var(--q-accent-emphasis);
-  color: var(--q-fg-on-emphasis);
+  background: var(--q-bgColor-accent-emphasis);
+  border-color: var(--q-bgColor-accent-emphasis);
+  color: var(--q-fgColor-onEmphasis);
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--q-accent-emphasis-hover);
-  border-color: var(--q-accent-emphasis-hover);
+  background: var(--q-bgColor-accent-emphasis-hover);
+  border-color: var(--q-bgColor-accent-emphasis-hover);
 }
 
 .primary:active:not(:disabled) {
   /* Light's accent cannot go darker than rest, so the press is carried by
    * geometry and a darker border rather than by fill. */
-  background: var(--q-accent-emphasis);
-  border-color: var(--q-fg-default);
+  background: var(--q-bgColor-accent-emphasis);
+  border-color: var(--q-fgColor-default);
   transform: translate(1px, 1px);
 }
 
 .primary:disabled {
   background: var(--q-overlay-selected);
-  border-color: var(--q-border-muted);
-  color: var(--q-fg-disabled);
+  border-color: var(--q-borderColor-muted);
+  color: var(--q-fgColor-disabled);
 }
 
 /* ── loading ─────────────────────────────────────────────────────────────

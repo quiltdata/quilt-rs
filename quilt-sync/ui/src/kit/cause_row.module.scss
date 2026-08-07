@@ -19,7 +19,7 @@
    * chevron against the bullets by 2px — small, and visible the moment the rows are
    * adjacent, which they always are. */
   padding: 6px 2px;
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
 }
 
 /* The row is `flex-start` aligned, not centred, because it wraps to two or three lines
@@ -39,7 +39,7 @@
  * This is where a severity tint would go if the region ever wants one back; see the
  * module doc on why there is no tone here now. */
 .count {
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 /* Holds either a Button or a sentence, and it is the LAST thing in the row — so its
@@ -53,7 +53,7 @@
    * the text — same derivation as those two. */
   min-height: 24px;
   gap: var(--q-space-2);
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 /* The disclosure column. A hit target first and a chevron second: 24px square, so it
@@ -73,13 +73,13 @@
   border: 0;
   border-radius: var(--q-radius);
   background: none;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   cursor: pointer;
 }
 
 .expander:hover {
   background: var(--q-overlay-hover);
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
 }
 
 .expander svg {

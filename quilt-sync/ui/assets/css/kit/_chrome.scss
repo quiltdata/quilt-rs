@@ -35,7 +35,7 @@ body {
   list-style: none;
   margin: var(--q-space-4) 0 0;
   padding: 0;
-  border-left: 1px solid var(--q-border-muted);
+  border-left: 1px solid var(--q-borderColor-muted);
 }
 
 .g-nav li a {
@@ -43,13 +43,13 @@ body {
   padding: 4px var(--q-space-3);
   margin-left: -1px;
   border-left: 2px solid transparent;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   text-decoration: none;
 }
 
 .g-nav li a:hover {
-  color: var(--q-fg-default);
-  border-left-color: var(--q-border-strong);
+  color: var(--q-fgColor-default);
+  border-left-color: var(--q-borderColor-emphasis);
   background: var(--q-overlay-hover);
 }
 
@@ -60,17 +60,17 @@ body {
 .g-head { margin-bottom: var(--q-space-8); }
 
 .g-head h1 { font-size: var(--q-text-title); margin: 0 0 4px; font-weight: 600; }
-.g-head p { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fg-muted); max-width: 60ch; }
+.g-head p { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 60ch; }
 
 .g-section { margin-bottom: var(--q-space-8); }
 .g-section h2 {
   font-size: var(--q-text-body);
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   margin: 0 0 3px;
 }
-.g-note { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fg-muted); max-width: 80ch; }
+.g-note { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 80ch; }
 
 .g-grid {
   display: grid;
@@ -81,9 +81,9 @@ body {
 /* Composed scenes are not grid cells: a simulation of a real region has to be
  * the width the region actually gets, not a column. */
 .g-scene {
-  border: 1px dashed var(--q-border-default);
+  border: 1px dashed var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-page);
+  background: var(--q-bgColor-page);
   padding: var(--q-space-3);
 }
 
@@ -102,9 +102,9 @@ body {
 .g-cell--full { grid-column: 1 / -1; }
 
 .g-cell {
-  border: 1px solid var(--q-border-muted);
+  border: 1px solid var(--q-borderColor-muted);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
+  background: var(--q-bgColor-default);
   padding: 9px 11px 12px;
   min-width: 0;
 }
@@ -113,7 +113,7 @@ body {
   display: block;
   font-family: var(--q-font-mono);
   font-size: var(--q-text-body);
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   margin-bottom: 8px;
 }
 

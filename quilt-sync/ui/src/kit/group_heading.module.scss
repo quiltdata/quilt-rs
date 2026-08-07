@@ -11,7 +11,7 @@
   align-items: baseline;
   gap: var(--q-space-2);
   padding: var(--q-space-2) 2px 3px;
-  border-bottom: 1px solid var(--q-border-muted);
+  border-bottom: 1px solid var(--q-borderColor-muted);
 }
 
 .title {
@@ -23,9 +23,9 @@
 
 /* Attention tone, because an annotation only ever exists to say something is
  * wrong with the whole group. A header is not hoverable, which is what makes
- * `fg` rather than `fg-on-subtle` safe here — see the tone block in `_tokens`. */
+ * `fg` rather than `onMuted` safe here — see the tone block in `_tokens`. */
 .annotation {
-  color: var(--q-attention-fg);
+  color: var(--q-fgColor-attention);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -37,6 +37,6 @@
 .count {
   margin-left: auto;
   flex: none;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   font-variant-numeric: tabular-nums;
 }

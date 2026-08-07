@@ -362,23 +362,23 @@
    * step 9 measured 3.38:1). If something must recede, use `muted` with weight
    * or size — not a lighter grey.
    *
-   * On --q-canvas-default: default 16.5:1 light / 15.2:1 dark, muted 6.6 / 8.4,
+   * On --q-bgColor-default: default 16.5:1 light / 15.2:1 dark, muted 6.6 / 8.4,
    * accent-fg 6.5 / 8.5. */
-  --q-fg-default: var(--gray-12);
-  --q-fg-muted: var(--gray-11);
-  --q-fg-on-emphasis: var(--blue-contrast);
+  --q-fgColor-default: var(--gray-12);
+  --q-fgColor-muted: var(--gray-11);
+  --q-fgColor-onEmphasis: var(--blue-contrast);
 
   /* Disabled controls only — WCAG exempts inactive components. Never for text
    * a user has to read. */
-  --q-fg-disabled: var(--gray-9);
+  --q-fgColor-disabled: var(--gray-9);
 
   /* OPAQUE SURFACES — a raised surface is LIGHTER than the page. In light that
    * means literal white: step 1 is a *tinted* near-white (hue 277.7) and at
    * #f6f7f8 is darker than the #fafafa page, so cards would recede. */
-  --q-canvas-page: var(--color-background);
-  --q-canvas-default: #fff;
-  --q-canvas-subtle: var(--gray-2);
-  --q-canvas-inset: var(--gray-3);
+  --q-bgColor-page: var(--color-background);
+  --q-bgColor-default: #fff;
+  --q-bgColor-muted: var(--gray-2);
+  --q-bgColor-inset: var(--gray-3);
 
   /* INTERACTION OVERLAYS — alpha, not solid. A solid tint only works on the one
    * background it was chosen against: `--gray-2` as hover is invisible on a
@@ -390,9 +390,9 @@
   --q-overlay-accent-hover: var(--blue-a3);
 
   /* lines. `muted` separates rows; `default` outlines controls. */
-  --q-border-muted: var(--gray-4);
-  --q-border-default: var(--gray-7);
-  --q-border-strong: var(--gray-8);
+  --q-borderColor-muted: var(--gray-4);
+  --q-borderColor-default: var(--gray-7);
+  --q-borderColor-emphasis: var(--gray-8);
 
   /* ACCENT. Step 11 for text, not 12: light's 12 (#2a2d52) is nearly identical
    * to 9, so a link would be indistinguishable from a solid accent fill.
@@ -401,16 +401,16 @@
    * near-black navy and 10 is *lighter*; dark step 9 is a vivid blue and 10 is
    * darker. Always go through the token; a hand-written hover will be wrong in
    * one theme. */
-  --q-accent-fg: var(--blue-11);
-  --q-accent-emphasis: var(--blue-9);
-  --q-accent-emphasis-hover: var(--blue-10);
-  --q-accent-subtle: var(--blue-3);
-  --q-accent-border: var(--blue-7);
+  --q-fgColor-accent: var(--blue-11);
+  --q-bgColor-accent-emphasis: var(--blue-9);
+  --q-bgColor-accent-emphasis-hover: var(--blue-10);
+  --q-bgColor-accent-muted: var(--blue-3);
+  --q-borderColor-accent-muted: var(--blue-7);
 
   /* FOCUS. Step 8, not 9: light's 9 is near-black and reads as a border. */
-  --q-focus-ring: var(--blue-8);
-  --q-focus-ring-width: 2px;
-  --q-focus-ring-offset: 2px;
+  --q-focus-outlineColor: var(--blue-8);
+  --q-focus-outlineWidth: 2px;
+  --q-focus-outlineOffset: 2px;
 
   /* ─── TONES ───────────────────────────────────────────────────────────────
    * Four tones, four roles each, so a component can swap tone by swapping three
@@ -420,17 +420,17 @@
    *
    * TWO text roles per tone, and the difference is not cosmetic. Step 11 is the
    * scale's text step and is AA against steps 1–2 — NOT against step 3. Measured
-   * against the tone's own `subtle` fill: green 4.21:1 and amber 4.25:1, both
+   * against the tone's own `muted` fill: green 4.21:1 and amber 4.25:1, both
    * under 4.5. So text on a status fill uses step 12, at 10.5–13.7:1 in both
-   * themes. Same reason `--q-fg-subtle` was deleted: the scale offers two text
+   * themes. Same reason a third text role was never added: the scale offers two text
    * steps and the third level people reach for is the one that fails.
    *
-   * `fg` (step 11) on --q-canvas-default: 4.72 / 4.61 / 5.21 / 6.57 light,
+   * `fg` (step 11) on --q-bgColor-default: 4.72 / 4.61 / 5.21 / 6.57 light,
    *   9.36 / 11.46 / 8.33 / 8.42 dark. Bare status text, untinted surface only.
    *   CAUTION: a hover overlay is enough to break it — attention on a
    *   hover-tinted card measures 4.01:1. Status text on a hoverable row needs
-   *   `fg-on-subtle`, or a fill under it.
-   * `fg-on-subtle` (step 12) is measured per tone in the block below, including
+   *   `onMuted`, or a fill under it.
+   * `onMuted` (step 12) is measured per tone in the block below, including
    *   over a hovered row, which is the case the solid fills got wrong.
    *
    * NO `emphasis` role. A solid step-9 fill has no foreground that passes: white
@@ -455,36 +455,36 @@
    * "you are safe", not "well done". `neutral` stays for a tone that reports a
    * number and takes no position (`2 files changed`).
    *
-   * `subtle` is an ALPHA step so it composites with the row's hover tint instead
+   * `muted` is an ALPHA step so it composites with the row's hover tint instead
    * of sitting on it like a sticker. On an untinted card `a3` resolves to exactly
    * step 3, so nothing about the plain case changed.
    *
-   * `fg-on-subtle` (step 12) measured over its own fill, card / hovered row:
+   * `onMuted` (step 12) measured over its own fill, card / hovered row:
    *   success  11.72 / 10.26 light   12.49 / 10.10 dark
    *   neutral  14.31 / 12.46         12.37 /  9.81
    *   attention 10.47 /  9.40        11.83 /  9.57
    *   danger   10.84 /  9.44         11.04 /  9.22
    * Worst case 9.22:1. Step 11 in the same places measures 3.7-4.3 in light, which
    * is why the text step is 12 and not the scale's own text step. */
-  --q-neutral-fg: var(--gray-11);
-  --q-neutral-fg-on-subtle: var(--gray-12);
-  --q-neutral-subtle: var(--gray-a3);
-  --q-neutral-border: var(--gray-7);
+  --q-fgColor-neutral: var(--gray-11);
+  --q-fgColor-neutral-onMuted: var(--gray-12);
+  --q-bgColor-neutral-muted: var(--gray-a3);
+  --q-borderColor-neutral-muted: var(--gray-7);
 
-  --q-success-fg: var(--green-11);
-  --q-success-fg-on-subtle: var(--green-12);
-  --q-success-subtle: var(--green-a2);
-  --q-success-border: var(--green-6);
+  --q-fgColor-success: var(--green-11);
+  --q-fgColor-success-onMuted: var(--green-12);
+  --q-bgColor-success-muted: var(--green-a2);
+  --q-borderColor-success-muted: var(--green-6);
 
-  --q-attention-fg: var(--amber-11);
-  --q-attention-fg-on-subtle: var(--amber-12);
-  --q-attention-subtle: var(--amber-a3);
-  --q-attention-border: var(--amber-7);
+  --q-fgColor-attention: var(--amber-11);
+  --q-fgColor-attention-onMuted: var(--amber-12);
+  --q-bgColor-attention-muted: var(--amber-a3);
+  --q-borderColor-attention-muted: var(--amber-7);
 
-  --q-danger-fg: var(--red-11);
-  --q-danger-fg-on-subtle: var(--red-12);
-  --q-danger-subtle: var(--red-a3);
-  --q-danger-border: var(--red-7);
+  --q-fgColor-danger: var(--red-11);
+  --q-fgColor-danger-onMuted: var(--red-12);
+  --q-bgColor-danger-muted: var(--red-a3);
+  --q-borderColor-danger-muted: var(--red-7);
 
   /* SPACE — a 4px grid, mirroring v1's `--q-ui-size-*` but named by multiples of
    * the unit rather than by half-steps (`--q-space-3` reads better than
@@ -556,7 +556,7 @@
  * block short — needing it often means tier 1 is doing the wrong job.
  * ═════════════════════════════════════════════════════════════════════════ */
 :root[data-theme="dark"], .dark, .dark-theme {
-  --q-canvas-default: var(--gray-2);
-  --q-canvas-subtle: var(--gray-3);
-  --q-canvas-inset: var(--gray-4);
+  --q-bgColor-default: var(--gray-2);
+  --q-bgColor-muted: var(--gray-3);
+  --q-bgColor-inset: var(--gray-4);
 }

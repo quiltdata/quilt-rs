@@ -25,13 +25,13 @@
 }
 
 .track {
-  stroke: var(--q-accent-subtle);
+  stroke: var(--q-bgColor-accent-muted);
 }
 
 /* `--cd-circumference` is set by the component so the keyframes and the dash
  * array cannot disagree — the geometry lives in one place, in Rust. */
 .arc {
-  stroke: var(--q-accent-emphasis);
+  stroke: var(--q-bgColor-accent-emphasis);
   stroke-dasharray: var(--cd-circumference);
   animation: countdown-sweep var(--cd-duration) linear var(--cd-delay) 1 forwards;
 }

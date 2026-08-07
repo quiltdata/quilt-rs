@@ -13,9 +13,9 @@
 .root {
   min-width: 0;
   padding: var(--q-space-3);
-  border: 1px solid var(--q-border-default);
+  border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
-  background: var(--q-canvas-default);
+  background: var(--q-bgColor-default);
 }
 
 /* Uppercase and muted, so it labels the block without competing with the rows inside
@@ -34,7 +34,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }
 
 /* Neither upper-cased nor tracked — it is a number, and spacing digits apart makes
@@ -51,5 +51,5 @@
  * divided consistently, which a `.row + .row` rule inside one row's module
  * could not do. */
 .body > * + * {
-  border-top: 1px solid var(--q-border-muted);
+  border-top: 1px solid var(--q-borderColor-muted);
 }

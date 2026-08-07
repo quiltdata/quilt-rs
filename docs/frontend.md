@@ -475,34 +475,49 @@ where ten solid fills would be louder than the content.
 
 ### Token names
 
-| Ours | Primer equivalent | |
+Tier 2 is property-first, matching Primer; only the `--q-` prefix is
+ours. Tier 1 keeps Radix's names, because Radix owns the values.
+
+| Ours | Primer | |
 |---|---|---|
-| `--q-fg-default` | `--fgColor-default` | ✅ words |
-| `--q-fg-muted` | `--fgColor-muted` | ✅ words |
-| `--q-fg-disabled` | `--fgColor-disabled` | ✅ words |
-| `--q-fg-on-emphasis` | `--fgColor-onEmphasis` | ✅ words |
-| `--q-border-default` | `--borderColor-default` | ✅ words |
-| `--q-border-muted` | `--borderColor-muted` | ✅ words |
-| `--q-{tone}-fg` | `--fgColor-{tone}` | ✅ words |
-| `--q-accent-emphasis` | `--bgColor-accent-emphasis` | ✅ words |
-| `--q-focus-ring` | `--focus-outlineColor` | ✅ concept |
+| `--q-fgColor-{default,muted,disabled,onEmphasis}` | `--fgColor-…` | ✅ |
+| `--q-bgColor-{default,muted,inset}` | `--bgColor-…` | ✅ |
+| `--q-borderColor-{default,muted,emphasis}` | `--borderColor-…` | ✅ |
+| `--q-fgColor-{tone}` | `--fgColor-{tone}` | ✅ |
+| `--q-bgColor-{tone}-muted` | `--bgColor-{tone}-muted` | ✅ |
+| `--q-borderColor-{tone}-muted` | `--borderColor-{tone}-muted` | ✅ |
+| `--q-bgColor-accent-emphasis` | `--bgColor-accent-emphasis` | ✅ |
+| `--q-focus-outlineColor` | `--focus-outlineColor` | ✅ |
+| `--q-fgColor-{tone}-onMuted` | — | ours, in Primer's grammar |
+| `--q-focus-outline{Width,Offset}` | — | ours, in Primer's grammar |
+| `--q-bgColor-page`, `--q-container` | — | ours |
+| `--q-bgColor-accent-emphasis-hover` | `--button-primary-bgColor-hover` | ⚠️ global vs component token |
 | `--q-overlay-{hover,active,selected}` | `--control-bgColor-{hover,active,selected}` | ⚠️ alpha overlay vs resolved colour |
-| `--q-border-strong` | `--borderColor-emphasis` | ❌ `strong` |
-| `--q-canvas-{default,subtle,inset}` | `--bgColor-{default,muted,inset}` | ❌ `canvas` retired |
-| `--q-{tone}-subtle` | `--bgColor-{tone}-muted` | ❌ `subtle` retired |
-| `--q-{tone}-border` | `--borderColor-{tone}-muted` | ❌ property in the role slot |
-| `--q-{tone}-fg-on-subtle` | — | ours; see below |
-| `--q-canvas-page`, `--q-container` | — | ours |
+| `--q-text-{body,lead,title}` | `--text-body-size-medium`, … | ⚠️ collapsed |
 | `--q-space-{1..12}` | `--base-size-{4..48}` | ❌ index vs value |
 | `--q-radius` | `--borderRadius-small` | ❌ value diverges |
-| `--q-text-{body,lead,title}` | `--text-body-size-medium`, … | ⚠️ collapsed |
 
-Every name in the ❌ rows is a **structural** mismatch, not a spelling
-one: our tokens are tone-first (`--q-success-subtle`) where Primer's are
-property-first (`--bgColor-success-muted`). Tone-first has no room for
-the property, which is why our fill role is called `subtle` and our
-border role is called `border` -- two words on different axes sharing one
-slot. Primer's shape has no such collision.
+Before the migration these were tone-first -- `--q-success-subtle`,
+`--q-success-border` -- which left no slot for the property, so the
+property leaked into the role slot: the fill role was called `subtle`
+(how loud it is) and the border role was called `border` (what it
+paints), two words on different axes sharing one position. Two of the
+role words were also retired Primer vocabulary rather than merely
+different: `subtle` and `canvas` were `primer/css` v18 and were dropped
+when primitives moved to property-first.
+
+`--q-fgColor-{tone}-onMuted` is invented: Primer has `onEmphasis` and
+`onInverse` but no `onMuted`, because Primer has only one foreground per
+tone. We need two -- step 11 is what a glyph wants on a step-3 fill, and
+step 12 is what *text* needs to hold 4.5:1 there. Inventing it in
+Primer's grammar rather than in our own is the point: it reads as the
+role it is, and the next person looking for it will guess right.
+
+`--q-overlay-*` keeps its own name deliberately. Primer's
+`--control-bgColor-hover` is a resolved colour; ours is an **alpha**
+overlay that composites with whatever it sits on, which is what lets a
+`StateLabel` inside a hovered row tint along with the row. Calling it
+`bgColor` would claim a model we do not use.
 
 ### Deliberate divergences
 
@@ -512,7 +527,7 @@ explicit product call, and Primer is the weaker authority in each case:
 | Divergence | Why |
 |---|---|
 | `--q-radius: 4px` everywhere, against Primer's 3 / 6 / 12px scale | A single radius was chosen deliberately -- there was no case where two radii were justifiable. 4px is the settled value. |
-| `--q-{tone}-fg-on-subtle` exists at all | Primer has one `--fgColor-{tone}` per tone. Ours needs two: step 11 is what a glyph wants on a step-3 fill, and step 12 is what *text* needs to hold 4.5:1 there. Primer's single token cannot express a measurement we took. |
+| `--q-fgColor-{tone}-onMuted` exists at all | Primer has one `--fgColor-{tone}` per tone. Ours needs two: step 11 is what a glyph wants on a step-3 fill, and step 12 is what *text* needs to hold 4.5:1 there. Primer's single token cannot express a measurement we took. |
 | No `emphasis` role for `success` / `attention` / `danger` | No solid tone fill passes AA with any foreground we have. A token that cannot be used legally should not exist. |
 | `TextInput` takes `invalid: bool`, not `validationStatus: 'error' \| 'success'` | We have no success validation state and no plan for one. |
 | `Field` takes `error: Option<String>`, not a `Validation` child with a required `variant` | Same reason, plus we have no compound-children pattern in Leptos. |
@@ -520,7 +535,7 @@ explicit product call, and Primer is the weaker authority in each case:
 | Prefix `--q-` on every token | Primer's are unprefixed and would collide in a webview that also loads vendored Radix scales. |
 | The Radix scales themselves | Primer's own palette is not published as a scale we can vendor, and Radix's is contrast-tested per step. This is the whole point of splitting the two authorities. |
 
-### Outstanding mismatches
+### What was applied
 
 Applied 2026-08-07 (`qhq-o2ov`), beyond the six component renames above:
 
@@ -546,13 +561,23 @@ Still outstanding:
    `SegmentedControl` and onto the control wrapper.
 2. **`ButtonVariant`** lacks Primer's `Danger` and `Invisible`. Add when
    a call site needs one, not before.
-3. **Token shape** -- adopting property-first
-   (`--q-bgColor-success-muted`, `--q-borderColor-success-muted`,
-   `--q-fgColor-success`, `--q-fgColor-success-onMuted`) across
-   `_tokens.scss` and every `*.module.scss` that reads tier 2. This is
-   the largest and the one with the clearest payoff: it retires
-   `subtle`, `canvas` and `strong` in one pass and makes the
-   fill-vs-border collision impossible to reintroduce.
+
+The token migration to property-first (`qhq-mowp`) landed the same day,
+across `_tokens.scss` and all 26 module stylesheets in one commit -- a
+half-migrated vocabulary is worse than either shape. It retired `subtle`,
+`canvas` and `strong` together and makes the fill-vs-border collision
+impossible to reintroduce. v1's page CSS was untouched: it reads a
+separate `--q-ui-*` namespace.
+
+Two checks are worth repeating after any future token sweep, because a
+dangling `var()` fails **silently** -- the declaration is simply dropped
+and the element renders unstyled rather than erroring:
+
+- every `var(--q-*)` in the kit resolves to a name defined in
+  `_tokens.scss` (diff the used set against the defined set);
+- the count of distinct token names is unchanged, which is what proves
+  the rename was bijective and did not quietly collapse two roles into
+  one.
 
 ## CSS Organization
 

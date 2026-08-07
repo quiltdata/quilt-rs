@@ -19,7 +19,7 @@
   display: block;
   /* An opaque surface rather than an alpha, so a stack of bars cannot accumulate into
    * a darker block where they overlap the row's own hover tint. */
-  background: var(--q-canvas-inset);
+  background: var(--q-bgColor-inset);
   border-radius: var(--q-radius);
   /* One radius, like everything else. The component spec asked for a `radius` prop;
    * collapsing the four radius tokens into one removed the reason for it. */

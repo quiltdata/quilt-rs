@@ -39,7 +39,7 @@
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: var(--q-border-strong);
+  background: var(--q-borderColor-emphasis);
 }
 
 /* Truncates right. The namespace is the row's subject, so it yields space to the
@@ -73,5 +73,5 @@
  * Quieter too, because it is evidence and not a decision of its own. */
 .sub {
   padding-left: calc(24px + var(--q-space-2));
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
 }

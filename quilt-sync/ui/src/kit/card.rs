@@ -3,7 +3,7 @@
 //! The page's four regions are all one of these: the two state-strip blocks, the
 //! attention queue, and the list. That is what makes the page read as a page rather
 //! than as two widgets followed by loose text — and it is not only cosmetic, since the
-//! rows were designed against a card's `--q-canvas-default`, where their hairlines and
+//! rows were designed against a card's `--q-bgColor-default`, where their hairlines and
 //! hover tint were measured.
 
 use leptos::prelude::*;

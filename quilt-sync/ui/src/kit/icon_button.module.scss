@@ -13,14 +13,14 @@
   justify-content: center;
   flex: none;
   border-radius: var(--q-radius);
-  color: var(--q-fg-muted);
+  color: var(--q-fgColor-muted);
   cursor: pointer;
   transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
 .root:hover:not(:disabled) {
   background: var(--q-overlay-hover);
-  color: var(--q-fg-default);
+  color: var(--q-fgColor-default);
 }
 
 .root:active:not(:disabled) {
@@ -30,7 +30,7 @@
 
 .root:disabled {
   cursor: not-allowed;
-  color: var(--q-fg-disabled);
+  color: var(--q-fgColor-disabled);
 }
 
 .root svg {
@@ -41,12 +41,12 @@
 .default {
   width: 28px;
   height: 28px;
-  border: 1px solid var(--q-border-default);
-  background: var(--q-canvas-default);
+  border: 1px solid var(--q-borderColor-default);
+  background: var(--q-bgColor-default);
 }
 
 .default:hover:not(:disabled) {
-  border-color: var(--q-border-strong);
+  border-color: var(--q-borderColor-emphasis);
 }
 
 .invisible {

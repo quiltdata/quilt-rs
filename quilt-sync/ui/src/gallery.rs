@@ -83,7 +83,7 @@ fn main() {
 ///
 /// Tier-2 tokens are declared on `:root` as `var()` references to tier 1, and a
 /// custom property's `var()` is resolved where the *declaration* sits — not
-/// where it is used. So `--q-fg-default` is computed once against whichever
+/// where it is used. So `--q-fgColor-default` is computed once against whichever
 /// tier-1 values `:root` sees, and descendants inherit that already-resolved
 /// colour. Putting `.dark` on a wrapper element therefore changes nothing.
 fn set_theme(dark: bool) {

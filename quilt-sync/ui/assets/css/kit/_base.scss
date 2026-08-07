@@ -15,8 +15,8 @@
 
 /* Document baseline in our tokens; overrides normalize's `html` floors. */
 body {
-  background: var(--q-canvas-page);
-  color: var(--q-fg-default);
+  background: var(--q-bgColor-page);
+  color: var(--q-fgColor-default);
   font-family: var(--q-font-sans);
   font-size: var(--q-text-body);
   line-height: var(--q-line-body);
@@ -41,6 +41,6 @@ svg {
  * `:focus-visible` so a mouse click leaves nothing behind. A component may
  * restyle it; nothing may remove it. */
 :focus-visible {
-  outline: var(--q-focus-ring-width) solid var(--q-focus-ring);
-  outline-offset: var(--q-focus-ring-offset);
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
 }
