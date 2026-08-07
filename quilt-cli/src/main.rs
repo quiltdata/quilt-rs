@@ -6,6 +6,7 @@
 use clap::Parser;
 use std::io;
 use tracing::log;
+use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 mod cli;
 
@@ -13,8 +14,8 @@ use cli::print;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
     let args = cli::Args::parse();
+    init_logging(args.verbose);
     match cli::init(args).await {
         Ok(result) => {
             let stdout = io::stdout();
@@ -32,4 +33,20 @@ async fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn init_logging(verbose: bool) {
+    let default_level = if verbose {
+        LevelFilter::INFO
+    } else {
+        LevelFilter::WARN
+    };
+    let filter = EnvFilter::builder()
+        .with_default_directive(default_level.into())
+        .from_env_lossy();
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(io::stderr)
+        .init();
 }
