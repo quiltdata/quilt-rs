@@ -1,6 +1,8 @@
 [package]
 name = "quilt-rs"
-description = "Rust library for accessing Quilt data packages."
+description = "Rust library for versioning data packages: content-addressed manifests, local domains, and S3 remotes."
+keywords = ["data", "versioning", "s3", "manifest", "reproducibility"]
+categories = ["filesystem", "science", "api-bindings"]
 
 # Inherit from workspace
 version = "0.35.1-alpha1"

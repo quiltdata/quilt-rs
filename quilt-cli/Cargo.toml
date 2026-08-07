@@ -1,6 +1,9 @@
 [package]
 name = "quilt-cli"
-description = "Command-line interface for Quilt data packages"
+description = "Local-first data versioning for AI agent workflows: commit immutable data packages on your own machine, then sync them with S3 to share."
+readme = "README.md"
+keywords = ["data", "versioning", "cli", "s3", "reproducibility"]
+categories = ["command-line-utilities", "filesystem", "science"]
 
 version = "0.30.0-alpha1"
 
