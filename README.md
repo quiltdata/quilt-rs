@@ -5,6 +5,10 @@ your scripts and AI agents read and write real revisions: immutable,
 content-addressed, visible in `status`, and pushable to S3 when you want them
 shared. No server and no cloud credentials required to start.
 
+This repo holds three ways to use it: the `quilt` CLI, the `quilt-rs` library
+underneath it, and [QuiltSync](quilt-sync/), a desktop app for people who
+would rather not open a terminal.
+
 [![CI](https://github.com/quiltdata/quilt-rs/actions/workflows/test-quilt-rs.yaml/badge.svg)](https://github.com/quiltdata/quilt-rs/actions/workflows/test-quilt-rs.yaml)
 [![crates.io](https://img.shields.io/crates/v/quilt-cli.svg)](https://crates.io/crates/quilt-cli)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -80,6 +84,20 @@ When you are ready to share, `quilt login --host <stack>`, then
 run `quilt install quilt+s3://<bucket>#package=demo/sales` and
 `quilt pull -n demo/sales`.
 
+## Or skip the terminal: QuiltSync
+
+[QuiltSync](quilt-sync/) is the same engine with a desktop UI, built for
+people who would rather not use a CLI at all. Find a package in the Quilt
+Catalog, open it on your desktop, and pull down only the files you need into
+an ordinary local folder. Edit them in your usual tools; QuiltSync syncs the
+changes back as a new immutable revision, and surfaces divergence when someone
+else published in the meantime.
+
+Builds for macOS (Apple Silicon and Intel), Windows, and Linux are on the
+[releases page](https://github.com/quiltdata/quilt-rs/releases) under
+`QuiltSync/v*`; the Windows artifacts are code-signed. Same packages, same
+revisions, same registry as the CLI — use either, or both.
+
 ## Why this exists
 
 We build AI learning loops for biotech, and the unit of agentic execution
@@ -90,35 +108,57 @@ changed. That is true on a laptop before it is ever true in a cloud account,
 so `quilt` works fully local-first and grows into S3 only when you outgrow
 your disk.
 
-**Why not just git?** Git tracks line-level text history in a single working
-copy. Data packages here are frequently binary and often enormous (Parquet,
-FASTQ, HDF5 — thousands of files, terabytes), so `quilt` optimizes for partial
-installs (`--path`), content-addressed dedup across packages, and
-whole-manifest revisions rather than text diffs and merges.
+**Why not git-lfs?** No server to run and no smudge/clean filters. Objects are
+addressed by content hash in a store S3 understands natively, so `push`
+uploads only rows whose content actually changed, and `install --path` fetches
+part of a package without materializing the rest. That partial, dedup-first
+model is what makes thousand-file, terabyte packages workable.
 
-**Why not git-lfs?** No server to run, no smudge/clean filters, and objects
-are addressed by content hash in a store that S3 understands natively — `push`
-uploads only rows whose content actually changed.
+## What belongs in a Quilt package
 
-## When *not* to use this
+Data: the structured and unstructured files that are the inputs, outputs, and
+control surface of your pipelines and agents. Parquet, CSV, FASTQ, HDF5,
+images, PDFs, notebooks, prompts, configs, model weights. Content that is
+often binary, sometimes enormous, and valuable because a given revision is
+immutable, addressable, and cheap to fetch in part.
 
-- You want line-level diffs, merges, or blame on text files. Use git.
-- You need to undo a commit. There is no `revert`/`reset` verb yet, and for a
-  local-only package there is no rollback at all
+Not your source tree. Code is text that gets reviewed, syntax-checked, built,
+and run, and git is very good at that — keep it there. Line-level diff, blame,
+and three-way merge are the right tools for a 200-line module and meaningless
+on a 40 GB Parquet file, which is why `quilt` does not implement them.
+
+The two compose: code in git, the data that code consumes and produces in
+`quilt`, each referencing the other by hash.
+
+## Current limitations
+
+We chose to ship something simple that handles large binary files and
+arbitrary document types over something complete. These are the sharp edges
+that choice left, not positions we intend to defend forever. Each has an
+issue — telling us which one actually blocks you is the most useful feedback
+you can give, and it is how we order the work.
+
+- **No undo yet.** No `revert`/`reset` verb, and a local-only package has no
+  rollback path at all
   ([#840](https://github.com/quiltdata/quilt-rs/issues/840)).
-- You want a revision log. Not in the CLI yet
-  ([#841](https://github.com/quiltdata/quilt-rs/issues/841)) — use `browse`
+- **No revision log yet** in the CLI
+  ([#841](https://github.com/quiltdata/quilt-rs/issues/841)). Use `browse`
   against a remote, or QuiltSync.
-- You are tight on disk. `objects/` and the manifest cache are **never
-  pruned**, deliberately: content is shared between packages and there is no
-  reference counting, so the safe choice is to leak bytes rather than delete
-  content another package still addresses.
-- You expect merge semantics. Divergence is resolved by choosing a whole
-  manifest — yours or theirs — not per file. The first push of a package also
-  always certifies itself as `latest`, even if a teammate published that
-  namespace first. Both are deliberate;
-  [Resolving Diverged](docs/architecture.md#resolving-diverged) lists the gaps
-  versus git explicitly.
+- **Noisy output.** Commands log at INFO on stdout; `RUST_LOG=warn` fixes it
+  today ([#837](https://github.com/quiltdata/quilt-rs/issues/837)).
+- **Disk usage only grows.** `objects/` and the manifest cache are never
+  pruned. Content is shared across packages with no reference counting, so
+  leaking bytes beats deleting something another package still addresses.
+  Refcounted pruning is a real feature we have not built.
+- **Divergence is resolved per package, not per file.** When two people move
+  past the same base, you pick your manifest or theirs. Relatedly, a first
+  push certifies itself as `latest` even if a teammate published that
+  namespace first. Both are deliberate given binary payloads;
+  [Resolving Diverged](docs/architecture.md#resolving-diverged) records the
+  reasoning and the exact gaps versus git.
+- **Prebuilt CLI binaries for macOS and Linux only.** Windows builds from
+  source ([#844](https://github.com/quiltdata/quilt-rs/issues/844)), though
+  QuiltSync ships a signed Windows app.
 
 ## What is in this repo
 
