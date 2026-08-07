@@ -75,27 +75,28 @@ pub async fn command(m: impl Commands) -> Std {
     Std::from_result(m.list().await)
 }
 
-/// Lists installed packages from the local domain — no network, one lineage
-/// read per package.
+/// Lists installed packages from the local domain — no network, one read of
+/// the lineage record for the whole listing.
 ///
 /// `status` is the [`UpstreamState`] cascade over the lineage's four hashes,
 /// read against the *last-known* remote tip: `list` never refreshes it.
 /// `quilt status <namespace>` does.
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
-    let installed_packages = local_domain.list_installed_packages().await?;
-    let mut installed_packages_list = Vec::with_capacity(installed_packages.len());
+    let domain_lineage = local_domain.get_lineage().await?;
+    let mut installed_packages_list = Vec::with_capacity(domain_lineage.packages.len());
 
-    for installed_package in installed_packages {
-        let lineage = installed_package.lineage().await?;
+    for (namespace, lineage) in domain_lineage.packages {
+        // An empty bucket is what the cascade already reads as local-only, so
+        // it renders like a package with no remote at all.
+        let bucket = lineage
+            .remote_uri
+            .as_ref()
+            .map(|remote| remote.bucket.clone())
+            .filter(|bucket| !bucket.is_empty());
         installed_packages_list.push(PackageEntry {
-            status: UpstreamState::from(lineage.clone()),
-            namespace: installed_package.namespace,
-            // An empty bucket is what the cascade already reads as local-only,
-            // so it renders like a package with no remote at all.
-            bucket: lineage
-                .remote_uri
-                .map(|remote| remote.bucket)
-                .filter(|bucket| !bucket.is_empty()),
+            status: UpstreamState::from(lineage),
+            namespace,
+            bucket,
         });
     }
 

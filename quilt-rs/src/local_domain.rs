@@ -210,6 +210,18 @@ impl LocalDomain {
         Ok(packages)
     }
 
+    /// The whole lineage record — every installed package, in one read.
+    ///
+    /// [`list_installed_packages`](Self::list_installed_packages) hands back
+    /// an [`InstalledPackage`] per namespace, and each
+    /// [`InstalledPackage::lineage`] call re-reads and re-parses this record
+    /// to pluck one entry out of it. That is the right shape for operating on
+    /// one package and the wrong one for surveying them all.
+    pub async fn get_lineage(&self) -> Res<DomainLineage> {
+        trace!("Reading domain lineage");
+        self.lineage.read(&self.storage).await
+    }
+
     pub async fn get_installed_package(
         &self,
         namespace: &Namespace,
