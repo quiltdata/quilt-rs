@@ -13,7 +13,7 @@
 
 ### Changed
 
-- `quilt list` prints a table of bucket, namespace and upstream status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package, and it no longer contacts the remote: the whole listing is a single read of the local lineage record, so it works signed out and returns in constant I/O rather than one network round trip and one full working-tree scan per package. The status column therefore reflects the last-known remote tip; `quilt status <namespace>` still refreshes it (<https://github.com/quiltdata/quilt-rs/pull/846>)
+- `quilt list` prints a table of bucket, namespace and upstream status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package. Status comes from the local lineage record, so listing stays offline and reports the last-known remote tip; `quilt status <namespace>` refreshes it (<https://github.com/quiltdata/quilt-rs/pull/846>)
 
 ## [v0.29.2] - 2026-08-07
 
