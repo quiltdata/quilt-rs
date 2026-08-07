@@ -1,6 +1,7 @@
 //! Not a part of the library and meant to be an independent project.
 //! This is a CLI frontend for `quilt_rs`.
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -75,6 +76,37 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
     }
 }
 
+fn namespace_from_working_dir(home: &Path, current_dir: &Path) -> Result<Namespace, Error> {
+    let home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    let current_dir =
+        std::fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
+    let mut components = current_dir
+        .strip_prefix(&home)
+        .map_err(|_| Error::NamespaceRequired)?
+        .components();
+
+    let prefix = components
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .ok_or(Error::NamespaceRequired)?;
+    let name = components
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .ok_or(Error::NamespaceRequired)?;
+
+    Namespace::try_from(format!("{prefix}/{name}")).map_err(Error::from)
+}
+
+async fn resolve_namespace(model: &Model, namespace: Option<String>) -> Result<Namespace, Error> {
+    if let Some(namespace) = namespace {
+        return Ok(namespace.try_into()?);
+    }
+
+    let home = model.get_home().await?;
+    let current_dir = std::env::current_dir()?;
+    namespace_from_working_dir(home.as_ref(), &current_dir)
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
@@ -118,10 +150,10 @@ enum Commands {
         /// JSON string for user meta
         #[arg(short, long)]
         user_meta: Option<String>,
-        /// Namespace of the package to commit new revision
-        /// Ex. foo/bar
+        /// Namespace of the package to commit new revision. If omitted, infer
+        /// it from the current working directory under the configured home.
         #[arg(short, long)]
-        namespace: String,
+        namespace: Option<String>,
         /// Workflow ID
         /// Ex. `"my_workflow"`
         /// Omit to use the bucket's default workflow.
@@ -157,17 +189,17 @@ enum Commands {
     List,
     /// Pull
     Pull {
-        /// Namespace of the package to pull
-        /// Ex. foo/bar
+        /// Namespace of the package to pull. If omitted, infer it from the
+        /// current working directory under the configured home.
         #[arg(short, long)]
-        namespace: String,
+        namespace: Option<String>,
     },
     /// Push
     Push {
-        /// Namespace of the package to push
-        /// Ex. foo/bar
+        /// Namespace of the package to push. If omitted, infer it from the
+        /// current working directory under the configured home.
         #[arg(short, long)]
-        namespace: String,
+        namespace: Option<String>,
         /// S3 bucket (required for first push of local-only packages)
         #[arg(short, long, requires = "origin")]
         bucket: Option<String>,
@@ -202,16 +234,17 @@ enum Commands {
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
-        /// Namespace of the package. Ex. foo/bar
+        /// Namespace of the package. If omitted, infer it from the current
+        /// working directory under the configured home.
         #[arg(short, long)]
-        namespace: String,
+        namespace: Option<String>,
     },
     /// Uninstall package from local domain
     Uninstall {
-        /// Namespace of the package to uninstall.
-        /// Ex. foo/bar
+        /// Namespace of the package to uninstall. If omitted, infer it from
+        /// the current working directory under the configured home.
         #[arg(short, long)]
-        namespace: String,
+        namespace: Option<String>,
     },
 }
 
@@ -274,6 +307,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             workflow,
             no_workflow,
         } => {
+            let namespace = resolve_namespace(&m, namespace).await?;
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
                     serde_json::Value::Object(object) => {
@@ -288,7 +322,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = commit::Input {
                 message,
-                namespace: namespace.try_into()?,
+                namespace,
                 user_meta,
                 workflow,
                 host_config: None,
@@ -327,8 +361,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(list::command(m).await)
         }
         Commands::Pull { namespace } => {
+            let namespace = resolve_namespace(&m, namespace).await?;
             let args = pull::Input {
-                namespace: namespace.try_into()?,
+                namespace,
                 host_config: None,
             };
 
@@ -342,6 +377,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             workflow,
             no_workflow,
         } => {
+            let namespace = resolve_namespace(&m, namespace).await?;
             // The workflow flags only take effect on a first push, where
             // set_remote→recommit resolves them. On a subsequent push the
             // workflow was already decided at commit time, so reject the flags
@@ -351,7 +387,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             }
             let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = push::Input {
-                namespace: namespace.try_into()?,
+                namespace,
                 host_config: None,
                 bucket,
                 origin,
@@ -368,8 +404,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(role::command(m, args).await)
         }
         Commands::Status { namespace } => {
+            let namespace = resolve_namespace(&m, namespace).await?;
             let args = status::Input {
-                namespace: namespace.try_into()?,
+                namespace,
                 host_config: None,
             };
 
@@ -377,9 +414,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(status::command(m, args).await)
         }
         Commands::Uninstall { namespace } => {
-            let args = uninstall::Input {
-                namespace: namespace.try_into()?,
-            };
+            let namespace = resolve_namespace(&m, namespace).await?;
+            let args = uninstall::Input { namespace };
 
             log::info!("Uninstalling {args:?}");
             Ok(uninstall::command(m, args).await)
@@ -405,6 +441,11 @@ Then run:
 
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
+
+    #[error(
+        "Could not infer a namespace from the current directory. Pass --namespace or run inside <home>/<prefix>/<name>"
+    )]
+    NamespaceRequired,
 
     #[error("Invalid JSON for user_meta object. Object is required")]
     CommitMetaInvalid(String),
@@ -509,6 +550,50 @@ mod tests {
     }
 
     #[test]
+    fn package_namespace_flag_is_optional() {
+        let inferred = Args::try_parse_from(["quilt", "status"]).unwrap();
+        assert!(matches!(
+            inferred.command,
+            Commands::Status { namespace: None }
+        ));
+
+        let explicit =
+            Args::try_parse_from(["quilt", "status", "--namespace", "demo/sales"]).unwrap();
+        assert!(matches!(
+            explicit.command,
+            Commands::Status {
+                namespace: Some(namespace)
+            } if namespace == "demo/sales"
+        ));
+    }
+
+    #[test]
+    fn namespace_from_working_dir_uses_package_components() -> Result<(), Error> {
+        let home = Path::new("/home/user/QuiltSync");
+        let current_dir = Path::new("/home/user/QuiltSync/demo/sales/src");
+
+        assert_eq!(
+            namespace_from_working_dir(home, current_dir)?,
+            Namespace::from(("demo", "sales"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn namespace_from_working_dir_requires_a_package_path() {
+        let home = Path::new("/home/user/QuiltSync");
+
+        assert!(matches!(
+            namespace_from_working_dir(home, Path::new("/home/user/QuiltSync")),
+            Err(Error::NamespaceRequired)
+        ));
+        assert!(matches!(
+            namespace_from_working_dir(home, Path::new("/home/user/other/demo/sales")),
+            Err(Error::NamespaceRequired)
+        ));
+    }
+
+    #[test]
     fn test_parse_optional_namespace() -> Result<(), Error> {
         // Test None case
         assert!(parse_optional_namespace(None)?.is_none());
@@ -589,7 +674,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             command: Commands::Commit {
                 message: pkg::MESSAGE.to_string(),
-                namespace: pkg::NAMESPACE_STR.to_string(),
+                namespace: Some(pkg::NAMESPACE_STR.to_string()),
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -620,7 +705,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Commit {
                 message: "Any message".to_string(),
-                namespace: "in/valid".to_string(),
+                namespace: Some("in/valid".to_string()),
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -647,7 +732,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Push {
-                namespace: "foo/bar".to_string(),
+                namespace: Some("foo/bar".to_string()),
                 bucket: None,
                 origin: None,
                 workflow: Some("x".to_string()),
@@ -672,7 +757,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Push {
-                namespace: "foo/bar".to_string(),
+                namespace: Some("foo/bar".to_string()),
                 bucket: None,
                 origin: None,
                 workflow: None,
@@ -700,7 +785,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Push {
-                namespace: "foo/bar".to_string(),
+                namespace: Some("foo/bar".to_string()),
                 bucket: Some("some-bucket".to_string()),
                 origin: Some(Host::from_str("open.quiltdata.com").unwrap()),
                 workflow: Some("x".to_string()),
@@ -727,7 +812,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Pull {
-                namespace: pkg::NAMESPACE_STR.to_string(),
+                namespace: Some(pkg::NAMESPACE_STR.to_string()),
             },
         };
 
@@ -753,7 +838,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Pull {
-                namespace: "in/valid".to_string(),
+                namespace: Some("in/valid".to_string()),
             },
         };
 
@@ -777,7 +862,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Uninstall {
-                namespace: pkg::NAMESPACE_STR.to_string(),
+                namespace: Some(pkg::NAMESPACE_STR.to_string()),
             },
         };
 
@@ -803,7 +888,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             command: Commands::Uninstall {
-                namespace: "in/valid".to_string(),
+                namespace: Some("in/valid".to_string()),
             },
         };
 
