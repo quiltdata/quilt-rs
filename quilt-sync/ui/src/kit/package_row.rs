@@ -22,7 +22,7 @@
 use leptos::prelude::*;
 
 use super::RelativeTime;
-use super::Skeleton;
+use super::SkeletonBox;
 use super::StateLabel;
 use super::countdown::EpochMillis;
 use super::state_label::StateTone;
@@ -95,14 +95,14 @@ pub fn PackageRowSkeleton() -> impl IntoView {
     view! {
         <div class=format!("{} {}", style::root, style::skeleton)>
             <span class=style::namespace>
-                <Skeleton width="38%" />
+                <SkeletonBox width="38%" />
             </span>
             <span class=style::time>
-                <Skeleton width="100%" />
+                <SkeletonBox width="100%" />
             </span>
             // 88px is roughly `Latest` in a state label. A percentage would be wrong here:
             // the label's width is set by its words, not by the row.
-            <Skeleton width="88px" height="22px" />
+            <SkeletonBox width="88px" height="22px" />
         </div>
     }
 }

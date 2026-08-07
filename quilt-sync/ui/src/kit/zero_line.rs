@@ -1,6 +1,6 @@
 //! The healthy queue: one line where a region would be.
 //!
-//! # Why it is not an `EmptyState`
+//! # Why it is not a `Blankslate`
 //!
 //! With autosync working this is the common case, seen most days by most users — so
 //! it is the state that decides whether the page reads as calm or as unfinished. A

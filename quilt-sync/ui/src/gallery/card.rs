@@ -26,7 +26,7 @@ pub fn CardStories() -> impl IntoView {
                   mix of row types stays evenly divided — which a rule inside one row's \
                   module could not do. Pass ONE wrapper child to opt out, as the queue does. \
                   The count is optional and must be derived from the rows; the title is \
-                  optional too, for the list card, whose ViewToggle already names the view."
+                  optional too, for the list card, whose SegmentedControl already names the view."
         >
             <Cell wide=true label="two rows — hairline is the card's, not the row's">
                 <Card title="Autosync">
@@ -68,7 +68,7 @@ pub fn CardStories() -> impl IntoView {
                     <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                 </Card>
             </Cell>
-            <Cell wide=true label="no title — the list card, named by its own ViewToggle">
+            <Cell wide=true label="no title — the list card, named by its own SegmentedControl">
                 <Card>
                     <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                 </Card>

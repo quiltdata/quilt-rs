@@ -17,7 +17,7 @@
   border-radius: var(--q-radius);
   background: var(--tone-fill);
   color: var(--tone-text);
-  animation: notification-in 160ms ease-out;
+  animation: banner-in 160ms ease-out;
 }
 
 .success {
@@ -34,7 +34,7 @@
   --tone-mark: var(--q-attention-fg);
 }
 
-.error {
+.critical {
   --tone-fill: var(--q-danger-subtle);
   --tone-edge: var(--q-danger-border);
   --tone-text: var(--q-danger-fg-on-subtle);
@@ -89,7 +89,7 @@
 
 /* Slides down from under the appbar and fades, which is the direction it arrives from.
  * In only — see the module doc on why there is no exit. */
-@keyframes notification-in {
+@keyframes banner-in {
   from {
     opacity: 0;
     transform: translateY(-4px);
@@ -97,7 +97,7 @@
 }
 
 /* The bar appearing is the signal; the slide is decoration. A user who has asked for less
- * motion still gets the notification, instantly. */
+ * motion still gets the banner, instantly. */
 @media (prefers-reduced-motion: reduce) {
   .root { animation: none; }
 }

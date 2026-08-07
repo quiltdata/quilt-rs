@@ -18,7 +18,7 @@
   color: var(--q-fg-muted);
 }
 
-.title {
+.heading {
   font-size: var(--q-text-lead);
   font-weight: 600;
   color: var(--q-fg-default);
@@ -26,6 +26,6 @@
 
 /* Held narrow: a centred explanation running the full width of a 1200px window is
  * unreadable however well written. */
-.body {
+.description {
   max-width: 46ch;
 }

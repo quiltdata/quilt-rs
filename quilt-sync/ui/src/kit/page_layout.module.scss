@@ -48,7 +48,7 @@
   gap: var(--q-space-2);
 }
 
-/* The notification's own row: width-capped like the appbar's contents and the page column,
+/* The banner's own row: width-capped like the appbar's contents and the page column,
  * so a bar lines up with the regions rather than with the window. Only the top padding is
  * the row's — the bottom gap belongs to whatever follows, and `.main`'s padding already
  * provides it. */

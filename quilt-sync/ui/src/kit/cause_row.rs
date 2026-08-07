@@ -51,7 +51,7 @@ pub fn CauseRow(
     /// its own `QueueRow`s with `sub`. This row owns the control, not the content.
     expanded: RwSignal<bool>,
     /// `[Sign in]`, or the line that points at where the fix lives. `AnyView` rather
-    /// than `Children`, matching `ToggleRow`'s trailing slot and `EmptyState`'s action
+    /// than `Children`, matching `ToggleRow`'s trailing slot and `Blankslate`'s `primary_action`
     /// — in this kit `Children` means the one unnamed child, and a named slot is a
     /// view.
     trailing: AnyView,

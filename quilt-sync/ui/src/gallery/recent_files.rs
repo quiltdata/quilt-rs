@@ -10,16 +10,16 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
-use crate::kit::EmptyState;
+use crate::kit::Blankslate;
 use crate::kit::FileRow;
-use crate::kit::GroupHeader;
+use crate::kit::GroupHeading;
 use crate::kit::IconButton;
 use crate::kit::IconButtonVariant;
 use crate::kit::ListToolbar;
 use crate::kit::RelativeTime;
 use crate::kit::SearchInput;
 use crate::kit::Select;
-use crate::kit::ViewToggle;
+use crate::kit::SegmentedControl;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -213,7 +213,7 @@ fn Icons() -> impl IntoView {
                 <IconButton
                     icon=gear_icon()
                     aria_label="Settings"
-                    variant=IconButtonVariant::Bare
+                    variant=IconButtonVariant::Invisible
                     on_click=|_| ()
                 />
             </Cell>
@@ -225,23 +225,23 @@ fn Icons() -> impl IntoView {
 fn Groups() -> impl IntoView {
     view! {
         <Story
-            title="GroupHeader"
+            title="GroupHeading"
             note="The count is always shown, including one — hiding it would make a \
                   single-row group look like a header with a bug. The annotation exists so a \
                   shared cause can be stated once per group instead of on thirty rows; only \
                   the bucket axis has one, since a prefix spans buckets."
         >
             <Cell wide=true label="plain — the files view, grouped by package">
-                <GroupHeader title="user/package-b" count=3 />
+                <GroupHeading title="user/package-b" count=3 />
             </Cell>
             <Cell wide=true label="count of one">
-                <GroupHeader title="Local only" count=1 />
+                <GroupHeading title="Local only" count=1 />
             </Cell>
             <Cell wide=true label="annotated — the packages view's bucket axis, in the attention tone">
-                <GroupHeader title="s3://team-bucket" count=3 annotation="no access as analyst" />
+                <GroupHeading title="s3://team-bucket" count=3 annotation="no access as analyst" />
             </Cell>
             <Cell wide=true label="long title truncates, count survives">
-                <GroupHeader
+                <GroupHeading
                     title="s3://quilt-enterprise-eu-west-1-vir-biotechnology-in-progress"
                     count=14
                 />
@@ -254,24 +254,24 @@ fn Groups() -> impl IntoView {
 fn Empties() -> impl IntoView {
     view! {
         <Story
-            title="EmptyState"
+            title="Blankslate"
             note="One component for both empties. No results has no action — the user already \
                   knows how to change their search, so a button there would be filler."
         >
             <Cell wide=true label="no results — no action">
-                <EmptyState
-                    title="No files match “plate-99”"
-                    body="Search covers the paths of files you have locally. Files that exist \
+                <Blankslate
+                    heading="No files match “plate-99”"
+                    description="Search covers the paths of files you have locally. Files that exist \
                           only in a bucket are not included."
                 />
             </Cell>
             <Cell wide=true label="nothing yet — with an action">
-                <EmptyState
-                    title="No recent changes"
-                    body="Files appear here as they arrive from your team or as you edit and \
+                <Blankslate
+                    heading="No recent changes"
+                    description="Files appear here as they arrive from your team or as you edit and \
                           publish them."
-                    action=view! {
-                        <ViewToggle
+                    primary_action=view! {
+                        <SegmentedControl
                             label="List view"
                             name="empty-view"
                             options=vec!["Packages".to_string(), "Recent files".to_string()]
@@ -349,7 +349,7 @@ pub fn RecentFilesScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · recent files"
-            note="The Group select is live — switch it to Package to see GroupHeader in \
+            note="The Group select is live — switch it to Package to see GroupHeading in \
                   context, which is the only place this view uses one. Note what grouping \
                   costs: flat, the newest file is the top row; grouped, it is the top row of \
                   the first group, and a single recent file in the third group sits below \
@@ -359,7 +359,7 @@ pub fn RecentFilesScene() -> impl IntoView {
                   the row is one stop, then the package chip, then the three actions."
         >
             <ListToolbar>
-                <ViewToggle
+                <SegmentedControl
                     label="List view"
                     name="recent-files-view"
                     options=vec!["Packages".to_string(), "Recent files".to_string()]
@@ -391,7 +391,7 @@ pub fn RecentFilesScene() -> impl IntoView {
                                 .filter(|(_, p, _)| *p == package)
                                 .collect();
                             view! {
-                                <GroupHeader title=package count=rows.len() />
+                                <GroupHeading title=package count=rows.len() />
                                 {rows.into_iter().map(row).collect_view()}
                             }
                                 .into_any()

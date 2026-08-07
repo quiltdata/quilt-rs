@@ -38,25 +38,25 @@
   height: 15px;
 }
 
-.framed {
+.default {
   width: 28px;
   height: 28px;
   border: 1px solid var(--q-border-default);
   background: var(--q-canvas-default);
 }
 
-.framed:hover:not(:disabled) {
+.default:hover:not(:disabled) {
   border-color: var(--q-border-strong);
 }
 
-.bare {
+.invisible {
   width: 24px;
   height: 22px;
   border: 0;
   background: none;
 }
 
-.bare svg {
+.invisible svg {
   width: 14px;
   height: 14px;
 }

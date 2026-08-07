@@ -17,7 +17,7 @@
 
 use leptos::prelude::*;
 
-use super::Skeleton;
+use super::SkeletonBox;
 use super::StateLabel;
 use super::state_label::StateTone;
 
@@ -81,11 +81,11 @@ pub fn QueueRowSkeleton() -> impl IntoView {
         <div class=style::root>
             <span class=style::bullet></span>
             <span class=style::namespace>
-                <Skeleton width="32%" />
+                <SkeletonBox width="32%" />
             </span>
-            <Skeleton width="120px" height="22px" />
+            <SkeletonBox width="120px" height="22px" />
             <span class=style::action>
-                <Skeleton width="76px" height="26px" />
+                <SkeletonBox width="76px" height="26px" />
             </span>
         </div>
     }

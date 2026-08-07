@@ -38,12 +38,12 @@ mod gallery {
     pub mod queue;
     pub mod recent_files;
     pub mod search_input;
+    pub mod segmented_control;
     pub mod select;
     pub mod skeleton;
     pub mod state_label;
     pub mod state_strip;
     pub mod toggle_row;
-    pub mod view_toggle;
 }
 
 use leptos::prelude::*;
@@ -51,8 +51,8 @@ use leptos::prelude::*;
 use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
 use crate::gallery::countdown::CountdownStories;
+use crate::gallery::feedback::BannerScene;
 use crate::gallery::feedback::FeedbackStories;
-use crate::gallery::feedback::NotificationScene;
 use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
@@ -65,13 +65,13 @@ use crate::gallery::queue::QueueStories;
 use crate::gallery::recent_files::RecentFilesScene;
 use crate::gallery::recent_files::RecentFilesStories;
 use crate::gallery::search_input::SearchInputStories;
+use crate::gallery::segmented_control::SegmentedControlStories;
 use crate::gallery::select::SelectStories;
 use crate::gallery::skeleton::SkeletonStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
 use crate::gallery::state_strip::StateStripScene;
 use crate::gallery::toggle_row::ToggleRowStories;
-use crate::gallery::view_toggle::ViewToggleStories;
 use kit::Button;
 
 fn main() {
@@ -115,11 +115,11 @@ fn Gallery() -> impl IntoView {
         ("ToggleRow", view! { <ToggleRowStories /> }.into_any()),
         ("Countdown", view! { <CountdownStories /> }.into_any()),
         ("HostRow", view! { <HostRowStories /> }.into_any()),
-        ("ViewToggle", view! { <ViewToggleStories /> }.into_any()),
+        ("SegmentedControl", view! { <SegmentedControlStories /> }.into_any()),
         ("SearchInput", view! { <SearchInputStories /> }.into_any()),
         ("StateLabel", view! { <StateLabelStories /> }.into_any()),
         ("PackageRow", view! { <PackageRowStories /> }.into_any()),
-        ("Skeleton", view! { <SkeletonStories /> }.into_any()),
+        ("SkeletonBox", view! { <SkeletonStories /> }.into_any()),
         ("Feedback", view! { <FeedbackStories /> }.into_any()),
         ("Forms", view! { <FormsStories /> }.into_any()),
         ("Queue parts", view! { <QueueStories /> }.into_any()),
@@ -132,8 +132,8 @@ fn Gallery() -> impl IntoView {
             view! { <DialogScene /> }.into_any(),
         ),
         (
-            "Scene · a notification in place",
-            view! { <NotificationScene /> }.into_any(),
+            "Scene · a banner in place",
+            view! { <BannerScene /> }.into_any(),
         ),
         (
             "Scene · state strip",

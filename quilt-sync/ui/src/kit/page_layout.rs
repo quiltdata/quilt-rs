@@ -15,7 +15,7 @@
 //!
 //! It exists in v1 because a single boolean was the only vocabulary available: with no way
 //! to say *this row is busy* or *this region is loading*, locking everything is the only
-//! honest thing left. v2 has that vocabulary — `busy` on a queue row's action, `Skeleton`
+//! honest thing left. v2 has that vocabulary — `busy` on a queue row's action, `SkeletonBox`
 //! per region, `loading` on a `Button`, `spinning` on the appbar's refresh — so the
 //! overlay's job is now done by indicators that are truthful about their scope.
 //!
@@ -31,26 +31,26 @@
 //!
 //! **Breadcrumbs** — the main page is the root, so its trail is one item, and a breadcrumb
 //! of one is decoration. The first v2 page with a parent adds them. That is the only thing
-//! left; the notification host arrived, and `ui_locked` is not arriving.
+//! left; the banner host arrived, and `ui_locked` is not arriving.
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/layout.module.scss");
+stylance::import_crate_style!(style, "src/kit/page_layout.module.scss");
 
 #[component]
-pub fn Layout(
+pub fn PageLayout(
     /// Appbar controls, pushed to the right — on the main page, refresh and settings
     /// as Framed `IconButton`s. A slot rather than named props, because the appbar has
     /// no opinion about which page needs which controls.
     #[prop(optional)]
     actions: Option<AnyView>,
-    /// A `Notification`, when there is one. In the flow directly under the appbar, so it
+    /// A `Banner`, when there is one. In the flow directly under the appbar, so it
     /// pushes the page down rather than floating over it — the design bans anchored
     /// positioning, and a bar cannot be missed by someone looking at the bottom of a long
     /// list. A slot rather than the signal itself, so the layout stays ignorant of what
     /// kinds exist and who dismisses them.
     #[prop(optional)]
-    notification: Option<AnyView>,
+    banner: Option<AnyView>,
     children: Children,
 ) -> impl IntoView {
     view! {
@@ -67,9 +67,9 @@ pub fn Layout(
                     {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}
                 </div>
             </header>
-            {notification
-                .map(|notification| {
-                    view! { <div class=style::notice>{notification}</div> }
+            {banner
+                .map(|banner| {
+                    view! { <div class=style::notice>{banner}</div> }
                 })}
             <main class=style::main>{children()}</main>
         </div>

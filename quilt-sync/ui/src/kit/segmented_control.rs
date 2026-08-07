@@ -7,10 +7,10 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/view_toggle.module.scss");
+stylance::import_crate_style!(style, "src/kit/segmented_control.module.scss");
 
 #[component]
-pub fn ViewToggle(
+pub fn SegmentedControl(
     /// Names the group for assistive technology. Not rendered — the options are
     /// visible, so a visible group label would be redundant.
     #[prop(into)]

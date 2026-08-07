@@ -438,13 +438,13 @@ string props.
 | `Spinner` | `Spinner` | ✅ |
 | `Card` | `Card` | ✅ (experimental in Primer) |
 | `RelativeTime` | `RelativeTime` | ✅ |
+| `Banner` | `Banner` | ✅ was `Notification` |
+| `PageLayout` | `PageLayout` | ✅ was `Layout` |
+| `Blankslate` | `Blankslate` | ✅ was `EmptyState` |
+| `SegmentedControl` | `SegmentedControl` | ✅ was `ViewToggle` |
+| `SkeletonBox` | `SkeletonBox` | ✅ was `Skeleton` |
+| `GroupHeading` | `ActionList.GroupHeading` | ✅ was `GroupHeader` |
 | `StateLabel` | `StateLabel` / `Label` | ⚠️ see below |
-| `Notification` | `Banner` | ❌ |
-| `Layout` | `PageLayout` | ❌ |
-| `EmptyState` | `Blankslate` | ❌ |
-| `ViewToggle` | `SegmentedControl` | ❌ |
-| `Skeleton` | `SkeletonBox` | ❌ |
-| `GroupHeader` | `ActionList.GroupHeading` | ❌ `Header` vs `Heading` |
 | `Field` | `FormControl` | ❌ tracked as `qhq-kt31` |
 | `SearchInput` | — (`TextInput` + `trailingAction`) | ours |
 | `ToggleRow` | — (wraps `ToggleSwitch`) | ours |
@@ -522,22 +522,31 @@ explicit product call, and Primer is the weaker authority in each case:
 
 ### Outstanding mismatches
 
-Not yet reconciled, in rough order of cost:
+Applied 2026-08-07 (`qhq-o2ov`), beyond the six component renames above:
 
-1. **Component renames** -- `Notification` → `Banner` (and
-   `NoticeKind::Error` → `Critical`, which is Primer's word),
-   `Layout` → `PageLayout`, `EmptyState` → `Blankslate`,
-   `ViewToggle` → `SegmentedControl`, `Skeleton` → `SkeletonBox`,
-   `GroupHeader` → `GroupHeading`.
-2. **Prop renames** -- `Button.icon` → `leading_visual` (Primer's word,
-   and it removes a collision: `icon` on `IconButton` is the whole
-   content, not a leading slot); `IconButtonVariant::Bare` → `Invisible`
-   and `::Framed` → `Default`; `ButtonVariant` is missing Primer's
-   `Danger` and `Invisible`.
-3. **`Field` → `FormControl`** -- `qhq-kt31`, which also covers the
+- `Banner`'s tone prop is `variant: BannerVariant`, not `kind` --
+  `variant` is Primer's word for the visual axis and is what `Button`,
+  `Spinner` and `IconButton` already call it. Its `Error` variant became
+  `Critical`, Primer's word for the tone.
+- `Button.icon` → `leading_visual`. Primer's word, and it removes a
+  collision: `icon` on `IconButton` is the entire content, while on
+  `Button` it was a leading slot. One word, two meanings, one kit.
+- `IconButtonVariant::Bare` → `Invisible`, `::Framed` → `Default`.
+  `invisible` is Primer's established word for a chromeless button.
+- `Blankslate`'s props took the words from Primer's sub-components:
+  `title` → `heading`, `body` → `description`, `action` →
+  `primary_action`. Renaming the component and leaving the props would
+  have been a half-match.
+
+Still outstanding:
+
+1. **`Field` → `FormControl`** -- `qhq-kt31`, which also covers the
    `for`/`id` threading that the wrapping-`<label>` trick currently
-   avoids.
-4. **Token shape** -- adopting property-first
+   avoids, and moving `label` off `Select` / `SearchInput` /
+   `SegmentedControl` and onto the control wrapper.
+2. **`ButtonVariant`** lacks Primer's `Danger` and `Invisible`. Add when
+   a call site needs one, not before.
+3. **Token shape** -- adopting property-first
    (`--q-bgColor-success-muted`, `--q-borderColor-success-muted`,
    `--q-fgColor-success`, `--q-fgColor-success-onMuted`) across
    `_tokens.scss` and every `*.module.scss` that reads tier 2. This is

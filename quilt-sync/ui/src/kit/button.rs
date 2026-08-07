@@ -40,11 +40,11 @@ pub fn Button(
     #[prop(optional)] variant: ButtonVariant,
     #[prop(optional)] size: ButtonSize,
     /// Optional leading glyph. **The same slot the loading spinner uses**: while
-    /// `loading` is set the icon is removed and the spinner takes its place, so
-    /// they can never both render and a button with an icon does not change
+    /// `loading` is set the leading visual is removed and the spinner takes its place, so
+    /// they can never both render and a button with a leading visual does not change
     /// width when work starts.
     #[prop(optional)]
-    icon: Option<AnyView>,
+    leading_visual: Option<AnyView>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
     /// Renders a spinner and blocks activation. Implies `disabled` — a caller
     /// never has to set both, and a loading button must not be clickable twice.
@@ -74,10 +74,10 @@ pub fn Button(
         out
     };
 
-    // Rendered once, not reactively: an icon is a property of the call site, not
+    // Rendered once, not reactively: a leading visual is a property of the call site, not
     // of state. The CSS hides it while loading rather than the Rust removing it,
     // so the spinner swap costs no re-render.
-    let icon_view = icon.map(|glyph| view! { <span class=style::icon>{glyph}</span> });
+    let visual = leading_visual.map(|glyph| view! { <span class=style::icon>{glyph}</span> });
 
     view! {
         <button
@@ -91,7 +91,7 @@ pub fn Button(
                 }
             }
         >
-            {icon_view}
+            {visual}
             <span class=style::label>{children()}</span>
         </button>
     }

@@ -12,14 +12,14 @@ use crate::Story;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
-use crate::kit::EmptyState;
-use crate::kit::GroupHeader;
+use crate::kit::Blankslate;
+use crate::kit::GroupHeading;
 use crate::kit::ListToolbar;
 use crate::kit::PackageRow;
 use crate::kit::SearchInput;
 use crate::kit::Select;
 use crate::kit::StateTone;
-use crate::kit::ViewToggle;
+use crate::kit::SegmentedControl;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -292,7 +292,7 @@ fn fixtures() -> Vec<(&'static str, &'static str, &'static str, StateTone, f64)>
     rows
 }
 
-/// Two spellings of the same header, because `GroupHeader`'s `annotation` is
+/// Two spellings of the same header, because `GroupHeading`'s `annotation` is
 /// `#[prop(optional, into)]` and Leptos makes that setter take `impl Into<String>`
 /// — so an `Option<String>` cannot be forwarded to it. Harmless here, where the
 /// condition is a fixture, but the real page reads the cause off a DTO as an
@@ -303,10 +303,10 @@ fn header(title: &'static str, count: usize, bucket_axis: bool) -> AnyView {
     // packages in two of them here — so no cause can be a property of a prefix group,
     // and the slot stays empty rather than repeating a per-row problem.
     if bucket_axis && title == "s3://team-bucket" {
-        view! { <GroupHeader title=title count=count annotation="no access as analyst" /> }
+        view! { <GroupHeading title=title count=count annotation="no access as analyst" /> }
             .into_any()
     } else {
-        view! { <GroupHeader title=title count=count /> }.into_any()
+        view! { <GroupHeading title=title count=count /> }.into_any()
     }
 }
 
@@ -341,13 +341,13 @@ pub fn PackagesRegion() -> impl IntoView {
     let sort = RwSignal::new("Recently changed".to_string());
 
     view! {
-        // No title: the ViewToggle names the view, and a card headed `Packages` above a
+        // No title: the SegmentedControl names the view, and a card headed `Packages` above a
         // Packages / Recent files switch says it twice. One wrapper child, so the
         // card's between-children hairline does not double the rows' own.
         <Card>
             <div>
                 <ListToolbar>
-                    <ViewToggle
+                    <SegmentedControl
                         label="List view"
                         name="packages-view"
                         options=vec!["Packages".to_string(), "Recent files".to_string()]
@@ -456,12 +456,12 @@ pub fn PackagesScene() -> impl IntoView {
         >
             <Card>
                 <div>
-                    <EmptyState
-                        title="No packages yet"
-                        body="A package is a folder of files that QuiltSync keeps in step with \
+                    <Blankslate
+                        heading="No packages yet"
+                        description="A package is a folder of files that QuiltSync keeps in step with \
                               an S3 bucket. Create one from a folder you already have, or \
                               install an existing package from the catalog."
-                        action=view! {
+                        primary_action=view! {
                             <Button variant=ButtonVariant::Primary on_click=|_| ()>
                                 "Create package"
                             </Button>
@@ -473,13 +473,13 @@ pub fn PackagesScene() -> impl IntoView {
         </Scene>
         <Scene
             title="Scene · packages, no results"
-            note="One EmptyState component for both empties. No results carries no action — \
+            note="One Blankslate component for both empties. No results carries no action — \
                   the user already knows how to change their own search, so a button here \
                   would be filler."
         >
-            <EmptyState
-                title="No packages match “plate-99”"
-                body="Search covers the names of packages installed on this machine."
+            <Blankslate
+                heading="No packages match “plate-99”"
+                description="Search covers the names of packages installed on this machine."
             />
         </Scene>
     }

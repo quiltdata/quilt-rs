@@ -1,4 +1,4 @@
-//! `Notification` and `Spinner` stories, plus the notification in its real position.
+//! `Banner` and `Spinner` stories, plus the banner in its real position.
 
 use leptos::prelude::*;
 
@@ -8,9 +8,9 @@ use crate::Story;
 use crate::kit::Button;
 use crate::kit::Card;
 use crate::kit::IconButton;
-use crate::kit::Layout;
-use crate::kit::NoticeKind;
-use crate::kit::Notification;
+use crate::kit::PageLayout;
+use crate::kit::BannerVariant;
+use crate::kit::Banner;
 use crate::kit::Spinner;
 use crate::kit::SpinnerVariant;
 use crate::kit::ToggleRow;
@@ -35,7 +35,7 @@ pub fn FeedbackStories() -> impl IntoView {
 fn Notices() -> impl IntoView {
     view! {
         <Story
-            title="Notification"
+            title="Banner"
             note="Three kinds, and the type has exactly three variants rather than reusing \
                   StateTone's four — Neutral has no meaning for an outcome, and a type that \
                   cannot express it beats a note asking people not to. They map onto the \
@@ -53,29 +53,29 @@ fn Notices() -> impl IntoView {
                   there is nothing left to fade."
         >
             <Cell full=true label="success">
-                <Notification kind=NoticeKind::Success on_dismiss=|_| ()>
+                <Banner variant=BannerVariant::Success on_dismiss=|_| ()>
                     "Published user/package-b."
-                </Notification>
+                </Banner>
             </Cell>
             <Cell full=true label="warning — it worked, but something adjacent needs you">
-                <Notification kind=NoticeKind::Warning on_dismiss=|_| ()>
+                <Banner variant=BannerVariant::Warning on_dismiss=|_| ()>
                     "Bucket set to s3://team-bucket. Its default workflow could not be \
                      resolved, so publishing will use no workflow until you choose one."
-                </Notification>
+                </Banner>
             </Cell>
             <Cell full=true label="error">
-                <Notification kind=NoticeKind::Error on_dismiss=|_| ()>
+                <Banner variant=BannerVariant::Critical on_dismiss=|_| ()>
                     "Could not publish user/package-b: access denied for role analyst."
-                </Notification>
+                </Banner>
             </Cell>
             <Cell full=true label="long message wraps — the glyph stays on the first line">
-                <Notification kind=NoticeKind::Error on_dismiss=|_| ()>
+                <Banner variant=BannerVariant::Critical on_dismiss=|_| ()>
                     "Could not get the latest revision of \
                      team/rnaseq-batch-2026-07-31-reprocessed-v2: the manifest at \
                      s3://team-bucket/.quilt/named_packages/ refers to a top hash that is \
                      not present in the bucket, which usually means the package was \
                      rewritten while this machine was offline."
-                </Notification>
+                </Banner>
             </Cell>
         </Story>
     }
@@ -86,7 +86,7 @@ fn Spinners() -> impl IntoView {
     view! {
         <Story
             title="Spinner"
-            note="No longer the page's loading state — Skeleton is, because a skeleton holds \
+            note="No longer the page's loading state — SkeletonBox is, because a skeleton holds \
                   the space the content will take and a spinner says only that you are \
                   waiting. This is for work whose SHAPE is unknown, which leaves two jobs: \
                   inline beside a label that names the work, and filling a region whose \
@@ -135,13 +135,13 @@ fn Spinners() -> impl IntoView {
 }
 
 #[component]
-pub fn NotificationScene() -> impl IntoView {
-    let kind = RwSignal::new(Some(NoticeKind::Error));
+pub fn BannerScene() -> impl IntoView {
+    let variant = RwSignal::new(Some(BannerVariant::Critical));
     let pull = RwSignal::new(true);
 
     view! {
         <Scene
-            title="Scene · a notification in place"
+            title="Scene · a banner in place"
             note="Under the appbar, in the flow, pushing the page down — not floating over \
                   it. Anchored positioning is banned by the design, and that ban is what \
                   keeps the whole tooltip/popover/dropdown class out of the codebase; a bar \
@@ -150,22 +150,22 @@ pub fn NotificationScene() -> impl IntoView {
                   \
                   Its width is capped like the appbar's contents and the page column, so it \
                   lines up with the regions rather than with the window. Dismiss it and it \
-                  is gone — the caller owns that, which is why Layout takes a slot and not \
+                  is gone — the caller owns that, which is why PageLayout takes a slot and not \
                   the signal."
             >
-            <Layout
+            <PageLayout
                 actions=view! {
                     <IconButton icon=gear_icon() aria_label="Settings" on_click=|_| () />
                 }
                     .into_any()
-                notification=view! {
-                    <Show when=move || kind.get().is_some()>
-                        <Notification
-                            kind=kind.get().unwrap_or(NoticeKind::Error)
-                            on_dismiss=move |_| kind.set(None)
+                banner=view! {
+                    <Show when=move || variant.get().is_some()>
+                        <Banner
+                            variant=variant.get().unwrap_or(BannerVariant::Critical)
+                            on_dismiss=move |_| variant.set(None)
                         >
                             "Could not publish user/package-b: access denied for role analyst."
-                        </Notification>
+                        </Banner>
                     </Show>
                 }
                     .into_any()
@@ -180,12 +180,12 @@ pub fn NotificationScene() -> impl IntoView {
                 </Card>
                 <Card title="Needs your attention">
                     <div>
-                        <Button on_click=move |_| kind.set(Some(NoticeKind::Success))>
+                        <Button on_click=move |_| variant.set(Some(BannerVariant::Success))>
                             "Show a success instead"
                         </Button>
                     </div>
                 </Card>
-            </Layout>
+            </PageLayout>
         </Scene>
     }
 }

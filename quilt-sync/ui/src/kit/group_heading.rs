@@ -2,10 +2,10 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/group_header.module.scss");
+stylance::import_crate_style!(style, "src/kit/group_heading.module.scss");
 
 #[component]
-pub fn GroupHeader(
+pub fn GroupHeading(
     #[prop(into)] title: String,
     /// How many rows follow. Always shown, including one — "1" is information, and
     /// hiding it would make a single-row group look like a header with a bug.

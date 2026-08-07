@@ -12,7 +12,7 @@
 //!
 //! # It is the region that is busy, not the placeholder
 //!
-//! Each `Skeleton` is `aria-hidden`, because a bar has nothing to announce. The
+//! Each `SkeletonBox` is `aria-hidden`, because a bar has nothing to announce. The
 //! **composing region** sets `aria-busy="true"` and drops it when the content arrives.
 //! That split is easy to get backwards, and getting it backwards means a screen reader
 //! reads out a dozen nameless boxes.
@@ -26,10 +26,10 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/skeleton.module.scss");
+stylance::import_crate_style!(style, "src/kit/skeleton_box.module.scss");
 
 #[component]
-pub fn Skeleton(
+pub fn SkeletonBox(
     /// Any CSS width — `"40%"`, `"120px"`. Required, because a placeholder with no width
     /// is not a placeholder. Percentages are usually right: a skeleton stands in for a
     /// namespace of unknown length, and a fixed width would claim to know it.

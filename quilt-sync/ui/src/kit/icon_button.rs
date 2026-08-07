@@ -14,8 +14,8 @@ stylance::import_crate_style!(style, "src/kit/icon_button.module.scss");
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum IconButtonVariant {
     #[default]
-    Framed,
-    Bare,
+    Default,
+    Invisible,
 }
 
 #[component]
@@ -45,8 +45,8 @@ pub fn IconButton(
         let mut out = String::from(style::root);
         out.push(' ');
         out.push_str(match variant {
-            IconButtonVariant::Framed => style::framed,
-            IconButtonVariant::Bare => style::bare,
+            IconButtonVariant::Default => style::default,
+            IconButtonVariant::Invisible => style::invisible,
         });
         if is_spinning.get() {
             out.push(' ');

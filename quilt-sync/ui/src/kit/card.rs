@@ -12,7 +12,7 @@ stylance::import_crate_style!(style, "src/kit/card.module.scss");
 
 #[component]
 pub fn Card(
-    /// Optional, because the list card has none: its `ViewToggle` names the view, and a
+    /// Optional, because the list card has none: its `SegmentedControl` names the view, and a
     /// card titled `Packages` above a Packages / Recent files switch says it twice.
     #[prop(optional, into)]
     title: Option<String>,

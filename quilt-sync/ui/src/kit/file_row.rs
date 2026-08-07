@@ -88,19 +88,19 @@ pub fn FileRow(
                 <IconButton
                     icon=folder_icon()
                     aria_label="Reveal in directory"
-                    variant=IconButtonVariant::Bare
+                    variant=IconButtonVariant::Invisible
                     on_click=on_reveal
                 />
                 <IconButton
                     icon=catalog_icon()
                     aria_label="Open in catalog"
-                    variant=IconButtonVariant::Bare
+                    variant=IconButtonVariant::Invisible
                     on_click=on_open_catalog
                 />
                 <IconButton
                     icon=copy_icon()
                     aria_label="Copy Quilt+S3 URI"
-                    variant=IconButtonVariant::Bare
+                    variant=IconButtonVariant::Invisible
                     on_click=on_copy_uri
                 />
             </span>

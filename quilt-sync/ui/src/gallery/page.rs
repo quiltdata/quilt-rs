@@ -24,7 +24,7 @@ use crate::gallery::queue::QueueRegion;
 use crate::gallery::state_strip::StateStripRegion;
 use crate::kit::Card;
 use crate::kit::IconButton;
-use crate::kit::Layout;
+use crate::kit::PageLayout;
 use crate::kit::ZeroLine;
 
 fn refresh_icon() -> AnyView {
@@ -73,11 +73,11 @@ pub fn PageScene() -> impl IntoView {
                   (the list). Nothing below the queue needs reading on a bad day, and \
                   nothing in the queue exists on a good one."
         >
-            <Layout actions=appbar_actions()>
+            <PageLayout actions=appbar_actions()>
                 <StateStripRegion />
                 <QueueRegion />
                 <PackagesRegion />
-            </Layout>
+            </PageLayout>
         </Scene>
         <Scene
             title="Scene · the whole page, a normal day"
@@ -90,7 +90,7 @@ pub fn PageScene() -> impl IntoView {
                   The state strip is unchanged, and that is deliberate: it reports what is \
                   running, which is as true on a calm day as on a bad one."
         >
-            <Layout actions=appbar_actions()>
+            <PageLayout actions=appbar_actions()>
                 <StateStripRegion />
                 // The queue region collapsed. Composed here rather than hidden inside
                 // `QueueRegion` behind a flag — "is anything wrong" is the caller's
@@ -103,7 +103,7 @@ pub fn PageScene() -> impl IntoView {
                     <ZeroLine text="Everything is Latest — 43 packages" />
                 </Card>
                 <PackagesRegion />
-            </Layout>
+            </PageLayout>
         </Scene>
     }
 }

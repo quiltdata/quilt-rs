@@ -33,26 +33,26 @@ use leptos::prelude::*;
 
 use super::state_label::StateTone;
 
-stylance::import_crate_style!(style, "src/kit/notification.module.scss");
+stylance::import_crate_style!(style, "src/kit/banner.module.scss");
 
 /// What happened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NoticeKind {
+pub enum BannerVariant {
     /// It worked, and saying so is worth one line.
     Success,
     /// It worked, but something adjacent needs attention — the remote was set and its
     /// default workflow could not be resolved.
     Warning,
     /// It did not work.
-    Error,
+    Critical,
 }
 
-impl NoticeKind {
+impl BannerVariant {
     fn tone(self) -> StateTone {
         match self {
             Self::Success => StateTone::Success,
             Self::Warning => StateTone::Attention,
-            Self::Error => StateTone::Danger,
+            Self::Critical => StateTone::Danger,
         }
     }
 
@@ -60,7 +60,7 @@ impl NoticeKind {
         match self {
             Self::Success => style::success,
             Self::Warning => style::warning,
-            Self::Error => style::error,
+            Self::Critical => style::critical,
         }
     }
 
@@ -69,25 +69,25 @@ impl NoticeKind {
     /// not, because it did.
     fn role(self) -> &'static str {
         match self {
-            Self::Error => "alert",
+            Self::Critical => "alert",
             Self::Success | Self::Warning => "status",
         }
     }
 }
 
 #[component]
-pub fn Notification(
-    kind: NoticeKind,
+pub fn Banner(
+    variant: BannerVariant,
     on_dismiss: impl Fn(MouseEvent) + 'static,
     /// The message, as prose. Wraps rather than truncating — the end of an error is where
     /// the specifics are, and half an error is worse than a scrollbar.
     children: Children,
 ) -> impl IntoView {
-    let class = format!("{} {}", style::root, kind.class());
+    let class = format!("{} {}", style::root, variant.class());
 
     view! {
-        <div class=class role=kind.role()>
-            {kind.tone().glyph()}
+        <div class=class role=variant.role()>
+            {variant.tone().glyph()}
             <p class=style::message>{children()}</p>
             <button
                 type="button"

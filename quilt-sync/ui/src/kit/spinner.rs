@@ -2,7 +2,7 @@
 //!
 //! # Not the page's loading state
 //!
-//! It used to be. It is not any more — [`Skeleton`](super::Skeleton) is, because a
+//! It used to be. It is not any more — [`SkeletonBox`](super::SkeletonBox) is, because a
 //! skeleton holds the space the content will occupy and a spinner tells you nothing
 //! except that you are waiting. A spinner is for work whose *shape* is unknown, not for
 //! content whose shape we can predict.

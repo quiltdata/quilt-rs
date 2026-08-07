@@ -1,4 +1,4 @@
-//! `Skeleton` stories.
+//! `SkeletonBox` stories.
 //!
 //! The composed cells are the ones that matter. A bar on its own proves nothing; a
 //! skeleton row sitting directly above the real row it stands in for proves the only
@@ -11,12 +11,12 @@ use crate::Story;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
-use crate::kit::GroupHeader;
+use crate::kit::GroupHeading;
 use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
 use crate::kit::QueueRow;
 use crate::kit::QueueRowSkeleton;
-use crate::kit::Skeleton;
+use crate::kit::SkeletonBox;
 use crate::kit::StateTone;
 
 const HOUR: f64 = 3_600_000.0;
@@ -34,7 +34,7 @@ pub fn SkeletonStories() -> impl IntoView {
 fn Bars() -> impl IntoView {
     view! {
         <Story
-            title="Skeleton"
+            title="SkeletonBox"
             note="For content that is genuinely UNKNOWN — the window before the light phase \
                   resolves, where the row count is not known yet. Not for provisional: the \
                   light phase already returns a status and the heavy walk merely corrects \
@@ -52,25 +52,25 @@ fn Bars() -> impl IntoView {
                   makes a screen reader read out a dozen nameless boxes."
         >
             <Cell label="a text bar — the default height">
-                <Skeleton width="140px" />
+                <SkeletonBox width="140px" />
             </Cell>
             <Cell label="percentage width, for content of unknown length">
-                <Skeleton width="60%" />
+                <SkeletonBox width="60%" />
             </Cell>
             <Cell label="a state label's shape">
-                <Skeleton width="88px" height="22px" />
+                <SkeletonBox width="88px" height="22px" />
             </Cell>
             <Cell label="a button's shape">
-                <Skeleton width="76px" height="26px" />
+                <SkeletonBox width="76px" height="26px" />
             </Cell>
             <Cell label="a block">
-                <Skeleton width="100%" height="64px" />
+                <SkeletonBox width="100%" height="64px" />
             </Cell>
             <Cell wide=true label="three bars — a paragraph's worth, ragged like real text">
                 <div class="g-bars">
-                    <Skeleton width="72%" />
-                    <Skeleton width="88%" />
-                    <Skeleton width="46%" />
+                    <SkeletonBox width="72%" />
+                    <SkeletonBox width="88%" />
+                    <SkeletonBox width="46%" />
                 </div>
             </Cell>
         </Story>
@@ -81,7 +81,7 @@ fn Bars() -> impl IntoView {
 fn Rows() -> impl IntoView {
     view! {
         <Story
-            title="Skeleton — composed as rows"
+            title="SkeletonBox — composed as rows"
             note="THE HEIGHT IS THE WHOLE JOB. Each cell puts skeleton rows directly above \
                   the real rows they stand in for — if the boundary between them is visible \
                   as a step, the list will jump when it settles, which is worse than no \
@@ -100,7 +100,7 @@ fn Rows() -> impl IntoView {
             <Cell full=true label="package list — four unknown rows above two real ones">
                 <Card>
                     <div>
-                        <GroupHeader title="s3://my-bucket" count=6 />
+                        <GroupHeading title="s3://my-bucket" count=6 />
                         <div class="g-rows" aria-busy="true">
                             <PackageRowSkeleton />
                             <PackageRowSkeleton />

@@ -10,7 +10,7 @@ use crate::Scene;
 use crate::kit::Button;
 use crate::kit::SearchInput;
 use crate::kit::Select;
-use crate::kit::ViewToggle;
+use crate::kit::SegmentedControl;
 
 #[component]
 pub fn ListToolbarScene() -> impl IntoView {
@@ -28,7 +28,7 @@ pub fn ListToolbarScene() -> impl IntoView {
                   views will disagree about."
         >
             <div style="display:flex; gap:var(--q-space-2); align-items:center; flex-wrap:wrap;">
-                <ViewToggle
+                <SegmentedControl
                     label="List view"
                     name="toolbar-view"
                     options=vec!["Packages".to_string(), "Recent files".to_string()]

@@ -100,10 +100,10 @@ fn WithIcon() -> impl IntoView {
                   the label at the same moment anyway."
         >
             <Cell label="icon + label">
-                <Button on_click=|_| () icon=plus_icon()>"Create package"</Button>
+                <Button on_click=|_| () leading_visual=plus_icon()>"Create package"</Button>
             </Cell>
             <Cell label="icon · primary">
-                <Button on_click=|_| () variant=ButtonVariant::Primary icon=download_icon()>
+                <Button on_click=|_| () variant=ButtonVariant::Primary leading_visual=download_icon()>
                     "Get latest"
                 </Button>
             </Cell>
@@ -111,17 +111,17 @@ fn WithIcon() -> impl IntoView {
                 <Button
                     on_click=|_| ()
                     variant=ButtonVariant::Primary
-                    icon=download_icon()
+                    leading_visual=download_icon()
                     loading=true
                 >
                     "Get latest"
                 </Button>
             </Cell>
             <Cell label="icon · disabled">
-                <Button on_click=|_| () icon=plus_icon() disabled=true>"Create package"</Button>
+                <Button on_click=|_| () leading_visual=plus_icon() disabled=true>"Create package"</Button>
             </Cell>
             <Cell label="icon · long label">
-                <Button on_click=|_| () icon=download_icon()>
+                <Button on_click=|_| () leading_visual=download_icon()>
                     "Get latest revision of this package"
                 </Button>
             </Cell>
@@ -152,7 +152,7 @@ fn Large() -> impl IntoView {
                 </Button>
             </Cell>
             <Cell label="large · icon">
-                <Button on_click=|_| () size=ButtonSize::Large icon=plus_icon()>
+                <Button on_click=|_| () size=ButtonSize::Large leading_visual=plus_icon()>
                     "Create package"
                 </Button>
             </Cell>
@@ -161,7 +161,7 @@ fn Large() -> impl IntoView {
                     on_click=|_| ()
                     size=ButtonSize::Large
                     variant=ButtonVariant::Primary
-                    icon=download_icon()
+                    leading_visual=download_icon()
                 >
                     "Get latest"
                 </Button>
@@ -171,7 +171,7 @@ fn Large() -> impl IntoView {
                     on_click=|_| ()
                     size=ButtonSize::Large
                     variant=ButtonVariant::Primary
-                    icon=download_icon()
+                    leading_visual=download_icon()
                     loading=true
                 >
                     "Publishing\u{2026}"
