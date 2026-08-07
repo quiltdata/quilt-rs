@@ -11,10 +11,14 @@ stylance::import_crate_style!(style, "src/kit/search_input.module.scss");
 #[component]
 pub fn SearchInput(
     value: RwSignal<String>,
-    /// Accessible name. A search field with only a placeholder is unlabelled once
-    /// the user starts typing, because the placeholder disappears.
+    /// Accessible name, never drawn. A search field with only a placeholder is unlabelled
+    /// once the user starts typing, because the placeholder disappears.
+    ///
+    /// `aria_label` and not a [`FormControl`](super::FormControl), unlike `TextInput`: this only ever
+    /// appears in a toolbar, where a stacked label would cost a line to say what the
+    /// magnifier and the placeholder already say. Same reason `SegmentedControl` takes one.
     #[prop(into)]
-    label: String,
+    aria_label: String,
     #[prop(into, optional)] placeholder: String,
 ) -> impl IntoView {
     view! {
@@ -29,7 +33,7 @@ pub fn SearchInput(
             <input
                 type="search"
                 class=style::field
-                aria-label=label
+                aria-label=aria_label
                 placeholder=placeholder
                 prop:value=move || value.get()
                 on:input=move |ev| value.set(event_target_value(&ev))

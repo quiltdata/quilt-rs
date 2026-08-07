@@ -9,17 +9,18 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
+use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
-use crate::kit::Blankslate;
 use crate::kit::GroupHeading;
 use crate::kit::ListToolbar;
+use crate::kit::Naming;
 use crate::kit::PackageRow;
 use crate::kit::SearchInput;
+use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::StateTone;
-use crate::kit::SegmentedControl;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -348,27 +349,25 @@ pub fn PackagesRegion() -> impl IntoView {
             <div>
                 <ListToolbar>
                     <SegmentedControl
-                        label="List view"
+                        aria_label="List view"
                         name="packages-view"
                         options=vec!["Packages".to_string(), "Recent files".to_string()]
                         selected=view_mode
                     />
-                    <SearchInput value=query label="Search packages" placeholder="Search…" />
+                    <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
                     <Select
-                        label="Group"
+                        naming=Naming::Prefix("Group".to_string())
                         options=vec![
                             "Bucket".to_string(),
                             "Prefix".to_string(),
                             "None".to_string(),
                         ]
                         selected=group
-                        visible_label=true
                     />
                     <Select
-                        label="Sort"
+                        naming=Naming::Prefix("Sort".to_string())
                         options=vec!["Recently changed".to_string(), "Name".to_string()]
                         selected=sort
-                        visible_label=true
                     />
                     <Button variant=ButtonVariant::Primary on_click=|_| ()>
                         "Create package"

@@ -22,7 +22,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
         >
             <Cell label="two options — the list region's real use">
                 <SegmentedControl
-                    label="List view"
+                    aria_label="List view"
                     name="story-view"
                     options=vec!["Packages".to_string(), "Recent files".to_string()]
                     selected=two
@@ -30,7 +30,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
             </Cell>
             <Cell label="three options — still comfortable">
                 <SegmentedControl
-                    label="Grouping"
+                    aria_label="Grouping"
                     name="story-group"
                     options=vec![
                         "Bucket".to_string(),
@@ -42,7 +42,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
             </Cell>
             <Cell label="long labels — past this, use a Select">
                 <SegmentedControl
-                    label="List view"
+                    aria_label="List view"
                     name="story-long"
                     options=vec![
                         "Installed packages".to_string(),

@@ -9,6 +9,7 @@ use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 
 use crate::kit::Button;
+use crate::kit::Naming;
 use crate::kit::Select;
 
 stylance::import_crate_style!(style, "src/kit/host_row.module.scss");
@@ -55,7 +56,7 @@ pub fn HostRow(
                     view! { <Button on_click=on_sign_in>"Sign in"</Button> }.into_any()
                 } else if switchable {
                     view! {
-                        <Select label="Role" options=roles selected=role visible_label=true />
+                        <Select naming=Naming::Prefix("Role".to_string()) options=roles selected=role />
                     }
                         .into_any()
                 } else {

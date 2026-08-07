@@ -21,13 +21,13 @@ pub fn SearchInputStories() -> impl IntoView {
                   unthemeable and differs per platform."
         >
             <Cell wide=true label="empty — no clear button">
-                <SearchInput value=empty label="Search packages" placeholder="Search…" />
+                <SearchInput value=empty aria_label="Search packages" placeholder="Search…" />
             </Cell>
             <Cell wide=true label="with text — clear button appears">
-                <SearchInput value=typed label="Search packages" placeholder="Search…" />
+                <SearchInput value=typed aria_label="Search packages" placeholder="Search…" />
             </Cell>
             <Cell wide=true label="long value truncates, control does not grow">
-                <SearchInput value=long label="Search packages" placeholder="Search…" />
+                <SearchInput value=long aria_label="Search packages" placeholder="Search…" />
             </Cell>
         </Story>
     }

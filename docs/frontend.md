@@ -445,7 +445,8 @@ string props.
 | `SkeletonBox` | `SkeletonBox` | ✅ was `Skeleton` |
 | `GroupHeading` | `ActionList.GroupHeading` | ✅ was `GroupHeader` |
 | `StateLabel` | `StateLabel` / `Label` | ⚠️ see below |
-| `Field` | `FormControl` | ❌ tracked as `qhq-kt31` |
+| `FormControl` | `FormControl` | ✅ was `Field` |
+| `ControlId`, `Naming` | — | ours; see below |
 | `SearchInput` | — (`TextInput` + `trailingAction`) | ours |
 | `ToggleRow` | — (wraps `ToggleSwitch`) | ours |
 | `ListToolbar` | — | ours |
@@ -519,6 +520,57 @@ overlay that composites with whatever it sits on, which is what lets a
 `StateLabel` inside a hovered row tint along with the row. Calling it
 `bgColor` would claim a model we do not use.
 
+### `FormControl`, and using the type system where Primer uses a linter
+
+Primer composes `FormControl` from children -- `FormControl.Label`,
+`.Caption`, `.Validation`. In JSX that is free. In Leptos `children` is an
+opaque closure, so `FormControl` cannot reach inside it to wire `for`/`id`,
+and a `Label` child that fetched the id from context would fail silently
+the day someone forgot the provider. Primer's reason for children --
+arbitrary ordering and omission -- is not a need we have. So ours takes
+props.
+
+The interesting part is the id. Primer's `FormControl` is **optional at
+the type level**: a bare unlabelled `Select` compiles, and eslint plus axe
+catch it in CI. We have neither, and we shipped that exact bug once --
+`Select`'s label rendered nowhere and only clippy's unused-parameter
+warning noticed.
+
+So `ControlId`'s constructor is private to its module. The only way to get
+one is from the closure `FormControl` hands you:
+
+```rust
+<FormControl label="Bucket" control=move |id| view! {
+    <TextInput id=id value=bucket />
+}.into_any() />
+```
+
+`TextInput` requires a `ControlId`, so **an unlabelled text input does not
+compile**. That is stricter than Primer, and it is the one place where
+being unable to use their components turned into an advantage.
+
+`Naming` does the same job for `Select`, which is named three different
+ways in this app -- by an enclosing `FormControl`, by a hidden
+`aria-label`, or by a `Group by:` prefix drawn inside the control. It is a
+required enum with no anonymous variant, so the caller has to say which.
+`SearchInput` and `SegmentedControl` take a plain `aria_label` instead:
+both live only in toolbars, where a stacked label would cost a line to say
+what the magnifier or the visible options already say.
+
+Two things this fixed rather than renamed:
+
+- **The caption and the error are now announced.** They are
+  `aria-describedby`, which needs ids on both ends and so was impossible
+  before. Under the old wrapping-`<label>` design they were visually
+  associated and programmatically invisible -- they could not go *inside*
+  the label, because everything in a label becomes part of the accessible
+  name, and "Package name owner/package-name Use owner/name" is a worse
+  name than "Package name".
+- **`BucketForm` was double-labelling its Workflow select** -- the
+  `FormControl` labelled it and the `Select` was also passed
+  `label="Workflow"`, nesting two labels around one control. With
+  `Naming::FormControl(id)` there is no second name to pass.
+
 ### Deliberate divergences
 
 These do **not** get fixed. Each was decided against a measurement or an
@@ -530,7 +582,9 @@ explicit product call, and Primer is the weaker authority in each case:
 | `--q-fgColor-{tone}-onMuted` exists at all | Primer has one `--fgColor-{tone}` per tone. Ours needs two: step 11 is what a glyph wants on a step-3 fill, and step 12 is what *text* needs to hold 4.5:1 there. Primer's single token cannot express a measurement we took. |
 | No `emphasis` role for `success` / `attention` / `danger` | No solid tone fill passes AA with any foreground we have. A token that cannot be used legally should not exist. |
 | `TextInput` takes `invalid: bool`, not `validationStatus: 'error' \| 'success'` | We have no success validation state and no plan for one. |
-| `Field` takes `error: Option<String>`, not a `Validation` child with a required `variant` | Same reason, plus we have no compound-children pattern in Leptos. |
+| `FormControl` takes `error: Option<String>`, not a `Validation` child with a required `variant` | Same reason, plus `children` in Leptos is opaque — see below. |
+| `FormControl` has no `layout` prop | Primer offers vertical and horizontal; nothing here needs horizontal, and a prop with one value lies about being a choice. |
+| `FormControl` has no `visuallyHidden` label | Every call site shows its label. The two controls that want an invisible name are toolbar controls that never sit in a `FormControl` at all, and they take `aria_label`. |
 | `required` renders the word "Required", not Primer's `*` | An asterisk is a convention you have to have learned. |
 | Prefix `--q-` on every token | Primer's are unprefixed and would collide in a webview that also loads vendored Radix scales. |
 | The Radix scales themselves | Primer's own palette is not published as a scale we can vendor, and Radix's is contrast-tested per step. This is the whole point of splitting the two authorities. |
@@ -553,14 +607,19 @@ Applied 2026-08-07 (`qhq-o2ov`), beyond the six component renames above:
   `primary_action`. Renaming the component and leaving the props would
   have been a half-match.
 
+`Field` became `FormControl` the same day (`qhq-kt31`), and that one was
+not a rename -- see the next section.
+
 Still outstanding:
 
-1. **`Field` → `FormControl`** -- `qhq-kt31`, which also covers the
-   `for`/`id` threading that the wrapping-`<label>` trick currently
-   avoids, and moving `label` off `Select` / `SearchInput` /
-   `SegmentedControl` and onto the control wrapper.
-2. **`ButtonVariant`** lacks Primer's `Danger` and `Invisible`. Add when
+1. **`ButtonVariant`** lacks Primer's `Danger` and `Invisible`. Add when
    a call site needs one, not before.
+2. **A prop-by-prop audit of the components that were already
+   correctly named.** Only the renamed ones had their props checked. One
+   spot-check found `Spinner`, where Primer takes `srText` and lists
+   `aria-label` as *deprecated* -- and the reason is mechanical, not
+   cosmetic: our `role="status"` element has no text content, and a live
+   region announces its content, not its label. `qhq-m5s6`.
 
 The token migration to property-first (`qhq-mowp`) landed the same day,
 across `_tokens.scss` and all 26 module stylesheets in one commit -- a

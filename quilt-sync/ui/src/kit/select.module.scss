@@ -7,7 +7,9 @@
  * closed state — prefix, value, caret — is drawn beneath it. A `<label>` alone
  * was not enough: browsers forward a label click to a checkbox or input, but
  * deliberately never synthesise "open the dropdown" for a select, so only the
- * select's own text box was clickable. Now every pixel of the control is.
+ * select's own text box was clickable. Now every pixel of the control is — which
+ * is also why the wrapper can be a plain `div` and the naming can live wholly in
+ * `aria-label` or in a `FormControl`'s `<label for>`.
  *
  * `opacity: 0` rather than `visibility: hidden` or `display: none`: the element
  * must stay hit-testable and in the accessibility tree. It is still a real,
@@ -56,22 +58,6 @@
 .prefix {
   flex: none;
   color: var(--q-fgColor-muted);
-}
-
-/* The label always renders; when it is not shown it goes off-screen rather than
- * being dropped, so the control keeps its accessible name and the `<label>`
- * keeps naming it from markup. `display: none` or omitting it would leave the
- * select anonymous to a screen reader. */
-.offscreen {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
 }
 
 .root.disabled .prefix,

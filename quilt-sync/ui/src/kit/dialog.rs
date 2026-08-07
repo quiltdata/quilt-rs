@@ -47,7 +47,7 @@ pub fn Dialog(
     let element: NodeRef<leptos::html::Dialog> = NodeRef::new();
     // Named twice on purpose: `aria-label` is what a screen reader announces when the
     // modal opens, and the heading is what a sighted reader sees first. Pointing the
-    // former at the latter would need an id, which is the same threading `Field` avoids.
+    // former at the latter would need an id, which is the same threading `FormControl` avoids.
     let heading = title.clone();
 
     Effect::new(move |_| {

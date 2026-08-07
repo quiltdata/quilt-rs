@@ -11,10 +11,13 @@ stylance::import_crate_style!(style, "src/kit/segmented_control.module.scss");
 
 #[component]
 pub fn SegmentedControl(
-    /// Names the group for assistive technology. Not rendered — the options are
-    /// visible, so a visible group label would be redundant.
+    /// Names the group for assistive technology. Never drawn — the options are visible, so
+    /// a visible group label would be redundant.
+    ///
+    /// `aria_label` and not a [`FormControl`](super::FormControl): this only ever appears in a toolbar,
+    /// where every option is already on screen. Same reason `SearchInput` takes one.
     #[prop(into)]
-    label: String,
+    aria_label: String,
     /// Groups the radios. Must be unique on the page — two controls sharing a name
     /// become one group, and selecting in either clears the other.
     ///
@@ -26,7 +29,7 @@ pub fn SegmentedControl(
     selected: RwSignal<String>,
 ) -> impl IntoView {
     view! {
-        <div class=style::root role="radiogroup" aria-label=label>
+        <div class=style::root role="radiogroup" aria-label=aria_label>
             {options
                 .into_iter()
                 .map(|option| {

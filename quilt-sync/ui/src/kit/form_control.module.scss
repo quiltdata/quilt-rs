@@ -1,5 +1,5 @@
 /*
- * Field. Label above the control, caption and error below it.
+ * FormControl. Label above the control, caption and error below it.
  *
  * Vertical only. Primer offers a horizontal layout and nothing here needs one yet — a
  * `layout` prop with one value is a prop that lies about being a choice.
@@ -11,13 +11,8 @@
   min-width: 0;
 }
 
-/* The `<label>` wraps the control, which is what makes the association hold without ids.
- * `display: block` so the name sits above rather than beside. */
-.label {
-  display: block;
-  min-width: 0;
-}
-
+/* The `<label for>` itself. `display: block` so the name sits above the control rather
+ * than beside it — the vertical layout is the only one, per the note above. */
 .name {
   display: block;
   margin-bottom: var(--q-space-1);

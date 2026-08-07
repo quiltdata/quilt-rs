@@ -16,10 +16,11 @@ use crate::kit::GroupHeading;
 use crate::kit::IconButton;
 use crate::kit::IconButtonVariant;
 use crate::kit::ListToolbar;
+use crate::kit::Naming;
 use crate::kit::RelativeTime;
 use crate::kit::SearchInput;
-use crate::kit::Select;
 use crate::kit::SegmentedControl;
+use crate::kit::Select;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -272,7 +273,7 @@ fn Empties() -> impl IntoView {
                           publish them."
                     primary_action=view! {
                         <SegmentedControl
-                            label="List view"
+                            aria_label="List view"
                             name="empty-view"
                             options=vec!["Packages".to_string(), "Recent files".to_string()]
                             selected=RwSignal::new("Packages".to_string())
@@ -360,17 +361,16 @@ pub fn RecentFilesScene() -> impl IntoView {
         >
             <ListToolbar>
                 <SegmentedControl
-                    label="List view"
+                    aria_label="List view"
                     name="recent-files-view"
                     options=vec!["Packages".to_string(), "Recent files".to_string()]
                     selected=view_mode
                 />
-                <SearchInput value=query label="Search files" placeholder="Search…" />
+                <SearchInput value=query aria_label="Search files" placeholder="Search…" />
                 <Select
-                    label="Group"
+                    naming=Naming::Prefix("Group".to_string())
                     options=vec!["None".to_string(), "Package".to_string()]
                     selected=group
-                    visible_label=true
                 />
             </ListToolbar>
             {move || {

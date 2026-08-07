@@ -1,4 +1,4 @@
-//! `Dialog`, `TextInput`, `Field`, and the two forms the main page opens.
+//! `Dialog`, `TextInput`, `FormControl`, and the two forms the main page opens.
 //!
 //! Each form is a component rendered **twice**: inline in a cell, so it can be reviewed at
 //! a glance and screenshotted, and inside a real modal behind a button, so the parts only
@@ -13,13 +13,14 @@ use crate::Story;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Dialog;
-use crate::kit::Field;
+use crate::kit::FormControl;
+use crate::kit::Naming;
 use crate::kit::Select;
 use crate::kit::TextInput;
 
 #[component]
 pub fn FormsStories() -> impl IntoView {
-    view! { <Inputs /> <Fields /> <FormBodies /> }
+    view! { <Inputs /> <FormControls /> <FormBodies /> }
 }
 
 #[component]
@@ -38,27 +39,63 @@ fn Inputs() -> impl IntoView {
                   \
                   Invalid draws the border and nothing else. A red fill behind text the \
                   user is still typing makes it harder to read at the moment they are \
-                  trying to fix it — and the border plus Field's message already say it \
-                  twice. It carries no label; Field does."
+                  trying to fix it — and the border plus FormControl's message already say it \
+                  twice. \
+                  \
+                  Every cell here is wrapped in a FormControl, because a bare TextInput no longer \
+                  COMPILES: it demands a ControlId and the only source of one is FormControl's \
+                  control closure. That is deliberate — see the FormControl story below."
         >
-            <Cell label="empty, with a placeholder">
-                <TextInput value=empty placeholder="owner/package-name" />
+            <Cell wide=true label="empty, with a placeholder">
+                <FormControl
+                    label="Package name"
+                    control=move |id| {
+                        view! { <TextInput id=id value=empty placeholder="owner/package-name" /> }
+                            .into_any()
+                    }
+                />
             </Cell>
-            <Cell label="with a value">
-                <TextInput value=filled placeholder="owner/package-name" />
+            <Cell wide=true label="with a value">
+                <FormControl
+                    label="Package name"
+                    control=move |id| {
+                        view! {
+                            <TextInput id=id value=filled placeholder="owner/package-name" />
+                        }
+                            .into_any()
+                    }
+                />
             </Cell>
-            <Cell label="invalid — border only">
-                <TextInput value=bad placeholder="owner/package-name" invalid=true />
+            <Cell wide=true label="invalid — border only">
+                <FormControl
+                    label="Package name"
+                    control=move |id| {
+                        view! {
+                            <TextInput
+                                id=id
+                                value=bad
+                                placeholder="owner/package-name"
+                                invalid=true
+                            />
+                        }
+                            .into_any()
+                    }
+                />
             </Cell>
-            <Cell label="disabled — showing a value you may not change">
-                <TextInput value=locked disabled=true />
+            <Cell wide=true label="disabled — showing a value you may not change">
+                <FormControl
+                    label="Host"
+                    control=move |id| {
+                        view! { <TextInput id=id value=locked disabled=true /> }.into_any()
+                    }
+                />
             </Cell>
         </Story>
     }
 }
 
 #[component]
-fn Fields() -> impl IntoView {
+fn FormControls() -> impl IntoView {
     let plain = RwSignal::new(String::new());
     let captioned = RwSignal::new(String::new());
     let required = RwSignal::new(String::new());
@@ -66,16 +103,19 @@ fn Fields() -> impl IntoView {
 
     view! {
         <Story
-            title="Field"
-            note="The label is a real <label> WRAPPING the control, so the browser \
-                  associates them with no for, no id, and nothing to keep in step. \
+            title="FormControl"
+            note="FormControl hands its control the ids it allocated, through a closure. That \
+                  closure is the whole design: ControlId's constructor is PRIVATE, every \
+                  control that belongs in a form demands one, so an unlabelled control is a \
+                  compile error. Primer leaves that to eslint and axe in CI — we have \
+                  neither, and we shipped exactly that bug once when Select's label rendered \
+                  nowhere. \
                   \
-                  Which is also why the caption and the error are OUTSIDE it: everything \
-                  inside a label contributes to the accessible name, and \
-                  'Package name owner/package-name Use owner/name' is a worse name than \
-                  'Package name'. Outside, they are visually associated and NOT announced \
-                  — there is no aria-describedby, because that needs ids on both ends. \
-                  That is the concrete cost of deferring qhq-kt31, and its concrete reason. \
+                  The ids also buy what the previous wrapping-label version could not: the \
+                  caption and the message are now aria-describedby, so they are ANNOUNCED. \
+                  They could never be inside the label, because everything in a label \
+                  becomes part of the name, and 'Package name owner/package-name Use \
+                  owner/name' is a worse name than 'Package name'. \
                   \
                   The error carries the Danger tone's own glyph, so it agrees with every \
                   other red thing on the page and survives greyscale. Required says the \
@@ -83,24 +123,44 @@ fn Fields() -> impl IntoView {
                   have learned."
         >
             <Cell wide=true label="label only">
-                <Field label="Bucket">
-                    <TextInput value=plain placeholder="my-s3-bucket" />
-                </Field>
+                <FormControl
+                    label="Bucket"
+                    control=move |id| {
+                        view! { <TextInput id=id value=plain placeholder="my-s3-bucket" /> }
+                            .into_any()
+                    }
+                />
             </Cell>
-            <Cell wide=true label="with a caption">
-                <Field label="Package name" caption="Two parts, separated by a slash — user/plate-07.">
-                    <TextInput value=captioned placeholder="owner/package-name" />
-                </Field>
+            <Cell wide=true label="with a caption — announced, via aria-describedby">
+                <FormControl
+                    label="Package name"
+                    caption="Two parts, separated by a slash — user/plate-07."
+                    control=move |id| {
+                        view! {
+                            <TextInput id=id value=captioned placeholder="owner/package-name" />
+                        }
+                            .into_any()
+                    }
+                />
             </Cell>
             <Cell wide=true label="required">
-                <Field label="Bucket" required=true>
-                    <TextInput value=required placeholder="my-s3-bucket" />
-                </Field>
+                <FormControl
+                    label="Bucket"
+                    required=true
+                    control=move |id| {
+                        view! { <TextInput id=id value=required placeholder="my-s3-bucket" /> }
+                            .into_any()
+                    }
+                />
             </Cell>
-            <Cell wide=true label="in error — border here, reason below">
-                <Field label="Bucket" error="Bucket names cannot contain spaces.">
-                    <TextInput value=broken invalid=true />
-                </Field>
+            <Cell wide=true label="in error — border here, reason below, both announced">
+                <FormControl
+                    label="Bucket"
+                    error="Bucket names cannot contain spaces."
+                    control=move |id| {
+                        view! { <TextInput id=id value=broken invalid=true /> }.into_any()
+                    }
+                />
             </Cell>
         </Story>
     }
@@ -119,21 +179,41 @@ pub fn BucketForm() -> impl IntoView {
         // platform as an abstraction — no "…from Quilt" — but explicitly allows concrete
         // endpoints "where the user actually chooses or authenticates against one", and
         // this is that place.
-        <Field label="Host" caption="Where this package is published. From your accounts.">
-            <TextInput value=host placeholder="open.quiltdata.com" />
-        </Field>
-        <Field label="Bucket" required=true>
-            <TextInput value=bucket placeholder="my-s3-bucket" />
-        </Field>
+        <FormControl
+            label="Host"
+            caption="Where this package is published. From your accounts."
+            control=move |id| {
+                view! { <TextInput id=id value=host placeholder="open.quiltdata.com" /> }
+                    .into_any()
+            }
+        />
+        <FormControl
+            label="Bucket"
+            required=true
+            control=move |id| {
+                view! { <TextInput id=id value=bucket placeholder="my-s3-bucket" /> }.into_any()
+            }
+        />
         // Read from the bucket once it is known, so it is last and its options depend on
         // the field above it.
-        <Field label="Workflow" caption="Rules the bucket applies when you publish.">
-            <Select
-                label="Workflow"
-                options=vec!["Default".to_string(), "None".to_string()]
-                selected=workflow
-            />
-        </Field>
+        //
+        // `Naming::FormControl`, so the Select renders no name of its own. It used to be given
+        // `label="Workflow"` here as well as by the FormControl, which nested two labels and named
+        // the control twice — the kind of thing the ControlId design exists to make unsayable.
+        <FormControl
+            label="Workflow"
+            caption="Rules the bucket applies when you publish."
+            control=move |id| {
+                view! {
+                    <Select
+                        naming=Naming::FormControl(id)
+                        options=vec!["Default".to_string(), "None".to_string()]
+                        selected=workflow
+                    />
+                }
+                    .into_any()
+            }
+        />
     }
 }
 
@@ -145,25 +225,46 @@ pub fn CreateForm() -> impl IntoView {
     let folder = RwSignal::new(String::new());
 
     view! {
-        <Field
+        <FormControl
             label="Package name"
             caption="Two parts, separated by a slash — user/plate-07."
             required=true
-        >
-            <TextInput value=name placeholder="owner/package-name" autofocus=true />
-        </Field>
+            control=move |id| {
+                view! {
+                    <TextInput
+                        id=id
+                        value=name
+                        placeholder="owner/package-name"
+                        autofocus=true
+                    />
+                }
+                    .into_any()
+            }
+        />
         // A path the user picks with the OS dialog rather than types, so the text field is
         // disabled and the Browse button is the control. Optional: an empty package is a
         // legitimate starting point, and the vocabulary says so by not calling this
         // "source".
-        <Field label="Folder to add" caption="Optional. You can add files later.">
-            <div class="g-inline">
-                <TextInput value=folder placeholder="No folder chosen" disabled=true />
-                <Button on_click=move |_| folder.set("/home/you/runs/plate-07".to_string())>
-                    "Browse…"
-                </Button>
-            </div>
-        </Field>
+        <FormControl
+            label="Folder to add"
+            caption="Optional. You can add files later."
+            control=move |id| {
+                view! {
+                    <div class="g-inline">
+                        <TextInput
+                            id=id
+                            value=folder
+                            placeholder="No folder chosen"
+                            disabled=true
+                        />
+                        <Button on_click=move |_| {
+                            folder.set("/home/you/runs/plate-07".to_string());
+                        }>"Browse…"</Button>
+                    </div>
+                }
+                    .into_any()
+            }
+        />
     }
 }
 
