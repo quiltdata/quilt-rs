@@ -2,6 +2,7 @@ mod content;
 mod entries;
 mod selection;
 mod status_banner;
+mod sync_scope;
 mod toolbar;
 
 use leptos::prelude::*;

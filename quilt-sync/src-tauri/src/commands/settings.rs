@@ -12,6 +12,8 @@ use crate::autopull::PushSettings;
 use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::Watcher;
 use crate::changelog;
+use crate::experimental_settings::ExperimentalSettings;
+use crate::experimental_settings::SharedExperimentalSettings;
 use crate::fswatcher::FsWatcherSettings;
 use crate::fswatcher::SharedFsWatcherSettings;
 use crate::model;
@@ -112,6 +114,20 @@ impl From<FsWatcherSettings> for FsWatcherSettingsData {
     }
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperimentalSettingsData {
+    pub entire_package_sync: bool,
+}
+
+impl From<ExperimentalSettings> for ExperimentalSettingsData {
+    fn from(s: ExperimentalSettings) -> Self {
+        Self {
+            entire_package_sync: s.entire_package_sync,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -127,6 +143,7 @@ pub struct SettingsData {
     pub publish: PublishSettingsData,
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
+    pub experimental: ExperimentalSettingsData,
 }
 
 #[tauri::command]
@@ -137,6 +154,7 @@ pub async fn get_settings_data(
     publish: tauri::State<'_, SharedPublishSettings>,
     autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
     fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
+    experimental: tauri::State<'_, SharedExperimentalSettings>,
 ) -> Result<SettingsData, String> {
     let app: &app::App = &app;
 
@@ -160,6 +178,7 @@ pub async fn get_settings_data(
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
+    let experimental_data = ExperimentalSettingsData::from(experimental.read().await.clone());
 
     Ok(SettingsData {
         version: app.version.to_string(),
@@ -174,6 +193,7 @@ pub async fn get_settings_data(
         publish: publish_data,
         autosync: autosync_data,
         fswatcher: fswatcher_data,
+        experimental: experimental_data,
     })
 }
 
@@ -285,6 +305,32 @@ pub async fn update_fswatcher_settings(
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *fswatcher_settings.write().await = new;
+    Ok(())
+}
+
+/// Turn an experiment on or off.
+///
+/// A gate on a *control*, not on behaviour: enabling this downloads nothing by
+/// itself, and disabling it leaves every per-package choice written where it
+/// is, so re-enabling resumes them. Clearing those would destroy a decision the
+/// user made in order to undo a setting that only ever hid a control.
+#[tauri::command]
+pub async fn update_experimental_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    experimental: tauri::State<'_, SharedExperimentalSettings>,
+    entire_package_sync: bool,
+) -> Result<(), String> {
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let new = ExperimentalSettings {
+        entire_package_sync,
+    };
+    new.save(&data_dir).await.map_err(|e| e.to_string())?;
+    *experimental.write().await = new;
     Ok(())
 }
 

@@ -244,6 +244,8 @@ mod tests {
     use tempfile::TempDir;
     use test_log::test;
 
+    use crate::lineage::PackageLineage;
+
     #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {
         // Create a temporary directory for testing
@@ -269,7 +271,7 @@ mod tests {
         for namespace in &namespaces {
             lineage.packages.insert(
                 namespace.clone(),
-                crate::lineage::PackageLineage {
+                PackageLineage {
                     commit: None,
                     remote_uri: Some(ManifestUri {
                         bucket: "test-bucket".to_string(),
@@ -280,6 +282,7 @@ mod tests {
                     base_hash: "abcdef".to_string(),
                     latest_hash: "abcdef".to_string(),
                     paths: std::collections::BTreeMap::new(),
+                    ..PackageLineage::default()
                 },
             );
         }

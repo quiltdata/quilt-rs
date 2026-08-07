@@ -15,11 +15,13 @@ use crate::autopull::reporter::PackageStatusEvent;
 use crate::autopull::reporter::clean_uptodate_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
 use crate::commands::RoleCache;
+use crate::experimental_settings::resolve_sync_scope;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
 use crate::quilt;
 use crate::quilt::flow::PullOutcome;
+use crate::quilt::lineage::SyncScope;
 use crate::telemetry::prelude::*;
 
 #[derive(Debug)]
@@ -236,6 +238,11 @@ fn role_denied_summary(role: &str) -> String {
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one tick's inputs, each read from a different source; bundling them \
+              would invent a struct that exists only to satisfy the count"
+)]
 pub(crate) async fn refresh_then_maybe_sync(
     model: &impl QuiltModel,
     namespace: &Namespace,
@@ -244,6 +251,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     quiet_window: Duration,
     pull_enabled: bool,
     push_enabled: bool,
+    scope: SyncScope,
 ) -> Result<RefreshOutcome, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -327,7 +335,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                 return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                return match model.package_pull(&installed, None).await {
+                return match model.package_pull(&installed, None, scope).await {
                     Ok(_) => {
                         info!("autosync: pulled namespace={namespace}");
                         // Kept work leaves a dirty tree: `UpToDate` +
@@ -467,6 +475,10 @@ pub(crate) async fn run_once(
     // `cadence_for_mode(&settings.pull, mode)`, so pull frequency and
     // push quiet window can be tuned independently.
     let publish = inner.publish_settings.read().await.clone();
+    // One read per tick, not per package. The gate is what makes a package's
+    // standing scope apply to background pulls at all — a scope honoured only
+    // by the Pull button would miss the case the feature exists for.
+    let experimental = inner.experimental.read().await.clone();
     let quiet_window = {
         let settings = inner.settings.read().await;
         Duration::from_secs(settings.push.idle_timeout_secs)
@@ -512,6 +524,7 @@ pub(crate) async fn run_once(
             quiet_window,
             pull_enabled,
             push_enabled,
+            resolve_sync_scope(lineage.sync_scope, &experimental),
         )
         .await
         {

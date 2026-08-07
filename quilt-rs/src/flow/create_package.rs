@@ -180,6 +180,7 @@ pub async fn create_package(
         base_hash: String::new(),
         latest_hash: String::new(),
         paths: lineage_paths,
+        ..PackageLineage::default()
     };
 
     let mut lineage = lineage;

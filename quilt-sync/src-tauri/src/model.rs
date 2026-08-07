@@ -19,6 +19,7 @@ use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::io::remote::WorkflowsConfig;
 use quilt_rs::io::remote::fetch_workflows_config_for_bucket;
+use quilt_rs::lineage::SyncScope;
 use quilt_rs::workflow::WorkflowRules;
 
 use quilt_uri::Host;
@@ -153,12 +154,30 @@ pub trait QuiltModel {
         Ok(package.install_paths(paths).await?)
     }
 
+    /// `scope` is resolved by the caller through
+    /// [`resolve_sync_scope`](crate::experimental_settings::resolve_sync_scope)
+    /// — the package's stored choice, honoured only while the experiment is on.
+    /// It is a parameter rather than something read in here so the two paths
+    /// that pull (a user's button, the autopull tick) resolve it the same way
+    /// and a mocked model can drive either.
     async fn package_pull(
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
+        scope: SyncScope,
     ) -> Result<quilt_uri::ManifestUri, Error> {
-        Ok(package.pull(host_config).await?)
+        Ok(package.pull(host_config, scope).await?)
+    }
+
+    /// Persist a package's standing [`SyncScope`]. Storage only — what a pull
+    /// actually does with it still goes through `resolve_sync_scope`.
+    async fn package_set_sync_scope(
+        &self,
+        package: &quilt::InstalledPackage,
+        scope: SyncScope,
+    ) -> Result<(), Error> {
+        package.set_sync_scope(scope).await?;
+        Ok(())
     }
 
     /// Dry-run classifier: what would `package_pull` do right now? Delegates

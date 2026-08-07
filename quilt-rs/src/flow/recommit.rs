@@ -266,6 +266,7 @@ mod tests {
                     hash: row.hash.into(),
                 },
             )]),
+            ..PackageLineage::default()
         };
 
         let manifest_path =

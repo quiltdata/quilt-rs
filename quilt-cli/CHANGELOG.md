@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.29.2] - 2026-08-07
+
+### quilt-rs
+
+- A package can now be set to download its whole contents, including files added later. `quilt pull` deliberately does **not** honour that setting — it keeps fetching only the files you already have, whatever the desktop app recorded for the package (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
 ## [v0.29.1] - 2026-08-06
 
 ### quilt-rs

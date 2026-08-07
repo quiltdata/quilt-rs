@@ -403,15 +403,41 @@ fn PackageItem(
         refreshing.set(false);
     });
 
-    // Mirror autopull watcher events into this row's local signals.
+    // Mirror autopull watcher events into this row's local signals — but only
+    // where the value actually moved.
+    //
+    // The producer re-reports constantly and by design: the filesystem
+    // watcher's reactor emits on *every* signal, spurious wakes included, and
+    // `TauriEventReporter` forwards each one to the webview (it consults the
+    // observation fingerprint only to decide whether to log, never whether to
+    // emit). So a package sitting still still delivers a stream of
+    // value-identical events.
+    //
+    // A `RwSignal` notifies on **write**, not on change, so `set`ting "behind"
+    // over "behind" wakes every subscriber. One of those is `pull_outcome_res`
+    // below, which reads `status` and, for a `behind` row, answers by resolving
+    // the remote `latest` tag and fetching its manifest. Writing unconditionally
+    // therefore turned a quiet package into a network request per event —
+    // measured at ~1.4/s, each with a fresh S3 client, for as long as the row
+    // was on screen.
+    //
+    // Comparing here rather than at the resource keeps the whole row quiet,
+    // including any future subscriber that has no idea it is downstream of a
+    // firehose.
     let ns_for_listener = data.namespace.clone();
     Effect::new(move |_| {
         if let Some(ev) = status_event.get()
             && ev.namespace == ns_for_listener
         {
-            status.set(ev.status);
-            has_changes.set(ev.has_changes);
-            refresh_error.set(None);
+            if status.get_untracked() != ev.status {
+                status.set(ev.status);
+            }
+            if has_changes.get_untracked() != ev.has_changes {
+                has_changes.set(ev.has_changes);
+            }
+            if refresh_error.get_untracked().is_some() {
+                refresh_error.set(None);
+            }
         }
     });
 
@@ -457,10 +483,16 @@ fn PackageItem(
     // with a retry), so one network blip no longer strands the button.
     let ns_for_outcome = data.namespace.clone();
     let pull_retry = Trigger::new();
+    // Through a `Memo`, so the resource re-runs when the row becomes or stops
+    // being `behind` — not merely when something wrote to `status`. Belt and
+    // braces with the equality guard above: this one holds even if a future
+    // writer forgets, and it is the difference between a *network* call and a
+    // no-op notification.
+    let is_behind_now = Memo::new(move |_| status.get() == "behind");
     let pull_outcome_res = LocalResource::new(move || {
         pull_retry.track();
         let ns = ns_for_outcome.clone();
-        let is_behind = status.get() == "behind";
+        let is_behind = is_behind_now.get();
         async move {
             if is_behind {
                 match commands::package_pull_outcome(ns).await {

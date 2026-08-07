@@ -16,8 +16,11 @@ use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::lineage::ChangeSet;
 use crate::lineage::InstalledPackageStatus;
+use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
+use crate::lineage::SyncScope;
 use crate::manifest::Manifest;
 use crate::paths::DomainPaths;
 use quilt_uri::ManifestUri;
@@ -99,6 +102,34 @@ pub async fn snapshot_for_pull(
     ))
 }
 
+/// Which of the remote's changed paths this pull will actually apply.
+///
+/// The **whole** of what a [`SyncScope`] does, in one place and free of I/O so
+/// the rule is checkable without a working tree. Two filters, and they answer
+/// different questions:
+///
+/// - the scope decides whether a path this copy does not track is in play at
+///   all — sparse checkout under [`SyncScope::IndividualFiles`], everything the
+///   remote touched under [`SyncScope::EntirePackage`], which is what lets a
+///   remote *addition* be fetched;
+/// - a path the user changed locally is dropped under **either** scope. The
+///   classifier has already blocked the pull if that change disagrees with the
+///   remote's, so what is left here is work to keep in place, not to overwrite.
+///   Whole-package scope widens what a pull *fetches*; it never widens what a
+///   pull is willing to clobber.
+fn touch_set(
+    remote_changed: impl IntoIterator<Item = PathBuf>,
+    tracked: &LineagePaths,
+    locally_changed: &ChangeSet,
+    scope: SyncScope,
+) -> Vec<PathBuf> {
+    remote_changed
+        .into_iter()
+        .filter(|p| scope.covers_untracked() || tracked.contains_key(p))
+        .filter(|p| !locally_changed.contains_key(p))
+        .collect()
+}
+
 /// Pulls the latest package revision from remote and reconciles it into the
 /// working tree surgically: only remote-changed tracked paths the user did not
 /// touch are updated, while non-conflicting local changes are kept in place.
@@ -108,6 +139,10 @@ pub async fn snapshot_for_pull(
 /// `snapshot` carries the freshness contract: it must come from
 /// [`snapshot_for_pull`], which does all network *before* the status walk, so
 /// `snapshot.status` is the freshest possible input to classification.
+///
+/// `scope` is the caller's, never read from the lineage: this engine also backs
+/// the `quilt` CLI, which passes [`SyncScope::IndividualFiles`] and so keeps
+/// sparse-checkout behaviour whatever a desktop app wrote to `data.json`.
 #[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -118,8 +153,9 @@ pub async fn pull_package(
     working_dir: PathBuf,
     snapshot: PullSnapshot,
     namespace: Namespace,
+    scope: SyncScope,
 ) -> Res<PackageLineage> {
-    info!("⏳ Starting pull for package {}", namespace);
+    info!("⏳ Starting pull for package {namespace} (scope={scope:?})");
 
     if lineage.commit.is_some() {
         error!("❌ Found pending commits, cannot pull");
@@ -175,13 +211,12 @@ pub async fn pull_package(
     // per-path disposition (or the delta) so the two derivations cannot
     // silently desynchronize.
     //
-    // Touch-set: remote-changed tracked paths the user did NOT touch. Paths the
-    // user changed are left in place (kept, or trivially resolved).
-    let touched: Vec<PathBuf> = remote_delta(manifest, &snapshot.latest_manifest)
-        .into_keys()
-        .filter(|p| lineage.paths.contains_key(p))
-        .filter(|p| !snapshot.status.changes.contains_key(p))
-        .collect();
+    let touched = touch_set(
+        remote_delta(manifest, &snapshot.latest_manifest).into_keys(),
+        &lineage.paths,
+        &snapshot.status.changes,
+        scope,
+    );
 
     // Verify-before-uninstall. For every touched path, confirm the working-tree
     // file still holds the BASE content the classifier assumed — the row in
@@ -202,9 +237,21 @@ pub async fn pull_package(
     // never data loss.
     let mut drifted = Vec::new();
     for path in &touched {
-        // The touch-set is derived from `remote_delta(manifest, ..)`, whose
-        // keys are all base rows, so a missing base row is unreachable; treat
-        // it as "nothing to verify against" and skip.
+        // Verify only what this copy actually INSTALLED. Under
+        // `EntirePackage` the touch-set carries paths with no working file —
+        // remote additions, and base rows never checked out (install registers
+        // the manifest, not the files, so `lineage.paths` is a subset of the
+        // base rows). `refresh_hash` opens the file before hashing, so a
+        // not-yet-installed path would read as a not-found error, which the
+        // arms below classify as drift and turn into a spurious
+        // `PullConflict` aborting the whole pull. There is nothing to verify
+        // for a file we never wrote: its absence is the expected state, not
+        // drift.
+        if !lineage.paths.contains_key(path) {
+            continue;
+        }
+        // A tracked path always has a base row (`create_status` hard-errors
+        // otherwise for a remote-backed package), so this is defensive only.
         let Some(base_row) = manifest.get_record(path) else {
             continue;
         };
@@ -339,6 +386,7 @@ mod tests {
             PathBuf::default(),
             snapshot_with(status, Manifest::default()),
             Namespace::default(),
+            SyncScope::IndividualFiles,
         )
         .await;
         // Reaches the up-to-date branch (guard relaxed), not "pending changes".
@@ -414,6 +462,7 @@ mod tests {
             PathBuf::default(),
             snapshot_with(InstalledPackageStatus::default(), Manifest::default()),
             Namespace::default(),
+            SyncScope::IndividualFiles,
         )
         .await;
         assert_eq!(
@@ -443,6 +492,7 @@ mod tests {
             PathBuf::default(),
             snapshot_with(InstalledPackageStatus::default(), Manifest::default()),
             Namespace::default(),
+            SyncScope::IndividualFiles,
         )
         .await;
         assert_eq!(
@@ -473,6 +523,7 @@ mod tests {
             PathBuf::default(),
             snapshot_with(InstalledPackageStatus::default(), Manifest::default()),
             Namespace::default(),
+            SyncScope::IndividualFiles,
         )
         .await;
         assert!(matches!(
@@ -529,6 +580,7 @@ mod tests {
             working_dir.clone(),
             snapshot_with(status, latest),
             Namespace::default(),
+            SyncScope::IndividualFiles,
         )
         .await;
 
@@ -588,6 +640,7 @@ mod tests {
             working_dir.clone(),
             snapshot_with(status, latest),
             Namespace::default(),
+            SyncScope::IndividualFiles,
         )
         .await;
 
@@ -598,6 +651,160 @@ mod tests {
             ),
             "expected PullConflict naming `a`, got: {error:?}"
         );
+    }
+
+    fn tracked_map<const N: usize>(names: [&str; N]) -> LineagePaths {
+        names
+            .iter()
+            .map(|n| (PathBuf::from(n), PathState::default()))
+            .collect()
+    }
+
+    /// **The scope, both directions.** A path the remote added is fetched under
+    /// whole-package scope and left alone under the narrow one. Asserted both
+    /// ways round on the same input, so this cannot pass by the two scopes
+    /// behaving alike — which is exactly how a broken filter would look.
+    #[test]
+    fn a_remote_added_path_is_taken_only_under_whole_package_scope() {
+        let remote_changed = || vec![PathBuf::from("have.csv"), PathBuf::from("added.csv")];
+        let tracked = tracked_map(["have.csv"]);
+        let none = ChangeSet::new();
+
+        assert_eq!(
+            touch_set(
+                remote_changed(),
+                &tracked,
+                &none,
+                SyncScope::IndividualFiles
+            ),
+            vec![PathBuf::from("have.csv")],
+            "sparse checkout leaves a path it does not track"
+        );
+        assert_eq!(
+            touch_set(remote_changed(), &tracked, &none, SyncScope::EntirePackage),
+            vec![PathBuf::from("have.csv"), PathBuf::from("added.csv")],
+            "whole-package scope takes it"
+        );
+    }
+
+    /// A base row this copy never installed is in the same boat as a remote
+    /// addition: untracked, so narrow scope skips it and whole-package scope
+    /// picks it up. This is the case that reaches the verify pass with no file
+    /// on disk — see `a_never_installed_path_does_not_abort_the_verify_pass`.
+    #[test]
+    fn a_never_installed_path_follows_the_same_rule() {
+        let never = vec![PathBuf::from("never-installed.csv")];
+        let tracked = tracked_map(["something-else.csv"]);
+        let none = ChangeSet::new();
+
+        assert!(touch_set(never.clone(), &tracked, &none, SyncScope::IndividualFiles).is_empty());
+        assert_eq!(
+            touch_set(never.clone(), &tracked, &none, SyncScope::EntirePackage),
+            never
+        );
+    }
+
+    /// Widening what a pull *fetches* must not widen what it *overwrites*: a
+    /// path the user changed is dropped under **both** scopes. The classifier
+    /// has already blocked anything that genuinely disagrees, so what survives
+    /// to here is local work to keep.
+    #[test]
+    fn a_locally_changed_path_is_dropped_under_either_scope() {
+        let remote_changed = || vec![PathBuf::from("mine.csv")];
+        let tracked = tracked_map(["mine.csv"]);
+        let mine = ChangeSet::from([(
+            PathBuf::from("mine.csv"),
+            Change::Modified(ManifestRow::default()),
+        )]);
+
+        for scope in [SyncScope::IndividualFiles, SyncScope::EntirePackage] {
+            assert!(
+                touch_set(remote_changed(), &tracked, &mine, scope).is_empty(),
+                "{scope:?} must not overwrite the user's own change"
+            );
+        }
+    }
+
+    /// **The regression the verify re-gate exists for.** Under whole-package
+    /// scope the touch-set carries paths with no working file — here a base row
+    /// that was never installed, which the remote has since removed. The verify
+    /// pass hashes a path's file to check it still holds the base content;
+    /// against a file that was never written, that read fails as not-found, and
+    /// before the re-gate it was classified as drift and aborted the whole pull
+    /// with a spurious `PullConflict`. Nothing to verify is not drift.
+    #[test(tokio::test)]
+    async fn a_never_installed_path_does_not_abort_the_verify_pass() -> crate::Res {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let bucket = "bkt";
+        let namespace: Namespace = ("f", "b").into();
+        let (base_hash, latest_hash) = ("OLD", "NEW");
+        let working_dir = PathBuf::from("/wd");
+        let never = PathBuf::from("never-installed.csv");
+
+        let paths = DomainPaths::default();
+        paths.scaffold_for_caching(&storage, bucket).await?;
+
+        // `never` has a base row but no working file and no lineage entry —
+        // install registers the manifest, not the files. `latest` drops it, so
+        // it lands in the touch-set as a removal and the apply has nothing to
+        // download.
+        let base = manifest_of(vec![ManifestRow {
+            logical_key: never.clone(),
+            ..ManifestRow::default()
+        }]);
+        let latest_manifest = manifest_of(vec![]);
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://{bucket}/.quilt/packages/{latest_hash}").as_str())?,
+                br#"{"version": "v0"}"#.to_vec(),
+            )
+            .await?;
+
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri {
+                bucket: bucket.to_string(),
+                namespace: namespace.clone(),
+                hash: base_hash.to_string(),
+                origin: None,
+            }),
+            base_hash: base_hash.to_string(),
+            latest_hash: latest_hash.to_string(),
+            // Deliberately empty: nothing about this package is installed.
+            paths: BTreeMap::new(),
+            ..PackageLineage::default()
+        };
+        let snapshot = PullSnapshot {
+            status: InstalledPackageStatus::default(),
+            latest: ManifestUri {
+                bucket: bucket.to_string(),
+                namespace: namespace.clone(),
+                hash: latest_hash.to_string(),
+                origin: None,
+            },
+            latest_manifest,
+        };
+
+        let mut base = base;
+        let lineage = pull_package(
+            lineage,
+            &mut base,
+            &paths,
+            &storage,
+            &remote,
+            working_dir,
+            snapshot,
+            namespace,
+            SyncScope::EntirePackage,
+        )
+        .await?;
+
+        assert_eq!(
+            lineage.base_hash, latest_hash,
+            "the pull completed instead of reporting drift on a file that was never written"
+        );
+        Ok(())
     }
 
     // The happy counterpart: a touched path whose working-tree file still holds
@@ -683,6 +890,7 @@ mod tests {
             working_dir.clone(),
             snapshot,
             namespace,
+            SyncScope::IndividualFiles,
         )
         .await?;
 

@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.35.0] - 2026-08-07
+
+### Added
+
+- A package can be set to sync its **whole contents**: `PackageLineage::sync_scope` records the choice, and under `SyncScope::EntirePackage` a pull also fetches paths the remote added, instead of listing them and leaving them. `InstalledPackage::set_sync_scope` writes it (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+### Changed
+
+- **Breaking:** `flow::pull` and `InstalledPackage::pull` take the scope as an argument rather than reading the stored one, so a caller keeps sparse-checkout behaviour whatever a package's lineage says. Pass `SyncScope::IndividualFiles` for the previous behaviour (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
 ## [v0.34.1] - 2026-08-06
 
 ### Changed
