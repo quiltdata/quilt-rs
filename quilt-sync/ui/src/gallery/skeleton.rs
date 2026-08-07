@@ -97,7 +97,7 @@ fn Rows() -> impl IntoView {
                   two lists have an unknown state, which is why the card titles and counts \
                   below are real while their contents are not."
         >
-            <Cell full=true label="package list — four unknown rows above two real ones">
+            <Cell wide=true label="package list — four unknown rows above two real ones">
                 <Card>
                     <div>
                         <GroupHeading title="s3://my-bucket" count=6 />
@@ -124,7 +124,7 @@ fn Rows() -> impl IntoView {
                     </div>
                 </Card>
             </Cell>
-            <Cell full=true label="queue — three unknown rows above one real one">
+            <Cell wide=true label="queue — three unknown rows above one real one">
                 <Card title="Needs your attention">
                     <div>
                         <div class="g-rows" aria-busy="true">
@@ -146,7 +146,7 @@ fn Rows() -> impl IntoView {
                     </div>
                 </Card>
             </Cell>
-            <Cell full=true label="the whole region unknown — what the first paint shows">
+            <Cell wide=true label="the whole region unknown — what the first paint shows">
                 <Card title="Needs your attention">
                     <div class="g-rows" aria-busy="true">
                         <QueueRowSkeleton />
