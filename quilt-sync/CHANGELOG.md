@@ -9,11 +9,11 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.21.1-alpha1]
+## [v0.21.1] - 2026-08-07
 
 ### Added
 
-- Experimental, off by default: Settings → Experimental → "Enable entire-package sync" adds a per-package choice on the installed-package page — sync individual files, or sync the entire package. Under whole-package sync a pull also downloads files a teammate added, instead of listing them and leaving them; switching it on doesn't move any bytes by itself — the toolbar offers "Download all files" for what's already listed — and switching it off stops fetching more without removing anything
+- Experimental, off by default: Settings → Experimental → "Enable entire-package sync" adds a per-package choice on the installed-package page — sync individual files, or sync the entire package. Under whole-package sync a pull also downloads files a teammate added, instead of listing them and leaving them; switching it on doesn't move any bytes by itself — the toolbar offers "Download all files" for what's already listed — and switching it off stops fetching more without removing anything (<https://github.com/quiltdata/quilt-rs/pull/834>)
 
 ## [v0.21.0] - 2026-08-06
 
