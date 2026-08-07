@@ -1,0 +1,60 @@
+/*
+ * Field. Label above the control, caption and error below it.
+ *
+ * Vertical only. Primer offers a horizontal layout and nothing here needs one yet — a
+ * `layout` prop with one value is a prop that lies about being a choice.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The `<label>` wraps the control, which is what makes the association hold without ids.
+ * `display: block` so the name sits above rather than beside. */
+.label {
+  display: block;
+  min-width: 0;
+}
+
+.name {
+  display: block;
+  margin-bottom: var(--q-space-1);
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  color: var(--q-fg-default);
+}
+
+/* Not bold and not a colour — it qualifies the name rather than competing with it. */
+.required {
+  margin-left: 5px;
+  font-weight: 400;
+  color: var(--q-fg-muted);
+}
+
+.caption {
+  margin: var(--q-space-1) 0 0;
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-fg-muted);
+}
+
+/* `fg` and not `fg-on-subtle`: there is no fill under it, and a field label does not
+ * hover — the two conditions that make step 11 legal. 5.21:1 on the card. */
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: var(--q-space-1) 0 0;
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-danger-fg);
+}
+
+.error svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+}

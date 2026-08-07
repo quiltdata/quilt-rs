@@ -30,6 +30,7 @@ mod gallery {
     pub mod card;
     pub mod countdown;
     pub mod feedback;
+    pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
     pub mod packages;
@@ -52,6 +53,8 @@ use crate::gallery::card::CardStories;
 use crate::gallery::countdown::CountdownStories;
 use crate::gallery::feedback::FeedbackStories;
 use crate::gallery::feedback::NotificationScene;
+use crate::gallery::forms::DialogScene;
+use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::packages::PackageRowStories;
@@ -118,10 +121,15 @@ fn Gallery() -> impl IntoView {
         ("PackageRow", view! { <PackageRowStories /> }.into_any()),
         ("Skeleton", view! { <SkeletonStories /> }.into_any()),
         ("Feedback", view! { <FeedbackStories /> }.into_any()),
+        ("Forms", view! { <FormsStories /> }.into_any()),
         ("Queue parts", view! { <QueueStories /> }.into_any()),
         (
             "Recent files parts",
             view! { <RecentFilesStories /> }.into_any(),
+        ),
+        (
+            "Scene · the two dialogs",
+            view! { <DialogScene /> }.into_any(),
         ),
         (
             "Scene · a notification in place",

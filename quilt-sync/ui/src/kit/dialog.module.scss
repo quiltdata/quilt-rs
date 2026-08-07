@@ -1,0 +1,55 @@
+/*
+ * Modal. Sized to its content up to a cap, centred by the element's own default
+ * positioning — a native `<dialog>` in the top layer needs no `position`, no `transform`
+ * and no `z-index`, which is most of what the four hand-rolled overlays were doing.
+ */
+
+.root {
+  /* `margin: auto` is what centres a top-layer dialog. The UA stylesheet already sets it;
+   * it is repeated because a reset that clears margins would otherwise pin the dialog to
+   * the top-left and the cause would be invisible. */
+  margin: auto;
+  width: min(440px, calc(100vw - var(--q-space-8)));
+  max-height: calc(100vh - var(--q-space-8));
+  overflow: auto;
+  padding: var(--q-space-4);
+  border: 1px solid var(--q-border-default);
+  border-radius: var(--q-radius);
+  background: var(--q-canvas-default);
+  color: var(--q-fg-default);
+  /* The one place a shadow is allowed: the page is flat and bordered, but a modal is
+   * genuinely above it and the shadow is what says so. */
+  box-shadow: var(--q-shadow-overlay);
+}
+
+/* Not a colour of its own — the page tinted down. `--q-fg-default` at low alpha is a
+ * near-black in light and a near-white in dark, which is wrong in dark, so this is one of
+ * the few places a literal is right: a dark scrim over a dark page still reads as a
+ * scrim. */
+.root::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.title {
+  margin: 0 0 var(--q-space-3);
+  font-size: var(--q-text-lead);
+  font-weight: 600;
+  /* Not upper-cased, unlike Card's title. A card labels a region you are already looking
+   * at; a dialog title names the thing you just opened, and it is the first thing read. */
+  color: var(--q-fg-default);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}
+
+/* Right-aligned, primary last. Separated by space rather than a rule — the dialog's own
+ * edge is enough of a boundary and a divider inside a 440px box reads as clutter. */
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--q-space-2);
+  margin-top: var(--q-space-5);
+}

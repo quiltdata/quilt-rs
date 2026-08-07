@@ -1,0 +1,42 @@
+/*
+ * Text field. The `Select`'s closed state is drawn to match this deliberately — a select
+ * and an input side by side in one form must not disagree about height or border.
+ */
+
+.root {
+  /* `appearance` and `font` come from the baseline. */
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--q-border-default);
+  border-radius: var(--q-radius);
+  background: var(--q-canvas-default);
+  color: var(--q-fg-default);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-tight);
+}
+
+.root::placeholder {
+  color: var(--q-fg-muted);
+}
+
+.root:hover:not(:disabled) {
+  border-color: var(--q-border-strong);
+}
+
+.root:disabled {
+  color: var(--q-fg-disabled);
+  background: var(--q-overlay-hover);
+  cursor: not-allowed;
+}
+
+/* The border alone, not a tint. A red fill behind text the user is still typing makes it
+ * harder to read at the moment they are trying to fix it — and the border plus the
+ * message in `Field` already say it twice. */
+.invalid {
+  border-color: var(--q-danger-border);
+}
+
+.invalid:hover:not(:disabled) {
+  border-color: var(--q-danger-fg);
+}
