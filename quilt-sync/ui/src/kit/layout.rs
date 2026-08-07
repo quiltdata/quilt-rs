@@ -7,18 +7,31 @@
 //! region that spaced itself would look right alone and wrong beside the others, and
 //! there would be no single place to change how the page breathes.
 //!
+//! # `ui_locked` is not here, and is not coming
+//!
+//! v1 disables the whole page behind an overlay while an operation runs. **Rejected for
+//! v2**, decided 2026-08-07 — and it is worth recording why, because it looks like a
+//! missing feature and is not one.
+//!
+//! It exists in v1 because a single boolean was the only vocabulary available: with no way
+//! to say *this row is busy* or *this region is loading*, locking everything is the only
+//! honest thing left. v2 has that vocabulary — `busy` on a queue row's action, `Skeleton`
+//! per region, `loading` on a `Button`, `spinning` on the appbar's refresh — so the
+//! overlay's job is now done by indicators that are truthful about their scope.
+//!
+//! And the overlay has a real cost that its scope-accurate replacements do not: it stops
+//! the user reading the page, which is exactly what people do while waiting.
+//!
+//! **The consequence, which is the part to be careful about.** The overlay was also a
+//! safety net — it covered any operation whose progress nobody remembered to show. Without
+//! it, *every* operation must own a visible indicator at its own scope, because there is
+//! no longer a backstop that makes forgetting merely ugly instead of invisible.
+//!
 //! # What is deliberately not here yet
 //!
-//! v1's `components::layout::Layout` also carries breadcrumbs, a notification host and
-//! a `ui_locked` overlay. None of the three is in this one:
-//!
-//! - **Breadcrumbs** — the main page is the root, so its trail is one item, and a
-//!   breadcrumb of one is decoration. The first v2 page with a parent adds them.
-//! - **`ui_locked`** — its overlay wants a decision about whether a modal spinner is even
-//!   the right answer, given the page already reports work per region. `Spinner` exists
-//!   now, so this is a design question rather than a missing part.
-//!
-//! The notification host is no longer among them — see `notification` below.
+//! **Breadcrumbs** — the main page is the root, so its trail is one item, and a breadcrumb
+//! of one is decoration. The first v2 page with a parent adds them. That is the only thing
+//! left; the notification host arrived, and `ui_locked` is not arriving.
 
 use leptos::prelude::*;
 
