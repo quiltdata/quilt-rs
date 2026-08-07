@@ -19,8 +19,29 @@ pub struct PackageEntry {
 }
 
 pub struct Output {
-    /// Sorted by bucket, then namespace, so each bucket's packages are adjacent.
+    /// Grouped by bucket. Only [`Output::new`] builds this, because
+    /// [`Display`](std::fmt::Display) cannot restore the order it needs.
     installed_packages_list: Vec<PackageEntry>,
+}
+
+impl Output {
+    /// Sorts each bucket's packages together, local-only ones last.
+    ///
+    /// `Display` spans a bucket's cell over a *run* of adjacent rows, so a
+    /// bucket reached in two runs would be named twice, in two spans. Sorting
+    /// here rather than trusting the caller is what makes that unreachable.
+    fn new(mut installed_packages_list: Vec<PackageEntry>) -> Self {
+        installed_packages_list.sort_by(|a, b| {
+            (a.bucket.is_none(), &a.bucket, &a.namespace).cmp(&(
+                b.bucket.is_none(),
+                &b.bucket,
+                &b.namespace,
+            ))
+        });
+        Self {
+            installed_packages_list,
+        }
+    }
 }
 
 #[derive(tabled::Tabled)]
@@ -100,19 +121,7 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error
         });
     }
 
-    // The leading `is_none()` puts the local-only packages last; the rest
-    // makes each bucket's packages adjacent, which `Display`'s span needs.
-    installed_packages_list.sort_by(|a, b| {
-        (a.bucket.is_none(), &a.bucket, &a.namespace).cmp(&(
-            b.bucket.is_none(),
-            &b.bucket,
-            &b.namespace,
-        ))
-    });
-
-    Ok(Output {
-        installed_packages_list,
-    })
+    Ok(Output::new(installed_packages_list))
 }
 
 #[cfg(test)]
@@ -146,19 +155,42 @@ mod tests {
         Ok(())
     }
 
+    /// Packages arrive in whatever order the lineage map yields, so the two
+    /// buckets here are interleaved and the local-only package sits in the
+    /// middle. Each bucket must still be named exactly once, in one span.
+    #[test]
+    fn test_display_groups_interleaved_buckets() {
+        let output = Output::new(vec![
+            entry(Some("zulu-bucket"), "late", UpstreamState::Behind),
+            entry(Some("acme-research"), "two", UpstreamState::UpToDate),
+            entry(None, "scratch", UpstreamState::Local),
+            entry(Some("acme-research"), "one", UpstreamState::UpToDate),
+            entry(Some("zulu-bucket"), "early", UpstreamState::Ahead),
+        ]);
+
+        let rendered = format!("{output}");
+        assert_eq!(rendered.matches("acme-research").count(), 1, "one span");
+        assert_eq!(rendered.matches("zulu-bucket").count(), 1, "one span");
+
+        let positions = |name: &str| rendered.find(name).expect("{name} is listed");
+        // Buckets sort, each bucket's own packages sort, local-only last.
+        assert!(positions("acme-research") < positions("zulu-bucket"));
+        assert!(positions("example/one") < positions("example/two"));
+        assert!(positions("example/early") < positions("example/late"));
+        assert!(positions("zulu-bucket") < positions("example/scratch"));
+    }
+
     /// A bucket shared by several packages is named once, in a spanning cell;
     /// a bucket with one package still gets its own cell; a package with no
     /// remote names that absence.
     #[test]
     fn test_display_spans_repeated_buckets() {
-        let output = Output {
-            installed_packages_list: vec![
-                entry(Some("acme-research"), "one", UpstreamState::UpToDate),
-                entry(Some("acme-research"), "two", UpstreamState::UpToDate),
-                entry(Some("zulu-bucket"), "late", UpstreamState::Behind),
-                entry(None, "scratch", UpstreamState::Local),
-            ],
-        };
+        let output = Output::new(vec![
+            entry(Some("acme-research"), "one", UpstreamState::UpToDate),
+            entry(Some("acme-research"), "two", UpstreamState::UpToDate),
+            entry(Some("zulu-bucket"), "late", UpstreamState::Behind),
+            entry(None, "scratch", UpstreamState::Local),
+        ]);
 
         let rendered = format!("{output}");
         assert_eq!(rendered.matches("acme-research").count(), 1, "named once");
@@ -207,7 +239,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         // Test with one installed package
-        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
+        let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
         {
             let local_domain = m.get_local_domain();
@@ -235,7 +267,7 @@ mod tests {
     // TODO: install and list multiple packages
     #[test(tokio::test)]
     async fn test_command_with_package() -> Result<(), Error> {
-        let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
+        let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 
         if let Std::Out(output) = command(m).await {
