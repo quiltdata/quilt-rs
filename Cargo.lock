@@ -5593,6 +5593,7 @@ dependencies = [
  "dirs",
  "quilt-rs",
  "quilt-uri",
+ "serde",
  "serde_json",
  "tabled",
  "tempfile",

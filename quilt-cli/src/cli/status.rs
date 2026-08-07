@@ -25,6 +25,12 @@ struct StatusEntry {
     status: String,
 }
 
+#[derive(serde::Serialize)]
+struct JsonChange {
+    path: String,
+    status: &'static str,
+}
+
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
@@ -64,8 +70,39 @@ impl std::fmt::Display for Output {
     }
 }
 
-pub async fn command(m: impl Commands, args: Input) -> Std {
-    Std::from_result(m.status(args).await)
+impl Output {
+    fn to_json(&self) -> String {
+        let changes: Vec<JsonChange> = self
+            .status
+            .changes
+            .iter()
+            .map(|(path, change)| JsonChange {
+                path: path.display().to_string(),
+                status: match change {
+                    Change::Modified(_) => "modified",
+                    Change::Added(_) => "added",
+                    Change::Removed(_) => "removed",
+                },
+            })
+            .collect();
+
+        serde_json::json!({
+            "upstream_state": self.status.upstream_state.to_string(),
+            "changes": changes,
+        })
+        .to_string()
+    }
+}
+
+pub async fn command(m: impl Commands, args: Input, json: bool) -> Std {
+    match m.status(args).await {
+        Ok(output) => Std::Out(if json {
+            output.to_json()
+        } else {
+            output.to_string()
+        }),
+        Err(error) => Std::Err(error),
+    }
 }
 
 async fn get_status(
@@ -101,6 +138,21 @@ mod tests {
     use quilt_rs::flow::UserMeta;
 
     use crate::cli::model::install_package_into_temp_dir;
+
+    #[test]
+    fn test_json_empty_status() {
+        let output = Output {
+            status: InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                std::collections::BTreeMap::new(),
+            ),
+        };
+
+        assert_eq!(
+            output.to_json(),
+            r#"{"upstream_state":"up_to_date","changes":[]}"#
+        );
+    }
 
     use quilt_rs::io::storage::ByteStream;
 
