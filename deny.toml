@@ -54,6 +54,12 @@ ignore = [
 
     # --- mixpanel-rs (dotenv) ---
     { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, transitive via mixpanel-rs" },
+
+    # --- serde-json-fmt (smartstring) ---
+    # serde-json-fmt is used to keep manifest top-hash JSON formatting compatible
+    # with Python's compact, ASCII-escaped output. Revisit when replacing that
+    # formatter or when serde-json-fmt moves off smartstring.
+    { id = "RUSTSEC-2026-0249", reason = "smartstring unmaintained, transitive via serde-json-fmt" },
 ]
 
 [licenses]
