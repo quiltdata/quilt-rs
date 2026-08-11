@@ -15,6 +15,7 @@ use crate::cli::list;
 use crate::cli::login;
 use crate::cli::pull;
 use crate::cli::push;
+use crate::cli::reset;
 use crate::cli::role;
 use crate::cli::status;
 use crate::cli::uninstall;
@@ -64,6 +65,11 @@ pub trait Commands {
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
         let local_domain = self.get_local_domain();
         push::model(local_domain, args).await
+    }
+
+    async fn reset(&self, args: reset::Input) -> Result<reset::Output, Error> {
+        let local_domain = self.get_local_domain();
+        reset::model(local_domain, args).await
     }
 
     async fn role(&self, args: role::Input) -> Result<role::Output, Error> {

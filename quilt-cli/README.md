@@ -38,6 +38,7 @@ cargo install quilt-cli
 | `install`   | Install a remote package locally                 |
 | `status`    | Show working-directory changes                   |
 | `commit`    | Commit a new package revision                    |
+| `reset`     | Discard the newest revision of a local package  |
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
 | `list`      | List installed packages                          |

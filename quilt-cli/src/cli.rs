@@ -22,6 +22,7 @@ mod model;
 mod output;
 mod pull;
 mod push;
+mod reset;
 mod role;
 mod status;
 mod uninstall;
@@ -185,6 +186,13 @@ enum Commands {
         /// First push with no workflow (explicit opt-out; requires --bucket/--origin)
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
+    },
+    /// Discard the newest revision of a local-only package
+    Reset {
+        /// Namespace of the package to reset
+        /// Ex. foo/bar
+        #[arg(short, long)]
+        namespace: String,
     },
     /// Show or switch your active role on a Quilt stack
     ///
@@ -360,6 +368,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::info!("Pushing {args:?}");
             Ok(push::command(m, args).await)
+        }
+        Commands::Reset { namespace } => {
+            let args = reset::Input {
+                namespace: namespace.try_into()?,
+            };
+
+            log::info!("Resetting {args:?}");
+            Ok(reset::command(m, args).await)
         }
         Commands::Role { host, set } => {
             let args = role::Input { host, set };

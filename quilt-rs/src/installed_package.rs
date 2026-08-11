@@ -682,6 +682,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
+    /// Discard the newest revision of a local-only package and restore its
+    /// previous local revision. Local objects and manifests are retained so
+    /// the discarded revision remains recoverable from disk.
+    pub async fn reset_to_local(&self) -> Res<CommitState> {
+        self.scaffold_paths().await?;
+
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        if lineage.remote_uri.is_some() {
+            return Err(Error::PackageOp(crate::PackageOpError::Reset(
+                "local reset is only available for packages without a remote".to_string(),
+            )));
+        }
+
+        let (lineage, commit) = flow::reset_to_local(
+            lineage,
+            &self.paths,
+            &self.storage,
+            package_home,
+            self.namespace.clone(),
+        )
+        .await?;
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(commit)
+    }
+
     pub async fn set_remote(
         &self,
         bucket: String,
