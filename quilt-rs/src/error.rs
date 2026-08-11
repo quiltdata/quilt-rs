@@ -39,6 +39,13 @@ impl S3Error {
     pub fn is_access_denied(&self) -> bool {
         matches!(self.kind, S3ErrorKind::AccessDenied(_))
     }
+
+    /// True when the S3 service rejected the credentials themselves rather
+    /// than the active role's access to an object.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self.kind, S3ErrorKind::InvalidCredentials(_))
+    }
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -75,6 +82,9 @@ pub enum S3ErrorKind {
 
     #[error("S3 access denied: {0}")]
     AccessDenied(String),
+
+    #[error("Invalid AWS credentials: {0}")]
+    InvalidCredentials(String),
 
     #[error("S3 error: {0}")]
     Raw(String),

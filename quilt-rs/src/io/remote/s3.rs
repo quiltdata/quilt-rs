@@ -82,9 +82,15 @@ pub(super) fn classify_s3_error(
     described: &str,
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
-    match (code, status) {
-        (Some("AccessDenied"), _) | (None, Some(403)) => {
-            S3ErrorKind::AccessDenied(described.to_string())
+    match code {
+        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+        None if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
+        Some("InvalidAccessKeyId")
+        | Some("ExpiredToken")
+        | Some("InvalidToken")
+        | Some("InvalidClientTokenId") => S3ErrorKind::InvalidCredentials(described.to_string()),
+        Some("NoSuchKey") | Some("NoSuchBucket") | Some("NotFound") => {
+            S3ErrorKind::NotFound(described.to_string())
         }
         _ => fallback(described.to_string()),
     }
@@ -794,11 +800,16 @@ mod tests {
         );
     }
 
-    /// Both of these are also HTTP 403, which is exactly why we key on the
-    /// code: they mean "re-vend credentials", not "wrong role".
+    /// Credential failures are also HTTP 403, which is exactly why we key on
+    /// the code: they mean "re-vend credentials", not "wrong role".
     #[test]
-    fn expired_credential_codes_do_not_classify_as_access_denied() {
-        for code in ["ExpiredToken", "InvalidAccessKeyId"] {
+    fn credential_codes_classify_as_invalid_credentials() {
+        for code in [
+            "ExpiredToken",
+            "InvalidAccessKeyId",
+            "InvalidToken",
+            "InvalidClientTokenId",
+        ] {
             let err = classify_s3_error(
                 Some(code),
                 Some(403),
@@ -809,7 +820,28 @@ mod tests {
                 !S3Error::new(err).is_access_denied(),
                 "{code} must not be read as a role denial"
             );
+            let err = classify_s3_error(
+                Some(code),
+                Some(403),
+                &format!("{code}: nope"),
+                S3ErrorKind::Raw,
+            );
+            assert!(
+                S3Error::new(err).is_invalid_credentials(),
+                "{code} must be shown as a credential failure"
+            );
         }
+    }
+
+    #[test]
+    fn missing_objects_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchKey"),
+            Some(404),
+            "NoSuchKey: missing",
+            S3ErrorKind::GetObject,
+        );
+        assert_eq!(err, S3ErrorKind::NotFound("NoSuchKey: missing".to_string()));
     }
 
     #[test]

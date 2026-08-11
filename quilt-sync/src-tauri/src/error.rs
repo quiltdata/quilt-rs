@@ -225,9 +225,45 @@ impl Error {
                 "message": self.to_string(),
             })
             .to_string(),
+            Error::Quilt(quilt::Error::S3(error)) => s3_error_to_frontend(error),
             _ => self.to_string(),
         }
     }
+}
+
+fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
+    let (kind, message) = match &error.kind {
+        quilt::S3ErrorKind::InvalidCredentials(_) if error.host.is_none() => (
+            "credentials_invalid",
+            "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
+                .to_string(),
+        ),
+        quilt::S3ErrorKind::InvalidCredentials(_) => (
+            "credentials_invalid",
+            format!(
+                "AWS credentials for {} are invalid. Please sign in again.",
+                error.host.as_ref().expect("host checked above")
+            ),
+        ),
+        quilt::S3ErrorKind::NotFound(_) => (
+            "not_found",
+            "Package not found: the requested version or object does not exist.".to_string(),
+        ),
+        quilt::S3ErrorKind::AccessDenied(_) => (
+            "access_denied",
+            "The active role does not have access to this object.".to_string(),
+        ),
+        _ => return error.to_string(),
+    };
+
+    let mut response = serde_json::json!({
+        "kind": kind,
+        "message": message,
+    });
+    if let Some(host) = &error.host {
+        response["host"] = serde_json::Value::String(host.to_string());
+    }
+    response.to_string()
 }
 
 impl From<Error> for String {
@@ -291,5 +327,35 @@ mod tests {
         let result = err.to_frontend_string();
         assert_eq!(result, "General error: something broke");
         assert!(serde_json::from_str::<serde_json::Value>(&result).is_err());
+    }
+
+    #[test]
+    fn to_frontend_string_invalid_local_credentials_is_actionable() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::InvalidCredentials(
+                "InvalidAccessKeyId: raw SDK details".to_string(),
+            ),
+        )));
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "credentials_invalid");
+        assert_eq!(
+            json["message"],
+            "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
+    }
+
+    #[test]
+    fn to_frontend_string_missing_object_is_actionable() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::NotFound("NoSuchKey: raw SDK details".to_string()),
+        )));
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "not_found");
+        assert_eq!(
+            json["message"],
+            "Package not found: the requested version or object does not exist."
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
     }
 }
