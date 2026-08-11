@@ -352,14 +352,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Logging {args:?}");
             Ok(history::command(m, args, json).await)
         }
-        Commands::Log { namespace } => {
-            let args = history::Input {
-                namespace: namespace.try_into()?,
-            };
-
-            log::info!("Logging {args:?}");
-            Ok(history::command(m, args).await)
-        }
         Commands::Pull { namespace } => {
             let args = pull::Input {
                 namespace: namespace.try_into()?,
