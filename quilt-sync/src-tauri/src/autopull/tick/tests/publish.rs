@@ -249,10 +249,8 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
 #[tokio::test]
 async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
     // The publish branch must never fire on a `Behind` tree. Here the pull
-    // branch is entered (Behind, pull enabled) but the dry-run classifier
-    // returns `UpToDate` — the race where the tip moved back between the
-    // status read and the classify — so neither pull nor publish runs and the
-    // tick falls through with the cheap-refresh status.
+    // branch is entered, but the single-pass pull observes that the tip moved
+    // back to `UpToDate`, so neither pull nor publish runs.
     let ns: Namespace = ("acme", "demo").into();
     let mut changes = BTreeMap::new();
     changes.insert(
@@ -264,10 +262,13 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_package_pull_outcome()
+        .expect_package_pull_with_outcome()
         .times(1)
-        .returning(|_| Ok(PullOutcome::UpToDate));
-    model.expect_package_pull().times(0);
+        .returning(|_, _, _| {
+            Err(Error::from(quilt::Error::PackageOp(
+                quilt::PackageOpError::AlreadyUpToDate,
+            )))
+        });
     model.expect_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -877,21 +878,24 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
     let (mut model, _) =
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::Behind, changes));
     // Non-conflicting local work: the pull reconciles cleanly and keeps it.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
-            added: vec![std::path::PathBuf::from("file.txt")],
-            modified: Vec::new(),
-            removed: Vec::new(),
-        })
-    });
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+    model
+        .expect_package_pull_with_outcome()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok((
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+                PullOutcome::KeepsLocalChanges {
+                    added: vec![std::path::PathBuf::from("file.txt")],
+                    modified: Vec::new(),
+                    removed: Vec::new(),
+                },
+            ))
+        });
     let reporter = Arc::new(RecordingReporter::default());
     let (tx, rx) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));

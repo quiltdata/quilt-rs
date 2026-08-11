@@ -80,6 +80,13 @@ mod tests;
 /// that may authenticate against many distinct hosts.
 type RefreshLocks = Arc<StdMutex<HashMap<Host, Weak<AsyncMutex<()>>>>>;
 
+/// Valid STS credentials kept in memory after the first read. Credential
+/// providers are called for every S3 operation, so repeatedly parsing the
+/// credentials file turns a cheap cache lookup into filesystem I/O. The
+/// refresh lock still owns the slow path; this cache only removes the normal
+/// read path and is invalidated whenever credentials are refreshed or expired.
+type CredentialCache = Arc<StdMutex<HashMap<Host, Credentials>>>;
+
 /// Endpoint label for the role-surface retry logs. All three role calls
 /// share one registry endpoint, so they share one name.
 const ROLE_ENDPOINT: &str = "registry GraphQL endpoint";
@@ -112,6 +119,7 @@ pub struct Auth<S: Storage = LocalStorage> {
     pub paths: DomainPaths,
     pub storage: Arc<S>,
     refresh_locks: RefreshLocks,
+    credential_cache: CredentialCache,
     session_roles: SessionRoles,
 }
 
@@ -121,6 +129,7 @@ impl<S: Storage> Clone for Auth<S> {
             paths: self.paths.clone(),
             storage: Arc::clone(&self.storage),
             refresh_locks: Arc::clone(&self.refresh_locks),
+            credential_cache: Arc::clone(&self.credential_cache),
             session_roles: Arc::clone(&self.session_roles),
         }
     }
@@ -132,8 +141,40 @@ impl<S: Storage + Send + Sync> Auth<S> {
             paths,
             storage,
             refresh_locks: Arc::new(StdMutex::new(HashMap::new())),
+            credential_cache: Arc::new(StdMutex::new(HashMap::new())),
             session_roles: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    fn cached_credentials(&self, host: &Host) -> Option<Credentials> {
+        let mut cache = self
+            .credential_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match cache.get(host) {
+            Some(credentials) if credentials.expires_at > chrono::Utc::now() => {
+                Some(credentials.clone())
+            }
+            Some(_) => {
+                cache.remove(host);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn cache_credentials(&self, host: &Host, credentials: &Credentials) {
+        self.credential_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(host.clone(), credentials.clone());
+    }
+
+    fn clear_cached_credentials(&self, host: &Host) {
+        self.credential_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(host);
     }
 
     /// Get the `Arc<Mutex>` for this host's refresh lock, creating it
@@ -443,6 +484,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
 
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.write_credentials(&credentials).await?;
+        self.cache_credentials(host, &credentials);
 
         debug!(
             "✔️ Successfully refreshed credentials in {:?}",
@@ -493,6 +535,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         info!("⏳ Expiring cached credentials for {}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.delete_credentials().await?;
+        self.clear_cached_credentials(host);
         info!("✔️ Cached credentials expired for {}", host);
         Ok(())
     }
@@ -788,11 +831,18 @@ impl<S: Storage + Send + Sync> Auth<S> {
         // always "the cached ones are fine". The outcomes worth a line are the
         // *unusual* ones below — no credentials, or a refresh — which stay louder.
         trace!("⏳ Getting or refreshing credentials for {}", host);
+
+        if let Some(creds) = self.cached_credentials(host) {
+            trace!("✔️ Found valid in-memory credentials for {}", host);
+            return Ok(creds);
+        }
+
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
 
         match auth_io.read_credentials().await {
             Ok(Some(creds)) => {
                 // A cache hit is the normal case and says nothing.
+                self.cache_credentials(host, &creds);
                 trace!("✔️ Found valid credentials for {}", host);
                 return Ok(creds);
             }
@@ -815,8 +865,16 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let lock = self.refresh_lock_for(host);
         let _guard = lock.lock().await;
 
+        // A concurrent caller may have refreshed while this task was waiting
+        // for the host lock. Check memory before touching disk again.
+        if let Some(creds) = self.cached_credentials(host) {
+            debug!("✔️ Another task refreshed credentials for {}", host);
+            return Ok(creds);
+        }
+
         match auth_io.read_credentials().await {
             Ok(Some(creds)) => {
+                self.cache_credentials(host, &creds);
                 debug!("✔️ Another task refreshed credentials for {}", host);
                 return Ok(creds);
             }
@@ -855,6 +913,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let creds = self
             .refresh_credentials_with_retry(http_client, &auth_io, host, &access_token)
             .await?;
+        self.cache_credentials(host, &creds);
         info!("✔️ Successfully refreshed credentials for {}", host);
         Ok(creds)
     }

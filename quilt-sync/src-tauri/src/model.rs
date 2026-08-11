@@ -169,6 +169,18 @@ pub trait QuiltModel {
         Ok(package.pull(host_config, scope).await?)
     }
 
+    /// Apply a pull using the same snapshot that produced its classification.
+    /// Autosync uses this single-pass variant so a Behind tick does not fetch
+    /// the latest manifest and walk the working tree twice.
+    async fn package_pull_with_outcome(
+        &self,
+        package: &quilt::InstalledPackage,
+        host_config: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Result<(quilt_uri::ManifestUri, PullOutcome), Error> {
+        Ok(package.pull_with_outcome(host_config, scope).await?)
+    }
+
     /// Persist a package's standing [`SyncScope`]. Storage only — what a pull
     /// actually does with it still goes through `resolve_sync_scope`.
     async fn package_set_sync_scope(

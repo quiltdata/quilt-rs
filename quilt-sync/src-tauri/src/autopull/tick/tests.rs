@@ -60,6 +60,18 @@ fn enabled() -> AutosyncSettings {
     }
 }
 
+fn pulled_with(outcome: PullOutcome) -> Result<(quilt_uri::ManifestUri, PullOutcome), Error> {
+    Ok((
+        quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h1".to_string(),
+            origin: None,
+        },
+        outcome,
+    ))
+}
+
 #[test]
 fn classify_sync_pending_changes() {
     let err = Error::from(quilt::Error::PackageOp(quilt::PackageOpError::Package(
@@ -370,19 +382,11 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
                 BTreeMap::new(),
             ))
         });
-    // Clean tree: the dry-run classifier reports a straight surgical update.
+    // Clean tree: the single-pass pull reports a straight surgical update.
     model
-        .expect_package_pull_outcome()
+        .expect_package_pull_with_outcome()
         .times(1)
-        .returning(|_| Ok(PullOutcome::CleanUpdate));
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+        .returning(|_, _, _| pulled_with(PullOutcome::CleanUpdate));
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -458,23 +462,17 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
                 changes,
             ))
         });
-    // Dry run: the surgical update reconciles cleanly, keeping the local add.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
-            added: vec![std::path::PathBuf::from("local.txt")],
-            modified: Vec::new(),
-            removed: Vec::new(),
-        })
-    });
-    // The pull is actually performed.
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+    // The surgical update reconciles cleanly, keeping the local add.
+    model
+        .expect_package_pull_with_outcome()
+        .times(1)
+        .returning(|_, _, _| {
+            pulled_with(PullOutcome::KeepsLocalChanges {
+                added: vec![std::path::PathBuf::from("local.txt")],
+                modified: Vec::new(),
+                removed: Vec::new(),
+            })
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -556,23 +554,18 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
                 changes,
             ))
         });
-    // Dry run: the pull reconciles every local change (e.g. identical edit) →
-    // KeepsLocalChanges with all-empty lists = nothing kept.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
-            added: Vec::new(),
-            modified: Vec::new(),
-            removed: Vec::new(),
-        })
-    });
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+    // The pull reconciles every local change (e.g. identical edit), so
+    // KeepsLocalChanges has all-empty lists and nothing remains dirty.
+    model
+        .expect_package_pull_with_outcome()
+        .times(1)
+        .returning(|_, _, _| {
+            pulled_with(PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: Vec::new(),
+                removed: Vec::new(),
+            })
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -653,17 +646,9 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
             ))
         });
     model
-        .expect_package_pull_outcome()
+        .expect_package_pull_with_outcome()
         .times(1)
-        .returning(|_| Ok(PullOutcome::CleanUpdate));
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+        .returning(|_, _, _| pulled_with(PullOutcome::CleanUpdate));
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -725,14 +710,14 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
                 BTreeMap::new(),
             ))
         });
-    // The dry-run itself hits an expired token.
-    let host_for_dry_run = host.clone();
+    // The pull itself hits an expired token before it can apply anything.
+    let host_for_pull = host.clone();
     model
-        .expect_package_pull_outcome()
+        .expect_package_pull_with_outcome()
         .times(1)
-        .returning(move |_| {
+        .returning(move |_, _, _| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_dry_run.clone())),
+                quilt::LoginError::Required(Some(host_for_pull.clone())),
             )))
         });
 
@@ -801,14 +786,16 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
                 changes,
             ))
         });
-    // Dry run: a tracked path changed on both sides → the whole pull blocks.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::Blocked {
-            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        })
-    });
-    // The pull itself must never run when the outcome is Blocked.
-    model.expect_package_pull().times(0);
+    // A tracked path changed on both sides, so the single-pass pull returns a
+    // conflict without mutating the working tree.
+    model
+        .expect_package_pull_with_outcome()
+        .times(1)
+        .returning(|_, _, _| {
+            Err(Error::from(quilt::Error::PackageOp(
+                quilt::PackageOpError::PullConflict(vec![std::path::PathBuf::from("conflict.txt")]),
+            )))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -1025,12 +1012,14 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
                 changes,
             ))
         });
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::Blocked {
-            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        })
-    });
-    model.expect_package_pull().times(0);
+    model
+        .expect_package_pull_with_outcome()
+        .times(1)
+        .returning(|_, _, _| {
+            Err(Error::from(quilt::Error::PackageOp(
+                quilt::PackageOpError::PullConflict(vec![std::path::PathBuf::from("conflict.txt")]),
+            )))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {

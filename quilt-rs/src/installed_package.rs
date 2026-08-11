@@ -499,6 +499,19 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
     ) -> Res<ManifestUri> {
+        self.pull_with_outcome(host_config_opt, scope)
+            .await
+            .map(|(uri, _)| uri)
+    }
+
+    /// Pull the latest revision and return the classification used for the
+    /// apply. Keeping the snapshot and outcome together lets autosync apply a
+    /// pull without performing a second remote fetch and status walk.
+    pub async fn pull_with_outcome(
+        &self,
+        host_config_opt: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Res<(ManifestUri, PullOutcome)> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -523,6 +536,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
+        let outcome = flow::classify_pull(&snapshot.status, &manifest, &snapshot.latest_manifest);
         let lineage = flow::pull(
             lineage,
             &mut manifest,
@@ -536,7 +550,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote()?.clone())
+        Ok((lineage.remote()?.clone(), outcome))
     }
 
     /// Dry-run: what would `pull` do right now, without mutating anything?

@@ -8,8 +8,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::ErrorKind;
+use notify::EventKind;
 use notify::RecommendedWatcher;
 use notify::RecursiveMode;
+use notify::event::ModifyKind;
 use notify_debouncer_full::Debouncer;
 use notify_debouncer_full::RecommendedCache;
 use notify_debouncer_full::new_debouncer;
@@ -242,16 +244,22 @@ impl Subscription {
 }
 
 /// Resolve which namespaces are affected by a batch of debounced events.
-/// All event kinds — including `Access(_)` and `Modify(Metadata)` that
-/// Linux inotify emits on plain reads — are forwarded. The reactor
-/// dedupes spurious wakes by fingerprinting the recomputed status; a wake
-/// here only costs one extra recompute, never a UI repaint.
+///
+/// `notify` can report reads as `Access` events and filesystem metadata reads
+/// as `Modify(Metadata)`. Status walks perform both operations, so forwarding
+/// those events makes the watcher wake itself in a tight loop (the status walk
+/// causes another status walk). Only mutations can change package status; the
+/// catch-all `Any`/`Other` variants still pass through because they may be the
+/// platform's only representation of a mutation.
 fn affected_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, PathBuf>,
 ) -> BTreeSet<Namespace> {
     let mut touched = BTreeSet::new();
     for event in events {
+        if is_non_mutating_event(&event.kind) {
+            continue;
+        }
         for path in &event.paths {
             if filter::is_ignored(path) {
                 continue;
@@ -262,6 +270,13 @@ fn affected_namespaces(
         }
     }
     touched
+}
+
+fn is_non_mutating_event(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_))
+    )
 }
 
 fn namespace_for<'a>(
@@ -315,11 +330,62 @@ mod tests {
     use super::*;
 
     use crate::autopull::reporter::test_support::RecordingReporter;
+    use notify::event::AccessKind;
+    use notify::event::DataChange;
+    use notify::event::MetadataKind;
+    use notify::event::ModifyKind;
     use tempfile::TempDir;
     use tokio::time::Duration;
 
     fn test_reporter() -> Arc<dyn StatusReporter> {
         Arc::new(RecordingReporter::default())
+    }
+
+    fn debounced(kind: EventKind) -> notify_debouncer_full::DebouncedEvent {
+        notify_debouncer_full::DebouncedEvent::new(
+            notify::Event {
+                kind,
+                paths: vec![PathBuf::from("/pkg/file.txt")],
+                attrs: Default::default(),
+            },
+            std::time::Instant::now(),
+        )
+    }
+
+    #[test]
+    fn ignores_events_generated_by_a_status_read() {
+        let namespace: Namespace = ("acme", "demo").into();
+        let watched = BTreeMap::from([(namespace.clone(), PathBuf::from("/pkg"))]);
+
+        assert!(
+            affected_namespaces(&[debounced(EventKind::Access(AccessKind::Read))], &watched)
+                .is_empty()
+        );
+        assert!(
+            affected_namespaces(
+                &[debounced(EventKind::Modify(ModifyKind::Metadata(
+                    MetadataKind::AccessTime
+                )))],
+                &watched
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn keeps_content_mutations() {
+        let namespace: Namespace = ("acme", "demo").into();
+        let watched = BTreeMap::from([(namespace.clone(), PathBuf::from("/pkg"))]);
+
+        assert_eq!(
+            affected_namespaces(
+                &[debounced(EventKind::Modify(ModifyKind::Data(
+                    DataChange::Content
+                )))],
+                &watched
+            ),
+            BTreeSet::from([namespace])
+        );
     }
 
     #[tokio::test]

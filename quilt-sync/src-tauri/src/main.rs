@@ -63,6 +63,17 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(
+            tauri::plugin::Builder::<_, ()>::new("logging-shutdown")
+                .on_event(|app_handle, event| {
+                    if matches!(event, tauri::RunEvent::Exit) {
+                        if let Some(app) = app_handle.try_state::<App>() {
+                            app.logging.shutdown();
+                        }
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let package_info = app.package_info();
 

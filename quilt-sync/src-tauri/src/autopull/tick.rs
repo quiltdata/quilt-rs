@@ -303,60 +303,31 @@ pub(crate) async fn refresh_then_maybe_sync(
     // shape, this gate is what stops a pull and a publish from racing on
     // the same package in the same tick.
     if pull_enabled && upstream == quilt::lineage::UpstreamState::Behind && !has_pending_commit {
-        // TODO: this dry-run and the `package_pull` below each build their own
-        // snapshot (one tag resolution + one status walk apiece — the per-call
-        // cost is now a single tag read), so `classify_pull` still runs twice
-        // per Behind tick with a race window between them. Have `flow::pull`
-        // return the `PullOutcome` it already computes and route on the pull
-        // result alone — same outcome-based routing, half the work.
-        let outcome = model
-            .package_pull_outcome(&installed)
-            .await
-            .map_err(classify_transient_or_login)?;
-        // Post-pull `has_changes`, read from the dry-run outcome we just
-        // classified — the truth about kept local work, unlike the pre-pull
-        // `has_changes` which is stale-true when the pull trivially resolves
-        // every local change (identical edits, both-removed). `CleanUpdate`
-        // keeps nothing; `KeepsLocalChanges` keeps exactly the listed paths
-        // (all-empty lists ⇒ clean tree after apply). Residual: changes made
-        // DURING the pull are still invisible until the next tick — inherent
-        // to a dry-run-then-apply split, not fixed here.
-        let kept_changes = match &outcome {
-            PullOutcome::KeepsLocalChanges {
-                added,
-                modified,
-                removed,
-            } => !(added.is_empty() && modified.is_empty() && removed.is_empty()),
-            _ => false,
-        };
-        match outcome {
-            PullOutcome::Blocked { conflicts } => {
-                let files = conflicts.iter().map(|p| p.display().to_string()).collect();
-                return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
-            }
-            PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                return match model.package_pull(&installed, None, scope).await {
-                    Ok(_) => {
-                        info!("autosync: pulled namespace={namespace}");
-                        // Kept work leaves a dirty tree: `UpToDate` +
-                        // `kept_changes` is the intended post-pull state.
-                        // `kept_changes` comes from the outcome (post-pull
-                        // truth), not the pre-pull `has_changes`.
-                        Ok(RefreshOutcome::observed(
-                            quilt::lineage::UpstreamState::UpToDate,
-                            kept_changes,
-                            clean_uptodate_fingerprint(),
-                        ))
-                    }
-                    // Nothing was applied on the error path, so the pre-pull
-                    // `has_changes` still describes the tree.
-                    Err(err) => classify_sync_err(err)
-                        .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
+        // Apply from the same snapshot that classifies the pull. This keeps a
+        // Behind tick to one tag read, manifest fetch, and working-tree walk.
+        let result = model
+            .package_pull_with_outcome(&installed, None, scope)
+            .await;
+        return match result {
+            Ok((_, outcome)) => {
+                let kept_changes = match outcome {
+                    PullOutcome::KeepsLocalChanges {
+                        added,
+                        modified,
+                        removed,
+                    } => !(added.is_empty() && modified.is_empty() && removed.is_empty()),
+                    _ => false,
                 };
+                info!("autosync: pulled namespace={namespace}");
+                Ok(RefreshOutcome::observed(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    kept_changes,
+                    clean_uptodate_fingerprint(),
+                ))
             }
-            // Race: tip moved back to up-to-date between status and classify.
-            PullOutcome::UpToDate => {}
-        }
+            Err(err) => classify_sync_err(err)
+                .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
+        };
     }
 
     // Publish branch.

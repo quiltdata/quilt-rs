@@ -13,6 +13,7 @@ use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::debug;
 use tracing::info;
 use tracing::trace;
@@ -188,6 +189,7 @@ pub struct RemoteS3 {
     auth: auth::Auth,
     http: crate::io::remote::client::ReqwestClient,
     s3: RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>,
+    client_locks: RwLock<HashMap<CredsRef, Arc<AsyncMutex<()>>>>,
     regions: RwLock<HashMap<String, Region>>,
 }
 
@@ -197,6 +199,7 @@ impl RemoteS3 {
         RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),
             s3: RwLock::new(HashMap::new()),
+            client_locks: RwLock::new(HashMap::new()),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, Arc::new(storage)),
         }
@@ -211,9 +214,14 @@ impl RemoteS3 {
             Ok(regions) => regions.clone(),
             Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
         };
+        let client_locks = match self.client_locks.read() {
+            Ok(client_locks) => client_locks.clone(),
+            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
+        };
         Ok(RemoteS3 {
             http: self.http.clone(),
             s3: RwLock::new(s3),
+            client_locks: RwLock::new(client_locks),
             regions: RwLock::new(regions),
             auth: self.auth.clone(),
         })
@@ -325,6 +333,36 @@ impl RemoteS3 {
             map.get(&creds_ref).cloned()
         };
         if let Some(client) = cached_client {
+            info!("✔️ Using cached S3 client for region {:?}", region);
+            return Ok(client);
+        }
+
+        // Several object fetches can miss the cache at the same time (for
+        // example when a package is opened and its manifest is read in
+        // parallel). Serialize construction per credential/region key so
+        // those misses do not all perform the expensive SDK configuration and
+        // credential-provider setup.
+        let client_lock = {
+            let mut locks = self
+                .client_locks
+                .write()
+                .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+            locks
+                .entry(creds_ref.clone())
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+                .clone()
+        };
+        let _client_guard = client_lock.lock().await;
+
+        // The first creator may have completed while this task was waiting.
+        // Recheck under the single-flight lock before doing any AWS work.
+        if let Some(client) = self
+            .s3
+            .read()
+            .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?
+            .get(&creds_ref)
+            .cloned()
+        {
             info!("✔️ Using cached S3 client for region {:?}", region);
             return Ok(client);
         }
