@@ -210,6 +210,18 @@ impl LocalDomain {
         Ok(packages)
     }
 
+    /// The whole lineage record — every installed package, in one read.
+    ///
+    /// [`list_installed_packages`](Self::list_installed_packages) hands back
+    /// an [`InstalledPackage`] per namespace, and each
+    /// [`InstalledPackage::lineage`] call re-reads and re-parses this record
+    /// to pluck one entry out of it. That is the right shape for operating on
+    /// one package and the wrong one for surveying them all.
+    pub async fn get_lineage(&self) -> Res<DomainLineage> {
+        trace!("Reading domain lineage");
+        self.lineage.read(&self.storage).await
+    }
+
     pub async fn get_installed_package(
         &self,
         namespace: &Namespace,
@@ -244,6 +256,8 @@ mod tests {
     use tempfile::TempDir;
     use test_log::test;
 
+    use crate::lineage::PackageLineage;
+
     #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {
         // Create a temporary directory for testing
@@ -269,7 +283,7 @@ mod tests {
         for namespace in &namespaces {
             lineage.packages.insert(
                 namespace.clone(),
-                crate::lineage::PackageLineage {
+                PackageLineage {
                     commit: None,
                     remote_uri: Some(ManifestUri {
                         bucket: "test-bucket".to_string(),
@@ -280,6 +294,7 @@ mod tests {
                     base_hash: "abcdef".to_string(),
                     latest_hash: "abcdef".to_string(),
                     paths: std::collections::BTreeMap::new(),
+                    ..PackageLineage::default()
                 },
             );
         }

@@ -1,6 +1,8 @@
 [package]
 name = "quilt-uri"
 description = "Parser and types for Quilt+ URIs."
+keywords = ["quilt", "uri", "parser", "data", "wasm"]
+categories = ["parser-implementations", "wasm"]
 
 version = "0.4.0"
 

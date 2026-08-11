@@ -11,6 +11,7 @@ use crate::io::storage::StorageExt;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
+use crate::lineage::SyncScope;
 use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 
@@ -720,7 +721,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     // "package is already up-to-date". Any other failure mode proves
     // the refresh-then-check path ran.
     let err = package
-        .pull(None)
+        .pull(None, SyncScope::IndividualFiles)
         .await
         .expect_err("pull should fail downstream on the missing NEW_HASH manifest");
     let msg = err.to_string();
