@@ -85,11 +85,10 @@ pub(super) fn classify_s3_error(
     match code {
         Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
         None if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
-        Some("InvalidAccessKeyId")
-        | Some("ExpiredToken")
-        | Some("InvalidToken")
-        | Some("InvalidClientTokenId") => S3ErrorKind::InvalidCredentials(described.to_string()),
-        Some("NoSuchKey") | Some("NoSuchBucket") | Some("NotFound") => {
+        Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
+            S3ErrorKind::InvalidCredentials(described.to_string())
+        }
+        Some("NoSuchKey" | "NoSuchBucket" | "NotFound") => {
             S3ErrorKind::NotFound(described.to_string())
         }
         _ => fallback(described.to_string()),
