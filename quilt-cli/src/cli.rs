@@ -542,6 +542,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_install() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
@@ -578,6 +579,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_commit_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
@@ -609,6 +611,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_commit_invalid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
@@ -717,6 +720,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_pull_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::outdated as pkg;
@@ -767,6 +771,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_uninstall_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::default as pkg;
@@ -899,6 +904,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_browse_valid() -> Result<(), Error> {
         use crate::cli::fixtures::get_browse_output;

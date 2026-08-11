@@ -69,6 +69,7 @@ mod tests {
     ///   * installs an outdated package version
     ///   * pulls the latest version
     ///   * verifies the package is up to date
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         let uri = pkg::URI;

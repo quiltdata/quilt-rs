@@ -601,6 +601,7 @@ mod tests {
     use crate::io::storage::LocalStorage;
     use crate::paths::DomainPaths;
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_multipart_upload() -> Res<()> {
         // Create a temporary file with the test content
@@ -644,6 +645,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_zero_bytes_upload() -> Res<()> {
         // Create a temporary file with zero bytes
@@ -688,6 +690,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_crc64_upload() -> Res<()> {
         // Read the fixture file content

@@ -44,6 +44,7 @@ mod tests {
     ///   * installs a package
     ///   * uninstalls it
     ///   * verifies it's no longer present
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         let uri = pkg::URI;

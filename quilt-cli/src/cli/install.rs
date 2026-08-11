@@ -134,6 +134,7 @@ mod tests {
         clippy::too_many_lines,
         reason = "large integration test; allowed per-test so new large tests stay flagged"
     )]
+    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
     async fn test_model() -> Result<(), Error> {
         let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);

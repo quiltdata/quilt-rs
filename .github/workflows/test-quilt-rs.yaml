@@ -13,6 +13,18 @@ on:
       - "rust-toolchain.toml"
       - "deny.toml"
       - ".github/workflows/test-quilt-rs.yaml"
+  pull_request:
+    paths:
+      - "quilt-rs/**"
+      - "!quilt-rs/**/*.md"
+      - "quilt-cli/**"
+      - "!quilt-cli/**/*.md"
+      - "quilt-uri/**"
+      - "!quilt-uri/**/*.md"
+      - "Cargo.*"
+      - "rust-toolchain.toml"
+      - "deny.toml"
+      - ".github/workflows/test-quilt-rs.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -47,7 +59,12 @@ jobs:
         run: cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features
 
       - name: Test
-        run: cargo nextest run --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+        run: |
+          if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+            cargo nextest run --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui --run-ignored all
+          else
+            cargo nextest run --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+          fi
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

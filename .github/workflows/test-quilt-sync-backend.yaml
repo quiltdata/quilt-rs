@@ -9,6 +9,14 @@ on:
       - "quilt-sync/Cargo.*"
       - "rust-toolchain.toml"
       - ".github/workflows/test-quilt-sync-backend.yaml"
+  pull_request:
+    paths:
+      - "quilt-sync/src-tauri/**"
+      - "!quilt-sync/src-tauri/**/*.md"
+      - "quilt-sync/*.toml"
+      - "quilt-sync/Cargo.*"
+      - "rust-toolchain.toml"
+      - ".github/workflows/test-quilt-sync-backend.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

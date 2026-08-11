@@ -7,6 +7,12 @@ on:
       - "!quilt-sync/ui/**/*.md"
       - "rust-toolchain.toml"
       - ".github/workflows/test-quilt-sync-frontend.yaml"
+  pull_request:
+    paths:
+      - "quilt-sync/ui/**"
+      - "!quilt-sync/ui/**/*.md"
+      - "rust-toolchain.toml"
+      - ".github/workflows/test-quilt-sync-frontend.yaml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
