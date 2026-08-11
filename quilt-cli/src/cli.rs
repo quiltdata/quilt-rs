@@ -160,7 +160,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// List a package's local revision history
+    /// List a package's local revision history.
+    /// Older revision dates are best-effort local manifest file timestamps.
     Log {
         /// Namespace of the package. Ex. foo/bar
         #[arg(short, long)]
@@ -350,6 +351,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::info!("Logging {args:?}");
             Ok(history::command(m, args, json).await)
+        }
+        Commands::Log { namespace } => {
+            let args = history::Input {
+                namespace: namespace.try_into()?,
+            };
+
+            log::info!("Logging {args:?}");
+            Ok(history::command(m, args).await)
         }
         Commands::Pull { namespace } => {
             let args = pull::Input {

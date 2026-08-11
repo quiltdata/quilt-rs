@@ -2,6 +2,9 @@ use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 
+use std::cmp::Ordering;
+use std::collections::HashMap;
+
 use quilt_rs::io::storage::Storage;
 use quilt_uri::Namespace;
 
@@ -15,6 +18,8 @@ struct Revision {
     hash: String,
     timestamp: String,
     message: String,
+    #[serde(skip)]
+    order: Option<usize>,
 }
 
 pub struct Output {
@@ -67,6 +72,15 @@ pub async fn model(
 
     let lineage = package.lineage().await?;
     let current_commit = lineage.commit.as_ref();
+    let revision_order: HashMap<String, usize> = current_commit
+        .map(|commit| {
+            std::iter::once(&commit.hash)
+                .chain(commit.prev_hashes.iter())
+                .enumerate()
+                .map(|(order, hash)| (hash.clone(), order))
+                .collect()
+        })
+        .unwrap_or_default();
     let manifest_dir = package.paths.installed_manifests_dir(&namespace);
     let mut entries = package.storage.read_dir(&manifest_dir).await?;
     let mut revisions = Vec::new();
@@ -94,6 +108,7 @@ pub async fn model(
             .replace(['\n', '\r'], " ");
 
         revisions.push(Revision {
+            order: revision_order.get(&hash).copied(),
             hash,
             timestamp,
             message,
@@ -101,10 +116,16 @@ pub async fn model(
     }
 
     revisions.sort_by(|left, right| {
-        right
-            .timestamp
-            .cmp(&left.timestamp)
-            .then_with(|| right.hash.cmp(&left.hash))
+        match (left.order, right.order) {
+            (Some(left_order), Some(right_order)) => left_order.cmp(&right_order),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => right
+                .timestamp
+                .cmp(&left.timestamp)
+                .then_with(|| right.hash.cmp(&left.hash)),
+        }
+        .then_with(|| left.hash.cmp(&right.hash))
     });
 
     Ok(Output { revisions })
@@ -130,11 +151,13 @@ mod tests {
                     hash: "0123456789abcdef".to_string(),
                     timestamp: "2026-08-07T00:00:00Z".to_string(),
                     message: "add east region".to_string(),
+                    order: Some(0),
                 },
                 Revision {
                     hash: "fedcba9876543210".to_string(),
                     timestamp: "2026-08-06T00:00:00Z".to_string(),
                     message: "initial import".to_string(),
+                    order: Some(1),
                 },
             ],
         };
@@ -152,6 +175,7 @@ mod tests {
                 hash: "0123456789abcdef".to_string(),
                 timestamp: "2026-08-07T00:00:00Z".to_string(),
                 message: "initial import".to_string(),
+                order: Some(0),
             }],
         };
 
@@ -191,10 +215,80 @@ mod tests {
             })
             .await?;
 
-        let output = model(cli_model.get_local_domain(), Input { namespace }).await?;
+        let output = model(
+            cli_model.get_local_domain(),
+            Input {
+                namespace: namespace.clone(),
+            },
+        )
+        .await?;
 
         assert_eq!(output.revisions.len(), 2);
         assert_eq!(output.revisions[0].message, "add east region");
+        assert_eq!(output.revisions[1].message, "initial import");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_model_orders_revisions_by_lineage_not_manifest_mtime() -> Result<(), Error> {
+        let (cli_model, _domain_temp_dir) = create_model_in_temp_dir().await?;
+        let namespace = Namespace::from(("demo", "sales"));
+
+        cli_model
+            .create(create::Input {
+                namespace: namespace.clone(),
+                source: None,
+                message: Some("initial import".to_string()),
+            })
+            .await?;
+
+        let package = cli_model
+            .get_local_domain()
+            .get_installed_package(&namespace)
+            .await?
+            .unwrap();
+        std::fs::write(package.package_home().await?.join("data.txt"), "one")?;
+
+        cli_model
+            .commit(commit::Input {
+                message: "add east region".to_string(),
+                namespace: namespace.clone(),
+                user_meta: UserMeta::Keep,
+                workflow: WorkflowIntent::NoWorkflow,
+                host_config: None,
+            })
+            .await?;
+
+        let package = cli_model
+            .get_local_domain()
+            .get_installed_package(&namespace)
+            .await?
+            .unwrap();
+        let lineage = package.lineage().await?;
+        let current_commit = lineage.commit.unwrap();
+        let previous_hash = current_commit
+            .prev_hashes
+            .first()
+            .expect("initial revision should be tracked as previous")
+            .clone();
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let previous_manifest_path = package.paths.installed_manifest(&namespace, &previous_hash);
+        let previous_manifest = std::fs::read(&previous_manifest_path)?;
+        std::fs::write(&previous_manifest_path, previous_manifest)?;
+
+        let output = model(
+            cli_model.get_local_domain(),
+            Input {
+                namespace: namespace.clone(),
+            },
+        )
+        .await?;
+
+        assert_eq!(output.revisions.len(), 2);
+        assert_eq!(output.revisions[0].hash, current_commit.hash);
+        assert_eq!(output.revisions[0].message, "add east region");
+        assert_eq!(output.revisions[1].hash, previous_hash);
         assert_eq!(output.revisions[1].message, "initial import");
         Ok(())
     }
