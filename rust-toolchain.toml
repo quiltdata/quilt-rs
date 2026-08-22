@@ -1,3 +1,11 @@
 [toolchain]
-channel = "stable"
+# Pinned, not floating "stable". CI runs `cargo clippy -- --deny warnings`, so a new
+# stable release can turn a fresh lint into a build failure on every branch at once
+# with no code change. That happened on 2026-08-18: rustc 1.98.0 shipped a stricter
+# `clippy::unused_async`, and main went from green (last: 2026-08-07, rustc 1.97.1)
+# to failing on ~27 pre-existing sites — taking every open PR down with it.
+#
+# Bumping this pin is now a deliberate PR that surfaces new lints in isolation
+# instead of breaking the whole repo. See PR #866.
+channel = "1.97.1"
 components = ["rustfmt", "clippy", "rust-analyzer"]
