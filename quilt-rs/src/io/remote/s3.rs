@@ -31,10 +31,10 @@ use crate::io::remote::HostConfig;
 use crate::io::remote::HttpClient;
 use crate::io::remote::Remote;
 use crate::io::remote::describe_sdk_error;
-use crate::io::remote::recover_login_required;
 use crate::io::remote::host::fetch_host_config;
 use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
 use crate::io::remote::object::put_and_request_checksum;
+use crate::io::remote::recover_login_required;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::auth::OAuthClient;
 use crate::object_hash::ObjectHash;
@@ -1405,8 +1405,8 @@ mod tests {
             .await
             .expect_err("an unauthenticated vend cannot produce a response");
 
-        let recovered = recover_login_required(&err)
-            .expect("the login refusal must survive the SDK wrap");
+        let recovered =
+            recover_login_required(&err).expect("the login refusal must survive the SDK wrap");
         assert_eq!(
             recovered.to_string(),
             format!("Login required: {host}"),
