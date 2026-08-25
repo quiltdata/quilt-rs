@@ -162,14 +162,12 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     })
                     .unwrap_or(redirect_path);
                 let telemetry = handle.state::<Telemetry>();
-                telemetry
-                    .track(MixpanelEvent::UserLoggedIn(LoginEvent {
-                        // Cloned, not moved: the redirect-failure path below
-                        // still needs the host to build its error route.
-                        host: host.clone(),
-                        flow: LoginFlow::OAuth,
-                    }))
-                    .await;
+                telemetry.track(MixpanelEvent::UserLoggedIn(LoginEvent {
+                    // Cloned, not moved: the redirect-failure path below
+                    // still needs the host to build its error route.
+                    host: host.clone(),
+                    flow: LoginFlow::OAuth,
+                }));
                 if let Err(err) = commands::navigate_after_login(&handle, final_path) {
                     error!("Failed to redirect after login: {}", err);
                     let error_path = routes::Paths::LoginError(

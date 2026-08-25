@@ -13,12 +13,15 @@ use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
 use crate::autopull::Watcher;
+use crate::experimental_settings::ExperimentalSettings;
+use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 use crate::quilt::flow::PullOutcome;
+use crate::quilt::lineage::SyncScope;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{PackageEvent, RemotePackageEvent};
 
@@ -53,12 +56,6 @@ pub async fn package_commit(
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Committing package {namespace}");
     let msg_ok = format!("Successfully committed {namespace}");
     let msg_err = |err: &Error| format!("Failed to commit: {err}");
@@ -67,7 +64,12 @@ pub async fn package_commit(
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
-    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn certify_latest_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -83,21 +85,20 @@ pub async fn certify_latest(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::LatestCertified(RemotePackageEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Certifying latest for {namespace}");
     let msg_ok = format!("Successfully certified latest for {namespace}");
     let msg_err = |err: &Error| format!("Failed to certify latest: {err}");
 
-    Notify::new(msg_init).map(
-        certify_latest_command(&m, &namespace).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::LatestCertified(RemotePackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            certify_latest_command(&m, &namespace).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 async fn reset_local_command(
@@ -117,12 +118,6 @@ pub async fn reset_local(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::LocalReset(RemotePackageEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Resetting local for {namespace}");
     let msg_ok = format!("Successfully reset local for {namespace}");
     let msg_err = |err: &Error| format!("Failed to reset local: {err}");
@@ -131,7 +126,12 @@ pub async fn reset_local(
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
-    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::LocalReset(RemotePackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 /// The user-visible text for a failed write, given the action that failed
@@ -169,12 +169,6 @@ pub async fn package_push(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Pushing package {namespace}");
 
     let result = package_push_command(&m, &namespace).await;
@@ -195,7 +189,12 @@ pub async fn package_push(
     };
     let msg_err = |err: &Error| write_failure_message("push package", err);
 
-    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_publish_command(
@@ -236,23 +235,17 @@ pub async fn package_publish(
     }
 
     if let Ok((_, outcome)) = &result {
-        tracing
-            .track(MixpanelEvent::PackagePublished(
-                RemotePackageEvent::for_uri(uri.as_ref()),
-            ))
-            .await;
+        tracing.track(MixpanelEvent::PackagePublished(
+            RemotePackageEvent::for_uri(uri.as_ref()),
+        ));
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
-            tracing
-                .track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
-                    uri.as_ref(),
-                )))
-                .await;
-        }
-        tracing
-            .track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+            tracing.track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
                 uri.as_ref(),
-            )))
-            .await;
+            )));
+        }
+        tracing.track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+            uri.as_ref(),
+        )));
     }
 
     let msg_ok = match &result {
@@ -322,23 +315,17 @@ pub async fn package_commit_and_push(
     }
 
     if let Ok((_, outcome)) = &result {
-        tracing
-            .track(MixpanelEvent::PackagePublished(
-                RemotePackageEvent::for_uri(uri.as_ref()),
-            ))
-            .await;
+        tracing.track(MixpanelEvent::PackagePublished(
+            RemotePackageEvent::for_uri(uri.as_ref()),
+        ));
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
-            tracing
-                .track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
-                    uri.as_ref(),
-                )))
-                .await;
-        }
-        tracing
-            .track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+            tracing.track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
                 uri.as_ref(),
-            )))
-            .await;
+            )));
+        }
+        tracing.track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+            uri.as_ref(),
+        )));
     }
 
     let msg_ok = match &result {
@@ -358,10 +345,40 @@ pub async fn package_commit_and_push(
 async fn package_pull_command(
     m: &model::Model,
     namespace: &str,
+    experimental: &ExperimentalSettings,
 ) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_pull(m, &namespace, None).await?;
+    model::package_pull(m, &namespace, None, experimental).await?;
     Ok(namespace)
+}
+
+/// Record whether this package keeps its whole contents.
+///
+/// Storage only — it writes the standing choice and returns. Catching up on
+/// files already listed is the caller's separate `package_install_paths` call,
+/// deliberately not folded in here: one of them is a preference and the other
+/// downloads bytes, and a failure to fetch must not silently un-choose the mode.
+#[tauri::command]
+pub async fn package_set_sync_scope(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    entire_package: bool,
+) -> Result<(), String> {
+    let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let scope = if entire_package {
+        SyncScope::EntirePackage
+    } else {
+        SyncScope::IndividualFiles
+    };
+    let installed = m
+        .get_installed_package(&namespace)
+        .await
+        .map_err(|e| e.to_frontend_string())?
+        .ok_or_else(|| format!("Package {namespace} not found"))?;
+    m.package_set_sync_scope(&installed, scope)
+        .await
+        .map_err(|e| e.to_frontend_string())
 }
 
 #[tauri::command]
@@ -369,24 +386,25 @@ pub async fn package_pull(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
+    experimental: tauri::State<'_, SharedExperimentalSettings>,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Pulling package {namespace}");
     let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    let result = package_pull_command(&m, &namespace).await;
+    let experimental = experimental.read().await.clone();
+    let result = package_pull_command(&m, &namespace, &experimental).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
-    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_pull_outcome_command(
@@ -429,21 +447,20 @@ pub async fn package_uninstall(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::PackageUninstalled(PackageEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
 
-    Notify::new(msg_init).map(
-        package_uninstall_command(&m, &namespace).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageUninstalled(PackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            package_uninstall_command(&m, &namespace).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 /// Typed response for the `set_remote` command. `resolution_warning` is
@@ -483,17 +500,17 @@ pub async fn set_remote(
 ) -> Result<SetRemoteResponse, String> {
     // The origin is this command's own argument: the remote being set.
     let origin_host = Host::from_str(&origin).ok();
-    tracing
-        .track(MixpanelEvent::RemoteSet(RemotePackageEvent::for_host(
-            origin_host,
-        )))
-        .await;
-
     // `Notify::new` logs the init line; on success/failure we log explicitly so
     // the success payload can be the typed struct rather than a bare string.
     Notify::new(format!("Setting remote for {namespace}"));
     match set_remote_command(&m, &namespace, &origin, &bucket, workflow).await {
         Ok((ns, resolution_warning)) => {
+            // Reported here rather than through `Notify::on_success`, because this
+            // command returns a typed payload and so does not route its outcome
+            // through `map`. Same rule, hand-applied: the success arm only.
+            tracing.track(MixpanelEvent::RemoteSet(RemotePackageEvent::for_host(
+                origin_host,
+            )));
             watcher.clear_paused(&ns).await;
             let message = format!("Successfully set remote for {namespace}");
             ::tracing::debug!("{message}");
@@ -531,19 +548,20 @@ pub async fn package_create(
     message: Option<String>,
 ) -> Result<String, String> {
     // A package created here has no remote yet, so it belongs to no deployment.
-    tracing
-        .track(MixpanelEvent::PackageCreated(PackageEvent::hostless()))
-        .await;
-
     let msg_init = format!("Creating package {namespace}");
     let msg_ok = format!("Successfully created package {namespace}");
     let msg_err = |err: &Error| format!("Failed to create package: {err}");
 
-    Notify::new(msg_init).map(
-        package_create_command(&m, &namespace, source, message).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageCreated(PackageEvent::hostless()),
+        )
+        .map(
+            package_create_command(&m, &namespace, source, message).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 async fn package_install_paths_command(
@@ -566,21 +584,20 @@ pub async fn package_install_paths(
 ) -> Result<String, String> {
     // Installing names its package by URI, so the catalog is already in hand.
     let target = S3PackageUri::try_from(uri.as_str()).ok();
-    tracing
-        .track(MixpanelEvent::PackageInstalled(
-            RemotePackageEvent::for_uri(target.as_ref()),
-        ))
-        .await;
-
     let msg_init = format!("Installing paths from {uri}");
     let msg_ok = format!("Successfully installed {} paths", paths.len());
     let msg_err = |err: &Error| format!("Failed to install paths: {err}");
 
-    Notify::new(msg_init).map(
-        package_install_paths_command(&m, &uri, &paths).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(target.as_ref())),
+        )
+        .map(
+            package_install_paths_command(&m, &uri, &paths).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 async fn add_to_quiltignore_command(
@@ -621,21 +638,20 @@ pub async fn add_to_quiltignore(
     pattern: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::QuiltignorePatternAdded(
-            PackageEvent::for_uri(uri.as_ref()),
-        ))
-        .await;
-
     let msg_init = format!("Adding {pattern} to .quiltignore");
     let msg_ok = format!("Added {pattern} to .quiltignore");
     let msg_err = |err: &Error| format!("Failed to update .quiltignore: {err}");
 
-    Notify::new(msg_init).map(
-        add_to_quiltignore_command(&m, &namespace, &pattern).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            add_to_quiltignore_command(&m, &namespace, &pattern).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 #[tauri::command]

@@ -9,11 +9,40 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.20.2-alpha1] - 2026-08-25
+## [v0.21.2-alpha1] - 2026-08-25
 
 ### Fixed
 
 - Committing to a host you are signed out of no longer fails with a six-line Rust error chain — the message names the host — and autosync stops retrying a dead session in silence: the affected packages now show the error instead of looking idle (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+## [v0.21.1] - 2026-08-07
+
+### Fixed
+
+- The packages list stopped re-checking the remote for a package that had not changed. A package showing "behind" made a network round trip roughly once a second — for as long as its row was on screen — because the background watcher re-reports a package's status whether or not anything moved, and the row acted on every report instead of only the ones that differed (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+### Added
+
+- Experimental, off by default: Settings → Experimental → "Enable entire-package sync" adds a per-package choice on the installed-package page — sync individual files, or sync the entire package. Under whole-package sync a pull also downloads files a teammate added, instead of listing them and leaving them; switching it on doesn't move any bytes by itself — the toolbar offers "Download all files" for what's already listed — and switching it off stops fetching more without removing anything (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+## [v0.21.0] - 2026-08-06
+
+### Added
+
+- *Save diagnostics* now includes the app's logs. The log file was filtered to errors only, so the archive you send support was effectively empty (<https://github.com/quiltdata/quilt-rs/pull/828>)
+
+### Changed
+
+- Actions no longer wait on telemetry: reporting ran inside the command you triggered, with no timeout, so a slow connection delayed your click (<https://github.com/quiltdata/quilt-rs/pull/826>)
+- A problem you or your admin can fix — a package that fails a workflow, a role without access to a bucket, a cancelled dialog — no longer files a crash report (<https://github.com/quiltdata/quilt-rs/pull/830>)
+- A crash in the app window is now reported instead of being visible only in the browser console. The window still goes blank (<https://github.com/quiltdata/quilt-rs/pull/832>)
+- Crash reports include stack traces and the deployment they happened against, so a report is actionable rather than just a count (<https://github.com/quiltdata/quilt-rs/pull/831>)
+- Background autosync reports what it did, including stopping because a session expired — previously it worked in silence (<https://github.com/quiltdata/quilt-rs/pull/824>)
+- Two new files in the app data directory: `install_id`, a random identifier derived from nothing about you (delete it to become a new install), and `unsent_events.jsonl`, holding events that could not be sent while offline (<https://github.com/quiltdata/quilt-rs/pull/822>, <https://github.com/quiltdata/quilt-rs/pull/833>)
+
+### quilt-rs
+
+- Log levels rearranged and long file-list dumps replaced with summaries: a debug-level log is roughly 100× smaller (<https://github.com/quiltdata/quilt-rs/pull/828>)
 
 ## [v0.20.1] - 2026-08-03
 

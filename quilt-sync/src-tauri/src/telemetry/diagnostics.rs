@@ -83,7 +83,7 @@ pub async fn collect(
         os: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         data_dir: local_data_dir,
         home_dir,
-        logs_dir: app.logs_dir.path().to_path_buf(),
+        logs_dir: app.logging.dir.path().to_path_buf(),
         auth_hosts,
         install_id: install_id.map(|id| id.as_str().to_owned()),
     })

@@ -10,15 +10,18 @@ use quilt_uri::Namespace;
 use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
+use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
 use crate::autopull::reporter::clean_uptodate_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
 use crate::commands::RoleCache;
+use crate::experimental_settings::resolve_sync_scope;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
 use crate::quilt;
 use crate::quilt::flow::PullOutcome;
+use crate::quilt::lineage::SyncScope;
 use crate::telemetry::prelude::*;
 
 #[derive(Debug)]
@@ -50,6 +53,28 @@ impl RefreshOutcome {
             published: None,
             fingerprint,
         }
+    }
+}
+
+/// Whether a login failure *starts* an episode for its deployment, or joins one.
+///
+/// Per deployment rather than per package, and that is the whole point: one expired
+/// session blocks every package on the host, and they reach this code one per loop
+/// iteration. A per-package answer would report one expiry as many.
+///
+/// Asked *before* the failing namespace is recorded, so its own entry cannot make
+/// it look like a continuation of itself.
+fn login_episode(
+    blocked: &std::collections::BTreeMap<Namespace, Option<Host>>,
+    host: Option<&Host>,
+) -> LoginBlock {
+    if blocked
+        .values()
+        .any(|blocked_host| blocked_host.as_ref() == host)
+    {
+        LoginBlock::Continues
+    } else {
+        LoginBlock::Began
     }
 }
 
@@ -213,6 +238,11 @@ fn role_denied_summary(role: &str) -> String {
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one tick's inputs, each read from a different source; bundling them \
+              would invent a struct that exists only to satisfy the count"
+)]
 pub(crate) async fn refresh_then_maybe_sync(
     model: &impl QuiltModel,
     namespace: &Namespace,
@@ -221,6 +251,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     quiet_window: Duration,
     pull_enabled: bool,
     push_enabled: bool,
+    scope: SyncScope,
 ) -> Result<RefreshOutcome, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -304,7 +335,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                 return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                return match model.package_pull(&installed, None).await {
+                return match model.package_pull(&installed, None, scope).await {
                     Ok(_) => {
                         info!("autosync: pulled namespace={namespace}");
                         // Kept work leaves a dirty tree: `UpToDate` +
@@ -444,6 +475,10 @@ pub(crate) async fn run_once(
     // `cadence_for_mode(&settings.pull, mode)`, so pull frequency and
     // push quiet window can be tuned independently.
     let publish = inner.publish_settings.read().await.clone();
+    // One read per tick, not per package. The gate is what makes a package's
+    // standing scope apply to background pulls at all — a scope honoured only
+    // by the Pull button would miss the case the feature exists for.
+    let experimental = inner.experimental.read().await.clone();
     let quiet_window = {
         let settings = inner.settings.read().await;
         Duration::from_secs(settings.push.idle_timeout_secs)
@@ -464,7 +499,13 @@ pub(crate) async fn run_once(
         let Some(remote) = lineage.remote_uri.as_ref() else {
             continue;
         };
-        if remote.origin.is_none() || remote.bucket.is_empty() {
+        // The origin is what makes every outcome below attributable: the loop
+        // declines to work on a package without one, so `report_*` can require a
+        // host rather than accept an absent one.
+        let Some(origin) = remote.origin.as_ref() else {
+            continue;
+        };
+        if remote.bucket.is_empty() {
             continue;
         }
 
@@ -483,6 +524,7 @@ pub(crate) async fn run_once(
             quiet_window,
             pull_enabled,
             push_enabled,
+            resolve_sync_scope(lineage.sync_scope, &experimental),
         )
         .await
         {
@@ -490,7 +532,7 @@ pub(crate) async fn run_once(
                 inner.backoff.write().await.remove(&namespace);
                 inner.login_blocked.write().await.remove(&namespace);
                 if let Some(message) = outcome.published.as_deref() {
-                    inner.reporter.report_published(&namespace, message);
+                    inner.reporter.report_published(&namespace, origin, message);
                 }
                 inner.reporter.report_status(
                     &namespace,
@@ -509,12 +551,18 @@ pub(crate) async fn run_once(
             Err(WatchError::LoginRequired(host)) => {
                 // Backoff until the user re-auths; the Ok arm clears it.
                 bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
-                inner
-                    .login_blocked
-                    .write()
-                    .await
-                    .insert(namespace.clone(), host.clone());
-                inner.reporter.report_login_required(host.as_ref());
+                // The episode is per *deployment*, not per package: one expired
+                // session blocks every package on that host, and they arrive one
+                // per loop iteration. Asking whether any other namespace is
+                // already blocked on this host — before inserting this one — is
+                // what makes it countable once.
+                let block = {
+                    let mut blocked = inner.login_blocked.write().await;
+                    let block = login_episode(&blocked, host.as_ref());
+                    blocked.insert(namespace.clone(), host.clone());
+                    block
+                };
+                inner.reporter.report_login_required(host.as_ref(), block);
                 inner.aggregator.note_login_required(&namespace, host);
             }
             Err(WatchError::Conflict(reason)) => {
@@ -522,13 +570,15 @@ pub(crate) async fn run_once(
                 // the lookup is cached per host and the namespace is about
                 // to be paused, so a denied host costs at most one `/me`
                 // per role switch — not one per tick.
-                let reason = name_denied_role(model, roles, remote.origin.as_ref(), reason).await;
+                let reason = name_denied_role(model, roles, Some(origin), reason).await;
                 inner
                     .paused
                     .write()
                     .await
                     .insert(namespace.clone(), reason.clone());
-                inner.reporter.report_paused(&namespace, reason.clone());
+                inner
+                    .reporter
+                    .report_paused(&namespace, origin, reason.clone());
                 // Heuristic status from the refusal reason — flow::pull /
                 // flow::publish don't expose the post-attempt state
                 // directly. The string `"error"` is **reserved** for "we

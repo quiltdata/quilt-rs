@@ -15,6 +15,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
 use tracing::debug;
 use tracing::info;
+use tracing::trace;
 use tracing::warn;
 
 use crate::Error;
@@ -365,7 +366,10 @@ impl RemoteS3 {
             return Ok(client);
         }
 
-        info!("⏳ Creating new S3 client for region {:?}", region);
+        // `debug`, and worth reading as a signal rather than noise: a *new* client
+        // per fetch means the client cache is not being hit, which is TLS and config
+        // work repeated for nothing. The line stays so that stays visible.
+        debug!("⏳ Creating new S3 client for region {:?}", region);
         let config = match host {
             None => {
                 info!("⏳ No `&catalog=`, so we use credentials in ~/.aws");
@@ -387,7 +391,7 @@ impl RemoteS3 {
                 self.auth
                     .get_credentials_or_refresh(&self.http, host)
                     .await?;
-                debug!("✔️ Got credentials for host {:?}", host);
+                trace!("✔️ Got credentials for host {:?}", host);
                 aws_config::defaults(BehaviorVersion::latest())
                     .region(region.clone())
                     .credentials_provider(QuiltCredentialsProvider {
@@ -400,7 +404,8 @@ impl RemoteS3 {
             }
         };
         let client = aws_sdk_s3::Client::new(&config);
-        debug!("✔️ created new S3 client for region {:?}", region);
+        // The construction is already announced above; this only says it finished.
+        trace!("✔️ created new S3 client for region {:?}", region);
 
         // Cache the new client
         let mut map = self
@@ -507,7 +512,7 @@ impl Remote for RemoteS3 {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
         match get_object_stream(&client, s3_uri).await {
             Ok(stream) => {
-                info!("✔️ Created stream for object {}", s3_uri);
+                debug!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
             }
             Err(e) if e.is_not_found() => {

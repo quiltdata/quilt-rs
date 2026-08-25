@@ -95,7 +95,13 @@ pub async fn open_directory_picker(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<PathBuf, String> {
-    tracing.track(MixpanelEvent::DirectoryPickerOpened).await;
+    // Deliberately reported before the outcome, and the only site that is. The
+    // criterion is whether the event's name stays true when the call returns
+    // `Err`, and here it does: this command models the user *cancelling* as an
+    // error, so waiting for success would silently narrow "the picker was shown"
+    // to "a folder was chosen". Those are different questions and this event
+    // answers the first. If the second is ever wanted, it is a second event.
+    tracing.track(MixpanelEvent::DirectoryPickerOpened);
 
     let app_handle = &app_handle.lock().await;
 
@@ -121,18 +127,19 @@ pub async fn debug_dot_quilt(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DebugDotQuiltOpened).await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening .quilt directory".to_string();
     let msg_ok = "Successfully opened .quilt directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
-    Notify::new(msg_init).map(debug_dot_quilt_command(&app_handle), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::DebugDotQuiltOpened)
+        .map(debug_dot_quilt_command(&app_handle), msg_ok, msg_err)
 }
 
 fn debug_logs_command(app: &app::App) -> Result<(), Error> {
-    let logs_dir = &app.logs_dir;
+    let logs_dir = &app.logging.dir;
     opener::open_browser(logs_dir.path())?;
     Ok(())
 }
@@ -142,14 +149,15 @@ pub async fn debug_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DebugLogsOpened).await;
     let app: &app::App = &app;
 
     let msg_init = "Opening logs directory".to_string();
     let msg_ok = "Successfully opened logs directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open logs directory: {err}");
 
-    Notify::new(msg_init).map(debug_logs_command(app), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::DebugLogsOpened)
+        .map(debug_logs_command(app), msg_ok, msg_err)
 }
 
 async fn open_home_dir_command(m: &model::Model) -> Result<(), Error> {
@@ -164,13 +172,13 @@ pub async fn open_home_dir(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::HomeDirOpened).await;
-
     let msg_init = "Opening home directory".to_string();
     let msg_ok = "Successfully opened home directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
 
-    Notify::new(msg_init).map(open_home_dir_command(&m).await, msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::HomeDirOpened)
+        .map(open_home_dir_command(&m).await, msg_ok, msg_err)
 }
 
 fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
@@ -184,14 +192,15 @@ pub async fn open_data_dir(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DataDirOpened).await;
     let app_handle = app_handle.lock().await;
 
     let msg_init = "Opening data directory".to_string();
     let msg_ok = "Successfully opened data directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open data directory: {err}");
 
-    Notify::new(msg_init).map(open_data_dir_command(&app_handle), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::DataDirOpened)
+        .map(open_data_dir_command(&app_handle), msg_ok, msg_err)
 }
 
 async fn collect_diagnostic_logs_command(
@@ -213,12 +222,18 @@ pub async fn collect_diagnostic_logs(
     app: tauri::State<'_, app::App>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::DiagnosticLogsSaved).await;
     let app_handle = app_handle.lock().await;
     let app: &app::App = &app;
 
     match collect_diagnostic_logs_command(&app_handle, &m, app, &tracing).await {
-        Ok(zip_path) => Ok(zip_path.display().to_string()),
+        Ok(zip_path) => {
+            // Reported here rather than through `Notify::on_success`, because this
+            // command returns the archive's path and so does not route its outcome
+            // through `map`. Same rule, hand-applied: nothing was saved unless this
+            // arm was reached.
+            tracing.track(MixpanelEvent::DiagnosticLogsSaved);
+            Ok(zip_path.display().to_string())
+        }
         Err(err) => Err(err.to_string()),
     }
 }
@@ -228,8 +243,6 @@ pub async fn send_crash_report(
     zip_path: String,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::CrashReportSent).await;
-
     let zip_path = PathBuf::from(zip_path);
     if zip_path.file_name() != Some("quiltsync-diagnostic.zip".as_ref()) {
         return Err("Invalid diagnostic zip filename".to_string());
@@ -245,7 +258,9 @@ pub async fn send_crash_report(
             .map_err(|e| Error::General(e.to_string()))
             .and_then(|r| r);
 
-    Notify::new(msg_init).map(result, msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::CrashReportSent)
+        .map(result, msg_ok, msg_err)
 }
 
 async fn reveal_in_file_browser_command(
@@ -267,21 +282,20 @@ pub async fn reveal_in_file_browser(
     path: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
-    Notify::new(msg_init).map(
-        reveal_in_file_browser_command(&m, &namespace, &path).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            reveal_in_file_browser_command(&m, &namespace, &path).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 async fn open_in_file_browser_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
@@ -297,21 +311,20 @@ pub async fn open_in_file_browser(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(
-            uri.as_ref(),
-        )))
-        .await;
-
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
     let msg_err = |err: &Error| format!("Failed to open file manager: {err}");
 
-    Notify::new(msg_init).map(
-        open_in_file_browser_command(&m, &namespace).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            open_in_file_browser_command(&m, &namespace).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 async fn open_in_default_application_command(
@@ -333,21 +346,20 @@ pub async fn open_in_default_application(
     path: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    tracing
-        .track(MixpanelEvent::DefaultApplicationOpened(
-            PackageFileEvent::for_uri(uri.as_ref()),
-        ))
-        .await;
-
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
     let msg_err = |err: &Error| format!("Failed to open application: {err}");
 
-    Notify::new(msg_init).map(
-        open_in_default_application_command(&m, &namespace, &path).await,
-        msg_ok,
-        msg_err,
-    )
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::DefaultApplicationOpened(PackageFileEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            open_in_default_application_command(&m, &namespace, &path).await,
+            msg_ok,
+            msg_err,
+        )
 }
 
 fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
@@ -364,12 +376,13 @@ pub async fn open_in_web_browser(
     // catalog links, documentation, a local directory and `mailto:` alike, so its
     // URL's host is not necessarily a Quilt deployment — and `host` means the
     // deployment an event concerns, never a hostname that appeared nearby.
-    tracing.track(MixpanelEvent::WebBrowserOpened).await;
     let msg_init = format!("Opening URL {url}");
     let msg_ok = format!("Successfully opened {url}");
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
 
-    Notify::new(msg_init).map(open_in_web_browser_command(&url), msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::WebBrowserOpened)
+        .map(open_in_web_browser_command(&url), msg_ok, msg_err)
 }
 
 async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {
@@ -388,11 +401,12 @@ pub async fn setup(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     directory: String,
 ) -> Result<String, String> {
-    tracing.track(MixpanelEvent::SetupCompleted).await;
     let msg_init = format!("Setup with directory {directory}");
     let msg_ok = format!("Successfully set up directory: {directory}");
     let msg_err = |err: &Error| format!("Failed to create QuiltSync directory: {err}");
-    Notify::new(msg_init).map(setup_command(&m, &directory).await, msg_ok, msg_err)
+    Notify::new(msg_init)
+        .on_success(&tracing, MixpanelEvent::SetupCompleted)
+        .map(setup_command(&m, &directory).await, msg_ok, msg_err)
 }
 
 // ── Auto-update ────────────────────────────────────────────
@@ -428,4 +442,86 @@ pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), St
         .await
         .map_err(|e| e.to_string())?;
     app.restart();
+}
+
+/// How much of a panic message reaches the crash reporter.
+///
+/// A payload is whatever was formatted into `panic!` — plausibly a `Debug` dump of
+/// a large value — and it becomes an issue's title, so it is bounded here rather
+/// than at the sink. Generous enough that the message and its location survive.
+const MAX_PANIC_MESSAGE: usize = 1024;
+
+/// Bound the message at a character boundary, marking that it was cut.
+fn bounded(message: &str) -> String {
+    if message.chars().count() <= MAX_PANIC_MESSAGE {
+        return message.to_owned();
+    }
+    // By characters, not bytes: slicing a multi-byte character in half would panic
+    // while reporting a panic.
+    let kept: String = message.chars().take(MAX_PANIC_MESSAGE).collect();
+    format!("{kept}… (truncated)")
+}
+
+/// Report a panic the frontend caught in its own hook.
+///
+/// The frontend is a WASM module in a webview with no crash client of its own, so
+/// its panic hook could reach the browser console and nothing else. Bridging it
+/// here is the only way a UI panic reaches anybody.
+///
+/// Both sinks on purpose, at two levels. `warn!` puts it in the log file and leaves
+/// a breadcrumb; the explicit report is what becomes an issue. Logging it at `error!`
+/// instead would file a *second* issue through the crash-sink layer, since that is
+/// what an error-level event does — one panic, two reports.
+#[tauri::command]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Tauri's command macro dictates the signature: an argument is deserialized \
+              into an owned value and state is injected by value. Sync rather than async \
+              because there is nothing to await, and an async command taking state would \
+              have to return a Result it could never populate."
+)]
+pub fn report_ui_panic(message: String, tracing: tauri::State<'_, crate::telemetry::Telemetry>) {
+    let message = bounded(&message);
+    warn!("UI panic: {message}");
+    tracing.report_ui_panic(&message);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A short message is passed through untouched — the common case, and the one a
+    /// reader of the issue title needs to be exact.
+    #[test]
+    fn a_short_panic_message_is_untouched() {
+        let message = "panicked at ui/src/pages.rs:12:5:\nassertion failed";
+        assert_eq!(bounded(message), message);
+    }
+
+    /// A long one is cut and *says* it was cut, so nobody reads a truncated payload
+    /// as the whole story.
+    #[test]
+    fn a_long_panic_message_is_cut_and_marked() {
+        let bounded = bounded(&"x".repeat(MAX_PANIC_MESSAGE * 3));
+
+        assert!(bounded.ends_with("… (truncated)"));
+        assert_eq!(
+            bounded.chars().count(),
+            MAX_PANIC_MESSAGE + "… (truncated)".chars().count()
+        );
+    }
+
+    /// Cutting by characters rather than bytes, because slicing a multi-byte
+    /// character in half would panic *while reporting a panic* — the one failure
+    /// this path must not have.
+    #[test]
+    fn cutting_a_multibyte_message_does_not_panic() {
+        // Four bytes per character, so a byte-indexed cut would land mid-character.
+        let message = "🙀".repeat(MAX_PANIC_MESSAGE * 2);
+
+        let bounded = bounded(&message);
+
+        assert!(bounded.starts_with('🙀'));
+        assert!(bounded.ends_with("… (truncated)"));
+    }
 }

@@ -1,0 +1,78 @@
+/*
+ * The per-package sync-scope band: a second sticky toolbar above the entries
+ * toolbar, shown only under the experimental gate.
+ *
+ * Two sticky siblings cannot share an offset — whichever sticks higher covers
+ * the other — so the band takes the offset the entries toolbar used to have,
+ * and the toolbar is pushed down by exactly the band's height. That height is
+ * declared here and enforced on the band rather than measured, so the two
+ * numbers cannot drift apart.
+ */
+
+.qui-page-installed-package {
+  /* 16px padding x2, a 24px control row (16px box + 4px x2), 1px border —
+     the same vertical rhythm as the entries toolbar's own box. Forced on the
+     band below rather than measured, so the offset cannot drift from it. */
+  --qui-scope-band-height: 57px;
+}
+
+.qui-entries-toolbar.qui-sync-scope {
+  box-sizing: border-box;
+  height: var(--qui-scope-band-height);
+  top: 128px;
+
+  &.with-status {
+    top: calc(128px + 68px + 32px + 16px);
+  }
+
+  /* Same metrics as `.select-all` in entries-toolbar.css, so the radio lands
+     in the checkbox column and its label lines up with "Select all". */
+  .radio-option {
+    align-items: center;
+    cursor: pointer;
+    display: flex;
+    flex-shrink: 0;
+    padding: 4px 0 4px 24px;
+  }
+
+  .radio-option input {
+    cursor: pointer;
+    height: 16px;
+    margin: 0 24px 0 0;
+    width: 16px;
+  }
+}
+
+/*
+ * The standing-scope line replaces the download control in the toolbar's left
+ * slot, and reads as a caption for the list below it — so it starts in the
+ * *label* column, where "Select all" and every row's filename start, rather
+ * than out at the container edge where a control would.
+ *
+ * Nothing fills the control column beside it, deliberately. The column below
+ * is nothing but checkboxes, so a tick there would be read as one; and the
+ * line states a standing rule about later arrivals, which has no conventional
+ * glyph. An empty control column says "no control here", which is true.
+ */
+.qui-entries-toolbar .scope-standing-line {
+  /* 24px inset + 16px control + its 24px gap — `.select-all`'s own metrics. */
+  padding-left: 64px;
+}
+
+/*
+ * The download control takes the same offset under whole-package scope, where
+ * the select-all beside it is gone. Both states of that slot then start in the
+ * same column, so it does not jump sideways as the last file lands.
+ */
+.qui-entries-toolbar .scope-slot-indent {
+  margin-left: 64px;
+}
+
+/* The entries toolbar sticks below the band rather than on top of it. */
+.qui-entries-toolbar.below-sync-scope {
+  top: calc(128px + var(--qui-scope-band-height));
+
+  &.with-status {
+    top: calc(128px + 68px + 32px + 16px + var(--qui-scope-band-height));
+  }
+}

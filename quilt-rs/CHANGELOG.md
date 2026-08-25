@@ -9,11 +9,32 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.35.0-alpha1] - 2026-08-25
+## [v0.35.1-alpha1] - 2026-08-07
+
+### Added
+
+- `LocalDomain::get_lineage` reads the whole lineage record in one go, for callers that want every installed package at once — `list_installed_packages` plus `InstalledPackage::lineage` per package re-reads and re-parses that record once per package (<https://github.com/quiltdata/quilt-rs/pull/846>)
 
 ### Fixed
 
 - A call made without a valid session now fails with `LoginError::Required` instead of a generic S3 error carrying the AWS SDK's entire wrap chain in its message. Credentials are vended lazily inside the SDK provider, so a signed-out session arrived as a dispatch failure no caller could distinguish from a transport fault — leaving it unable to offer re-authentication, and the sync watcher retrying a call that could never succeed. Covers existence checks, object reads, URL resolution, and all four upload legs (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+## [v0.35.0] - 2026-08-07
+
+### Added
+
+- A package can be set to sync its **whole contents**: `PackageLineage::sync_scope` records the choice, and under `SyncScope::EntirePackage` a pull also fetches paths the remote added, instead of listing them and leaving them. `InstalledPackage::set_sync_scope` writes it (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+### Changed
+
+- **Breaking:** `flow::pull` and `InstalledPackage::pull` take the scope as an argument rather than reading the stored one, so a caller keeps sparse-checkout behaviour whatever a package's lineage says. Pass `SyncScope::IndividualFiles` for the previous behaviour (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+## [v0.34.1] - 2026-08-06
+
+### Changed
+
+- Rearranged log levels: anything that runs once per file, or once per status computation, is now `trace` rather than `debug`. `RUST_LOG=quilt_rs=trace` brings it back (<https://github.com/quiltdata/quilt-rs/pull/828>)
+- Replaced whole-collection dumps with short summaries — the package-status line used to print every file it walked. Together with the level changes, a `RUST_LOG=debug` log is roughly 100× smaller (<https://github.com/quiltdata/quilt-rs/pull/828>)
 
 ## [v0.34.0] - 2026-07-30
 

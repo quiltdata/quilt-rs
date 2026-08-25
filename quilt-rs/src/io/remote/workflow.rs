@@ -474,6 +474,10 @@ mod tests {
     // `clippy::unused_async_trait_impl` fires on, and spelling the future out
     // sidesteps the lint without naming it in an `allow` that older
     // toolchains would not recognize.
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "a stub that awaits nothing by design: `exists` refuses immediately and every other method must never be called. `async fn` keeps it consistent with the trait's real impls, and the alternatives each trip a different lint — `fn -> impl Future` with an async block trips `manual_async_fn`, and `std::future::ready(unreachable!(..))` trips `unreachable_code`."
+    )]
     impl Remote for SignedOutRemote {
         async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
             Err(Error::Login(LoginError::Required(Some(self.host.clone()))))

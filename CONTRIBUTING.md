@@ -73,3 +73,8 @@ See project-specific contributing guides for detailed release procedures.
 
 See [docs/verification.md](docs/verification.md) for SHA256-chunked,
 CRC64/NVMe, and manifest verification recipes.
+
+## Reporting Security Issues
+
+See [SECURITY.md](SECURITY.md) for how to report vulnerabilities privately
+and what is in scope.

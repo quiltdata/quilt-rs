@@ -27,6 +27,7 @@ use crate::lineage;
 use crate::lineage::CommitState;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
+use crate::lineage::SyncScope;
 use crate::lineage::UpstreamState;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
@@ -469,7 +470,35 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         })
     }
 
-    pub async fn pull(&self, host_config_opt: Option<HostConfig>) -> Res<ManifestUri> {
+    /// Record this package's standing [`SyncScope`].
+    ///
+    /// Storage only, and deliberately separate from [`Self::pull`]: writing the
+    /// choice and acting on it are different decisions, made by different
+    /// callers. Nothing in this crate reads the stored value back.
+    ///
+    /// Goes through
+    /// [`PackageLineageIo::edit`](lineage::PackageLineageIo::edit)
+    /// rather than read-then-write, because this writer is user-triggered and
+    /// can land at any moment — including mid-pull on the autosync tick, which
+    /// is doing its own read-modify-write of the same entry. Reading here and
+    /// writing later would clobber whatever that pull had recorded.
+    pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
+        self.lineage
+            .edit(&self.storage, |l| l.sync_scope = scope)
+            .await?;
+        Ok(())
+    }
+
+    /// `scope` comes from the caller, not from the package's stored
+    /// [`SyncScope`]. Both faces of this engine —
+    /// the desktop app and the `quilt` CLI — reach pull through here, and only
+    /// one of them has a setting; reading the field at this level would let
+    /// state the app wrote change what the CLI does.
+    pub async fn pull(
+        &self,
+        host_config_opt: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -503,6 +532,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             package_home,
             snapshot,
             self.namespace.clone(),
+            scope,
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;

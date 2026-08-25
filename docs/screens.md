@@ -152,6 +152,8 @@ with checkboxes, status indicator, and a toolbar.
 |   local+origin -> [Push]                                |
 |   error        -> [Login]                               |
 |                                                         |
+| [sync scope: (·) individual files ( ) entire package]   |
+|                        (only with the experiment on)    |
 | Show [x] unmodified [x] ignored (2)                    |
 | [toolbar: Select All / Deselect All]                    |
 | +-----------------------------------------------------+ |
@@ -188,6 +190,22 @@ with checkboxes, status indicator, and a toolbar.
     resolve them on the merge page."
 - [Uninstall] -> runs uninstall flow -> **Installed Packages List**
 - [Install Selected Paths] -> runs install_paths flow, reloads
+- **Sync scope** (only when Settings → Experimental → *Enable entire-package
+  sync* is on) -> a band above the entries toolbar, two options:
+  - *Sync individual files* — today's behaviour: a pull updates the files you
+    already have, and one a teammate added is listed but not fetched
+  - *Sync entire package* — a pull fetches the added ones too, on this package,
+    from now on (the autopull tick included)
+
+  Picking either **stores the choice and downloads nothing**. The band renders
+  whether or not anything is pending: once a package has caught up it is the
+  only thing on screen saying what its scope is, and the only way back.
+
+  In whole-package scope the toolbar's left slot drops *Select All* and
+  relabels its button to *Download all files*; row checkboxes are inert, since
+  the scope has taken the per-file choice away. When nothing is pending that
+  slot carries a caption instead — *"Files added later are downloaded too."*
+  under whole-package scope, *"All files are downloaded."* under individual.
 - [Ignore] -> opens **Ignore Popup** (for junk-detected files)
 - [Ignored] -> opens **Un-ignore Popup** (for `.quiltignore`-matched files)
 - [Create new revision] -> opens the **Commit** form at
@@ -518,6 +536,14 @@ Application settings and diagnostics.
 |  ------------------                                     |
 |  Enable filesystem watcher     [x]                      |
 |  hint: refreshes local status when files change         |
+|                                                         |
+|  Experimental                                           |
+|  ------------                                           |
+|  Enable entire-package sync    [ ]                      |
+|  hint: adds a per-package choice — sync the entire      |
+|        package, including files added later, instead    |
+|        of picking files. Off until you choose it on a   |
+|        package.                                         |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
