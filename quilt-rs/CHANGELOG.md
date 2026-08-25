@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.35.0-alpha1] - 2026-08-25
+
+### Fixed
+
+- A call made without a valid session now fails with `LoginError::Required` instead of a generic S3 error carrying the AWS SDK's entire wrap chain in its message. Credentials are vended lazily inside the SDK provider, so a signed-out session arrived as a dispatch failure no caller could distinguish from a transport fault — leaving it unable to offer re-authentication, and the sync watcher retrying a call that could never succeed. Covers existence checks, object reads, URL resolution, and all four upload legs (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
 ## [v0.34.0] - 2026-07-30
 
 ### Added
