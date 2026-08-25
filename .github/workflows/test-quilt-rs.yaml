@@ -9,17 +9,12 @@ on:
     - cron: "17 7 * * *"
   workflow_dispatch:
   push:
-    paths:
-      - "quilt-rs/**"
-      - "!quilt-rs/**/*.md"
-      - "quilt-cli/**"
-      - "!quilt-cli/**/*.md"
-      - "quilt-uri/**"
-      - "!quilt-uri/**/*.md"
-      - "Cargo.*"
-      - "rust-toolchain.toml"
-      - "deny.toml"
-      - ".github/workflows/test-quilt-rs.yaml"
+    # Ignore only crates downstream of what this job builds: Cargo forbids
+    # dependency cycles, so nothing here can depend on quilt-sync, which its
+    # `--exclude` flags name below. An upstream crate would skip a real check.
+    paths-ignore:
+      - "**/*.md"
+      - "quilt-sync/**"
 
 concurrency:
   # `event_name` so a scheduled run and a push to main cannot cancel each other.

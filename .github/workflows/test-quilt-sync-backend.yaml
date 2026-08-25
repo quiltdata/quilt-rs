@@ -7,13 +7,8 @@ on:
     - cron: "17 7 * * *"
   workflow_dispatch:
   push:
-    paths:
-      - "quilt-sync/src-tauri/**"
-      - "!quilt-sync/src-tauri/**/*.md"
-      - "quilt-sync/*.toml"
-      - "quilt-sync/Cargo.*"
-      - "rust-toolchain.toml"
-      - ".github/workflows/test-quilt-sync-backend.yaml"
+    paths-ignore:
+      - "**/*.md"
 
 concurrency:
   # `event_name` so a scheduled run and a push to main cannot cancel each other.
