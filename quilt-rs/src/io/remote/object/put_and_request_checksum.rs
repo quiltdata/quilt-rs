@@ -7,11 +7,10 @@ use aws_sdk_s3::types::ChecksumAlgorithm;
 use crate::Error;
 use crate::Res;
 use crate::error::ChecksumError;
-use crate::error::S3Error;
 use crate::error::S3ErrorKind;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
-use crate::io::remote::s3::classify_sdk_error;
+use crate::io::remote::s3::s3_error_or_login;
 use crate::object_hash::Crc64Hash;
 use crate::object_hash::ObjectHash;
 use crate::object_hash::Sha256ChunkedHash;
@@ -55,10 +54,7 @@ pub async fn put_and_request_checksum(
         .send()
         .await
         .map_err(|err| {
-            Error::S3(S3Error {
-                host: host_config.host.clone(),
-                kind: classify_sdk_error(err, S3ErrorKind::UploadFile),
-            })
+            s3_error_or_login(err, host_config.host.as_ref(), S3ErrorKind::UploadFile)
         })?;
     let checksum = match host_config.checksums {
         HostChecksums::Sha256Chunked => extract_sha256_checksum(&response)?,

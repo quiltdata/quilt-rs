@@ -14,7 +14,9 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use tokio_stream::Stream;
 
+use crate::Error;
 use crate::Res;
+use crate::error::LoginError;
 use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
@@ -76,6 +78,40 @@ where
     }
 
     DisplayErrorContext(err).to_string()
+}
+
+/// Recover a `LoginError::Required` that the AWS SDK wrapped on its way out.
+///
+/// Credentials are vended *lazily*, inside the SDK's credential provider, so
+/// "you are signed out" does not reach a call site as an auth error — the SDK
+/// boxes it as a `CredentialsError`, wraps that in a `ConnectorError`, and
+/// hands back an `SdkError::DispatchFailure` that is indistinguishable at the
+/// boundary from a transport fault. Left alone it flattens through
+/// [`describe_sdk_error`]'s transport tier into a diagnostic string, and every
+/// consumer that branches on error kind sees generic storage trouble: the
+/// desktop watcher retries it silently as a transient, and the UI has nothing
+/// to offer the user but the wrap chain.
+///
+/// So each call path that can hit an unauthenticated vend asks this first, and
+/// re-raises the typed error instead of classifying it as S3 trouble.
+///
+/// **This walks `source()`, not the SDK's error types.** Downcasting the
+/// intermediate `ConnectorError` / `CredentialsError` would pin us to shapes
+/// that are internal to the SDK; the source chain is a `std` contract. What we
+/// still depend on — and what no shape assertion could pin either — is that the
+/// SDK *preserves* our boxed error as a source rather than stringifying it. A
+/// dependency bump can sever that silently, so the pin for this is behavioural:
+/// [`login_required_survives_the_sdk_wrap`](#tests) builds the real wrap and
+/// asserts recovery, and fails if the chain is ever broken.
+pub(super) fn recover_login_required(err: &(dyn std::error::Error + 'static)) -> Option<Error> {
+    let mut current = Some(err);
+    while let Some(e) = current {
+        if let Some(Error::Login(LoginError::Required(host))) = e.downcast_ref::<Error>() {
+            return Some(Error::Login(LoginError::Required(host.clone())));
+        }
+        current = e.source();
+    }
+    None
 }
 
 pub use crate::workflow::{

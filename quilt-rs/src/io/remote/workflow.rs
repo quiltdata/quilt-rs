@@ -238,6 +238,9 @@ pub(crate) fn entry_view(row: &ManifestRow) -> EntryView<'_> {
 /// [`crate::Error::WorkflowValidation`] — a distinct typed error the sync
 /// watcher classifies as a conflict (pause the namespace), not a transient
 /// (retry) — while a failed *fetch* stays an `Error::S3` and remains transient.
+/// The one fetch failure that does not: an unauthenticated one, which the S3
+/// boundary now recovers as [`crate::error::LoginError::Required`] rather than
+/// letting a signed-out session retry forever as storage trouble.
 pub(crate) async fn validate_workflow<R: Remote>(
     remote: &R,
     host: Option<&Host>,
@@ -344,7 +347,8 @@ pub(crate) async fn validate_workflow_with_config<R: Remote>(
 /// A rule failure surfaces as [`crate::Error::WorkflowValidation`] and a
 /// missing/unknown workflow as [`crate::Error::RemoteCatalog`] — both
 /// classified as conflicts by the sync watcher — while a failed *fetch* stays
-/// an `Error::S3` and remains transient.
+/// an `Error::S3` and remains transient, except an unauthenticated one, which
+/// arrives typed as [`crate::error::LoginError::Required`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
     remote: &R,
@@ -448,9 +452,89 @@ pub(crate) async fn resolve_workflow_from_config<R: Remote>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LoginError;
+    use crate::io::remote::HostConfig;
+    use crate::io::remote::RemoteObjectStream;
     use crate::io::remote::mocks::MockRemote;
     use crate::workflow::WorkflowInfo;
     use test_log::test;
+
+    /// A `Remote` whose very first call — the gate's existence check — reports a
+    /// signed-out session, and whose every other method panics.
+    ///
+    /// The panics are the point: if the gate ever reaches past `exists` on a
+    /// login refusal, this stub says so loudly instead of quietly passing.
+    struct SignedOutRemote {
+        host: Host,
+    }
+
+    impl Remote for SignedOutRemote {
+        async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
+            Err(Error::Login(LoginError::Required(Some(self.host.clone()))))
+        }
+        async fn get_object_stream(
+            &self,
+            _host: Option<&Host>,
+            _s3_uri: &S3Uri,
+        ) -> Res<RemoteObjectStream> {
+            unreachable!("the gate must not fetch after a login refusal")
+        }
+        async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+            unreachable!("not part of the gate")
+        }
+        async fn put_object(
+            &self,
+            _host: Option<&Host>,
+            _s3_uri: &S3Uri,
+            _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        ) -> Res {
+            unreachable!("not part of the gate")
+        }
+        async fn upload_file(
+            &self,
+            _host_config: &HostConfig,
+            _source_path: impl AsRef<std::path::Path>,
+            _dest_uri: &S3Uri,
+            _size: u64,
+        ) -> Res<(S3Uri, crate::object_hash::ObjectHash)> {
+            unreachable!("not part of the gate")
+        }
+        async fn host_config(&self, _host: Option<&Host>) -> Res<HostConfig> {
+            unreachable!("not part of the gate")
+        }
+        async fn verify_bucket(&self, _bucket: &str) -> Res {
+            unreachable!("not part of the gate")
+        }
+    }
+
+    /// The seam above the recovery, not the recovery itself.
+    ///
+    /// Typing a login refusal at the S3 boundary buys nothing if a frame in
+    /// between re-wraps it — the failure mode that made the role-switcher
+    /// change a no-op through four layers, every test green. The workflow gate
+    /// is the caller that matters here: it makes the commit path's first S3
+    /// call, so a signed-out commit arrives through it. Assert the error the
+    /// watcher and the UI will actually branch on, at the point they receive
+    /// it.
+    #[test(tokio::test)]
+    async fn the_gate_propagates_a_login_refusal_untouched() -> Res<()> {
+        use std::str::FromStr;
+
+        let host = Host::from_str("nightly.quilttest.com").unwrap();
+        let remote = SignedOutRemote { host: host.clone() };
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        let err = fetch_workflows_config(&remote, Some(&host), &uri)
+            .await
+            .expect_err("a signed-out session cannot produce a workflows config");
+
+        assert!(
+            matches!(&err, Error::Login(LoginError::Required(Some(h))) if *h == host),
+            "the gate re-wrapped a login refusal into {err:?} — the watcher would \
+             classify this as storage trouble and retry it in silence"
+        );
+        Ok(())
+    }
 
     #[test(tokio::test)]
     async fn test_missing_schemas_section() -> Res<()> {
