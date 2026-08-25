@@ -1,6 +1,13 @@
 name: Test quilt_rs
 
 on:
+  # Toolchain canary: `rust-toolchain.toml` floats on `stable` and
+  # `setup-rust-dev` inherits it, so every run resolves a fresh compiler.
+  # Without a schedule, a new release is first seen when it breaks some PR.
+  schedule:
+    # Off the hour: scheduled runs on the hour contend for runners.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
   push:
     paths:
       - "quilt-rs/**"
@@ -15,7 +22,8 @@ on:
       - ".github/workflows/test-quilt-rs.yaml"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # `event_name` so a scheduled run and a push to main cannot cancel each other.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
