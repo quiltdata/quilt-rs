@@ -943,6 +943,10 @@ mod tests {
         }
     }
 
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "trait impls in a test double: each returns immediately without awaiting, and the trait declares `async fn`, so the `async` cannot just be dropped. Rewriting them to `impl Future` + `std::future::ready` would obscure the double for no gain."
+    )]
     impl model::QuiltModel for SilentHost {
         fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
             &self.domain

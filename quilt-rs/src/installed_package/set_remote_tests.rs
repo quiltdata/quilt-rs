@@ -144,6 +144,10 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
     /// where the user typed a bucket that doesn't resolve on S3.
     struct BadBucketRemote;
 
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "trait impls in a test double: each returns immediately without awaiting, and the trait declares `async fn`, so the `async` cannot just be dropped. Rewriting them to `impl Future` + `std::future::ready` would obscure the double for no gain."
+    )]
     impl Remote for BadBucketRemote {
         async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
             unreachable!("test only exercises verify_bucket")

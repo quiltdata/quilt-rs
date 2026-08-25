@@ -422,6 +422,10 @@ async fn test_manifest_recovery_from_corruption() -> Res {
 /// A remote that always returns `LoginRequired`, simulating a logged-out user.
 struct LoggedOutRemote;
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "trait impls in a test double: each returns immediately without awaiting, and the trait declares `async fn`, so the `async` cannot just be dropped. Rewriting them to `impl Future` + `std::future::ready` would obscure the double for no gain."
+)]
 impl crate::io::remote::Remote for LoggedOutRemote {
     async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
         Err(Error::Login(LoginError::Required(None)))
@@ -466,6 +470,10 @@ impl crate::io::remote::Remote for LoggedOutRemote {
 /// credentials are valid, the request arrived, and it was refused.
 struct DeniedRemote;
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "trait impls in a test double: each returns immediately without awaiting, and the trait declares `async fn`, so the `async` cannot just be dropped. Rewriting them to `impl Future` + `std::future::ready` would obscure the double for no gain."
+)]
 impl crate::io::remote::Remote for DeniedRemote {
     async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         Err(denied(s3_uri))

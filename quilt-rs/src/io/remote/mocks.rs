@@ -49,6 +49,10 @@ impl MockRemote {
     }
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "trait impls in a test double: each returns immediately without awaiting, and the trait declares `async fn`, so the `async` cannot just be dropped. Rewriting them to `impl Future` + `std::future::ready` would obscure the double for no gain."
+)]
 impl Remote for MockRemote {
     async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();
