@@ -56,6 +56,10 @@ pub struct Model {
     quilt: sync::Mutex<quilt::LocalDomain>,
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "mockall's generated `MockQuiltModel` impl returns canned values without awaiting; the lint fires on the expansion, not on the trait's own default bodies, which do await."
+)]
 #[automock]
 pub trait QuiltModel {
     fn get_quilt(&self) -> &sync::Mutex<quilt::LocalDomain>;

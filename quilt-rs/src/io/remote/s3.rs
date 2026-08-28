@@ -640,7 +640,7 @@ mod tests {
     use crate::paths::DomainPaths;
 
     #[test(tokio::test)]
-    async fn test_multipart_upload() -> Res<()> {
+    async fn live_multipart_upload() -> Res<()> {
         // Create a temporary file with the test content
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(less_than_8mb())?;
@@ -683,7 +683,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_zero_bytes_upload() -> Res<()> {
+    async fn live_zero_bytes_upload() -> Res<()> {
         // Create a temporary file with zero bytes
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(zero_bytes())?;
@@ -727,7 +727,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_crc64_upload() -> Res<()> {
+    async fn live_crc64_upload() -> Res<()> {
         // Read the fixture file content
         let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");
         let file_content = std::fs::read(fixture_path)?;
