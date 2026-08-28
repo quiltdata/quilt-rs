@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in the CLI, library, or QuiltSync is not working
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >
+        Commands are ideal. Redact bucket names and paths as needed.
+      placeholder: |
+        1. quilt create -n demo/sales -s ./data -m "initial"
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `quilt --version`, or the QuiltSync version.
+      placeholder: quilt-cli 0.29.1
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: macOS 15 (Apple Silicon) / Ubuntu 24.04 / Windows 11
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >
+        Optional. `RUST_LOG=debug` output helps. Check for credentials before
+        pasting.
+      render: text

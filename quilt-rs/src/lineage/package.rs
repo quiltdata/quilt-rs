@@ -81,6 +81,52 @@ pub struct CommitState {
     pub prev_hashes: Vec<String>,
 }
 
+/// Which of a package's files this copy keeps.
+///
+/// A standing property of the *package*, not of any one pull: it says what a
+/// future [`pull`](crate::flow::pull) is allowed to fetch, so it outlives the
+/// operation that reads it. See `model/ctx/sync/node.md#sync-scope`.
+///
+/// Nothing in quilt-rs reads the stored value — `pull` takes the scope as an
+/// argument from its caller, because this engine also backs the `quilt` CLI,
+/// which has no such setting and must not have its behaviour changed by state
+/// the desktop app wrote. The field lives here because a package's lineage is
+/// the only per-package store; its reader is the desktop app.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncScope {
+    /// Sparse checkout: only already-tracked paths are fetched, and a path
+    /// added on the remote is listed but left alone.
+    #[default]
+    IndividualFiles,
+    /// The whole package: a pull additionally fetches paths present in
+    /// `latest` that were never tracked here.
+    EntirePackage,
+}
+
+impl SyncScope {
+    /// Whether this is the scope a package has when nothing asked otherwise.
+    ///
+    /// Exists for `skip_serializing_if`: a package nobody opted in keeps a
+    /// byte-identical `data.json`, so enabling the feature does not rewrite
+    /// the key into every installed package's record.
+    #[must_use]
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if always hands the predicate a reference"
+    )]
+    fn is_default(&self) -> bool {
+        matches!(self, Self::IndividualFiles)
+    }
+
+    /// Whether a pull under this scope may fetch paths it does not already
+    /// track.
+    #[must_use]
+    pub fn covers_untracked(self) -> bool {
+        matches!(self, Self::EntirePackage)
+    }
+}
+
 /// Stores lineage (installation/modification history) of the package read from `data.json` file
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub struct PackageLineage {
@@ -101,6 +147,11 @@ pub struct PackageLineage {
     /// Installed paths (or files in other words)
     #[serde(default = "BTreeMap::new")]
     pub paths: LineagePaths,
+    /// Which of this package's files the copy keeps — the standing choice the
+    /// `paths` map above is subject to. Absent from `data.json` for every
+    /// package on the default scope; see [`SyncScope`].
+    #[serde(default, skip_serializing_if = "SyncScope::is_default")]
+    pub sync_scope: SyncScope,
 }
 
 impl From<PackageLineage> for UpstreamState {
@@ -172,6 +223,7 @@ impl PackageLineage {
             latest_hash,
             commit: None,
             paths: BTreeMap::new(),
+            ..Self::default()
         }
     }
 
@@ -203,6 +255,7 @@ impl From<ManifestUri> for PackageLineage {
             latest_hash: uri.hash.clone(),
             commit: None,
             paths: BTreeMap::new(),
+            ..Self::default()
         }
     }
 }

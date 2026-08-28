@@ -1,5 +1,7 @@
 //! Tests for the commit/push/pull/status lifecycle of an installed package.
 
+use std::future::Future;
+
 use super::*;
 
 use test_log::test;
@@ -11,6 +13,7 @@ use crate::io::storage::StorageExt;
 use crate::lineage::DomainLineageIo;
 use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
+use crate::lineage::SyncScope;
 use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 
@@ -422,41 +425,48 @@ async fn test_manifest_recovery_from_corruption() -> Res {
 struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
-    async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
-        Err(Error::Login(LoginError::Required(None)))
+    fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
+        std::future::ready(Err(Error::Login(LoginError::Required(None))))
     }
-    async fn get_object_stream(
+    fn get_object_stream(
         &self,
         _host: Option<&Host>,
         _s3_uri: &S3Uri,
-    ) -> Res<crate::io::remote::RemoteObjectStream> {
-        Err(Error::Login(LoginError::Required(None)))
+    ) -> impl Future<Output = Res<crate::io::remote::RemoteObjectStream>> {
+        std::future::ready(Err(Error::Login(LoginError::Required(None))))
     }
-    async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
-        Err(Error::Login(LoginError::Required(None)))
+    fn resolve_url(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<S3Uri>> {
+        std::future::ready(Err(Error::Login(LoginError::Required(None))))
     }
-    async fn put_object(
+    fn put_object(
         &self,
         _host: Option<&Host>,
         _s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
-    ) -> Res {
-        Err(Error::Login(LoginError::Required(None)))
+    ) -> impl Future<Output = Res> {
+        std::future::ready(Err(Error::Login(LoginError::Required(None))))
     }
-    async fn upload_file(
+    fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
         _source_path: impl AsRef<std::path::Path>,
         _dest_uri: &S3Uri,
         _size: u64,
-    ) -> Res<(S3Uri, ObjectHash)> {
-        Err(Error::Login(LoginError::Required(None)))
+    ) -> impl Future<Output = Res<(S3Uri, ObjectHash)>> {
+        std::future::ready(Err(Error::Login(LoginError::Required(None))))
     }
-    async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
-        Ok(crate::io::remote::HostConfig::default())
+    fn host_config(
+        &self,
+        _host: Option<&Host>,
+    ) -> impl Future<Output = Res<crate::io::remote::HostConfig>> {
+        std::future::ready(Ok(crate::io::remote::HostConfig::default()))
     }
-    async fn verify_bucket(&self, _bucket: &str) -> Res {
-        Ok(())
+    fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
+        std::future::ready(Ok(()))
     }
 }
 
@@ -466,41 +476,48 @@ impl crate::io::remote::Remote for LoggedOutRemote {
 struct DeniedRemote;
 
 impl crate::io::remote::Remote for DeniedRemote {
-    async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
-        Err(denied(s3_uri))
+    fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
+        std::future::ready(Err(denied(s3_uri)))
     }
-    async fn get_object_stream(
+    fn get_object_stream(
         &self,
         _host: Option<&Host>,
         s3_uri: &S3Uri,
-    ) -> Res<crate::io::remote::RemoteObjectStream> {
-        Err(denied(s3_uri))
+    ) -> impl Future<Output = Res<crate::io::remote::RemoteObjectStream>> {
+        std::future::ready(Err(denied(s3_uri)))
     }
-    async fn resolve_url(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
-        Err(denied(s3_uri))
+    fn resolve_url(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<S3Uri>> {
+        std::future::ready(Err(denied(s3_uri)))
     }
-    async fn put_object(
+    fn put_object(
         &self,
         _host: Option<&Host>,
         s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
-    ) -> Res {
-        Err(denied(s3_uri))
+    ) -> impl Future<Output = Res> {
+        std::future::ready(Err(denied(s3_uri)))
     }
-    async fn upload_file(
+    fn upload_file(
         &self,
         _host_config: &crate::io::remote::HostConfig,
         _source_path: impl AsRef<std::path::Path>,
         dest_uri: &S3Uri,
         _size: u64,
-    ) -> Res<(S3Uri, ObjectHash)> {
-        Err(denied(dest_uri))
+    ) -> impl Future<Output = Res<(S3Uri, ObjectHash)>> {
+        std::future::ready(Err(denied(dest_uri)))
     }
-    async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
-        Ok(crate::io::remote::HostConfig::default())
+    fn host_config(
+        &self,
+        _host: Option<&Host>,
+    ) -> impl Future<Output = Res<crate::io::remote::HostConfig>> {
+        std::future::ready(Ok(crate::io::remote::HostConfig::default()))
     }
-    async fn verify_bucket(&self, _bucket: &str) -> Res {
-        Ok(())
+    fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
+        std::future::ready(Ok(()))
     }
 }
 
@@ -720,7 +737,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     // "package is already up-to-date". Any other failure mode proves
     // the refresh-then-check path ran.
     let err = package
-        .pull(None)
+        .pull(None, SyncScope::IndividualFiles)
         .await
         .expect_err("pull should fail downstream on the missing NEW_HASH manifest");
     let msg = err.to_string();

@@ -46,11 +46,20 @@ pub(crate) enum RemoteChange {
     /// Remote content hash at `latest`.
     Modified(ObjectHash),
     Removed,
+    /// Present in `latest`, absent from `base` — the remote grew a path.
+    /// Carries the content hash at `latest`, like `Modified`.
+    Added(ObjectHash),
 }
 
-/// The remote `base → latest` delta over paths present in `base`. Latest-only
-/// (remote-added) paths are excluded — installing them is out of scope
-/// (sparse checkout).
+/// The whole remote `base → latest` row delta: modified, removed, **and
+/// added**.
+///
+/// Latest-only paths are included unconditionally, and whether a pull acts on
+/// them is not decided here — [`pull`](super::pull) filters the touch set by
+/// the caller's sync scope. That split matters: the delta is also the conflict
+/// input for [`classify_pull`], which needs to see a remote *add* regardless of
+/// whether this copy intends to fetch it, or a both-added collision would go
+/// unnoticed.
 ///
 /// This diffs manifest **rows** only, so a metadata-only revision (same rows,
 /// different header) yields an empty delta. It therefore drives the surgical
@@ -72,6 +81,14 @@ pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathB
             }
         }
     }
+    for latest_row in &latest.rows {
+        if base.get_record(&latest_row.logical_key).is_none() {
+            delta.insert(
+                latest_row.logical_key.clone(),
+                RemoteChange::Added(latest_row.hash.clone()),
+            );
+        }
+    }
     delta
 }
 
@@ -79,7 +96,12 @@ pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathB
 /// result? Same content (or both removed) is not a conflict.
 fn same_resulting_content(local: &Change, remote: &RemoteChange) -> bool {
     match (local, remote) {
-        (Change::Modified(row), RemoteChange::Modified(hash)) => &row.hash == hash,
+        (Change::Modified(row), RemoteChange::Modified(hash))
+        // Both sides added the same path. Only `Change::Added` can pair with
+        // `RemoteChange::Added`: a local add means the path has no `base` row,
+        // and a remote add means the same, while `Modified`/`Removed` on either
+        // side require one.
+        | (Change::Added(row), RemoteChange::Added(hash)) => &row.hash == hash,
         (Change::Removed(_), RemoteChange::Removed) => true,
         _ => false,
     }
@@ -126,23 +148,14 @@ pub fn classify_pull(
             // Same result → trivially resolved: not kept work, not a conflict.
             continue;
         }
-        // No `remote_delta` entry. For a local add this is ambiguous: the
-        // delta is base-only, so a path added on BOTH sides (present in
-        // `latest`, absent from `base`) also has no entry. Consult `latest`
-        // directly to tell a genuine local-only add from a hidden both-added
-        // case — otherwise a differing remote add would be silently overwritten
-        // by the next publish.
+        // No `remote_delta` entry means the remote left this path alone, for
+        // every kind of local change — including an add, now that the delta
+        // carries latest-only paths. (While it was base-only, an add had to
+        // consult `latest` here to tell a local-only add from a hidden
+        // both-added collision; the delta answers that itself.) So the local
+        // change is carried forward.
         match change {
-            Change::Added(row) => match latest.get_record(path) {
-                // Genuinely local-only add: remote does not have this path.
-                None => added.push(path.clone()),
-                // Both added, same content → trivially resolved (like
-                // `same_resulting_content`): neither kept work nor a conflict.
-                Some(latest_row) if latest_row.hash == row.hash => {}
-                // Both added, different content → conflict.
-                Some(_) => conflicts.push(path.clone()),
-            },
-            // Remote left this path alone → the local change is carried forward.
+            Change::Added(_) => added.push(path.clone()),
             Change::Modified(_) => modified.push(path.clone()),
             Change::Removed(_) => removed.push(path.clone()),
         }
@@ -362,6 +375,44 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    /// The delta reports all three kinds, additions included. It is
+    /// deliberately scope-blind: a remote add must be visible here even for a
+    /// caller that will not fetch it, because this is also the conflict input —
+    /// [`classify_pull`] reads it to catch a both-added collision, which it
+    /// would miss if additions were filtered out at the source.
+    #[test]
+    fn the_delta_reports_additions_alongside_modifications_and_removals() {
+        let base = manifest_of(vec![
+            row("kept", b"k"),
+            row("gone", b"g"),
+            row("edit", b"e1"),
+        ]);
+        let latest = manifest_of(vec![
+            row("kept", b"k"),
+            row("edit", b"e2"),
+            row("new", b"n"),
+        ]);
+
+        let delta = remote_delta(&base, &latest);
+
+        assert!(
+            !delta.contains_key(&PathBuf::from("kept")),
+            "an unchanged row is not a change"
+        );
+        assert!(matches!(
+            delta.get(&PathBuf::from("gone")),
+            Some(RemoteChange::Removed)
+        ));
+        assert!(matches!(
+            delta.get(&PathBuf::from("edit")),
+            Some(RemoteChange::Modified(_))
+        ));
+        assert!(
+            matches!(delta.get(&PathBuf::from("new")), Some(RemoteChange::Added(h)) if *h == row("new", b"n").hash),
+            "a latest-only path is an Added carrying its content hash"
+        );
     }
 
     #[test(tokio::test)]

@@ -26,6 +26,7 @@ This project uses `just` as a task runner for common development tasks.
 
 ```bash
 cargo install just
+cargo install cargo-nextest --locked   # the test runner CI uses
 
 just -l
 ```
@@ -43,6 +44,35 @@ cargo build [-p package-name]
 cargo fmt [--check] [-p package-name]
 cargo clippy [-- --deny warnings] [-p package-name]
 ```
+
+### Tests that need AWS
+
+Tests that read or write the shared S3 fixtures are named `live_*`. Nothing
+marks them as skipped, so `cargo test` and `cargo nextest run` both run them by
+default and both need AWS credentials in the environment.
+
+Without credentials, deselect them by name:
+
+```bash
+just test-no-aws            # the recipe; wraps the line below
+cargo nextest run --profile no-aws
+cargo test -- --skip live_  # same effect without nextest
+```
+
+Note that `cargo test --profile no-aws` does **not** work — to `cargo`,
+`--profile` names a build profile, and it will fail with `profile 'no-aws' is
+not defined`. The `no-aws` profile belongs to nextest.
+
+CI splits the same line: one step runs the `no-aws` selection everywhere, and a
+second step runs `live_*` with credentials, skipped when the pull request comes
+from a fork. GitHub withholds secrets from fork pull requests — a platform
+rule, not a project choice — so the split is what lets an outside contributor
+get a CI signal at all.
+
+**The naming convention is load-bearing.** A test that touches the fixtures but
+is not named `live_*` lands in the credential-free step, and fails there on
+every run — including your own pushes, not just fork pull requests. If a test
+you just wrote fails with a credentials error, check its name first.
 
 ## Release Process Overview
 
@@ -73,3 +103,8 @@ See project-specific contributing guides for detailed release procedures.
 
 See [docs/verification.md](docs/verification.md) for SHA256-chunked,
 CRC64/NVMe, and manifest verification recipes.
+
+## Reporting Security Issues
+
+See [SECURITY.md](SECURITY.md) for how to report vulnerabilities privately
+and what is in scope.
