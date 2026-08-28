@@ -13,12 +13,15 @@ use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
 use crate::autopull::Watcher;
+use crate::experimental_settings::ExperimentalSettings;
+use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 use crate::quilt::flow::PullOutcome;
+use crate::quilt::lineage::SyncScope;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{PackageEvent, RemotePackageEvent};
 
@@ -342,10 +345,40 @@ pub async fn package_commit_and_push(
 async fn package_pull_command(
     m: &model::Model,
     namespace: &str,
+    experimental: &ExperimentalSettings,
 ) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_pull(m, &namespace, None).await?;
+    model::package_pull(m, &namespace, None, experimental).await?;
     Ok(namespace)
+}
+
+/// Record whether this package keeps its whole contents.
+///
+/// Storage only — it writes the standing choice and returns. Catching up on
+/// files already listed is the caller's separate `package_install_paths` call,
+/// deliberately not folded in here: one of them is a preference and the other
+/// downloads bytes, and a failure to fetch must not silently un-choose the mode.
+#[tauri::command]
+pub async fn package_set_sync_scope(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    entire_package: bool,
+) -> Result<(), String> {
+    let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let scope = if entire_package {
+        SyncScope::EntirePackage
+    } else {
+        SyncScope::IndividualFiles
+    };
+    let installed = m
+        .get_installed_package(&namespace)
+        .await
+        .map_err(|e| e.to_frontend_string())?
+        .ok_or_else(|| format!("Package {namespace} not found"))?;
+    m.package_set_sync_scope(&installed, scope)
+        .await
+        .map_err(|e| e.to_frontend_string())
 }
 
 #[tauri::command]
@@ -353,6 +386,7 @@ pub async fn package_pull(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
+    experimental: tauri::State<'_, SharedExperimentalSettings>,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
@@ -360,7 +394,8 @@ pub async fn package_pull(
     let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    let result = package_pull_command(&m, &namespace).await;
+    let experimental = experimental.read().await.clone();
+    let result = package_pull_command(&m, &namespace, &experimental).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }

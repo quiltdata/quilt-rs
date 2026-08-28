@@ -54,6 +54,22 @@ ignore = [
 
     # --- mixpanel-rs (dotenv) ---
     { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, transitive via mixpanel-rs" },
+
+    # --- h2 0.3 via mixpanel-rs ---
+    # Denial of service, low severity: h2 accepts and queues empty DATA frames
+    # without limit, so a stream that is never drained can grow unboundedly.
+    # Reached only as an outbound client to Mixpanel's ingest API; nothing in
+    # the workspace serves HTTP over hyper 0.14, and a local build never even
+    # constructs the client (`Sink::DryRun`).
+    #
+    # Not fixable in place: the advisory patches `>= 0.4.16` and the 0.3 line
+    # has no patched release at all, while mixpanel-rs 0.3.1 is its latest and
+    # pins reqwest 0.11. Clears when mixpanel-rs moves to reqwest 0.12+, or when
+    # we replace it. Our own h2 0.4 is patched — 0.4.19 in Cargo.lock.
+    #
+    # Note this ignore is by advisory id, which is all cargo-deny supports here,
+    # so it would also mask a future h2 0.4 regression under the same id.
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3 via mixpanel-rs -> reqwest 0.11 -> hyper 0.14; no patched 0.3 release exists" },
 ]
 
 [licenses]
