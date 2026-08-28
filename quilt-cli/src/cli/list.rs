@@ -236,8 +236,10 @@ mod tests {
     /// Verifies that list model returns correct output for both empty and populated states:
     ///   * empty list shows "No installed packages" message
     ///   * after installing a package, shows its bucket, namespace and status
+    ///
+    /// This uses the shared S3 fixture and is run by credentialed CI only.
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         // Test with one installed package
         let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
@@ -265,8 +267,10 @@ mod tests {
     ///   * shows the installed package namespace
     ///   * formats output according to display implementation
     // TODO: install and list multiple packages
+    ///
+    /// This uses the shared S3 fixture and is run by credentialed CI only.
     #[test(tokio::test)]
-    async fn test_command_with_package() -> Result<(), Error> {
+    async fn live_command_with_package() -> Result<(), Error> {
         let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 

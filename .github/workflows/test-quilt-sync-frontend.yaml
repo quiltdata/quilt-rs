@@ -9,6 +9,9 @@ on:
   push:
     paths-ignore:
       - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
 
 concurrency:
   # `event_name` so a scheduled run and a push to main cannot cancel each other.
