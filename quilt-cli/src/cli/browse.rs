@@ -117,9 +117,8 @@ mod tests {
 
     /// Verifies that the remote Quilt registry has the expected manifest.
     /// Test actually fetch the manifest from Quilt, without mocks.
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         let uri = pkg::URI_LATEST.to_string();
 
         let readme_logical_key = PathBuf::from(pkg::README_LK);

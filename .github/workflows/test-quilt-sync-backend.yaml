@@ -46,8 +46,21 @@ jobs:
         run: cargo clippy --all-targets --all-features -- --deny warnings
         working-directory: ./quilt-sync/src-tauri
 
+      # Two steps, for the reason given in test-quilt-rs.yaml.
       - name: Test
-        run: cargo nextest run
+        run: cargo nextest run --profile no-aws
+        working-directory: ./quilt-sync/src-tauri
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: debug
+          # See test-quilt-rs.yaml.
+          AWS_EC2_METADATA_DISABLED: true
+
+      - name: Test (live AWS fixtures)
+        # Secrets reach a pull request only from a branch in this repository —
+        # a platform rule, so this is a skip, not a failure.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: cargo nextest run -E 'test(/::live_/)'
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
@@ -82,10 +95,10 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      # Two steps, for the reason given in test-quilt-rs.yaml.
       - name: Test
-        run: cargo nextest run
+        run: cargo nextest run --profile no-aws
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_EC2_METADATA_DISABLED: true

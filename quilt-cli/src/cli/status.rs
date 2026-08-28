@@ -111,9 +111,8 @@ mod tests {
         clippy::too_many_lines,
         reason = "large integration test; allowed per-test so new large tests stay flagged"
     )]
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         use crate::cli::fixtures::packages::default as pkg;
 
         let uri = pkg::URI;
@@ -242,9 +241,8 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_model_when_latest_is_outdated() -> Result<(), Error> {
+    async fn live_model_when_latest_is_outdated() -> Result<(), Error> {
         use crate::cli::fixtures::packages::outdated as pkg;
 
         let uri = pkg::URI;

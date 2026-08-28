@@ -111,9 +111,8 @@ mod tests {
     ///  * workflow/config.yml exists
     ///  * workflow id is not set
     ///  * no files to commit,
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
+    async fn live_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let uri = pkg::URI;
@@ -148,9 +147,8 @@ mod tests {
     /// top-hash — are byte-identical to the `NoWorkflow` case pinned by
     /// [`test_commit_package_with_message_and_null_workflow`]. This documents the
     /// equivalence rather than introducing a new anchor.
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_commit_package_bucket_default_equals_null_workflow() -> Result<(), Error> {
+    async fn live_commit_package_bucket_default_equals_null_workflow() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let uri = pkg::URI;
@@ -183,9 +181,8 @@ mod tests {
     /// `Type` in the package metadata; committing with `Clear` (no metadata)
     /// against that same workflow is rejected, and the message the user sees
     /// must name the failing rule (`metadata_schema`) and every missing field.
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_commit_rejected_by_workflow_surfaces_clear_error() -> Result<(), Error> {
+    async fn live_commit_rejected_by_workflow_surfaces_clear_error() -> Result<(), Error> {
         use crate::cli::fixtures::packages::my_workflow as pkg;
 
         let uri = pkg::URI;
@@ -228,9 +225,8 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_commit_package_with_workflow_and_meta() -> Result<(), Error> {
+    async fn live_commit_package_with_workflow_and_meta() -> Result<(), Error> {
         use crate::cli::fixtures::packages::my_workflow as pkg;
 
         let uri = pkg::URI;
@@ -265,9 +261,8 @@ mod tests {
     ///  * workflow/config.yml DOESN'T exists
     ///  * workflow id is not set
     ///  * no files to commit,
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_commit_package_with_message_only() -> Result<(), Error> {
+    async fn live_commit_package_with_message_only() -> Result<(), Error> {
         use crate::cli::fixtures::packages::no_workflows_message_only as pkg;
 
         let uri = pkg::URI;
@@ -293,9 +288,8 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
+    async fn live_throwing_error_when_workflow_set_but_no_workflows_config() -> Result<(), Error> {
         use crate::cli::fixtures::packages::no_workflows_message_only as pkg;
 
         let uri = pkg::URI;
@@ -324,9 +318,8 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_commit_package_with_meta_only() -> Result<(), Error> {
+    async fn live_commit_package_with_meta_only() -> Result<(), Error> {
         use crate::cli::fixtures::packages::no_workflows_with_meta as pkg;
 
         let uri = pkg::URI;
@@ -402,9 +395,8 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73";
 
         // TODO: commit is not-modified when we commit the same file (timestamp.txt)
@@ -527,9 +519,8 @@ mod tests {
     /// `Keep` (the CLI default when `--user-meta` is absent) inherits the
     /// installed revision's package-level metadata, so the hash covers the
     /// fixture's meta (`{"A": "B", "c": "d", "e": 123}`).
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_model_keep_inherits_fixture_meta() -> Result<(), Error> {
+    async fn live_model_keep_inherits_fixture_meta() -> Result<(), Error> {
         let uri = "quilt+s3://udp-spec#package=spec/quilt-rs@11c5f6dbd1bf1d8675c18aaaa963b2f0dced2f892c7406fa36c9cd17d3d31b73";
         let (m, _installed_package, _temp_dir) = install_package_into_temp_dir(uri).await?;
         let local_domain = m.get_local_domain();

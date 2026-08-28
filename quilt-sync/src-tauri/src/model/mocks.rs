@@ -152,9 +152,8 @@ pub fn mock_installed_packages_list(model: &mut MockQuiltModel) -> &MockQuiltMod
     model
 }
 
-#[ignore = "requires live AWS fixture credentials"]
 #[tokio::test]
-async fn test_install_package_only_with_timestamp_tag() -> Result {
+async fn live_install_package_only_with_timestamp_tag() -> Result {
     crate::env::init();
 
     let temp_dir = TempDir::new()?;
@@ -188,9 +187,8 @@ async fn test_install_package_only_with_timestamp_tag() -> Result {
     Ok(())
 }
 
-#[ignore = "requires live AWS fixture credentials"]
 #[tokio::test]
-async fn test_install_package_only_with_hash() -> Result {
+async fn live_install_package_only_with_hash() -> Result {
     crate::env::init();
 
     let temp_dir = TempDir::new()?;

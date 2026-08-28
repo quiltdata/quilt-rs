@@ -306,9 +306,8 @@ mod tests {
     /// Verifies that push command returns error when there are no commits:
     ///   * installs a package but makes no commits
     ///   * attempts to push without commits
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_no_commit() -> Result<(), Error> {
+    async fn live_no_commit() -> Result<(), Error> {
         let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
@@ -342,9 +341,8 @@ mod tests {
     /// 4. Push and verify first expected top hash: c8027e8697016feb74b8ea523ca55934243653b890b94d64166ef2664a71ebab
     /// 5. Revert e0-0.txt content, commit with different message and meta
     /// 6. Push and verify final expected top hash matches original: 4076eb7774f5159aab212302288a2a2a9e59fab69cf4e41e827072fee80fabb4
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_push_sha256_checksum() -> Result<(), Error> {
+    async fn live_push_sha256_checksum() -> Result<(), Error> {
         let namespace: Namespace = ("quilt_rs", "test").into();
         let uri = "quilt+s3://data-yaml-spec-tests#package=quilt_rs/test";
         let host_config = Some(HostConfig::default_sha256_chunked());
@@ -437,9 +435,8 @@ mod tests {
 
     /// Integration test: create local package → set bucket → push to S3 → verify lineage.
     /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_push_local_package_bucket_only() -> Result<(), Error> {
+    async fn live_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
         use quilt_rs::lineage::UpstreamState;
@@ -545,9 +542,8 @@ mod tests {
     /// 4. Push and verify first expected top hash: 8c9beced00f51cb100da861e62688e71f77a692a1c71bce422e329706ede6e63
     /// 5. Revert 1.txt content, commit with different message and meta
     /// 6. Push and verify final expected top hash matches original: b427c3867bce2445a988f69f43ad3998237d2fedf6f5e678822acd1a1e8f580a
-    #[ignore = "requires live AWS fixture credentials"]
     #[test(tokio::test)]
-    async fn test_push_crc64_checksum() -> Result<(), Error> {
+    async fn live_push_crc64_checksum() -> Result<(), Error> {
         let namespace: Namespace = ("crc64", "s3").into();
         let uri = "quilt+s3://fiskus-us-east-1#package=crc64/s3";
         let host_config = Some(HostConfig::default_crc64());
