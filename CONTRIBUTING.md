@@ -46,7 +46,11 @@ cargo clippy [-- --deny warnings] [-p package-name]
 
 ## Getting a pull request merged
 
-A pull request is ready to merge when all of these are true.
+Three things are checked on every pull request. Meeting them is necessary
+rather than sufficient — a change still has to be correct, readable, and free
+of anything that weakens security, and review will say so where it is not. But
+a pull request missing any of these will be sent back, so they are the cheap
+ones to check first.
 
 **CI is green.** A pull request from a fork runs the same checks as a branch in
 this repository, minus the tests that need AWS fixture credentials — GitHub does
@@ -69,7 +73,8 @@ you changed; they do not find the same lines. A command that gains a flag, a
 default, or a subcommand usually touches the root `README.md` quickstart, the
 crate's own `README.md`, and any "known issues" list that named the gap.
 
-Changelog entries are a maintainer's job. You do not need to write one.
+Changelog entries are welcome but not required — a maintainer will write one
+if you have not.
 
 ## Release Process Overview
 
