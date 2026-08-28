@@ -1,33 +1,29 @@
 name: Test quilt_rs
 
 on:
+  # Toolchain canary: `rust-toolchain.toml` floats on `stable` and
+  # `setup-rust-dev` inherits it, so every run resolves a fresh compiler.
+  # Without a schedule, a new release is first seen when it breaks some PR.
+  schedule:
+    # Off the hour: scheduled runs on the hour contend for runners.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
   push:
-    paths:
-      - "quilt-rs/**"
-      - "!quilt-rs/**/*.md"
-      - "quilt-cli/**"
-      - "!quilt-cli/**/*.md"
-      - "quilt-uri/**"
-      - "!quilt-uri/**/*.md"
-      - "Cargo.*"
-      - "rust-toolchain.toml"
-      - "deny.toml"
-      - ".github/workflows/test-quilt-rs.yaml"
+    # Ignore only crates downstream of what this job builds: Cargo forbids
+    # dependency cycles, so nothing here can depend on quilt-sync, which its
+    # `--exclude` flags name below. An upstream crate would skip a real check.
+    paths-ignore:
+      - "**/*.md"
+      - "quilt-sync/**"
   pull_request:
-    paths:
-      - "quilt-rs/**"
-      - "!quilt-rs/**/*.md"
-      - "quilt-cli/**"
-      - "!quilt-cli/**/*.md"
-      - "quilt-uri/**"
-      - "!quilt-uri/**/*.md"
-      - "Cargo.*"
-      - "rust-toolchain.toml"
-      - "deny.toml"
-      - ".github/workflows/test-quilt-rs.yaml"
+    # Same filter as `push`: see the note above.
+    paths-ignore:
+      - "**/*.md"
+      - "quilt-sync/**"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # `event_name` so a scheduled run and a push to main cannot cancel each other.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
