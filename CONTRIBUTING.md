@@ -44,6 +44,33 @@ cargo fmt [--check] [-p package-name]
 cargo clippy [-- --deny warnings] [-p package-name]
 ```
 
+## Getting a pull request merged
+
+A pull request is ready to merge when all of these are true.
+
+**CI is green.** A pull request from a fork runs the same checks as a branch in
+this repository, minus the tests that need AWS fixture credentials — GitHub does
+not pass secrets to a fork's workflow run, so those are skipped rather than
+failed. Everything else runs, and a red check is a red check wherever it came
+from.
+
+**Every review comment is resolved, and @greptileai is at 5/5.** Reviews come
+from Greptile and Copilot as well as from maintainers. The bots are usually
+right and sometimes wrong — a reply explaining why a comment does not apply
+resolves it just as well as a code change does. Silence does not. If Greptile
+holds below 5/5 over something we have deliberately decided against, say so in a
+reply and a maintainer will merge past it.
+
+**The docs still tell the truth.** This is the one most pull requests miss. The
+`README.md` files describe current behaviour and cite open issues by number for
+known limitations, so a change that closes an issue tends to falsify a paragraph
+somewhere else in the tree. Grep for the issue number *and* for the behaviour
+you changed; they do not find the same lines. A command that gains a flag, a
+default, or a subcommand usually touches the root `README.md` quickstart, the
+crate's own `README.md`, and any "known issues" list that named the gap.
+
+Changelog entries are a maintainer's job. You do not need to write one.
+
 ## Release Process Overview
 
 Each project has different release approaches:
