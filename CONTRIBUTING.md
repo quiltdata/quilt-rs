@@ -82,9 +82,14 @@ of anything that weakens security, and review will say so where it is not. But
 a pull request missing any of these will be sent back, so they are the cheap
 ones to check first.
 
-**CI is green.** A pull request from a fork runs everything except the `live_*`
-tests, which are skipped rather than failed — see "Tests that need AWS" above.
-A red check is a red check wherever it came from.
+**CI is green.** Which checks run depends on what you touched: the Rust
+workflows ignore markdown-only changes, `test-quilt-rs` also ignores
+`quilt-sync/**`, and the markdown lint fires only on `*.md`. QuiltSync's
+Cross-Platform Tests job is `main`-only and never appears on a pull request at
+all. So read the check list for what is there, not for the absence of red — a
+check that never ran is not a check that passed. A fork gets the same set as a
+branch here, minus the `live_*` tests, which are skipped rather than failed
+(see "Tests that need AWS" above).
 
 **Every review comment is resolved, and @greptileai is at 5/5.** Reviews come
 from Greptile and Copilot as well as from maintainers. The bots are usually
