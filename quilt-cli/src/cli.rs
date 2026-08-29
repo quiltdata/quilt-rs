@@ -240,13 +240,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     if let Some(dir) = args.home
         && let Err(err) = m.set_home(dir).await
     {
-        log::error!("Failed to set home directory: {err}");
+        log::debug!("Failed to set home directory: {err}");
         return Ok(Std::Err(err));
     }
 
     // Validate the lineage
     if let Err(err) = m.get_home().await {
-        log::error!("Failed to get home directory: {err}");
+        log::debug!("Failed to get home directory: {err}");
         return Ok(Std::Err(err));
     }
 
