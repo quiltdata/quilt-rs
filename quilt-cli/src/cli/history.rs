@@ -16,7 +16,6 @@ pub struct Input {
 #[derive(Debug)]
 struct Revision {
     hash: String,
-    timestamp: String,
     message: String,
     order: Option<usize>,
 }
@@ -33,12 +32,7 @@ impl std::fmt::Display for Output {
 
         for revision in &self.revisions {
             let short_hash: String = revision.hash.chars().take(8).collect();
-            let date = revision
-                .timestamp
-                .split('T')
-                .next()
-                .unwrap_or(&revision.timestamp);
-            writeln!(f, "{short_hash}  {date}  {}", revision.message)?;
+            writeln!(f, "{short_hash}  {}", revision.message)?;
         }
         Ok(())
     }
@@ -79,14 +73,6 @@ pub async fn model(
         let path = entry.path();
         let hash = entry.file_name().to_string_lossy().into_owned();
         let manifest = quilt_rs::manifest::Manifest::from_path(&package.storage, &path).await?;
-        let timestamp = match current_commit.filter(|commit| commit.hash == hash) {
-            Some(commit) => commit.timestamp.to_rfc3339(),
-            None => package
-                .storage
-                .modified_timestamp(&path)
-                .await?
-                .to_rfc3339(),
-        };
         let message = manifest
             .header
             .message
@@ -96,7 +82,6 @@ pub async fn model(
         revisions.push(Revision {
             order: revision_order.get(&hash).copied(),
             hash,
-            timestamp,
             message,
         });
     }
@@ -106,10 +91,7 @@ pub async fn model(
             (Some(left_order), Some(right_order)) => left_order.cmp(&right_order),
             (Some(_), None) => Ordering::Less,
             (None, Some(_)) => Ordering::Greater,
-            (None, None) => right
-                .timestamp
-                .cmp(&left.timestamp)
-                .then_with(|| right.hash.cmp(&left.hash)),
+            (None, None) => Ordering::Equal,
         }
         .then_with(|| left.hash.cmp(&right.hash))
     });
@@ -135,13 +117,11 @@ mod tests {
             revisions: vec![
                 Revision {
                     hash: "0123456789abcdef".to_string(),
-                    timestamp: "2026-08-07T00:00:00Z".to_string(),
                     message: "add east region".to_string(),
                     order: Some(0),
                 },
                 Revision {
                     hash: "fedcba9876543210".to_string(),
-                    timestamp: "2026-08-06T00:00:00Z".to_string(),
                     message: "initial import".to_string(),
                     order: Some(1),
                 },
@@ -150,7 +130,7 @@ mod tests {
 
         assert_eq!(
             output.to_string(),
-            "01234567  2026-08-07  add east region\nfedcba98  2026-08-06  initial import\n"
+            "01234567  add east region\nfedcba98  initial import\n"
         );
     }
 

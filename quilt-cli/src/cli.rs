@@ -157,7 +157,6 @@ enum Commands {
     /// List installed packages
     List,
     /// List a package's local revision history.
-    /// Older revision dates are best-effort local manifest file timestamps.
     Log {
         /// Namespace of the package. Ex. foo/bar
         #[arg(short, long)]
