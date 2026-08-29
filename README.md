@@ -39,18 +39,17 @@ Windows builds from source only
 
 ## Quickstart
 
-This example uses two directories: `--home` is where `quilt` keeps every
-package's working copy (pass it once; it is remembered after that,
-[#838](https://github.com/quiltdata/quilt-rs/issues/838)), and `-s` is an
-existing directory to import files from. Commands log at INFO by default;
-prefix them with `RUST_LOG=warn` to get exactly the output shown
+This example uses two directories: `quilt` keeps package working copies under
+`~/QuiltSync` by default, and `-s` is an existing directory to import files
+from. Commands log at INFO by default; prefix them with `RUST_LOG=warn` to get
+exactly the output shown
 ([#837](https://github.com/quiltdata/quilt-rs/issues/837)).
 
 ```bash
 mkdir -p ~/plate-exports
 printf 'sample,od600\nA1,0.42\n' > ~/plate-exports/plate1.csv
 
-quilt --home ~/QuiltSync create -n lab/assays -s ~/plate-exports -m "first run"
+quilt create -n lab/assays -s ~/plate-exports -m "first run"
 ```
 
 ```text
@@ -102,13 +101,14 @@ quilt login --host quilt.example.com
 quilt push -n lab/assays --bucket lab-data --origin quilt.example.com
 ```
 
-Collaborators log in to the same stack — on their machine, the first command
-also sets `--home` once — then install. `install` by itself fetches only the
-manifest, the content-hashed file listing; `--path` (or a `&path=` param in
-the URI) downloads the files they actually need:
+Collaborators log in to the same stack, then install. Their working copies use
+`~/QuiltSync` unless they pass `--home` to choose a different directory.
+`install` by itself fetches only the manifest, the content-hashed file listing;
+`--path` (or a `&path=` param in the URI) downloads the files they actually
+need:
 
 ```bash
-quilt --home ~/QuiltSync login --host quilt.example.com
+quilt login --host quilt.example.com
 quilt install --path plate1.csv \
   'quilt+s3://lab-data#package=lab/assays&catalog=quilt.example.com'
 ```

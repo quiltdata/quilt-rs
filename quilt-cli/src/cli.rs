@@ -34,7 +34,6 @@ pub use output::Std;
 pub use output::print;
 
 const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-sync";
-const DEFAULT_HOME_DIR_NAME: &str = "QuiltSync";
 
 /// Resolve the commit command's `(--workflow, --no-workflow)` flag pair into a
 /// [`WorkflowIntent`] at the clap boundary.
@@ -78,7 +77,7 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
 
 fn get_default_home_dir() -> Result<PathBuf, Error> {
     dirs::home_dir()
-        .map(|user_home| user_home.join(DEFAULT_HOME_DIR_NAME))
+        .map(|user_home| user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME))
         .ok_or(Error::Home)
 }
 
@@ -563,7 +562,7 @@ mod tests {
         let user_home = dirs::home_dir().ok_or(Error::Home)?;
         assert_eq!(
             get_default_home_dir()?,
-            user_home.join(DEFAULT_HOME_DIR_NAME)
+            user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME)
         );
         Ok(())
     }
@@ -590,6 +589,19 @@ mod tests {
             .await?;
         assert_eq!(stored_home.as_ref(), &get_default_home_dir()?);
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_missing_home_lineage_is_repaired_without_flag() -> Result<(), Error> {
+        let (model, domain_temp_dir) = Model::from_temp_dir()?;
+        let paths = quilt_rs::paths::DomainPaths::new(domain_temp_dir.path().to_path_buf());
+        std::fs::create_dir_all(paths.dot_quilt_dir())?;
+        std::fs::write(paths.lineage(), br#"{"packages":{},"home":""}"#)?;
+
+        initialize_home(&model, None).await?;
+
+        assert_eq!(model.get_home().await?.as_ref(), &get_default_home_dir()?);
         Ok(())
     }
 
