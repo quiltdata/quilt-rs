@@ -239,6 +239,7 @@ impl Manifest {
     /// Sorted by `logical_key` to match `Table`'s `BTreeMap` behavior and uses proper `TryFrom` conversion
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "kept async for the streaming, Table-compatible manifest API; a streamed backend will await here"
     )]
     pub async fn records_stream(&self) -> impl RowsStream {
@@ -256,6 +257,7 @@ impl Manifest {
     /// Get the number of records in the manifest
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "kept async for the streaming, Table-compatible manifest API; a streamed backend will await here"
     )]
     pub async fn records_len(&self) -> usize {
@@ -265,6 +267,7 @@ impl Manifest {
     /// Insert a record into the manifest (for compatibility with Table API)
     #[allow(
         clippy::unused_async,
+        clippy::unused_async_trait_impl,
         reason = "kept async for the streaming, Table-compatible manifest API; a streamed backend will await here"
     )]
     pub async fn insert_record(&mut self, row: ManifestRow) -> Res<Option<ManifestRow>> {

@@ -1,5 +1,6 @@
 pub mod packages {
     pub mod default {
+        pub const BUCKET: &str = "data-yaml-spec-tests";
         pub const URI_LATEST: &str = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs";
         pub const URI: &str = "quilt+s3://data-yaml-spec-tests#package=reference/quilt-rs@a4aed21f807f0474d2761ed924a5875cc10fd0cd84617ef8f7307e4b9daebcc7";
         pub const README_LK: &str = "one/two two/three three three/READ ME.md";

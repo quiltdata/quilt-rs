@@ -4,6 +4,8 @@ use serde::Serialize;
 
 use crate::Error;
 use crate::commands::RoleCache;
+use crate::experimental_settings::ExperimentalSettings;
+use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
 use crate::quilt;
 use crate::routes;
@@ -59,6 +61,14 @@ pub struct InstalledPackageData {
     pub unmodified_count: usize,
     pub filter_unmodified: bool,
     pub filter_ignored: bool,
+    /// This package's standing sync scope: `true` once the user has asked for
+    /// the whole package. Reported raw — the screen renders the choice, and
+    /// `entire_package_sync_enabled` decides whether it may be shown at all.
+    pub syncs_entire_package: bool,
+    /// Whether the experiment that offers the scope control is on. `false`
+    /// means the screen renders exactly as it did before the feature existed,
+    /// whatever `syncs_entire_package` says.
+    pub entire_package_sync_enabled: bool,
 }
 
 /// The installed revision's display message: the manifest header's commit
@@ -70,6 +80,7 @@ fn manifest_message(manifest: &quilt::manifest::Manifest) -> Option<String> {
 #[allow(clippy::too_many_lines, reason = "cohesive package-data assembly")]
 async fn get_installed_package_data_from_model(
     m: &impl model::QuiltModel,
+    experimental: &ExperimentalSettings,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
@@ -259,6 +270,8 @@ async fn get_installed_package_data_from_model(
         unmodified_count,
         filter_unmodified: filter.unmodified,
         filter_ignored: filter.ignored,
+        syncs_entire_package: lineage.sync_scope.covers_untracked(),
+        entire_package_sync_enabled: experimental.entire_package_sync,
     })
 }
 
@@ -267,6 +280,7 @@ pub async fn get_installed_package_data(
     m: tauri::State<'_, model::Model>,
     roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    experimental: tauri::State<'_, SharedExperimentalSettings>,
     namespace: String,
     filter: Option<String>,
 ) -> Result<InstalledPackageData, String> {
@@ -277,7 +291,8 @@ pub async fn get_installed_package_data(
         .map(|f| routes::EntriesFilter::from_filter_str(&f))
         .unwrap_or_default();
 
-    get_installed_package_data_from_model(&*m, &roles, &tracing, &namespace, filter)
+    let experimental = experimental.read().await.clone();
+    get_installed_package_data_from_model(&*m, &experimental, &roles, &tracing, &namespace, filter)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -303,6 +318,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -334,6 +350,7 @@ mod tests {
 
         let result = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -368,6 +385,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -413,6 +431,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -475,6 +494,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -522,6 +542,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -568,6 +589,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -635,6 +657,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
@@ -664,6 +687,7 @@ mod tests {
 
         let data = get_installed_package_data_from_model(
             &model,
+            &ExperimentalSettings::default(),
             &RoleCache::default(),
             &tracing,
             &namespace,
