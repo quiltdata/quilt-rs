@@ -96,12 +96,12 @@ entirely on disk:
 quilt --home ~/QuiltHome create --namespace me/local-pkg \
     --message "Initial revision"
 
-# Package files live under <home>/<namespace>; add/edit them directly
-mkdir -p ~/QuiltHome/me/local-pkg
-echo "a,b,c" > ~/QuiltHome/me/local-pkg/data.csv
+# Package files live under <home>/<namespace>; add/edit them directly.
+cd ~/QuiltHome/me/local-pkg
+echo "a,b,c" > data.csv
 
-quilt status --namespace me/local-pkg
-quilt commit --namespace me/local-pkg --message "Add data.csv"
+quilt status
+quilt commit --message "Add data.csv"
 
 quilt list
 ```
