@@ -49,6 +49,10 @@ impl MockRemote {
     }
 }
 
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "six of this impl's methods do await; only `host_config` and `verify_bucket` do not. Rewriting just those two would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
+)]
 impl Remote for MockRemote {
     async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();

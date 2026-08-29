@@ -3,6 +3,8 @@
 
 use super::*;
 
+use crate::experimental_settings::ExperimentalSettings;
+
 /// Shared boilerplate for the publish-branch tests: returns a
 /// `MockQuiltModel` wired with the package list, lineage, package, and
 /// status mocks, plus the namespace and lineage clones for tests that
@@ -86,6 +88,7 @@ fn quiet_status(
 fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInner {
     WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
+        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -113,6 +116,7 @@ fn make_inner_with_flags(
             },
             close_to_tray: false,
         })),
+        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -728,6 +732,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
+        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -841,6 +846,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
+        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -878,7 +884,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
             removed: Vec::new(),
         })
     });
-    model.expect_package_pull().times(1).returning(|_, _| {
+    model.expect_package_pull().times(1).returning(|_, _, _| {
         Ok(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
             namespace: ("acme", "demo").into(),
@@ -891,6 +897,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
+        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),

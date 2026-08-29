@@ -559,7 +559,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_install() -> Result<(), Error> {
+    async fn live_install() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         // Create temporary directory for domain
@@ -596,7 +596,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_commit_valid() -> Result<(), Error> {
+    async fn live_commit_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -628,7 +628,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_commit_invalid() -> Result<(), Error> {
+    async fn live_commit_invalid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_pull_valid() -> Result<(), Error> {
+    async fn live_pull_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::outdated as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -792,7 +792,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_uninstall_valid() -> Result<(), Error> {
+    async fn live_uninstall_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::default as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -929,7 +929,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_browse_valid() -> Result<(), Error> {
+    async fn live_browse_valid() -> Result<(), Error> {
         use crate::cli::fixtures::get_browse_output;
         use crate::cli::fixtures::packages::default as pkg;
 
