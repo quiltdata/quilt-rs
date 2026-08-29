@@ -60,8 +60,8 @@ fn enabled() -> AutosyncSettings {
     }
 }
 
-fn pulled_with(outcome: PullOutcome) -> Result<(quilt_uri::ManifestUri, PullOutcome), Error> {
-    Ok((
+fn pulled_with(outcome: PullOutcome) -> (quilt_uri::ManifestUri, PullOutcome) {
+    (
         quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
             namespace: ("acme", "demo").into(),
@@ -69,7 +69,7 @@ fn pulled_with(outcome: PullOutcome) -> Result<(quilt_uri::ManifestUri, PullOutc
             origin: None,
         },
         outcome,
-    ))
+    )
 }
 
 #[test]
@@ -386,7 +386,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     model
         .expect_package_pull_with_outcome()
         .times(1)
-        .returning(|_, _, _| pulled_with(PullOutcome::CleanUpdate));
+        .returning(|_, _, _| Ok(pulled_with(PullOutcome::CleanUpdate)));
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -467,11 +467,11 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         .expect_package_pull_with_outcome()
         .times(1)
         .returning(|_, _, _| {
-            pulled_with(PullOutcome::KeepsLocalChanges {
+            Ok(pulled_with(PullOutcome::KeepsLocalChanges {
                 added: vec![std::path::PathBuf::from("local.txt")],
                 modified: Vec::new(),
                 removed: Vec::new(),
-            })
+            }))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -560,11 +560,11 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         .expect_package_pull_with_outcome()
         .times(1)
         .returning(|_, _, _| {
-            pulled_with(PullOutcome::KeepsLocalChanges {
+            Ok(pulled_with(PullOutcome::KeepsLocalChanges {
                 added: Vec::new(),
                 modified: Vec::new(),
                 removed: Vec::new(),
-            })
+            }))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -648,7 +648,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     model
         .expect_package_pull_with_outcome()
         .times(1)
-        .returning(|_, _, _| pulled_with(PullOutcome::CleanUpdate));
+        .returning(|_, _, _| Ok(pulled_with(PullOutcome::CleanUpdate)));
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {

@@ -564,7 +564,7 @@ mod tests {
             },
         };
         let mut output = Vec::new();
-        let result = init(install_args).await?;
+        let result = Box::pin(init(install_args)).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
@@ -598,7 +598,7 @@ mod tests {
 
         // Test init with valid arguments
         let mut output = Vec::new();
-        let result = init(commit_args).await?;
+        let result = Box::pin(init(commit_args)).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
@@ -629,7 +629,7 @@ mod tests {
 
         // Test init with valid arguments
         let mut output = Vec::new();
-        let result = init(commit_args).await?;
+        let result = Box::pin(init(commit_args)).await?;
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "Package in/valid not found\n".to_string());
@@ -656,7 +656,7 @@ mod tests {
         };
 
         assert!(matches!(
-            init(push_args).await,
+            Box::pin(init(push_args)).await,
             Err(Error::WorkflowRequiresBucket)
         ));
 
@@ -681,7 +681,7 @@ mod tests {
         };
 
         assert!(matches!(
-            init(push_args).await,
+            Box::pin(init(push_args)).await,
             Err(Error::WorkflowRequiresBucket)
         ));
 
@@ -709,7 +709,7 @@ mod tests {
         };
 
         let mut output = Vec::new();
-        let result = init(push_args).await?;
+        let result = Box::pin(init(push_args)).await?;
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "Package foo/bar not found\n");
@@ -733,7 +733,7 @@ mod tests {
 
         // Test init with valid arguments
         let mut output = Vec::new();
-        let result = init(pull_args).await?;
+        let result = Box::pin(init(pull_args)).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
@@ -759,7 +759,7 @@ mod tests {
 
         // Test init with invalid namespace
         let mut output = Vec::new();
-        let result = init(pull_args).await?;
+        let result = Box::pin(init(pull_args)).await?;
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "Package in/valid not found\n");
@@ -783,7 +783,7 @@ mod tests {
 
         // Test init with valid arguments
         let mut output = Vec::new();
-        let result = init(uninstall_args).await?;
+        let result = Box::pin(init(uninstall_args)).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
@@ -809,7 +809,7 @@ mod tests {
 
         // Test init with invalid namespace
         let mut output = Vec::new();
-        let result = init(uninstall_args).await?;
+        let result = Box::pin(init(uninstall_args)).await?;
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.ends_with("The given package is not installed: in/valid\n"));
@@ -835,7 +835,7 @@ mod tests {
 
         // Test init with invalid permissions
         let mut output = Vec::new();
-        let result = init(list_args).await?;
+        let result = Box::pin(init(list_args)).await?;
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("Permission denied"));
@@ -856,7 +856,7 @@ mod tests {
 
         // Test init with empty domain
         let mut output = Vec::new();
-        let result = init(list_args).await?;
+        let result = Box::pin(init(list_args)).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "No installed packages\n");
@@ -885,7 +885,7 @@ mod tests {
 
         // Test init with invalid URI
         let mut output = Vec::new();
-        let result = init(install_args).await?;
+        let result = Box::pin(init(install_args)).await?;
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
@@ -916,7 +916,7 @@ mod tests {
 
         // Test init with valid URI
         let mut output = Vec::new();
-        let result = init(browse_args).await?;
+        let result = Box::pin(init(browse_args)).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, format!("{}\n", get_browse_output()?));
@@ -941,7 +941,7 @@ mod tests {
 
         // Test init with invalid URI
         let mut output = Vec::new();
-        let result = init(browse_args).await?;
+        let result = Box::pin(init(browse_args)).await?;
         print(result, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(

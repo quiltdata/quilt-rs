@@ -66,10 +66,10 @@ fn main() {
         .plugin(
             tauri::plugin::Builder::<_, ()>::new("logging-shutdown")
                 .on_event(|app_handle, event| {
-                    if matches!(event, tauri::RunEvent::Exit) {
-                        if let Some(app) = app_handle.try_state::<App>() {
-                            app.logging.shutdown();
-                        }
+                    if matches!(event, tauri::RunEvent::Exit)
+                        && let Some(app) = app_handle.try_state::<App>()
+                    {
+                        app.logging.shutdown();
                     }
                 })
                 .build(),

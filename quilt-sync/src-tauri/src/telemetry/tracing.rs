@@ -60,7 +60,7 @@ impl LogsDir {
 /// after startup.
 pub struct Logging {
     pub dir: LogsDir,
-    _writer: Mutex<Option<WorkerGuard>>,
+    writer: Mutex<Option<WorkerGuard>>,
 }
 
 impl Logging {
@@ -72,7 +72,7 @@ impl Logging {
     /// shared and immutable to command handlers.
     pub fn shutdown(&self) {
         let writer = self
-            ._writer
+            .writer
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
@@ -138,7 +138,7 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
     let writer = init_tracing(&dir);
     Ok(Logging {
         dir,
-        _writer: Mutex::new(writer),
+        writer: Mutex::new(writer),
     })
 }
 

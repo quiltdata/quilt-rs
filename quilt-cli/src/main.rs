@@ -15,7 +15,7 @@ use cli::print;
 async fn main() {
     tracing_subscriber::fmt::init();
     let args = cli::Args::parse();
-    match cli::init(args).await {
+    match Box::pin(cli::init(args)).await {
         Ok(result) => {
             let stdout = io::stdout();
             let stderr = io::stderr();

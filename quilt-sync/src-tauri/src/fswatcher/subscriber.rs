@@ -257,7 +257,7 @@ fn affected_namespaces(
 ) -> BTreeSet<Namespace> {
     let mut touched = BTreeSet::new();
     for event in events {
-        if is_non_mutating_event(&event.kind) {
+        if is_non_mutating_event(event.kind) {
             continue;
         }
         for path in &event.paths {
@@ -272,7 +272,7 @@ fn affected_namespaces(
     touched
 }
 
-fn is_non_mutating_event(kind: &EventKind) -> bool {
+fn is_non_mutating_event(kind: EventKind) -> bool {
     matches!(
         kind,
         EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_))
@@ -346,7 +346,7 @@ mod tests {
             notify::Event {
                 kind,
                 paths: vec![PathBuf::from("/pkg/file.txt")],
-                attrs: Default::default(),
+                attrs: notify::event::EventAttributes::default(),
             },
             std::time::Instant::now(),
         )
