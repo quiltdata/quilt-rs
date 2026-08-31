@@ -180,9 +180,14 @@ give — it is how we order the queue.
 - **No undo yet.** No `revert`/`reset` verb, and a local-only package has no
   rollback path at all
   ([#840](https://github.com/quiltdata/quilt-rs/issues/840)).
-- **No revision log yet** in the CLI
-  ([#841](https://github.com/quiltdata/quilt-rs/issues/841)). QuiltSync and
-  the Quilt catalog show a package's revision history in the meantime.
+- **`quilt log` lists only the revisions this copy has, dated by when it got
+  them.** A package's published revision history is not available from the
+  CLI, and neither are the dates its revisions were actually made: the
+  manifest format carries no timestamp, so the only date on disk is when this
+  machine wrote the file — the commit time for your own commits, the fetch
+  time for anything pulled. QuiltSync and the Quilt catalog show the full
+  history in the meantime
+  ([#841](https://github.com/quiltdata/quilt-rs/issues/841)).
 - **Disk usage only grows.** `objects/` and the manifest cache are never
   pruned. Content is shared across packages with no reference counting, so
   leaking bytes beats deleting something another package still addresses.

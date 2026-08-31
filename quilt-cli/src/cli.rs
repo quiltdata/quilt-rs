@@ -16,6 +16,7 @@ use quilt_uri::Namespace;
 mod browse;
 mod commit;
 mod create;
+mod history;
 mod install;
 mod list;
 mod login;
@@ -233,6 +234,16 @@ enum Commands {
     },
     /// List installed packages
     List,
+    /// List the revisions of a package this copy has, newest first.
+    ///
+    /// Ordered by when this copy obtained each revision, which is all that is
+    /// recorded locally — a manifest carries no timestamp of its own, so for a
+    /// revision fetched from a remote this is the fetch time, not the commit
+    /// time.
+    Log {
+        #[command(flatten)]
+        pkg: PackageRef,
+    },
     /// Pull
     Pull {
         #[command(flatten)]
@@ -384,6 +395,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::List => {
             log::info!("Listing installed packages");
             Ok(list::command(m).await)
+        }
+        Commands::Log { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = history::Input { namespace };
+
+            log::debug!("Logging {args:?}");
+            Ok(history::command(m, args).await)
         }
         Commands::Pull { pkg } => {
             let namespace = pkg.resolve(&m).await?;
