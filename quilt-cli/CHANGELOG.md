@@ -9,6 +9,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.0-alpha6] - 2026-08-31
+
+### Added
+
+- `quilt list --json` and `quilt status --json` print a machine-readable form, so `quilt list --json | jq` works (<https://github.com/quiltdata/quilt-rs/pull/851>)
+
+### Fixed
+
+- A command that fails now exits non-zero. It reported the error and exited 0, so a shell script could not tell success from failure (<https://github.com/quiltdata/quilt-rs/pull/851>)
+
 ## [v0.30.0-alpha5] - 2026-08-31
 
 ### Added

@@ -233,7 +233,11 @@ enum Commands {
         host: Host,
     },
     /// List installed packages
-    List,
+    List {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// List the revisions of a package this copy has, newest first.
     ///
     /// Ordered by when this copy obtained each revision, which is all that is
@@ -289,6 +293,9 @@ enum Commands {
     Status {
         #[command(flatten)]
         pkg: PackageRef,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Uninstall package from local domain
     Uninstall {
@@ -392,9 +399,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List => {
+        Commands::List { json } => {
             log::info!("Listing installed packages");
-            Ok(list::command(m).await)
+            Ok(list::command(m, json).await)
         }
         Commands::Log { pkg } => {
             let namespace = pkg.resolve(&m).await?;
@@ -446,7 +453,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
-        Commands::Status { pkg } => {
+        Commands::Status { pkg, json } => {
             let namespace = pkg.resolve(&m).await?;
             let args = status::Input {
                 namespace,
@@ -454,7 +461,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             };
 
             log::debug!("Status {args:?}");
-            Ok(status::command(m, args).await)
+            Ok(status::command(m, args, json).await)
         }
         Commands::Uninstall { pkg } => {
             let namespace = pkg.resolve(&m).await?;
@@ -608,12 +615,29 @@ mod tests {
     }
 
     #[test]
+    fn json_flag_is_available_on_read_commands() {
+        let list = Args::try_parse_from(["quilt", "list", "--json"]).unwrap();
+        assert!(matches!(list.command, Commands::List { json: true }));
+
+        let status =
+            Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"]).unwrap();
+        assert!(matches!(
+            status.command,
+            Commands::Status { json: true, .. }
+        ));
+
+        let default = Args::try_parse_from(["quilt", "list"]).unwrap();
+        assert!(matches!(default.command, Commands::List { json: false }));
+    }
+
+    #[test]
     fn package_namespace_flag_is_optional() {
         let inferred = Args::try_parse_from(["quilt", "status"]).unwrap();
         assert!(matches!(
             inferred.command,
             Commands::Status {
-                pkg: PackageRef { namespace: None }
+                pkg: PackageRef { namespace: None },
+                json: false
             }
         ));
 
@@ -622,7 +646,8 @@ mod tests {
         assert!(matches!(
             explicit.command,
             Commands::Status {
-                pkg: PackageRef { namespace: Some(namespace) }
+                pkg: PackageRef { namespace: Some(namespace) },
+                json: false
             } if namespace == "demo/sales"
         ));
     }
@@ -704,7 +729,7 @@ mod tests {
             home: None,
             domain: Some(domain_temp_dir.path().to_path_buf()),
             verbose: false,
-            command: Commands::List,
+            command: Commands::List { json: false },
         };
 
         let mut output = Vec::new();
@@ -1068,7 +1093,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
-            command: Commands::List,
+            command: Commands::List { json: false },
         };
 
         // Default home initialization now reaches the same write-protected
@@ -1088,7 +1113,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
-            command: Commands::List {},
+            command: Commands::List { json: false },
         };
 
         // Test init with empty domain
