@@ -25,7 +25,7 @@ use crate::telemetry::{MixpanelEvent, prelude::*};
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let path_resolver = app_handle.path();
     let user_home = path_resolver.home_dir()?;
-    Ok(user_home.join("QuiltSync"))
+    Ok(user_home.join(quilt::DEFAULT_HOME_DIR_NAME))
 }
 
 // ── Setup data for Leptos UI ──
@@ -51,7 +51,7 @@ fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBu
     let paths = app_handle.path();
     let home_dir = paths.home_dir()?;
 
-    let canonical_home = home_dir.join("QuiltSync");
+    let canonical_home = home_dir.join(quilt::DEFAULT_HOME_DIR_NAME);
     let canonical_home_already_exists = canonical_home.exists();
 
     if !canonical_home_already_exists && let Err(e) = fs::create_dir_all(&canonical_home) {

@@ -20,7 +20,12 @@ pub enum Change {
 pub type ChangeSet = BTreeMap<PathBuf, Change>;
 
 /// State of the local package relative to the remote package
+/// `Serialize` is the machine-readable form and a stable contract: these
+/// strings reach `quilt --json` and `QuiltSync`'s frontend, so changing one is a
+/// breaking change. `Display` below is for humans and may be reworded freely —
+/// the two happen to agree today, which is why they must be kept apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UpstreamState {
     #[default]
     UpToDate,
