@@ -9,6 +9,38 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.0-alpha5] - 2026-08-31
+
+### Added
+
+- `quilt log` lists a package's revisions, newest first, with the short hash, the commit message, and the date this copy obtained the revision. That date is what is recorded locally and nothing more: a manifest carries no timestamp of its own, so for a revision fetched from a remote it is the fetch time rather than the commit time — hence the `obtained` heading. A package's full published history is not available yet (<https://github.com/quiltdata/quilt-rs/pull/849>)
+
+## [v0.30.0-alpha4] - 2026-08-31
+
+### Changed
+
+- `commit`, `pull`, `push`, `status` and `uninstall` infer the package from the directory you are standing in, so `--namespace` is only needed from outside a package's working copy. Inference reads the two path components below the configured home; anywhere else it is an error naming the flag (<https://github.com/quiltdata/quilt-rs/pull/850>)
+
+## [v0.30.0-alpha3] - 2026-08-31
+
+### Changed
+
+- `quilt` no longer needs `--home` on first use — it defaults to `~/QuiltSync`, the same working-copy directory QuiltSync uses. Pass `--home` to choose a different one; it is still remembered after that (<https://github.com/quiltdata/quilt-rs/pull/848>)
+
+### Fixed
+
+- A command that cannot resolve the package home now exits non-zero, instead of reporting the error and exiting 0 (<https://github.com/quiltdata/quilt-rs/pull/848>)
+
+## [v0.30.0-alpha2] - 2026-08-31
+
+### Added
+
+- `-v` / `--verbose` shows INFO-level logs on stderr; `RUST_LOG` still takes precedence for target-specific filtering (<https://github.com/quiltdata/quilt-rs/pull/847>)
+
+### Changed
+
+- Piping a command's output now works — stdout carries only the command's own output, and logs go to stderr at WARN and above (was INFO on stdout) (<https://github.com/quiltdata/quilt-rs/pull/847>)
+
 ## [v0.30.0-alpha1] - 2026-08-07
 
 ### Changed

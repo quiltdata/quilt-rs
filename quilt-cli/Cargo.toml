@@ -5,7 +5,7 @@ readme = "README.md"
 keywords = ["data", "versioning", "cli", "s3", "reproducibility"]
 categories = ["command-line-utilities", "filesystem", "science"]
 
-version = "0.30.0-alpha1"
+version = "0.30.0-alpha5"
 
 # Inherit from workspace
 edition.workspace = true
@@ -33,7 +33,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 # Pull quilt-rs with the `testing` feature so CLI tests can drive flows against
