@@ -2,10 +2,6 @@ use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 
-use std::cmp::Ordering;
-use std::collections::HashMap;
-
-use quilt_rs::io::storage::Storage;
 use quilt_uri::Namespace;
 
 #[derive(Debug)]
@@ -13,15 +9,8 @@ pub struct Input {
     pub namespace: Namespace,
 }
 
-#[derive(Debug)]
-struct Revision {
-    hash: String,
-    message: String,
-    order: Option<usize>,
-}
-
 pub struct Output {
-    revisions: Vec<Revision>,
+    revisions: Vec<quilt_rs::flow::Revision>,
 }
 
 impl std::fmt::Display for Output {
@@ -30,9 +19,19 @@ impl std::fmt::Display for Output {
             return write!(f, "No revisions");
         }
 
+        writeln!(f, "revision  obtained (UTC)       message")?;
         for revision in &self.revisions {
             let short_hash: String = revision.hash.chars().take(8).collect();
-            writeln!(f, "{short_hash}  {}", revision.message)?;
+            let message = revision
+                .message
+                .as_deref()
+                .unwrap_or("\u{2205}")
+                .replace(['\n', '\r'], " ");
+            writeln!(
+                f,
+                "{short_hash}  {}  {message}",
+                revision.obtained.format("%Y-%m-%d %H:%M:%S"),
+            )?;
         }
         Ok(())
     }
@@ -50,53 +49,9 @@ pub async fn model(
         return Err(Error::NamespaceNotFound(namespace));
     };
 
-    let lineage = package.lineage().await?;
-    let current_commit = lineage.commit.as_ref();
-    let revision_order: HashMap<String, usize> = current_commit
-        .map(|commit| {
-            std::iter::once(&commit.hash)
-                .chain(commit.prev_hashes.iter())
-                .enumerate()
-                .map(|(order, hash)| (hash.clone(), order))
-                .collect()
-        })
-        .unwrap_or_default();
-    let manifest_dir = package.paths.installed_manifests_dir(&namespace);
-    let mut entries = package.storage.read_dir(&manifest_dir).await?;
-    let mut revisions = Vec::new();
-
-    while let Some(entry) = entries.next_entry().await? {
-        if !entry.file_type().await?.is_file() {
-            continue;
-        }
-
-        let path = entry.path();
-        let hash = entry.file_name().to_string_lossy().into_owned();
-        let manifest = quilt_rs::manifest::Manifest::from_path(&package.storage, &path).await?;
-        let message = manifest
-            .header
-            .message
-            .unwrap_or_else(|| "∅".to_string())
-            .replace(['\n', '\r'], " ");
-
-        revisions.push(Revision {
-            order: revision_order.get(&hash).copied(),
-            hash,
-            message,
-        });
-    }
-
-    revisions.sort_by(|left, right| {
-        match (left.order, right.order) {
-            (Some(left_order), Some(right_order)) => left_order.cmp(&right_order),
-            (Some(_), None) => Ordering::Less,
-            (None, Some(_)) => Ordering::Greater,
-            (None, None) => Ordering::Equal,
-        }
-        .then_with(|| left.hash.cmp(&right.hash))
-    });
-
-    Ok(Output { revisions })
+    Ok(Output {
+        revisions: package.revisions().await?,
+    })
 }
 
 #[cfg(test)]
@@ -115,22 +70,24 @@ mod tests {
     fn test_display() {
         let output = Output {
             revisions: vec![
-                Revision {
+                quilt_rs::flow::Revision {
                     hash: "0123456789abcdef".to_string(),
-                    message: "add east region".to_string(),
-                    order: Some(0),
+                    obtained: "2026-08-07T11:24:31Z".parse().unwrap(),
+                    message: Some("add east region".to_string()),
                 },
-                Revision {
+                quilt_rs::flow::Revision {
                     hash: "fedcba9876543210".to_string(),
-                    message: "initial import".to_string(),
-                    order: Some(1),
+                    obtained: "2026-08-07T09:02:07Z".parse().unwrap(),
+                    message: Some("initial import".to_string()),
                 },
             ],
         };
 
         assert_eq!(
             output.to_string(),
-            "01234567  add east region\nfedcba98  initial import\n"
+            "revision  obtained (UTC)       message\n\
+             01234567  2026-08-07 11:24:31  add east region\n\
+             fedcba98  2026-08-07 09:02:07  initial import\n"
         );
     }
 
@@ -173,13 +130,19 @@ mod tests {
         .await?;
 
         assert_eq!(output.revisions.len(), 2);
-        assert_eq!(output.revisions[0].message, "add east region");
-        assert_eq!(output.revisions[1].message, "initial import");
+        assert_eq!(
+            output.revisions[0].message.as_deref(),
+            Some("add east region")
+        );
+        assert_eq!(
+            output.revisions[1].message.as_deref(),
+            Some("initial import")
+        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_model_orders_revisions_by_lineage_not_manifest_mtime() -> Result<(), Error> {
+    async fn test_model_orders_by_acquisition_time_not_lineage() -> Result<(), Error> {
         let (cli_model, _domain_temp_dir) = create_model_in_temp_dir().await?;
         let namespace = Namespace::from(("demo", "sales"));
 
@@ -187,7 +150,7 @@ mod tests {
             .create(create::Input {
                 namespace: namespace.clone(),
                 source: None,
-                message: Some("initial import".to_string()),
+                message: Some("r1 initial import".to_string()),
             })
             .await?;
 
@@ -200,11 +163,58 @@ mod tests {
 
         cli_model
             .commit(commit::Input {
-                message: "add east region".to_string(),
+                message: "r2 add east".to_string(),
                 namespace: namespace.clone(),
                 user_meta: UserMeta::Keep,
                 workflow: WorkflowIntent::NoWorkflow,
                 host_config: None,
+            })
+            .await?;
+
+        let oldest = model(
+            cli_model.get_local_domain(),
+            Input {
+                namespace: namespace.clone(),
+            },
+        )
+        .await?
+        .revisions
+        .pop()
+        .expect("two revisions");
+        assert_eq!(oldest.message.as_deref(), Some("r1 initial import"));
+
+        // `obtained` is this copy's acquisition time, so re-acquiring the oldest
+        // revision moves it to the top. This is the documented meaning of the
+        // column, not an ordering bug: nothing on disk records when a revision
+        // was *made*.
+        // Rewriting the same bytes bumps the mtime; the manifest is
+        // content-addressed, so its name and contents still agree.
+        let manifest = package.paths.installed_manifest(&namespace, &oldest.hash);
+        let bytes = std::fs::read(&manifest)?;
+        std::fs::write(&manifest, &bytes)?;
+
+        let output = model(cli_model.get_local_domain(), Input { namespace }).await?;
+        assert_eq!(
+            output
+                .revisions
+                .iter()
+                .map(|revision| revision.message.as_deref().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            ["r1 initial import", "r2 add east"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_model_orders_four_successive_commits_newest_first() -> Result<(), Error> {
+        let (cli_model, _domain_temp_dir) = create_model_in_temp_dir().await?;
+        let namespace = Namespace::from(("demo", "sales"));
+
+        cli_model
+            .create(create::Input {
+                namespace: namespace.clone(),
+                source: None,
+                message: Some("r1 initial import".to_string()),
             })
             .await?;
 
@@ -213,32 +223,53 @@ mod tests {
             .get_installed_package(&namespace)
             .await?
             .unwrap();
-        let lineage = package.lineage().await?;
-        let current_commit = lineage.commit.unwrap();
-        let previous_hash = current_commit
-            .prev_hashes
-            .first()
-            .expect("initial revision should be tracked as previous")
-            .clone();
+        let home = package.package_home().await?;
 
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        let previous_manifest_path = package.paths.installed_manifest(&namespace, &previous_hash);
-        let previous_manifest = std::fs::read(&previous_manifest_path)?;
-        std::fs::write(&previous_manifest_path, previous_manifest)?;
+        for message in ["r2 add east", "r3 add west", "r4 fix header"] {
+            std::fs::write(home.join("data.txt"), message)?;
+            cli_model
+                .commit(commit::Input {
+                    message: message.to_string(),
+                    namespace: namespace.clone(),
+                    user_meta: UserMeta::Keep,
+                    workflow: WorkflowIntent::NoWorkflow,
+                    host_config: None,
+                })
+                .await?;
+        }
 
-        let output = model(
-            cli_model.get_local_domain(),
-            Input {
-                namespace: namespace.clone(),
-            },
-        )
-        .await?;
+        let output = model(cli_model.get_local_domain(), Input { namespace }).await?;
 
-        assert_eq!(output.revisions.len(), 2);
-        assert_eq!(output.revisions[0].hash, current_commit.hash);
-        assert_eq!(output.revisions[0].message, "add east region");
-        assert_eq!(output.revisions[1].hash, previous_hash);
-        assert_eq!(output.revisions[1].message, "initial import");
+        let expected = [
+            "r4 fix header",
+            "r3 add west",
+            "r2 add east",
+            "r1 initial import",
+        ];
+        assert_eq!(
+            output
+                .revisions
+                .iter()
+                .map(|revision| revision.message.as_deref().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            expected
+        );
+
+        // And the same order in the rendered output a user actually sees,
+        // past the heading row.
+        assert_eq!(
+            output
+                .to_string()
+                .lines()
+                .skip(1)
+                .map(|line| line
+                    .rsplit_once("  ")
+                    .expect("columns are two-space separated")
+                    .1
+                    .to_string())
+                .collect::<Vec<_>>(),
+            expected
+        );
         Ok(())
     }
 }

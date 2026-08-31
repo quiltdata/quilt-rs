@@ -41,7 +41,7 @@ cargo install quilt-cli
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
 | `list`      | List installed packages                          |
-| `log`       | Show a package's local revision history          |
+| `log`       | List the revisions this copy has, newest first    |
 | `uninstall` | Remove a package from local tracking             |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |

@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.0-alpha5] - 2026-08-31
+
+### Added
+
+- `quilt log` lists a package's revisions, newest first, with the short hash, the commit message, and the date this copy obtained the revision. That date is what is recorded locally and nothing more: a manifest carries no timestamp of its own, so for a revision fetched from a remote it is the fetch time rather than the commit time — hence the `obtained` heading. A package's full published history is not available yet (<https://github.com/quiltdata/quilt-rs/pull/849>)
+
 ## [v0.30.0-alpha4] - 2026-08-31
 
 ### Changed

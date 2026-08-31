@@ -234,7 +234,12 @@ enum Commands {
     },
     /// List installed packages
     List,
-    /// List a package's local revision history.
+    /// List the revisions of a package this copy has, newest first.
+    ///
+    /// Ordered by when this copy obtained each revision, which is all that is
+    /// recorded locally — a manifest carries no timestamp of its own, so for a
+    /// revision fetched from a remote this is the fetch time, not the commit
+    /// time.
     Log {
         #[command(flatten)]
         pkg: PackageRef,
