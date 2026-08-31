@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.21.2-alpha1] - 2026-08-25
+
+### Fixed
+
+- Committing to a host you are signed out of no longer fails with a six-line Rust error chain — the message names the host — and autosync stops retrying a dead session in silence: the affected packages now show the error instead of looking idle (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
 ## [v0.21.1] - 2026-08-07
 
 ### Fixed
