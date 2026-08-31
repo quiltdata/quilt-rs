@@ -62,9 +62,9 @@ Run `quilt <command> --help` for arguments.
   Defaults to `~/QuiltSync` on first use and is persisted in the domain
   lineage. Pass `--home` only to store packages somewhere else.
 
-Commands log at `INFO` on stdout by default; `RUST_LOG=warn` leaves only
-command output. See
-[#837](https://github.com/quiltdata/quilt-rs/issues/837).
+Commands keep stdout reserved for command output by default. Add `-v` or
+`--verbose` to show INFO-level logs on stderr; set `RUST_LOG` for target-specific
+filtering.
 
 ## Example
 

@@ -41,9 +41,8 @@ Windows builds from source only
 
 This example uses two directories: `quilt` keeps package working copies under
 `~/QuiltSync` by default, and `-s` is an existing directory to import files
-from. Commands log at INFO by default; prefix them with `RUST_LOG=warn` to get
-exactly the output shown
-([#837](https://github.com/quiltdata/quilt-rs/issues/837)).
+from. Commands keep stdout reserved for command output by default; add `-v` or
+`--verbose` to show INFO-level logs on stderr.
 
 ```bash
 mkdir -p ~/plate-exports
@@ -184,8 +183,6 @@ give — it is how we order the queue.
 - **No revision log yet** in the CLI
   ([#841](https://github.com/quiltdata/quilt-rs/issues/841)). QuiltSync and
   the Quilt catalog show a package's revision history in the meantime.
-- **Noisy output.** Commands log at INFO on stdout; `RUST_LOG=warn` fixes it
-  today ([#837](https://github.com/quiltdata/quilt-rs/issues/837)).
 - **Disk usage only grows.** `objects/` and the manifest cache are never
   pruned. Content is shared across packages with no reference counting, so
   leaking bytes beats deleting something another package still addresses.

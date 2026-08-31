@@ -114,6 +114,10 @@ pub struct Args {
     /// Path to local domain
     #[arg(short, long)]
     domain: Option<PathBuf>,
+
+    /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
+    #[arg(short, long, global = true)]
+    pub(crate) verbose: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -262,7 +266,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::Browse { uri } => {
             let args = browse::Input { uri };
 
-            log::info!("Browsing {args:?}");
+            log::debug!("Browsing {args:?}");
             Ok(browse::command(m, args).await)
         }
         Commands::Create {
@@ -276,7 +280,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 message,
             };
 
-            log::info!("Creating {args:?}");
+            log::debug!("Creating {args:?}");
             Ok(create::command(m, args).await)
         }
         Commands::Commit {
@@ -306,7 +310,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 host_config: None,
             };
 
-            log::info!("Committing {args:?}");
+            log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
         }
         Commands::Install {
@@ -320,14 +324,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 uri,
             };
 
-            log::info!("Installing {args:?}");
+            log::debug!("Installing {args:?}");
             Ok(install::command(m, args).await)
         }
         Commands::Login { code, host } => {
             if let Some(code) = code {
                 let args = login::Input { code, host };
 
-                log::info!("Logging in {args:?}");
+                log::debug!("Logging in {args:?}");
                 Ok(login::command(m, args).await)
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
@@ -344,7 +348,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 host_config: None,
             };
 
-            log::info!("Pull {args:?}");
+            log::debug!("Pull {args:?}");
             Ok(pull::command(m, args).await)
         }
         Commands::Push {
@@ -370,13 +374,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 workflow,
             };
 
-            log::info!("Pushing {args:?}");
+            log::debug!("Pushing {args:?}");
             Ok(push::command(m, args).await)
         }
         Commands::Role { host, set } => {
             let args = role::Input { host, set };
 
-            log::info!("Role {args:?}");
+            log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
         Commands::Status { namespace } => {
@@ -385,7 +389,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 host_config: None,
             };
 
-            log::info!("Status {args:?}");
+            log::debug!("Status {args:?}");
             Ok(status::command(m, args).await)
         }
         Commands::Uninstall { namespace } => {
@@ -393,7 +397,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: namespace.try_into()?,
             };
 
-            log::info!("Uninstalling {args:?}");
+            log::debug!("Uninstalling {args:?}");
             Ok(uninstall::command(m, args).await)
         }
     }
@@ -524,6 +528,18 @@ mod tests {
     }
 
     #[test]
+    fn verbose_flag_is_global() {
+        let before_subcommand = Args::try_parse_from(["quilt", "--verbose", "list"]).unwrap();
+        assert!(before_subcommand.verbose);
+
+        let after_subcommand = Args::try_parse_from(["quilt", "list", "--verbose"]).unwrap();
+        assert!(after_subcommand.verbose);
+
+        let default = Args::try_parse_from(["quilt", "list"]).unwrap();
+        assert!(!default.verbose);
+    }
+
+    #[test]
     fn test_parse_optional_namespace() -> Result<(), Error> {
         // Test None case
         assert!(parse_optional_namespace(None)?.is_none());
@@ -573,6 +589,7 @@ mod tests {
         let list_args = Args {
             home: None,
             domain: Some(domain_temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::List,
         };
 
@@ -635,6 +652,7 @@ mod tests {
         let install_args = Args {
             home,
             domain,
+            verbose: false,
             command: Commands::Install {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
@@ -665,6 +683,7 @@ mod tests {
         let commit_args = Args {
             home: Some(temp_dir.path().to_path_buf()),
             domain: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Commit {
                 message: pkg::MESSAGE.to_string(),
                 namespace: pkg::NAMESPACE_STR.to_string(),
@@ -696,6 +715,7 @@ mod tests {
         let commit_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Commit {
                 message: "Any message".to_string(),
                 namespace: "in/valid".to_string(),
@@ -724,6 +744,7 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
                 namespace: "foo/bar".to_string(),
                 bucket: None,
@@ -749,6 +770,7 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
                 namespace: "foo/bar".to_string(),
                 bucket: None,
@@ -777,6 +799,7 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
                 namespace: "foo/bar".to_string(),
                 bucket: Some("some-bucket".to_string()),
@@ -804,6 +827,7 @@ mod tests {
         let pull_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Pull {
                 namespace: pkg::NAMESPACE_STR.to_string(),
             },
@@ -830,6 +854,7 @@ mod tests {
         let pull_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Pull {
                 namespace: "in/valid".to_string(),
             },
@@ -854,6 +879,7 @@ mod tests {
         let uninstall_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Uninstall {
                 namespace: pkg::NAMESPACE_STR.to_string(),
             },
@@ -880,6 +906,7 @@ mod tests {
         let uninstall_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Uninstall {
                 namespace: "in/valid".to_string(),
             },
@@ -908,6 +935,7 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::List,
         };
 
@@ -927,6 +955,7 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::List {},
         };
 
@@ -952,6 +981,7 @@ mod tests {
         let install_args = Args {
             domain,
             home,
+            verbose: false,
             command: Commands::Install {
                 namespace: None,
                 uri: pkg::URI.to_string(),
@@ -987,6 +1017,7 @@ mod tests {
         let browse_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Browse { uri },
         };
 
@@ -1010,6 +1041,7 @@ mod tests {
         let browse_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Browse {
                 uri: pkg::URI.to_string(),
             },
