@@ -152,6 +152,25 @@ pub struct Args {
     pub(crate) verbose: bool,
 }
 
+/// The package a command acts on.
+///
+/// An omitted `--namespace` is inferred from the current working directory.
+/// `install` keeps its own `namespace`: there, omitting it means "take it from
+/// the URI", which is a different question.
+#[derive(clap::Args, Debug)]
+struct PackageRef {
+    /// Namespace of the package. If omitted, infer it from the current
+    /// working directory under the configured home.
+    #[arg(short, long)]
+    namespace: Option<String>,
+}
+
+impl PackageRef {
+    async fn resolve(self, model: &Model) -> Result<Namespace, Error> {
+        resolve_namespace(model, self.namespace).await
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Browse remote manifest
@@ -179,10 +198,8 @@ enum Commands {
         /// JSON string for user meta
         #[arg(short, long)]
         user_meta: Option<String>,
-        /// Namespace of the package to commit new revision. If omitted, infer
-        /// it from the current working directory under the configured home.
-        #[arg(short, long)]
-        namespace: Option<String>,
+        #[command(flatten)]
+        pkg: PackageRef,
         /// Workflow ID
         /// Ex. `"my_workflow"`
         /// Omit to use the bucket's default workflow.
@@ -218,17 +235,13 @@ enum Commands {
     List,
     /// Pull
     Pull {
-        /// Namespace of the package to pull. If omitted, infer it from the
-        /// current working directory under the configured home.
-        #[arg(short, long)]
-        namespace: Option<String>,
+        #[command(flatten)]
+        pkg: PackageRef,
     },
     /// Push
     Push {
-        /// Namespace of the package to push. If omitted, infer it from the
-        /// current working directory under the configured home.
-        #[arg(short, long)]
-        namespace: Option<String>,
+        #[command(flatten)]
+        pkg: PackageRef,
         /// S3 bucket (required for first push of local-only packages)
         #[arg(short, long, requires = "origin")]
         bucket: Option<String>,
@@ -263,17 +276,13 @@ enum Commands {
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
-        /// Namespace of the package. If omitted, infer it from the current
-        /// working directory under the configured home.
-        #[arg(short, long)]
-        namespace: Option<String>,
+        #[command(flatten)]
+        pkg: PackageRef,
     },
     /// Uninstall package from local domain
     Uninstall {
-        /// Namespace of the package to uninstall. If omitted, infer it from
-        /// the current working directory under the configured home.
-        #[arg(short, long)]
-        namespace: Option<String>,
+        #[command(flatten)]
+        pkg: PackageRef,
     },
 }
 
@@ -317,13 +326,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(create::command(m, args).await)
         }
         Commands::Commit {
-            namespace,
+            pkg,
             message,
             user_meta,
             workflow,
             no_workflow,
         } => {
-            let namespace = resolve_namespace(&m, namespace).await?;
+            let namespace = pkg.resolve(&m).await?;
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
                     serde_json::Value::Object(object) => {
@@ -376,8 +385,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::info!("Listing installed packages");
             Ok(list::command(m).await)
         }
-        Commands::Pull { namespace } => {
-            let namespace = resolve_namespace(&m, namespace).await?;
+        Commands::Pull { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
             let args = pull::Input {
                 namespace,
                 host_config: None,
@@ -387,13 +396,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             Ok(pull::command(m, args).await)
         }
         Commands::Push {
-            namespace,
+            pkg,
             bucket,
             origin,
             workflow,
             no_workflow,
         } => {
-            let namespace = resolve_namespace(&m, namespace).await?;
+            let namespace = pkg.resolve(&m).await?;
             // The workflow flags only take effect on a first push, where
             // set_remote→recommit resolves them. On a subsequent push the
             // workflow was already decided at commit time, so reject the flags
@@ -419,8 +428,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
-        Commands::Status { namespace } => {
-            let namespace = resolve_namespace(&m, namespace).await?;
+        Commands::Status { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
             let args = status::Input {
                 namespace,
                 host_config: None,
@@ -429,8 +438,8 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Status {args:?}");
             Ok(status::command(m, args).await)
         }
-        Commands::Uninstall { namespace } => {
-            let namespace = resolve_namespace(&m, namespace).await?;
+        Commands::Uninstall { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
             let args = uninstall::Input { namespace };
 
             log::debug!("Uninstalling {args:?}");
@@ -585,7 +594,9 @@ mod tests {
         let inferred = Args::try_parse_from(["quilt", "status"]).unwrap();
         assert!(matches!(
             inferred.command,
-            Commands::Status { namespace: None }
+            Commands::Status {
+                pkg: PackageRef { namespace: None }
+            }
         ));
 
         let explicit =
@@ -593,7 +604,7 @@ mod tests {
         assert!(matches!(
             explicit.command,
             Commands::Status {
-                namespace: Some(namespace)
+                pkg: PackageRef { namespace: Some(namespace) }
             } if namespace == "demo/sales"
         ));
     }
@@ -771,7 +782,9 @@ mod tests {
             verbose: false,
             command: Commands::Commit {
                 message: pkg::MESSAGE.to_string(),
-                namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -803,7 +816,9 @@ mod tests {
             verbose: false,
             command: Commands::Commit {
                 message: "Any message".to_string(),
-                namespace: Some("in/valid".to_string()),
+                pkg: PackageRef {
+                    namespace: Some("in/valid".to_string()),
+                },
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -831,7 +846,9 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             command: Commands::Push {
-                namespace: Some("foo/bar".to_string()),
+                pkg: PackageRef {
+                    namespace: Some("foo/bar".to_string()),
+                },
                 bucket: None,
                 origin: None,
                 workflow: Some("x".to_string()),
@@ -857,7 +874,9 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             command: Commands::Push {
-                namespace: Some("foo/bar".to_string()),
+                pkg: PackageRef {
+                    namespace: Some("foo/bar".to_string()),
+                },
                 bucket: None,
                 origin: None,
                 workflow: None,
@@ -886,7 +905,9 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             command: Commands::Push {
-                namespace: Some("foo/bar".to_string()),
+                pkg: PackageRef {
+                    namespace: Some("foo/bar".to_string()),
+                },
                 bucket: Some("some-bucket".to_string()),
                 origin: Some(Host::from_str("open.quiltdata.com").unwrap()),
                 workflow: Some("x".to_string()),
@@ -914,7 +935,9 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             command: Commands::Pull {
-                namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
             },
         };
 
@@ -941,7 +964,9 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             command: Commands::Pull {
-                namespace: Some("in/valid".to_string()),
+                pkg: PackageRef {
+                    namespace: Some("in/valid".to_string()),
+                },
             },
         };
 
@@ -966,7 +991,9 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             command: Commands::Uninstall {
-                namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
             },
         };
 
@@ -993,7 +1020,9 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             command: Commands::Uninstall {
-                namespace: Some("in/valid".to_string()),
+                pkg: PackageRef {
+                    namespace: Some("in/valid".to_string()),
+                },
             },
         };
 
