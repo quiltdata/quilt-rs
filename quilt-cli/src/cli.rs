@@ -76,6 +76,31 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
     }
 }
 
+fn get_default_home_dir() -> Result<PathBuf, Error> {
+    dirs::home_dir()
+        .map(|user_home| user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME))
+        .ok_or(Error::Home)
+}
+
+async fn initialize_home(model: &Model, home: Option<PathBuf>) -> Result<(), Error> {
+    if let Some(dir) = home {
+        model.set_home(dir).await?;
+    } else {
+        match model.get_home().await {
+            Ok(_) => {}
+            Err(Error::Quilt(quilt_rs::Error::Lineage(
+                quilt_rs::LineageError::Missing | quilt_rs::LineageError::MissingHome,
+            ))) => {
+                model.set_home(get_default_home_dir()?).await?;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    model.get_home().await?;
+    Ok(())
+}
+
 fn namespace_from_working_dir(home: &Path, current_dir: &Path) -> Result<Namespace, Error> {
     let home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
     let current_dir =
@@ -114,13 +139,17 @@ pub struct Args {
     command: Commands,
 
     /// Absolute path for the directory, where all packages will store their mutable files.
-    /// Ex. /home/user/QuiltSync
+    /// Defaults to `~/QuiltSync` on first use. Ex. /home/user/QuiltSync
     #[arg(long)]
     home: Option<PathBuf>,
 
     /// Path to local domain
     #[arg(short, long)]
     domain: Option<PathBuf>,
+
+    /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
+    #[arg(short, long, global = true)]
+    pub(crate) verbose: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -262,28 +291,15 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
 
-    // NOTE: Lineage must have home
-    //       It should come either from the lineage file itself,
-    //       or provided by user (when installing first time)
-
-    if let Some(dir) = args.home
-        && let Err(err) = m.set_home(dir).await
-    {
-        log::error!("Failed to set home directory: {err}");
-        return Ok(Std::Err(err));
-    }
-
-    // Validate the lineage
-    if let Err(err) = m.get_home().await {
-        log::error!("Failed to get home directory: {err}");
-        return Ok(Std::Err(err));
-    }
+    // Preserve an existing home, honor an explicit --home override, and set
+    // the default for a new domain on first use.
+    initialize_home(&m, args.home).await?;
 
     match args.command {
         Commands::Browse { uri } => {
             let args = browse::Input { uri };
 
-            log::info!("Browsing {args:?}");
+            log::debug!("Browsing {args:?}");
             Ok(browse::command(m, args).await)
         }
         Commands::Create {
@@ -297,7 +313,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 message,
             };
 
-            log::info!("Creating {args:?}");
+            log::debug!("Creating {args:?}");
             Ok(create::command(m, args).await)
         }
         Commands::Commit {
@@ -328,7 +344,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 host_config: None,
             };
 
-            log::info!("Committing {args:?}");
+            log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
         }
         Commands::Install {
@@ -342,14 +358,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 uri,
             };
 
-            log::info!("Installing {args:?}");
+            log::debug!("Installing {args:?}");
             Ok(install::command(m, args).await)
         }
         Commands::Login { code, host } => {
             if let Some(code) = code {
                 let args = login::Input { code, host };
 
-                log::info!("Logging in {args:?}");
+                log::debug!("Logging in {args:?}");
                 Ok(login::command(m, args).await)
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
@@ -367,7 +383,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 host_config: None,
             };
 
-            log::info!("Pull {args:?}");
+            log::debug!("Pull {args:?}");
             Ok(pull::command(m, args).await)
         }
         Commands::Push {
@@ -394,13 +410,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 workflow,
             };
 
-            log::info!("Pushing {args:?}");
+            log::debug!("Pushing {args:?}");
             Ok(push::command(m, args).await)
         }
         Commands::Role { host, set } => {
             let args = role::Input { host, set };
 
-            log::info!("Role {args:?}");
+            log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
         Commands::Status { namespace } => {
@@ -410,14 +426,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 host_config: None,
             };
 
-            log::info!("Status {args:?}");
+            log::debug!("Status {args:?}");
             Ok(status::command(m, args).await)
         }
         Commands::Uninstall { namespace } => {
             let namespace = resolve_namespace(&m, namespace).await?;
             let args = uninstall::Input { namespace };
 
-            log::info!("Uninstalling {args:?}");
+            log::debug!("Uninstalling {args:?}");
             Ok(uninstall::command(m, args).await)
         }
     }
@@ -427,6 +443,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 pub enum Error {
     #[error("Domain directory is required. We store files and credentials there")]
     Domain,
+
+    #[error("Could not determine the home directory. Pass --home to specify one")]
+    Home,
 
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
@@ -550,6 +569,18 @@ mod tests {
     }
 
     #[test]
+    fn verbose_flag_is_global() {
+        let before_subcommand = Args::try_parse_from(["quilt", "--verbose", "list"]).unwrap();
+        assert!(before_subcommand.verbose);
+
+        let after_subcommand = Args::try_parse_from(["quilt", "list", "--verbose"]).unwrap();
+        assert!(after_subcommand.verbose);
+
+        let default = Args::try_parse_from(["quilt", "list"]).unwrap();
+        assert!(!default.verbose);
+    }
+
+    #[test]
     fn package_namespace_flag_is_optional() {
         let inferred = Args::try_parse_from(["quilt", "status"]).unwrap();
         assert!(matches!(
@@ -627,6 +658,70 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_get_default_home_dir() -> Result<(), Error> {
+        let user_home = dirs::home_dir().ok_or(Error::Home)?;
+        assert_eq!(
+            get_default_home_dir()?,
+            user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME)
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_list_uses_default_home_without_flag() -> Result<(), Error> {
+        let domain_temp_dir = tempfile::tempdir()?;
+        let list_args = Args {
+            home: None,
+            domain: Some(domain_temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::List,
+        };
+
+        let mut output = Vec::new();
+        let result = init(list_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "No installed packages\n"
+        );
+
+        let stored_home = quilt_rs::LocalDomain::new(domain_temp_dir.path())
+            .get_home()
+            .await?;
+        assert_eq!(stored_home.as_ref(), &get_default_home_dir()?);
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_missing_home_lineage_is_repaired_without_flag() -> Result<(), Error> {
+        let (model, domain_temp_dir) = Model::from_temp_dir()?;
+        let paths = quilt_rs::paths::DomainPaths::new(domain_temp_dir.path().to_path_buf());
+        std::fs::create_dir_all(paths.dot_quilt_dir())?;
+        std::fs::write(paths.lineage(), br#"{"packages":{},"home":""}"#)?;
+
+        initialize_home(&model, None).await?;
+
+        assert_eq!(model.get_home().await?.as_ref(), &get_default_home_dir()?);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_existing_home_is_preserved_without_flag() -> Result<(), Error> {
+        let (model, _domain_temp_dir) = Model::from_temp_dir()?;
+        let home_temp_dir = tempfile::tempdir()?;
+        model.set_home(home_temp_dir.path()).await?;
+
+        initialize_home(&model, None).await?;
+
+        assert_eq!(
+            model.get_home().await?.as_ref(),
+            &home_temp_dir.path().to_path_buf()
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn live_install() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
@@ -642,6 +737,7 @@ mod tests {
         let install_args = Args {
             home,
             domain,
+            verbose: false,
             command: Commands::Install {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
@@ -672,6 +768,7 @@ mod tests {
         let commit_args = Args {
             home: Some(temp_dir.path().to_path_buf()),
             domain: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Commit {
                 message: pkg::MESSAGE.to_string(),
                 namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -703,6 +800,7 @@ mod tests {
         let commit_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Commit {
                 message: "Any message".to_string(),
                 namespace: Some("in/valid".to_string()),
@@ -731,6 +829,7 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
                 namespace: Some("foo/bar".to_string()),
                 bucket: None,
@@ -756,6 +855,7 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
                 namespace: Some("foo/bar".to_string()),
                 bucket: None,
@@ -784,6 +884,7 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
                 namespace: Some("foo/bar".to_string()),
                 bucket: Some("some-bucket".to_string()),
@@ -811,6 +912,7 @@ mod tests {
         let pull_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Pull {
                 namespace: Some(pkg::NAMESPACE_STR.to_string()),
             },
@@ -837,6 +939,7 @@ mod tests {
         let pull_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Pull {
                 namespace: Some("in/valid".to_string()),
             },
@@ -861,6 +964,7 @@ mod tests {
         let uninstall_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Uninstall {
                 namespace: Some(pkg::NAMESPACE_STR.to_string()),
             },
@@ -887,6 +991,7 @@ mod tests {
         let uninstall_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Uninstall {
                 namespace: Some("in/valid".to_string()),
             },
@@ -915,15 +1020,14 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::List,
         };
 
-        // Test init with invalid permissions
-        let mut output = Vec::new();
-        let result = init(list_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Permission denied"));
+        // Default home initialization now reaches the same write-protected
+        // lineage before the list command can render a command-level error.
+        let err = init(list_args).await.unwrap_err();
+        assert!(err.to_string().contains("Permission denied"));
 
         Ok(())
     }
@@ -936,6 +1040,7 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::List {},
         };
 
@@ -961,6 +1066,7 @@ mod tests {
         let install_args = Args {
             domain,
             home,
+            verbose: false,
             command: Commands::Install {
                 namespace: None,
                 uri: pkg::URI.to_string(),
@@ -996,6 +1102,7 @@ mod tests {
         let browse_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Browse { uri },
         };
 
@@ -1019,6 +1126,7 @@ mod tests {
         let browse_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Browse {
                 uri: pkg::URI.to_string(),
             },
