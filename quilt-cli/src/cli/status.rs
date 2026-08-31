@@ -154,6 +154,36 @@ mod tests {
         );
     }
 
+    /// The three `Change` arms are the only hand-written mapping in the JSON,
+    /// and the only place a swapped arm would go unnoticed: nothing else pins
+    /// these strings.
+    #[test]
+    fn test_json_maps_each_change_kind() {
+        let row = |key: &str| quilt_rs::manifest::ManifestRow {
+            logical_key: PathBuf::from(key),
+            physical_key: String::new(),
+            hash: quilt_rs::object_hash::ObjectHash::default(),
+            size: 0,
+            meta: None,
+        };
+        let changes = std::collections::BTreeMap::from([
+            (
+                PathBuf::from("edited.csv"),
+                Change::Modified(row("edited.csv")),
+            ),
+            (PathBuf::from("fresh.csv"), Change::Added(row("fresh.csv"))),
+            (PathBuf::from("gone.csv"), Change::Removed(row("gone.csv"))),
+        ]);
+        let output = Output {
+            status: InstalledPackageStatus::new(UpstreamState::Local, changes),
+        };
+
+        assert_eq!(
+            output.to_json(),
+            r#"{"upstream_state":"local","changes":[{"path":"edited.csv","status":"modified"},{"path":"fresh.csv","status":"added"},{"path":"gone.csv","status":"removed"}]}"#
+        );
+    }
+
     use quilt_rs::io::storage::ByteStream;
 
     use quilt_rs::io::storage::LocalStorage;
