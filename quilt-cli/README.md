@@ -59,10 +59,8 @@ Run `quilt <command> --help` for arguments.
   (`~/.local/share/com.quiltdata.quilt-sync/` on Linux,
   `~/Library/Application Support/com.quiltdata.quilt-sync/` on macOS).
 - `--home <path>` — directory where packages keep their working files.
-  Required on the first invocation against a domain (every command
-  validates that a home is set); afterward it is persisted in the
-  domain lineage and may be omitted. See
-  [#838](https://github.com/quiltdata/quilt-rs/issues/838).
+  Defaults to `~/QuiltSync` on first use and is persisted in the domain
+  lineage. Pass `--home` only to store packages somewhere else.
 
 Commands keep stdout reserved for command output by default. Add `-v` or
 `--verbose` to show INFO-level logs on stderr; set `RUST_LOG` for target-specific
@@ -71,15 +69,15 @@ filtering.
 ## Example
 
 ```sh
-quilt --home ~/QuiltHome login --host open.quiltdata.com
+quilt login --host open.quiltdata.com
 quilt install \
     "quilt+s3://quilt-example#package=akarve/cord19&catalog=open.quiltdata.com"
 quilt status --namespace akarve/cord19
 ```
 
-`--home` is needed once to initialize the domain; the later commands pick
-it up from the saved lineage. The namespace defaults to the one in the
-URI, so `install` needs no `--namespace` here.
+Package files are stored under `~/QuiltSync` by default. Pass `--home` only
+when you want a different package directory. The namespace defaults to the one
+in the URI, so `install` needs no `--namespace` here.
 
 URIs follow the [Quilt+ URI format](https://docs.quilt.bio/quilt-platform-catalog-user/uri).
 With `&catalog=<host>`, S3 requests use the stack credentials from
@@ -92,13 +90,11 @@ No login or remote is required to create, edit, and version a package
 entirely on disk:
 
 ```sh
-# --home is only needed on the first invocation against a domain
-quilt --home ~/QuiltHome create --namespace me/local-pkg \
-    --message "Initial revision"
+quilt create --namespace me/local-pkg --message "Initial revision"
 
-# Package files live under <home>/<namespace>; add/edit them directly
-mkdir -p ~/QuiltHome/me/local-pkg
-echo "a,b,c" > ~/QuiltHome/me/local-pkg/data.csv
+# Package files live under ~/QuiltSync/<namespace> by default; add/edit them directly
+mkdir -p ~/QuiltSync/me/local-pkg
+echo "a,b,c" > ~/QuiltSync/me/local-pkg/data.csv
 
 quilt status --namespace me/local-pkg
 quilt commit --namespace me/local-pkg --message "Add data.csv"
