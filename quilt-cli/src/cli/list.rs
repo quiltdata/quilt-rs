@@ -51,7 +51,7 @@ impl Output {
                 serde_json::json!({
                     "bucket": package.bucket.as_deref(),
                     "namespace": package.namespace.to_string(),
-                    "status": package.status.to_string(),
+                    "status": package.status,
                 })
             })
             .collect();

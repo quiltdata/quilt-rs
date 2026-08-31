@@ -87,7 +87,7 @@ impl Output {
             .collect();
 
         serde_json::json!({
-            "upstream_state": self.status.upstream_state.to_string(),
+            "upstream_state": self.status.upstream_state,
             "changes": changes,
         })
         .to_string()
