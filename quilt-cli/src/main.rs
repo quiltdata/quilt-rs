@@ -6,6 +6,7 @@
 use clap::Parser;
 use std::io;
 use tracing::log;
+use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 mod cli;
 
@@ -13,8 +14,8 @@ use cli::print;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
     let args = cli::Args::parse();
+    init_logging(args.verbose);
     match cli::init(args).await {
         Ok(result) => {
             let stdout = io::stdout();
@@ -31,5 +32,48 @@ async fn main() {
             log::error!("Failed to run command: {err}");
             std::process::exit(1);
         }
+    }
+}
+
+fn init_logging(verbose: bool) {
+    let rust_log = std::env::var(EnvFilter::DEFAULT_ENV).ok();
+    let filter = build_filter(rust_log.as_deref(), verbose);
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(io::stderr)
+        .init();
+}
+
+fn build_filter(env_value: Option<&str>, verbose: bool) -> EnvFilter {
+    let default_level = if verbose {
+        LevelFilter::INFO
+    } else {
+        LevelFilter::WARN
+    };
+    let builder = EnvFilter::builder().with_default_directive(default_level.into());
+
+    match env_value {
+        Some(value) => builder.parse_lossy(value),
+        None => builder.parse_lossy(""),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_filter_uses_info_default_when_verbose_without_rust_log() {
+        let filter = build_filter(None, true);
+
+        assert_eq!(filter.max_level_hint(), Some(LevelFilter::INFO));
+    }
+
+    #[test]
+    fn build_filter_lets_rust_log_override_verbose_default() {
+        let filter = build_filter(Some("warn"), true);
+
+        assert_eq!(filter.max_level_hint(), Some(LevelFilter::WARN));
     }
 }
