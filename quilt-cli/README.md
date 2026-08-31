@@ -93,11 +93,11 @@ entirely on disk:
 quilt create --namespace me/local-pkg --message "Initial revision"
 
 # Package files live under ~/QuiltSync/<namespace> by default; add/edit them directly
-mkdir -p ~/QuiltSync/me/local-pkg
-echo "a,b,c" > ~/QuiltSync/me/local-pkg/data.csv
+cd ~/QuiltSync/me/local-pkg
+echo "a,b,c" > data.csv
 
-quilt status --namespace me/local-pkg
-quilt commit --namespace me/local-pkg --message "Add data.csv"
+quilt status
+quilt commit --message "Add data.csv"
 
 quilt list
 ```

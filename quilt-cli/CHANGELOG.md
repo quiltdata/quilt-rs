@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.0-alpha4] - 2026-08-31
+
+### Changed
+
+- `commit`, `pull`, `push`, `status` and `uninstall` infer the package from the directory you are standing in, so `--namespace` is only needed from outside a package's working copy. Inference reads the two path components below the configured home; anywhere else it is an error naming the flag (<https://github.com/quiltdata/quilt-rs/pull/850>)
+
 ## [v0.30.0-alpha3] - 2026-08-31
 
 ### Changed
