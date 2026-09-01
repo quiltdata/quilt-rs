@@ -21,6 +21,7 @@ pub async fn multipart_upload_and_sha256_chunksum(
     source_path: impl AsRef<Path>,
     dest_uri: &S3Uri,
     size: u64,
+    host: Option<&quilt_uri::Host>,
 ) -> Res<(S3Uri, ObjectHash)> {
     let (chunksize, num_chunks) = chunksize_and_parts(size);
     let upload_id = client
@@ -30,7 +31,10 @@ pub async fn multipart_upload_and_sha256_chunksum(
         .checksum_algorithm(ChecksumAlgorithm::Sha256)
         .send()
         .await
-        .map_err(|err| S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw)))?
+        .map_err(|err| S3Error {
+            host: host.cloned(),
+            kind: classify_sdk_error(err, S3ErrorKind::Raw),
+        })?
         .upload_id
         .ok_or(S3Error::new(S3ErrorKind::UploadId(
             "failed to get an UploadId".to_string(),
@@ -60,7 +64,10 @@ pub async fn multipart_upload_and_sha256_chunksum(
             .body(chunk_body)
             .send()
             .await
-            .map_err(|err| S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw)))?;
+            .map_err(|err| S3Error {
+                host: host.cloned(),
+                kind: classify_sdk_error(err, S3ErrorKind::Raw),
+            })?;
         parts.push(
             CompletedPart::builder()
                 .part_number(part_number)
@@ -82,7 +89,10 @@ pub async fn multipart_upload_and_sha256_chunksum(
         )
         .send()
         .await
-        .map_err(|err| S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw)))?;
+        .map_err(|err| S3Error {
+            host: host.cloned(),
+            kind: classify_sdk_error(err, S3ErrorKind::Raw),
+        })?;
 
     let s3_checksum = response
         .checksum_sha256

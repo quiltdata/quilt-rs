@@ -99,6 +99,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
+    /// The revisions this copy has, newest first.
+    ///
+    /// See [`flow::list_revisions`] for what "newest" means — it is acquisition
+    /// order, not the order the revisions were made in.
+    pub async fn revisions(&self) -> Res<Vec<flow::Revision>> {
+        flow::list_revisions(&self.paths, &self.storage, &self.namespace).await
+    }
+
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let Some(hash) = lineage.current_hash() else {

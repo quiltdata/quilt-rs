@@ -25,6 +25,12 @@ struct StatusEntry {
     status: String,
 }
 
+#[derive(serde::Serialize)]
+struct JsonChange {
+    path: String,
+    status: &'static str,
+}
+
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output: Vec<String> = Vec::new();
@@ -64,8 +70,39 @@ impl std::fmt::Display for Output {
     }
 }
 
-pub async fn command(m: impl Commands, args: Input) -> Std {
-    Std::from_result(m.status(args).await)
+impl Output {
+    fn to_json(&self) -> String {
+        let changes: Vec<JsonChange> = self
+            .status
+            .changes
+            .iter()
+            .map(|(path, change)| JsonChange {
+                path: path.display().to_string(),
+                status: match change {
+                    Change::Modified(_) => "modified",
+                    Change::Added(_) => "added",
+                    Change::Removed(_) => "removed",
+                },
+            })
+            .collect();
+
+        serde_json::json!({
+            "upstream_state": self.status.upstream_state,
+            "changes": changes,
+        })
+        .to_string()
+    }
+}
+
+pub async fn command(m: impl Commands, args: Input, json: bool) -> Std {
+    match m.status(args).await {
+        Ok(output) => Std::Out(if json {
+            output.to_json()
+        } else {
+            output.to_string()
+        }),
+        Err(error) => Std::Err(error),
+    }
 }
 
 async fn get_status(
@@ -102,6 +139,51 @@ mod tests {
 
     use crate::cli::model::install_package_into_temp_dir;
 
+    #[test]
+    fn test_json_empty_status() {
+        let output = Output {
+            status: InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                std::collections::BTreeMap::new(),
+            ),
+        };
+
+        assert_eq!(
+            output.to_json(),
+            r#"{"upstream_state":"up_to_date","changes":[]}"#
+        );
+    }
+
+    /// The three `Change` arms are the only hand-written mapping in the JSON,
+    /// and the only place a swapped arm would go unnoticed: nothing else pins
+    /// these strings.
+    #[test]
+    fn test_json_maps_each_change_kind() {
+        let row = |key: &str| quilt_rs::manifest::ManifestRow {
+            logical_key: PathBuf::from(key),
+            physical_key: String::new(),
+            hash: quilt_rs::object_hash::ObjectHash::default(),
+            size: 0,
+            meta: None,
+        };
+        let changes = std::collections::BTreeMap::from([
+            (
+                PathBuf::from("edited.csv"),
+                Change::Modified(row("edited.csv")),
+            ),
+            (PathBuf::from("fresh.csv"), Change::Added(row("fresh.csv"))),
+            (PathBuf::from("gone.csv"), Change::Removed(row("gone.csv"))),
+        ]);
+        let output = Output {
+            status: InstalledPackageStatus::new(UpstreamState::Local, changes),
+        };
+
+        assert_eq!(
+            output.to_json(),
+            r#"{"upstream_state":"local","changes":[{"path":"edited.csv","status":"modified"},{"path":"fresh.csv","status":"added"},{"path":"gone.csv","status":"removed"}]}"#
+        );
+    }
+
     use quilt_rs::io::storage::ByteStream;
 
     use quilt_rs::io::storage::LocalStorage;
@@ -112,7 +194,7 @@ mod tests {
         reason = "large integration test; allowed per-test so new large tests stay flagged"
     )]
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         use crate::cli::fixtures::packages::default as pkg;
 
         let uri = pkg::URI;
@@ -242,7 +324,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_model_when_latest_is_outdated() -> Result<(), Error> {
+    async fn live_model_when_latest_is_outdated() -> Result<(), Error> {
         use crate::cli::fixtures::packages::outdated as pkg;
 
         let uri = pkg::URI;

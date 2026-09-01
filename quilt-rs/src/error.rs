@@ -39,6 +39,13 @@ impl S3Error {
     pub fn is_access_denied(&self) -> bool {
         matches!(self.kind, S3ErrorKind::AccessDenied(_))
     }
+
+    /// True when the S3 service rejected the credentials themselves rather
+    /// than the active role's access to an object.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self.kind, S3ErrorKind::InvalidCredentials(_))
+    }
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -75,6 +82,9 @@ pub enum S3ErrorKind {
 
     #[error("S3 access denied: {0}")]
     AccessDenied(String),
+
+    #[error("Invalid AWS credentials: {0}")]
+    InvalidCredentials(String),
 
     #[error("S3 error: {0}")]
     Raw(String),
@@ -401,6 +411,31 @@ impl Error {
     #[must_use]
     pub fn is_access_denied(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_access_denied())
+    }
+
+    /// Returns `true` if S3 rejected the credentials themselves.
+    ///
+    /// Distinct from [`Error::is_access_denied`]: that one means the session is
+    /// healthy and the active role cannot reach the object, this one means the
+    /// session is not healthy. Callers that back off on storage failures must
+    /// check this first — retrying a rejected credential never succeeds.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
+    }
+
+    /// The deployment this request was for, if any.
+    ///
+    /// `None` for a bare S3 bucket reached with ambient credentials, and for
+    /// errors that are not S3 errors. What that absence *means* is the
+    /// caller's to decide: paired with [`Error::is_invalid_credentials`] it
+    /// says there is no stack to sign back in to.
+    #[must_use]
+    pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
+        match self {
+            Error::S3(s3) => s3.host.as_ref(),
+            _ => None,
+        }
     }
 }
 

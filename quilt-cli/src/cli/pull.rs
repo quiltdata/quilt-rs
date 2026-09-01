@@ -70,7 +70,7 @@ mod tests {
     ///   * pulls the latest version
     ///   * verifies the package is up to date
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         {

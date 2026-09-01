@@ -9,6 +9,14 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.21.2-alpha1] - 2026-09-01
+
+### Fixed
+
+- An expired session no longer shows raw AWS error text. On a page, it sends you to sign in and returns you to the page you were on. A push or a publish reports through a toast, which cannot navigate, so the toast names the deployment to sign in to. If the bucket was reached with your own `~/.aws` credentials, both say to update that file instead — there is no deployment to sign in to (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- Background sync no longer treats an expired session as a network blip and retries it quietly. It now records a sign-in problem, once per deployment rather than once per package. There is no notification for it yet (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- A missing package or object now reads "Package not found: the requested version or object does not exist" instead of the AWS error text (<https://github.com/quiltdata/quilt-rs/pull/861>)
+
 ## [v0.21.1] - 2026-08-07
 
 ### Fixed
