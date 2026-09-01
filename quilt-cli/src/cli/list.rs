@@ -42,6 +42,21 @@ impl Output {
             installed_packages_list,
         }
     }
+
+    fn to_json(&self) -> String {
+        let packages: Vec<_> = self
+            .installed_packages_list
+            .iter()
+            .map(|package| {
+                serde_json::json!({
+                    "bucket": package.bucket.as_deref(),
+                    "namespace": package.namespace.to_string(),
+                    "status": package.status,
+                })
+            })
+            .collect();
+        serde_json::json!({ "packages": packages }).to_string()
+    }
 }
 
 #[derive(tabled::Tabled)]
@@ -92,8 +107,15 @@ impl std::fmt::Display for Output {
     }
 }
 
-pub async fn command(m: impl Commands) -> Std {
-    Std::from_result(m.list().await)
+pub async fn command(m: impl Commands, json: bool) -> Std {
+    match m.list().await {
+        Ok(output) => Std::Out(if json {
+            output.to_json()
+        } else {
+            output.to_string()
+        }),
+        Err(error) => Std::Err(error),
+    }
 }
 
 /// Lists installed packages from the local domain — no network, one read of
@@ -153,6 +175,26 @@ mod tests {
             assert_eq!(format!("{empty_output}"), "No installed packages");
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_json_empty_list() {
+        let output = Output::new(Vec::new());
+
+        assert_eq!(output.to_json(), r#"{"packages":[]}"#);
+    }
+
+    #[test]
+    fn test_json_includes_bucket_namespace_and_status() {
+        let output = Output::new(vec![
+            entry(Some("acme-research"), "one", UpstreamState::UpToDate),
+            entry(None, "scratch", UpstreamState::Local),
+        ]);
+
+        assert_eq!(
+            output.to_json(),
+            r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date"},{"bucket":null,"namespace":"example/scratch","status":"local"}]}"#
+        );
     }
 
     /// Packages arrive in whatever order the lineage map yields, so the two
@@ -274,7 +316,7 @@ mod tests {
         let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 
-        if let Std::Out(output) = command(m).await {
+        if let Std::Out(output) = command(m, false).await {
             assert!(output.contains(pkg::BUCKET));
             assert!(output.contains(pkg::NAMESPACE_STR));
             assert!(output.contains("up_to_date"));

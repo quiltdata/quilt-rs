@@ -5609,12 +5609,13 @@ dependencies = [
 
 [[package]]
 name = "quilt-cli"
-version = "0.30.0-alpha1"
+version = "0.30.0-alpha6"
 dependencies = [
  "clap",
  "dirs",
  "quilt-rs",
  "quilt-uri",
+ "serde",
  "serde_json",
  "tabled",
  "tempfile",
