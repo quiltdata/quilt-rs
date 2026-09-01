@@ -16,9 +16,9 @@ use crate::cli::list;
 use crate::cli::login;
 use crate::cli::pull;
 use crate::cli::push;
-use crate::cli::reset;
 use crate::cli::role;
 use crate::cli::status;
+use crate::cli::undo_commit;
 use crate::cli::uninstall;
 
 pub struct Model {
@@ -73,9 +73,9 @@ pub trait Commands {
         push::model(local_domain, args).await
     }
 
-    async fn reset(&self, args: reset::Input) -> Result<reset::Output, Error> {
+    async fn undo_commit(&self, args: undo_commit::Input) -> Result<undo_commit::Output, Error> {
         let local_domain = self.get_local_domain();
-        reset::model(local_domain, args).await
+        undo_commit::model(local_domain, args).await
     }
 
     async fn role(&self, args: role::Input) -> Result<role::Output, Error> {

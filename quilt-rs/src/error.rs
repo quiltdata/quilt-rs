@@ -276,8 +276,8 @@ pub enum PackageOpError {
     #[error("Publish error: {0}")]
     Publish(String),
 
-    #[error("Reset error: {0}")]
-    Reset(String),
+    #[error("Undo error: {0}")]
+    Undo(String),
 
     #[error("General error regarding package: {0}")]
     Package(String),

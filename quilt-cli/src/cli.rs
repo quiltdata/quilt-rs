@@ -24,9 +24,9 @@ mod model;
 mod output;
 mod pull;
 mod push;
-mod reset;
 mod role;
 mod status;
+mod undo_commit;
 mod uninstall;
 
 #[cfg(test)]
@@ -276,13 +276,6 @@ enum Commands {
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
-    /// Discard the newest revision of a local-only package
-    Reset {
-        /// Namespace of the package to reset
-        /// Ex. foo/bar
-        #[arg(short, long)]
-        namespace: String,
-    },
     /// Show or switch your active role on a Quilt stack
     ///
     /// The active role is server-side and global: it decides what every Quilt
@@ -304,6 +297,15 @@ enum Commands {
         /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
+    },
+    /// Undo the newest commit, restoring the revision before it
+    ///
+    /// Available while the package's commit chain still reaches back, which in
+    /// practice means before its first push. Refuses if any tracked file has
+    /// uncommitted changes.
+    UndoCommit {
+        #[command(flatten)]
+        pkg: PackageRef,
     },
     /// Uninstall package from local domain
     Uninstall {
@@ -455,14 +457,6 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Pushing {args:?}");
             Ok(push::command(m, args).await)
         }
-        Commands::Reset { namespace } => {
-            let args = reset::Input {
-                namespace: namespace.try_into()?,
-            };
-
-            log::info!("Resetting {args:?}");
-            Ok(reset::command(m, args).await)
-        }
         Commands::Role { host, set } => {
             let args = role::Input { host, set };
 
@@ -478,6 +472,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::debug!("Status {args:?}");
             Ok(status::command(m, args, json).await)
+        }
+        Commands::UndoCommit { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = undo_commit::Input { namespace };
+
+            log::debug!("Undoing commit {args:?}");
+            Ok(undo_commit::command(m, args).await)
         }
         Commands::Uninstall { pkg } => {
             let namespace = pkg.resolve(&m).await?;

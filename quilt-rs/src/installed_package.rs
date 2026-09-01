@@ -690,20 +690,25 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
-    /// Discard the newest revision of a local-only package and restore its
-    /// previous local revision. Local objects and manifests are retained so
-    /// the discarded revision remains recoverable from disk.
-    pub async fn reset_to_local(&self) -> Res<CommitState> {
+    /// Discard this package's newest local commit and restore the revision
+    /// before it. See [`flow::undo_commit`].
+    ///
+    /// The remote check below is narrower than the chain rule: a remote-backed
+    /// package with unpushed commits still has a chain, but undoing there would
+    /// leave a pending commit equal to its own base.
+    pub async fn undo_commit(&self) -> Res<CommitState> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         if lineage.remote_uri.is_some() {
-            return Err(Error::PackageOp(crate::PackageOpError::Reset(
-                "local reset is only available for packages without a remote".to_string(),
+            return Err(Error::PackageOp(crate::PackageOpError::Undo(
+                "this package has a remote, so its commit chain has been consumed by pushing; \
+                 undo is only available before the first push"
+                    .to_string(),
             )));
         }
 
-        let (lineage, commit) = flow::reset_to_local(
+        let (lineage, commit) = flow::undo_commit(
             lineage,
             &self.paths,
             &self.storage,
