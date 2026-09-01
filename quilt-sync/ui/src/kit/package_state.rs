@@ -1,0 +1,253 @@
+//! The state vocabulary: one function, and the only place words are chosen.
+//!
+//! §2 of the data record: the wire carries a discriminator and never prose, for two
+//! reasons. The vocabulary is a UI artifact that will move again, and moving it must
+//! not need a backend release. And **the same state needs different words in
+//! different places** — which is why [`render`] takes a [`Site`] and not just a
+//! state.
+//!
+//! Nine states, ten labels. `Behind` and `RoleDenied` are the two that differ by
+//! site; every other state says the same thing wherever it draws.
+
+use serde::Deserialize;
+
+use super::StateTone;
+
+/// A package's resolved state, as it crosses the wire.
+///
+/// Internally tagged, so the JSON is `{"kind": "diverged"}`. `Unknown` is
+/// `#[serde(other)]`, which is what stops a `kind` this build has never heard of
+/// from failing the whole payload — and it carries no data because
+/// `#[serde(other)]` accepts only unit variants, and does not need to: the message
+/// for an unexplained pause travels on the row's `paused_reason`, not in here.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PackageState {
+    Latest,
+    Behind,
+    PendingChanges { files: usize },
+    PendingCommit,
+    Diverged,
+    PullConflict { files: Vec<String> },
+    RoleDenied { role: String },
+    NoRemote,
+    Unpublished,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where a label is being drawn. Not decoration: two states word themselves
+/// differently here, so a mapping keyed on state alone is wrong.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Site {
+    /// A row in the package list, which is quiet and pairs against `Latest`.
+    ListRow,
+    /// A row in the attention queue, which sits beside the action it offers.
+    QueueRow,
+}
+
+/// What to draw for one state at one site.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Rendered {
+    pub words: String,
+    pub tone: StateTone,
+    /// The action's label, or `None` when the app has no operation that fixes it.
+    /// A `&'static str` because the verbs are the vocabulary's, not the caller's.
+    pub action: Option<&'static str>,
+}
+
+/// The vocabulary, in one place.
+///
+/// Counts are interpolated from the data here rather than sent as their own number
+/// (§1): `PullConflict` counts the paths it was given, so the label cannot disagree
+/// with the list it describes.
+#[allow(dead_code)]
+#[must_use]
+pub fn render(state: &PackageState, site: Site) -> Rendered {
+    let (words, tone, action) = match (state, site) {
+        (PackageState::Latest, _) => ("Latest".to_string(), StateTone::Success, None),
+
+        (PackageState::Behind, Site::ListRow) => {
+            ("Not the latest".to_string(), StateTone::Attention, Some("Get latest"))
+        }
+        (PackageState::Behind, Site::QueueRow) => (
+            "Newer revision available".to_string(),
+            StateTone::Attention,
+            Some("Get latest"),
+        ),
+
+        (PackageState::PendingChanges { files }, _) => (
+            format!("{files} files changed"),
+            StateTone::Neutral,
+            Some("Publish"),
+        ),
+
+        (PackageState::PendingCommit, _) => (
+            "Revision not published".to_string(),
+            StateTone::Attention,
+            Some("Publish"),
+        ),
+
+        // `Resolve`, never `Merge`: no merge operation exists — resolving is a
+        // package-level choice between Certify Latest and Reset Local.
+        (PackageState::Diverged, _) => (
+            "Changed in both places".to_string(),
+            StateTone::Danger,
+            Some("Resolve"),
+        ),
+
+        // `Publish`, not `Resolve`: the merge page cannot resolve a conflict until
+        // the local changes are committed, so publishing is the step that unblocks.
+        (PackageState::PullConflict { files }, _) => (
+            format!("conflicts in {} files", files.len()),
+            StateTone::Danger,
+            Some("Publish"),
+        ),
+
+        (PackageState::RoleDenied { .. }, Site::ListRow) => {
+            ("No access".to_string(), StateTone::Danger, None)
+        }
+        // The queue states a shared cause once, so this one names the role.
+        (PackageState::RoleDenied { role }, Site::QueueRow) => (
+            format!("No access as {role}"),
+            StateTone::Danger,
+            None,
+        ),
+
+        (PackageState::NoRemote, _) => (
+            "No S3 bucket yet".to_string(),
+            StateTone::Attention,
+            Some("Choose S3 bucket"),
+        ),
+
+        (PackageState::Unpublished, _) => (
+            "Not published yet".to_string(),
+            StateTone::Attention,
+            Some("Publish"),
+        ),
+
+        // Fixed words, never the backend's message as the label: the vocabulary
+        // stays UI-owned, and the message renders as detail beside this. No action
+        // — the fix is a workflow rule or a misconfiguration, not an operation the
+        // app exposes.
+        (PackageState::Unknown, _) => (
+            "Sync stopped".to_string(),
+            StateTone::Danger,
+            None,
+        ),
+    };
+
+    Rendered { words, tone, action }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    #[wasm_bindgen_test]
+    fn behind_is_quiet_on_a_list_row_and_inviting_on_a_queue_row() {
+        let s = PackageState::Behind;
+        assert_eq!(render(&s, Site::ListRow).words, "Not the latest");
+        assert_eq!(render(&s, Site::QueueRow).words, "Newer revision available");
+    }
+
+    #[wasm_bindgen_test]
+    fn role_denied_states_the_cause_once_on_a_queue_row() {
+        let s = PackageState::RoleDenied {
+            role: "analyst".to_string(),
+        };
+        assert_eq!(render(&s, Site::ListRow).words, "No access");
+        assert!(
+            render(&s, Site::QueueRow).words.contains("analyst"),
+            "the queue row names the role, so the cause is stated once"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_count_is_interpolated_from_the_data() {
+        let s = PackageState::PendingChanges { files: 2 };
+        assert_eq!(render(&s, Site::ListRow).words, "2 files changed");
+    }
+
+    #[wasm_bindgen_test]
+    fn pull_conflict_counts_the_paths_it_was_given() {
+        let s = PackageState::PullConflict {
+            files: vec!["a.csv".to_string(), "b.csv".to_string()],
+        };
+        assert_eq!(render(&s, Site::ListRow).words, "conflicts in 2 files");
+    }
+
+    #[wasm_bindgen_test]
+    fn diverged_offers_resolve_and_never_merge() {
+        let r = render(&PackageState::Diverged, Site::QueueRow);
+        assert_eq!(r.action, Some("Resolve"));
+    }
+
+    #[wasm_bindgen_test]
+    fn pull_conflict_offers_publish_not_resolve() {
+        let r = render(
+            &PackageState::PullConflict { files: vec![] },
+            Site::QueueRow,
+        );
+        assert_eq!(
+            r.action,
+            Some("Publish"),
+            "the merge page cannot resolve it until the changes are committed"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn latest_is_the_only_success_tone() {
+        assert_eq!(render(&PackageState::Latest, Site::ListRow).tone, StateTone::Success);
+        assert_eq!(render(&PackageState::Latest, Site::ListRow).action, None);
+    }
+
+    #[wasm_bindgen_test]
+    fn unknown_renders_fixed_words_and_never_the_backend_message() {
+        let r = render(&PackageState::Unknown, Site::ListRow);
+        assert_eq!(r.tone, StateTone::Danger);
+        assert!(!r.words.is_empty(), "an unknown state still says something");
+        assert_eq!(r.action, None, "the app has no operation that fixes this");
+    }
+
+    #[wasm_bindgen_test]
+    fn an_unrecognised_kind_deserialises_to_unknown_rather_than_failing() {
+        let parsed: PackageState =
+            serde_json::from_str(r#"{"kind":"something_added_next_year"}"#).unwrap();
+        assert!(matches!(parsed, PackageState::Unknown));
+    }
+
+    #[wasm_bindgen_test]
+    fn no_label_uses_a_banned_word() {
+        const BANNED: &[&str] = &[
+            "commit", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty",
+        ];
+        let all = [
+            PackageState::Latest,
+            PackageState::Behind,
+            PackageState::PendingChanges { files: 2 },
+            PackageState::PendingCommit,
+            PackageState::Diverged,
+            PackageState::PullConflict { files: vec![] },
+            PackageState::RoleDenied { role: "analyst".to_string() },
+            PackageState::NoRemote,
+            PackageState::Unpublished,
+            PackageState::Unknown,
+        ];
+        for state in &all {
+            for site in [Site::ListRow, Site::QueueRow] {
+                let words = render(state, site).words.to_lowercase();
+                for bad in BANNED {
+                    assert!(
+                        !words.split_whitespace().any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *bad),
+                        "{words:?} contains the banned word {bad:?}"
+                    );
+                }
+            }
+        }
+    }
+}
