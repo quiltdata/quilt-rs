@@ -147,6 +147,14 @@ pub async fn reset_local(
 fn write_failure_message(action: &str, err: &Error) -> String {
     if err.is_access_denied() {
         "Current role can't write here — switch role".to_string()
+    } else if err.is_invalid_credentials() {
+        // This path reports through a toast, not the error page
+        // `to_frontend_string` feeds, so it cannot navigate to `/login`. The
+        // message carries the remedy instead.
+        match err.s3_host() {
+            Some(host) => format!("Your session for {host} has expired — sign in again"),
+            None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
+        }
     } else {
         format!("Failed to {action}: {err}")
     }
@@ -832,6 +840,45 @@ mod tests {
         assert_eq!(
             super::write_failure_message("publish package", &access_denied_error()),
             super::write_failure_message("push package", &access_denied_error()),
+        );
+    }
+
+    fn expired_session_error() -> Error {
+        Error::from(quilt::Error::S3(quilt::S3Error {
+            host: Some("demo.quiltdata.com".parse().unwrap()),
+            kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+        }))
+    }
+
+    /// A write is where a stale session usually surfaces. The toast cannot
+    /// navigate to `/login` the way the error page does, so the message itself
+    /// has to carry the remedy and the host.
+    #[test]
+    fn push_with_an_expired_session_names_signing_in() {
+        let msg = super::write_failure_message("push package", &expired_session_error());
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(
+            msg.contains("demo.quiltdata.com"),
+            "must name the host, got: {msg}"
+        );
+        assert!(!msg.contains("ExpiredToken"), "raw SDK text leaked: {msg}");
+        assert!(!msg.contains("S3 error"), "got: {msg}");
+    }
+
+    /// Ambient credentials have no deployment to sign in to, so the remedy is
+    /// the file, not a login.
+    #[test]
+    fn push_with_invalid_local_credentials_names_the_file() {
+        let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::InvalidCredentials("InvalidAccessKeyId: nope".to_string()),
+        )));
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(msg.contains("~/.aws/credentials"), "got: {msg}");
+        assert!(
+            !msg.contains("sign in"),
+            "there is no stack to sign in to: {msg}"
         );
     }
 
