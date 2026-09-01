@@ -409,6 +409,29 @@ impl Error {
     pub fn is_access_denied(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_access_denied())
     }
+
+    /// Returns `true` if S3 rejected the credentials themselves.
+    ///
+    /// Distinct from [`Error::is_access_denied`]: that one means the session is
+    /// healthy and the active role cannot reach the object, this one means the
+    /// session is not healthy. Callers that back off on storage failures must
+    /// check this first — retrying a rejected credential never succeeds.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
+    }
+
+    /// The host whose credentials S3 rejected, when there is one.
+    ///
+    /// `None` for a bucket reached with ambient `~/.aws` credentials rather
+    /// than a Quilt deployment's vended ones — there is no stack to sign in to.
+    #[must_use]
+    pub fn invalid_credentials_host(&self) -> Option<&quilt_uri::Host> {
+        match self {
+            Error::S3(s3) if s3.is_invalid_credentials() => s3.host.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 // Compose `?` across two From hops: external error → focused enum → Error.

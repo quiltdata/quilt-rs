@@ -230,6 +230,38 @@ fn access_denied_error() -> Error {
     )))
 }
 
+/// An S3 refusal carrying a credential code, as it reaches the classifiers once
+/// the session's keys are stale.
+fn invalid_credentials_error() -> Error {
+    Error::from(quilt::Error::S3(quilt::S3Error::new(
+        quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: the token expired".to_string()),
+    )))
+}
+
+/// Retrying a rejected credential never succeeds — the user has to sign in.
+/// `Error::S3` otherwise lands in the transient bucket, so this would back off
+/// to the 64 s cap forever while the login affordance never appears. Same trap
+/// the denial arm above was hoisted out of.
+#[test]
+fn invalid_credentials_ask_for_login_rather_than_retrying_forever() {
+    let classified = classify_sync_err(invalid_credentials_error()).unwrap_err();
+
+    assert!(
+        matches!(classified, WatchError::LoginRequired(_)),
+        "expected LoginRequired, got: {classified:?}"
+    );
+}
+
+/// The read side, mirroring `access_denied_on_status_refresh_pauses`: the cheap
+/// status refresh and the pull dry-run go through the other classifier.
+#[test]
+fn invalid_credentials_on_status_refresh_ask_for_login() {
+    match classify_transient_or_login(invalid_credentials_error()) {
+        WatchError::LoginRequired(_) => {}
+        other => panic!("expected LoginRequired, got {other:?}"),
+    }
+}
+
 /// A role denial can never succeed on retry — the role must change first.
 /// Leaving it in the transient bucket means autosync retries forever (capped
 /// at 64 s) and the user is never told why nothing is syncing.

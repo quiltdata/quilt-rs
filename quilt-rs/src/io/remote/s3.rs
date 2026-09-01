@@ -88,9 +88,11 @@ pub(super) fn classify_s3_error(
         Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
             S3ErrorKind::InvalidCredentials(described.to_string())
         }
-        Some("NoSuchKey" | "NoSuchBucket" | "NotFound") => {
-            S3ErrorKind::NotFound(described.to_string())
-        }
+        // `NoSuchBucket` is deliberately absent: `is_not_found` means "that
+        // object is not there", and `push` reads it as "no `latest` tag yet, so
+        // this is a first push" (flow/push.rs). A misspelled or deleted bucket
+        // answering `NotFound` would take that branch and push into nothing.
+        Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
         _ => fallback(described.to_string()),
     }
 }
@@ -830,6 +832,25 @@ mod tests {
                 "{code} must be shown as a credential failure"
             );
         }
+    }
+
+    /// A bucket that is not there is not "the object is not there".
+    ///
+    /// `push` reads `is_not_found` on the `latest` tag as "first push for this
+    /// package"; classifying `NoSuchBucket` as `NotFound` would make a
+    /// misspelled bucket take that branch instead of failing.
+    #[test]
+    fn missing_bucket_does_not_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchBucket"),
+            Some(404),
+            "NoSuchBucket: no-such-bucket",
+            S3ErrorKind::Raw,
+        );
+        assert!(
+            !S3Error::new(err).is_not_found(),
+            "a missing bucket must not read as a missing object"
+        );
     }
 
     #[test]

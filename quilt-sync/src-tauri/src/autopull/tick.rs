@@ -167,6 +167,14 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         _ if err.is_access_denied() => Err(WatchError::Conflict(PausedReason::RoleDenied {
             role: String::new(),
         })),
+        // Above the `S3(_)` arm for the same reason as the denial above it: a
+        // rejected credential is an `Error::S3`, so it would otherwise back off
+        // forever, and no amount of retrying fixes it. It is the same fact the
+        // `Login` arm below carries, arriving by a different route — S3 answered
+        // 403 with a credential code rather than the provider refusing to vend.
+        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(
+            err.invalid_credentials_host().cloned(),
+        )),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
@@ -194,6 +202,13 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         _ if err.is_access_denied() => WatchError::Conflict(PausedReason::RoleDenied {
             role: String::new(),
         }),
+        // The same fact as the `Login` arm above, arriving by a different route:
+        // S3 answered 403 with a credential code instead of the provider
+        // refusing to vend. Retrying never fixes it, so it must not fall to the
+        // `Transient` default.
+        _ if err.is_invalid_credentials() => {
+            WatchError::LoginRequired(err.invalid_credentials_host().cloned())
+        }
         _ => WatchError::Transient(err),
     }
 }
