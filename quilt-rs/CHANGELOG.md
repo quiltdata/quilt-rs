@@ -9,6 +9,35 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.35.1-alpha2] - 2026-09-01
+
+### Added
+
+- `S3ErrorKind::InvalidCredentials` separates S3 rejecting the credentials from `AccessDenied`. `Error::is_invalid_credentials()` returns `true` for that case; `Error::s3_host()` returns the deployment a request was for, or `None` for a bare bucket. Together they tell "sign in again" from "retry later": retrying a rejected credential never succeeds (<https://github.com/quiltdata/quilt-rs/pull/861>)
+
+## [v0.35.1-alpha1] - 2026-08-07
+
+### Added
+
+- `LocalDomain::get_lineage` reads the whole lineage record in one go, for callers that want every installed package at once — `list_installed_packages` plus `InstalledPackage::lineage` per package re-reads and re-parses that record once per package (<https://github.com/quiltdata/quilt-rs/pull/846>)
+
+## [v0.35.0] - 2026-08-07
+
+### Added
+
+- A package can be set to sync its **whole contents**: `PackageLineage::sync_scope` records the choice, and under `SyncScope::EntirePackage` a pull also fetches paths the remote added, instead of listing them and leaving them. `InstalledPackage::set_sync_scope` writes it (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+### Changed
+
+- **Breaking:** `flow::pull` and `InstalledPackage::pull` take the scope as an argument rather than reading the stored one, so a caller keeps sparse-checkout behaviour whatever a package's lineage says. Pass `SyncScope::IndividualFiles` for the previous behaviour (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+## [v0.34.1] - 2026-08-06
+
+### Changed
+
+- Rearranged log levels: anything that runs once per file, or once per status computation, is now `trace` rather than `debug`. `RUST_LOG=quilt_rs=trace` brings it back (<https://github.com/quiltdata/quilt-rs/pull/828>)
+- Replaced whole-collection dumps with short summaries — the package-status line used to print every file it walked. Together with the level changes, a `RUST_LOG=debug` log is roughly 100× smaller (<https://github.com/quiltdata/quilt-rs/pull/828>)
+
 ## [v0.34.0] - 2026-07-30
 
 ### Added

@@ -3,8 +3,11 @@ use std::collections::BTreeSet;
 use leptos::prelude::*;
 
 use super::entries::{EntriesToolbar, EntryRow};
-use super::selection::{RemoteSelection, all_selected, partially_selected, resolve, toggled_all};
+use super::selection::{
+    RemoteSelection, all_selected, partially_selected, resolve_for_scope, toggled_all,
+};
 use super::status_banner::StatusBanner;
+use super::sync_scope::{ALL_DOWNLOADED_LINE, STANDING_SCOPE_LINE, SyncScopeBand};
 use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
 use crate::components::{
@@ -80,12 +83,21 @@ pub(super) fn InstalledPackageContent(
             .collect::<BTreeSet<String>>(),
     );
 
+    // The package's sync scope, needed above because the derived selection
+    // below is scope-aware: whole-package scope has no per-file choice to
+    // honour, so a subset left over from individual-file mode must not narrow
+    // what the download control sends, enables on, or draws ticked.
+    let scope_gate = data.entire_package_sync_enabled;
+    let syncs_entire_package = data.syncs_entire_package;
+    let whole_package = scope_gate && syncs_entire_package;
+
     // The one derived selection. The header checkbox and every row read *this*
     // and store nothing of their own, so they cannot disagree with each other —
     // before, they were two independent derivations over one index vector, and
     // their agreement rested on both being rebuilt at once.
     let selected = Memo::new(move |_| {
-        remote_paths.with_value(|remote| selection.with(|s| resolve(s, remote)))
+        remote_paths
+            .with_value(|remote| selection.with(|s| resolve_for_scope(s, remote, whole_package)))
     });
 
     // Filtered entries
@@ -111,6 +123,25 @@ pub(super) fn InstalledPackageContent(
     let checked_count = Memo::new(move |_| selected.with(BTreeSet::len));
 
     let show_toolbar = has_remote_entries || ignored_count > 0 || unmodified_count > 0;
+    // The scope band renders regardless of `has_remote_entries`: once a package
+    // has caught up there is nothing left to list, and the band is then the only
+    // thing on screen stating a scope that keeps applying — and the only way to
+    // turn it back off.
+    let namespace_for_scope = data.namespace.clone();
+    // One value, both sticky bands. They stack by deriving their `top` from
+    // it, so a disagreement here is the two overlapping.
+    let with_status = matches!(
+        data.status.as_str(),
+        "ahead" | "behind" | "diverged" | "error"
+    ) || no_access_reason.is_some();
+    let pending_count = remote_paths.with_value(std::collections::BTreeSet::len);
+    // What fills the toolbar's left slot once there is nothing to download.
+    // `None` off the gate: an un-gated package's page stays exactly as it was.
+    let slot_caption = match (scope_gate, whole_package) {
+        (false, _) => None,
+        (true, true) => Some(STANDING_SCOPE_LINE),
+        (true, false) => Some(ALL_DOWNLOADED_LINE),
+    };
 
     // Install selected paths. The resolved selection is already remote-only and
     // already narrowed to what the package still offers, so it is the path list
@@ -318,8 +349,23 @@ pub(super) fn InstalledPackageContent(
                 // ── Entries form ──
                 <div class="form" data-testid="installed-package-entries">
                     // ── Entries toolbar ──
+                    <Show when=move || scope_gate>
+                        <SyncScopeBand
+                            namespace=namespace_for_scope.clone()
+                            with_status=with_status
+                            pending=pending_count
+                            entire_package=syncs_entire_package
+                            notification=notification
+                            ui_locked=ui_locked
+                            refetch=refetch
+                        />
+                    </Show>
+
                     <Show when=move || show_toolbar>
                         <EntriesToolbar
+                            below_sync_scope=scope_gate
+                            whole_package=whole_package
+                            caption=slot_caption
                             has_remote_entries=has_remote_entries
                             on_select_all=on_select_all
                             all_selected=all_remote_selected
@@ -330,8 +376,7 @@ pub(super) fn InstalledPackageContent(
                             filter_ignored=filter_ignored
                             ignored_count=ignored_count
                             unmodified_count=unmodified_count
-                            with_status=matches!(data.status.as_str(), "ahead" | "behind" | "diverged" | "error")
-                                || no_access_reason.is_some()
+                            with_status=with_status
                         />
                     </Show>
 
@@ -343,6 +388,7 @@ pub(super) fn InstalledPackageContent(
                             let:item
                         >
                             <EntryRow
+                                whole_package=whole_package
                                 entry=item.1
                                 pkg_uri=uri.clone()
                                 selection=selection

@@ -1,23 +1,26 @@
 name: Test QuiltSync
 
 on:
+  # Toolchain canary — see test-quilt-rs.yaml. Holds the only clippy run for
+  # `quilt-sync/src-tauri`, so it needs its own schedule.
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
   push:
-    paths:
-      - "quilt-sync/src-tauri/**"
-      - "!quilt-sync/src-tauri/**/*.md"
-      - "quilt-sync/*.toml"
-      - "quilt-sync/Cargo.*"
-      - "rust-toolchain.toml"
-      - ".github/workflows/test-quilt-sync-backend.yaml"
+    paths-ignore:
+      - "**/*.md"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # `event_name` so a scheduled run and a push to main cannot cancel each other.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   quality:
     name: Code Quality (Ubuntu)
-    if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
     env:
       # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
@@ -43,8 +46,21 @@ jobs:
         run: cargo clippy --all-targets --all-features -- --deny warnings
         working-directory: ./quilt-sync/src-tauri
 
+      # Two steps, for the reason given in test-quilt-rs.yaml.
       - name: Test
-        run: cargo nextest run
+        run: cargo nextest run --profile no-aws
+        working-directory: ./quilt-sync/src-tauri
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: debug
+          # See test-quilt-rs.yaml.
+          AWS_EC2_METADATA_DISABLED: true
+
+      - name: Test (live AWS fixtures)
+        # Secrets reach a pull request only from a branch in this repository —
+        # a platform rule, so this is a skip, not a failure.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: cargo nextest run -E 'test(/::live_/)'
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
@@ -54,6 +70,7 @@ jobs:
 
   cross-platform:
     name: Cross-Platform Tests
+    # Scheduled runs are on `main`, so the canary covers macOS and Windows too.
     if: github.ref == 'refs/heads/main'
     env:
       # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
@@ -78,10 +95,10 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      # Two steps, for the reason given in test-quilt-rs.yaml.
       - name: Test
-        run: cargo nextest run
+        run: cargo nextest run --profile no-aws
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_EC2_METADATA_DISABLED: true

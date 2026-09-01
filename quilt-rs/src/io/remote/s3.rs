@@ -82,10 +82,17 @@ pub(super) fn classify_s3_error(
     described: &str,
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
-    match (code, status) {
-        (Some("AccessDenied"), _) | (None, Some(403)) => {
-            S3ErrorKind::AccessDenied(described.to_string())
+    match code {
+        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+        None if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
+        Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
+            S3ErrorKind::InvalidCredentials(described.to_string())
         }
+        // Only codes meaning a missing *object* belong here. `push` reads
+        // `is_not_found` on a package's `latest` tag as "no revisions yet, so
+        // this is a first push" (flow/push.rs), so a code that means a missing
+        // bucket would send it to write into one that does not exist.
+        Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
         _ => fallback(described.to_string()),
     }
 }
@@ -110,7 +117,11 @@ where
     classify_s3_error(code.as_deref(), status, &describe_sdk_error(err), fallback)
 }
 
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
+async fn get_object_stream(
+    client: &aws_sdk_s3::Client,
+    s3_uri: &S3Uri,
+    host: Option<&Host>,
+) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -118,10 +129,17 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
     };
 
     let result = result.send().await.map_err(|err| match &err {
-        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
-            Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
-        }
-        _ => Error::S3(S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw))),
+        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => Error::S3(S3Error {
+            host: host.cloned(),
+            kind: S3ErrorKind::NotFound(s3_uri.to_string()),
+        }),
+        // The host separates a deployment session, whose remedy is signing in,
+        // from ambient `~/.aws` credentials, whose remedy is the file. A `None`
+        // here is read downstream as the latter.
+        _ => Error::S3(S3Error {
+            host: host.cloned(),
+            kind: classify_sdk_error(err, S3ErrorKind::Raw),
+        }),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -476,7 +494,7 @@ impl Remote for RemoteS3 {
             host, s3_uri
         );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        match get_object_stream(&client, s3_uri).await {
+        match get_object_stream(&client, s3_uri, host).await {
             Ok(stream) => {
                 debug!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
@@ -490,6 +508,14 @@ impl Remote for RemoteS3 {
             // on — that the active role, not the session, is the problem.
             Err(e) if e.is_access_denied() => {
                 warn!("❌ Access denied reading {}: {}", s3_uri, e);
+                Err(e)
+            }
+            // A rejected credential says the session is dead, not that this
+            // read failed: autosync raises the login affordance on it rather
+            // than backing off. Re-wrapped, it is indistinguishable from a
+            // network fault.
+            Err(e) if e.is_invalid_credentials() => {
+                warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
                 Err(e)
             }
             Err(e) => {
@@ -563,7 +589,14 @@ impl Remote for RemoteS3 {
             .await?;
 
         if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
-            multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
+            multipart_upload_and_sha256_chunksum(
+                client,
+                source_path,
+                dest_uri,
+                size,
+                host_config.host.as_ref(),
+            )
+            .await
         } else {
             put_and_request_checksum(client, source_path, dest_uri, host_config).await
         }
@@ -602,7 +635,7 @@ mod tests {
     use crate::paths::DomainPaths;
 
     #[test(tokio::test)]
-    async fn test_multipart_upload() -> Res<()> {
+    async fn live_multipart_upload() -> Res<()> {
         // Create a temporary file with the test content
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(less_than_8mb())?;
@@ -645,7 +678,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_zero_bytes_upload() -> Res<()> {
+    async fn live_zero_bytes_upload() -> Res<()> {
         // Create a temporary file with zero bytes
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(zero_bytes())?;
@@ -689,7 +722,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_crc64_upload() -> Res<()> {
+    async fn live_crc64_upload() -> Res<()> {
         // Read the fixture file content
         let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");
         let file_content = std::fs::read(fixture_path)?;
@@ -794,11 +827,16 @@ mod tests {
         );
     }
 
-    /// Both of these are also HTTP 403, which is exactly why we key on the
-    /// code: they mean "re-vend credentials", not "wrong role".
+    /// Credential failures are also HTTP 403, which is exactly why we key on
+    /// the code: they mean "re-vend credentials", not "wrong role".
     #[test]
-    fn expired_credential_codes_do_not_classify_as_access_denied() {
-        for code in ["ExpiredToken", "InvalidAccessKeyId"] {
+    fn credential_codes_classify_as_invalid_credentials() {
+        for code in [
+            "ExpiredToken",
+            "InvalidAccessKeyId",
+            "InvalidToken",
+            "InvalidClientTokenId",
+        ] {
             let err = classify_s3_error(
                 Some(code),
                 Some(403),
@@ -809,7 +847,47 @@ mod tests {
                 !S3Error::new(err).is_access_denied(),
                 "{code} must not be read as a role denial"
             );
+            let err = classify_s3_error(
+                Some(code),
+                Some(403),
+                &format!("{code}: nope"),
+                S3ErrorKind::Raw,
+            );
+            assert!(
+                S3Error::new(err).is_invalid_credentials(),
+                "{code} must be shown as a credential failure"
+            );
         }
+    }
+
+    /// A bucket that is not there is not "the object is not there".
+    ///
+    /// `push` reads `is_not_found` on the `latest` tag as "first push for this
+    /// package"; classifying `NoSuchBucket` as `NotFound` would make a
+    /// misspelled bucket take that branch instead of failing.
+    #[test]
+    fn missing_bucket_does_not_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchBucket"),
+            Some(404),
+            "NoSuchBucket: no-such-bucket",
+            S3ErrorKind::Raw,
+        );
+        assert!(
+            !S3Error::new(err).is_not_found(),
+            "a missing bucket must not read as a missing object"
+        );
+    }
+
+    #[test]
+    fn missing_objects_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchKey"),
+            Some(404),
+            "NoSuchKey: missing",
+            S3ErrorKind::GetObject,
+        );
+        assert_eq!(err, S3ErrorKind::NotFound("NoSuchKey: missing".to_string()));
     }
 
     #[test]

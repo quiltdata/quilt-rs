@@ -13,12 +13,15 @@ use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
 use crate::autopull::Watcher;
+use crate::experimental_settings::ExperimentalSettings;
+use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 use crate::quilt::flow::PullOutcome;
+use crate::quilt::lineage::SyncScope;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{PackageEvent, RemotePackageEvent};
 
@@ -144,6 +147,14 @@ pub async fn reset_local(
 fn write_failure_message(action: &str, err: &Error) -> String {
     if err.is_access_denied() {
         "Current role can't write here — switch role".to_string()
+    } else if err.is_invalid_credentials() {
+        // This path reports through a toast, not the error page
+        // `to_frontend_string` feeds, so it cannot navigate to `/login`. The
+        // message carries the remedy instead.
+        match err.s3_host() {
+            Some(host) => format!("Your session for {host} has expired — sign in again"),
+            None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
+        }
     } else {
         format!("Failed to {action}: {err}")
     }
@@ -342,10 +353,40 @@ pub async fn package_commit_and_push(
 async fn package_pull_command(
     m: &model::Model,
     namespace: &str,
+    experimental: &ExperimentalSettings,
 ) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_pull(m, &namespace, None).await?;
+    model::package_pull(m, &namespace, None, experimental).await?;
     Ok(namespace)
+}
+
+/// Record whether this package keeps its whole contents.
+///
+/// Storage only — it writes the standing choice and returns. Catching up on
+/// files already listed is the caller's separate `package_install_paths` call,
+/// deliberately not folded in here: one of them is a preference and the other
+/// downloads bytes, and a failure to fetch must not silently un-choose the mode.
+#[tauri::command]
+pub async fn package_set_sync_scope(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    entire_package: bool,
+) -> Result<(), String> {
+    let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let scope = if entire_package {
+        SyncScope::EntirePackage
+    } else {
+        SyncScope::IndividualFiles
+    };
+    let installed = m
+        .get_installed_package(&namespace)
+        .await
+        .map_err(|e| e.to_frontend_string())?
+        .ok_or_else(|| format!("Package {namespace} not found"))?;
+    m.package_set_sync_scope(&installed, scope)
+        .await
+        .map_err(|e| e.to_frontend_string())
 }
 
 #[tauri::command]
@@ -353,6 +394,7 @@ pub async fn package_pull(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
+    experimental: tauri::State<'_, SharedExperimentalSettings>,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
@@ -360,7 +402,8 @@ pub async fn package_pull(
     let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    let result = package_pull_command(&m, &namespace).await;
+    let experimental = experimental.read().await.clone();
+    let result = package_pull_command(&m, &namespace, &experimental).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
@@ -797,6 +840,45 @@ mod tests {
         assert_eq!(
             super::write_failure_message("publish package", &access_denied_error()),
             super::write_failure_message("push package", &access_denied_error()),
+        );
+    }
+
+    fn expired_session_error() -> Error {
+        Error::from(quilt::Error::S3(quilt::S3Error {
+            host: Some("demo.quiltdata.com".parse().unwrap()),
+            kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+        }))
+    }
+
+    /// A write is where a stale session usually surfaces. The toast cannot
+    /// navigate to `/login` the way the error page does, so the message itself
+    /// has to carry the remedy and the host.
+    #[test]
+    fn push_with_an_expired_session_names_signing_in() {
+        let msg = super::write_failure_message("push package", &expired_session_error());
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(
+            msg.contains("demo.quiltdata.com"),
+            "must name the host, got: {msg}"
+        );
+        assert!(!msg.contains("ExpiredToken"), "raw SDK text leaked: {msg}");
+        assert!(!msg.contains("S3 error"), "got: {msg}");
+    }
+
+    /// Ambient credentials have no deployment to sign in to, so the remedy is
+    /// the file, not a login.
+    #[test]
+    fn push_with_invalid_local_credentials_names_the_file() {
+        let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::InvalidCredentials("InvalidAccessKeyId: nope".to_string()),
+        )));
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(msg.contains("~/.aws/credentials"), "got: {msg}");
+        assert!(
+            !msg.contains("sign in"),
+            "there is no stack to sign in to: {msg}"
         );
     }
 

@@ -14,7 +14,21 @@ use crate::util::format_size;
 // ── Entries toolbar ──
 
 #[component]
+#[allow(
+    clippy::fn_params_excessive_bools,
+    reason = "Leptos props are named at every call site, so the mis-ordering \
+              this lint guards against cannot happen here"
+)]
 pub(super) fn EntriesToolbar(
+    /// Whether this package is on whole-package scope. It changes what the
+    /// left slot holds, and the slot is never left empty: select-all plus the
+    /// download control under the narrow scope, a whole-package download while
+    /// files are still pending, and the standing-scope line once they are not.
+    whole_package: bool,
+    /// What the left slot says when there is nothing left to fetch. `None`
+    /// leaves it empty, which is the pre-experiment behaviour and what an
+    /// un-gated package still gets.
+    caption: Option<&'static str>,
     has_remote_entries: bool,
     on_select_all: impl Fn(leptos::ev::Event) + 'static,
     all_selected: Memo<bool>,
@@ -28,42 +42,79 @@ pub(super) fn EntriesToolbar(
     ignored_count: usize,
     unmodified_count: usize,
     with_status: bool,
+    /// Whether the sync-scope band is rendered above this toolbar. Both are
+    /// sticky, so the one underneath has to stick lower or the two overlap.
+    below_sync_scope: bool,
 ) -> impl IntoView {
-    let toolbar_class = if with_status {
-        "qui-entries-toolbar with-status"
-    } else {
-        "qui-entries-toolbar"
+    let toolbar_class = match (with_status, below_sync_scope) {
+        (true, true) => "qui-entries-toolbar with-status below-sync-scope",
+        (true, false) => "qui-entries-toolbar with-status",
+        (false, true) => "qui-entries-toolbar below-sync-scope",
+        (false, false) => "qui-entries-toolbar",
     };
 
     view! {
         <div class=toolbar_class>
             <div class="container">
-                {if has_remote_entries {
+                {if !has_remote_entries {
+                    // Caught up, so there is no control to offer. The list
+                    // below already shows what is on disk; the caption states
+                    // the thing it cannot — whether that is a standing rule or
+                    // just the present fact — and keeps the slot from going
+                    // empty.
+                    caption
+                        .map(|text| {
+                            view! {
+                                <span class="value default scope-standing-line">{text}</span>
+                            }
+                        })
+                        .into_any()
+                } else if has_remote_entries {
                     {
+                        // Whole-package scope hides the select-all beside it,
+                        // so the button would otherwise sit out at the container
+                        // edge while the line that replaces it starts in the
+                        // label column — the same slot jumping sideways between
+                        // its two states.
                         let install_btn_class = Memo::new(move |_| {
-                            if checked_count.get() > 0 {
-                                "qui-button primary"
-                            } else {
-                                "qui-button"
+                            match (checked_count.get() > 0, whole_package) {
+                                (true, true) => "qui-button primary scope-slot-indent",
+                                (true, false) => "qui-button primary",
+                                (false, true) => "qui-button scope-slot-indent",
+                                (false, false) => "qui-button",
                             }
                         });
                         view! {
-                            <label class="select-all">
-                                <input
-                                    type="checkbox"
-                                    prop:checked=move || all_selected.get()
-                                    prop:indeterminate=move || partially_selected.get()
-                                    on:change=on_select_all
-                                />
-                                "Select all"
-                            </label>
+                            // Under whole-package scope there is no per-file
+                            // choice left to offer, so select-all goes rather
+                            // than sitting inert. The button stays: it is the
+                            // catch-up affordance, and its existing
+                            // show-when-pending rule already renders it exactly
+                            // when it is the right thing to press.
+                            {(!whole_package).then(|| view! {
+                                <label class="select-all">
+                                    <input
+                                        type="checkbox"
+                                        prop:checked=move || all_selected.get()
+                                        prop:indeterminate=move || partially_selected.get()
+                                        on:change=on_select_all
+                                    />
+                                    "Select all"
+                                </label>
+                            })}
                             <button
                                 class=move || install_btn_class.get()
                                 type="button"
                                 prop:disabled=move || checked_count.get() == 0
                                 on:click=on_install_paths
                             >
-                                <span>"Download selected paths"</span>
+                                <span>
+                                    {if whole_package {
+                                        "Download all files"
+                                    } else {
+                                        "Download selected paths"
+                                    }}
+                                </span>
                             </button>
                         }.into_any()
                     }
@@ -141,6 +192,12 @@ fn EntriesFilter(
     reason = "declarative Leptos view; length is markup, not logic complexity"
 )]
 pub(super) fn EntryRow(
+    /// Under whole-package scope the row checkbox is inert. Forced, not
+    /// inferred: relying on "a downloaded file disables its own" would leave
+    /// rows live during the initial catch-up and after a failed one — offering
+    /// a per-file choice the scope has just removed, at exactly the moment
+    /// someone is watching.
+    whole_package: bool,
     entry: EntryData,
     pkg_uri: Option<S3PackageUri>,
     /// The held selection, written on a checkbox click.
@@ -296,7 +353,7 @@ pub(super) fn EntryRow(
                 <input
                     type="checkbox"
                     prop:checked=move || is_checked.get()
-                    prop:disabled=!is_remote
+                    prop:disabled=whole_package || !is_remote
                     on:change=on_checkbox_change
                 />
             </label>
@@ -379,6 +436,9 @@ mod tests {
         let el = mount(move || {
             view! {
                 <EntriesToolbar
+                    below_sync_scope=false
+                    whole_package=false
+                    caption=None
                     has_remote_entries=true
                     on_select_all=|_| {}
                     all_selected=Memo::new(move |_| all)

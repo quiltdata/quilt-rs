@@ -945,6 +945,10 @@ mod tests {
         }
     }
 
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "`readable_buckets` awaits; the other two do not. Rewriting just those would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
+    )]
     impl model::QuiltModel for SilentHost {
         fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
             &self.domain

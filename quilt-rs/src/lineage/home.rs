@@ -10,6 +10,9 @@ use tempfile::TempDir;
 use serde::Deserialize;
 use serde::Serialize;
 
+/// Default directory name for local package working copies.
+pub const DEFAULT_HOME_DIR_NAME: &str = "QuiltSync";
+
 /// Wrapper for working directory path with proper serialization/deserialization
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Home {

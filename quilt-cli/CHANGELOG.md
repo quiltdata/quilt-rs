@@ -9,6 +9,66 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.0-alpha6] - 2026-08-31
+
+### Added
+
+- `quilt list --json` and `quilt status --json` print a machine-readable form, so `quilt list --json | jq` works (<https://github.com/quiltdata/quilt-rs/pull/851>)
+
+### Fixed
+
+- A command that fails now exits non-zero. It reported the error and exited 0, so a shell script could not tell success from failure (<https://github.com/quiltdata/quilt-rs/pull/851>)
+
+## [v0.30.0-alpha5] - 2026-08-31
+
+### Added
+
+- `quilt log` lists a package's revisions, newest first, with the short hash, the commit message, and the date this copy obtained the revision. That date is what is recorded locally and nothing more: a manifest carries no timestamp of its own, so for a revision fetched from a remote it is the fetch time rather than the commit time — hence the `obtained` heading. A package's full published history is not available yet (<https://github.com/quiltdata/quilt-rs/pull/849>)
+
+## [v0.30.0-alpha4] - 2026-08-31
+
+### Changed
+
+- `commit`, `pull`, `push`, `status` and `uninstall` infer the package from the directory you are standing in, so `--namespace` is only needed from outside a package's working copy. Inference reads the two path components below the configured home; anywhere else it is an error naming the flag (<https://github.com/quiltdata/quilt-rs/pull/850>)
+
+## [v0.30.0-alpha3] - 2026-08-31
+
+### Changed
+
+- `quilt` no longer needs `--home` on first use — it defaults to `~/QuiltSync`, the same working-copy directory QuiltSync uses. Pass `--home` to choose a different one; it is still remembered after that (<https://github.com/quiltdata/quilt-rs/pull/848>)
+
+### Fixed
+
+- A command that cannot resolve the package home now exits non-zero, instead of reporting the error and exiting 0 (<https://github.com/quiltdata/quilt-rs/pull/848>)
+
+## [v0.30.0-alpha2] - 2026-08-31
+
+### Added
+
+- `-v` / `--verbose` shows INFO-level logs on stderr; `RUST_LOG` still takes precedence for target-specific filtering (<https://github.com/quiltdata/quilt-rs/pull/847>)
+
+### Changed
+
+- Piping a command's output now works — stdout carries only the command's own output, and logs go to stderr at WARN and above (was INFO on stdout) (<https://github.com/quiltdata/quilt-rs/pull/847>)
+
+## [v0.30.0-alpha1] - 2026-08-07
+
+### Changed
+
+- `quilt list` prints a table of bucket, namespace and upstream status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package. Status comes from the local lineage record, so listing stays offline and reports the last-known remote tip; `quilt status <namespace>` refreshes it (<https://github.com/quiltdata/quilt-rs/pull/846>)
+
+## [v0.29.2] - 2026-08-07
+
+### quilt-rs
+
+- A package can now be set to download its whole contents, including files added later. `quilt pull` deliberately does **not** honour that setting — it keeps fetching only the files you already have, whatever the desktop app recorded for the package (<https://github.com/quiltdata/quilt-rs/pull/834>)
+
+## [v0.29.1] - 2026-08-06
+
+### quilt-rs
+
+- Log levels rearranged and long file-list dumps replaced with summaries: a `RUST_LOG=debug` log is roughly 100× smaller. `RUST_LOG=quilt_rs=trace` brings the per-file detail back (<https://github.com/quiltdata/quilt-rs/pull/828>)
+
 ## [v0.29.0] - 2026-07-30
 
 ### Added
