@@ -13,7 +13,7 @@
 
 ### Fixed
 
-- An expired session during a pull or a push now takes you to the sign-in page and returns you to where you were, instead of showing the raw AWS error text. Credentials taken from `~/.aws/credentials` say so specifically, since there is no Quilt deployment to sign in to (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- An expired session no longer surfaces as raw AWS error text. Where the page can act on it, it takes you to the sign-in page and returns you to where you were; a push or a publish, which reports through a toast, names the remedy instead. Credentials taken from `~/.aws/credentials` point at the file, since there is no Quilt deployment to sign in to (<https://github.com/quiltdata/quilt-rs/pull/861>)
 - Background sync no longer files an expired session under passing network trouble, where it retried quietly and told you nothing. It is now recognised as a sign-in problem and counted once per deployment rather than once per package; the notification that acts on it is still to come (<https://github.com/quiltdata/quilt-rs/pull/861>)
 - A package or object that is genuinely missing now says so, rather than surfacing the AWS wrap chain (<https://github.com/quiltdata/quilt-rs/pull/861>)
 
