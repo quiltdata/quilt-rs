@@ -248,6 +248,8 @@ impl Default for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
+    #[serde(default)]
+    pub main_page_v2: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -750,18 +752,23 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
     tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
 }
 
-/// Turn the entire-package sync experiment on or off. Reveals the per-package
-/// scope control; downloads nothing by itself.
-pub async fn update_experimental_settings(entire_package_sync: bool) -> Result<(), String> {
+/// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
+/// knows about one experiment must not reset another.
+pub async fn update_experimental_settings(
+    entire_package_sync: Option<bool>,
+    main_page_v2: Option<bool>,
+) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
-        entire_package_sync: bool,
+        entire_package_sync: Option<bool>,
+        main_page_v2: Option<bool>,
     }
     tauri::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
+            main_page_v2,
         },
     )
     .await

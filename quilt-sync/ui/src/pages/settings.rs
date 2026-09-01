@@ -88,6 +88,7 @@ fn SettingsContent(
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <ExperimentalSection
                 entire_package_sync=data.experimental.entire_package_sync
+                main_page_v2=data.experimental.main_page_v2
                 notification=notification
                 refetch=refetch
             />
