@@ -421,14 +421,16 @@ impl Error {
         matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
     }
 
-    /// The host whose credentials S3 rejected, when there is one.
+    /// The deployment this request was for, if any.
     ///
-    /// `None` for a bucket reached with ambient `~/.aws` credentials rather
-    /// than a Quilt deployment's vended ones — there is no stack to sign in to.
+    /// `None` for a bare S3 bucket reached with ambient credentials, and for
+    /// errors that are not S3 errors. What that absence *means* is the
+    /// caller's to decide: paired with [`Error::is_invalid_credentials`] it
+    /// says there is no stack to sign back in to.
     #[must_use]
-    pub fn invalid_credentials_host(&self) -> Option<&quilt_uri::Host> {
+    pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
         match self {
-            Error::S3(s3) if s3.is_invalid_credentials() => s3.host.as_ref(),
+            Error::S3(s3) => s3.host.as_ref(),
             _ => None,
         }
     }

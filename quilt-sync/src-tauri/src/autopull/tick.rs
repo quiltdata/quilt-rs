@@ -171,9 +171,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // credential is an `Error::S3`, and retrying one never succeeds. It is
         // the fact the `Login` arm below carries, reached when S3 answers 403
         // with a credential code rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(
-            err.invalid_credentials_host().cloned(),
-        )),
+        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(err.s3_host().cloned())),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
@@ -205,9 +203,7 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         // rejected credential never succeeds. It is the fact the `Login` arm
         // above carries, reached when S3 answers 403 with a credential code
         // rather than the provider refusing to vend.
-        _ if err.is_invalid_credentials() => {
-            WatchError::LoginRequired(err.invalid_credentials_host().cloned())
-        }
+        _ if err.is_invalid_credentials() => WatchError::LoginRequired(err.s3_host().cloned()),
         _ => WatchError::Transient(err),
     }
 }

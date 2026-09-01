@@ -13,7 +13,7 @@
 
 ### Added
 
-- `S3ErrorKind::InvalidCredentials` separates S3 rejecting the credentials from `AccessDenied`. Two helpers read it: `Error::is_invalid_credentials()` returns `true` for that case, and `Error::invalid_credentials_host()` returns the deployment whose credentials were rejected — `None` when the bucket was reached with ambient `~/.aws` credentials, where there is no deployment to sign in to. Together they tell "sign in again" from "retry later": retrying a rejected credential never succeeds (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- `S3ErrorKind::InvalidCredentials` separates S3 rejecting the credentials from `AccessDenied`. `Error::is_invalid_credentials()` returns `true` for that case; `Error::s3_host()` returns the deployment a request was for, or `None` for a bare bucket. Together they tell "sign in again" from "retry later": retrying a rejected credential never succeeds (<https://github.com/quiltdata/quilt-rs/pull/861>)
 
 ## [v0.35.1-alpha1] - 2026-08-07
 

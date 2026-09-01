@@ -207,13 +207,12 @@ impl Error {
         matches!(self, Error::Quilt(err) if err.is_invalid_credentials())
     }
 
-    /// The host whose credentials S3 rejected, when there is one. `None` for a
-    /// bucket reached with ambient `~/.aws` credentials: there is no stack to
-    /// sign in to.
+    /// The deployment this request was for, if any. `None` for a bare S3
+    /// bucket reached with ambient credentials, and for non-S3 errors.
     #[must_use]
-    pub fn invalid_credentials_host(&self) -> Option<&quilt_uri::Host> {
+    pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
         match self {
-            Error::Quilt(err) => err.invalid_credentials_host(),
+            Error::Quilt(err) => err.s3_host(),
             _ => None,
         }
     }

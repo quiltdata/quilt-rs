@@ -151,7 +151,7 @@ fn write_failure_message(action: &str, err: &Error) -> String {
         // This path reports through a toast, not the error page
         // `to_frontend_string` feeds, so it cannot navigate to `/login`. The
         // message carries the remedy instead.
-        match err.invalid_credentials_host() {
+        match err.s3_host() {
             Some(host) => format!("Your session for {host} has expired — sign in again"),
             None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
         }
