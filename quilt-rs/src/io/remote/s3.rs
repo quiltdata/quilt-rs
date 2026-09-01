@@ -88,10 +88,10 @@ pub(super) fn classify_s3_error(
         Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
             S3ErrorKind::InvalidCredentials(described.to_string())
         }
-        // `NoSuchBucket` is deliberately absent: `is_not_found` means "that
-        // object is not there", and `push` reads it as "no `latest` tag yet, so
-        // this is a first push" (flow/push.rs). A misspelled or deleted bucket
-        // answering `NotFound` would take that branch and push into nothing.
+        // Only codes meaning a missing *object* belong here. `push` reads
+        // `is_not_found` on a package's `latest` tag as "no revisions yet, so
+        // this is a first push" (flow/push.rs), so a code that means a missing
+        // bucket would send it to write into one that does not exist.
         Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
         _ => fallback(described.to_string()),
     }
@@ -133,9 +133,9 @@ async fn get_object_stream(
             host: host.cloned(),
             kind: S3ErrorKind::NotFound(s3_uri.to_string()),
         }),
-        // Carry the host: a credential rejection with none reads downstream as
-        // "ambient ~/.aws credentials", whose remedy is editing a file rather
-        // than signing back into a deployment.
+        // The host separates a deployment session, whose remedy is signing in,
+        // from ambient `~/.aws` credentials, whose remedy is the file. A `None`
+        // here is read downstream as the latter.
         _ => Error::S3(S3Error {
             host: host.cloned(),
             kind: classify_sdk_error(err, S3ErrorKind::Raw),
@@ -510,11 +510,10 @@ impl Remote for RemoteS3 {
                 warn!("❌ Access denied reading {}: {}", s3_uri, e);
                 Err(e)
             }
-            // Same reasoning as the denial above, for the other half of the
-            // question: a rejected credential means the session is dead, and
-            // autosync branches on it to raise the login affordance instead of
-            // backing off. Flattening it here sent every expired-session read
-            // into transient retry.
+            // A rejected credential says the session is dead, not that this
+            // read failed: autosync raises the login affordance on it rather
+            // than backing off. Re-wrapped, it is indistinguishable from a
+            // network fault.
             Err(e) if e.is_invalid_credentials() => {
                 warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
                 Err(e)

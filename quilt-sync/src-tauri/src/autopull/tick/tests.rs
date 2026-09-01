@@ -239,9 +239,8 @@ fn invalid_credentials_error() -> Error {
 }
 
 /// Retrying a rejected credential never succeeds — the user has to sign in.
-/// `Error::S3` otherwise lands in the transient bucket, so this would back off
-/// to the 64 s cap forever while the login affordance never appears. Same trap
-/// the denial arm above was hoisted out of.
+/// `Error::S3` lands in the transient bucket, so an arm that does not precede it
+/// backs off to the 64 s cap while the login affordance never appears.
 #[test]
 fn invalid_credentials_ask_for_login_rather_than_retrying_forever() {
     let classified = classify_sync_err(invalid_credentials_error()).unwrap_err();
