@@ -8,9 +8,13 @@ use crate::Story;
 use crate::kit::StateLabel;
 use crate::kit::StateTone;
 
-/// Every state the page can put on a row, in the order the vocabulary lists them.
+/// Every label the page can put on a row, in the order the vocabulary lists them.
 /// Reviewing this list *is* reviewing the vocabulary: words that read badly here
 /// read badly on the page.
+///
+/// Ten labels, nine states: `Not the latest` and `Newer revision available` are the
+/// same state, `behind`, worded for a list row and for a queue row. Both appear here
+/// because `StateLabel` renders both; only the first can appear on a `PackageRow`.
 const STATES: &[(&str, StateTone)] = &[
     ("Latest", StateTone::Success),
     ("Not the latest", StateTone::Attention),
@@ -42,7 +46,7 @@ pub fn StateLabelStories() -> impl IntoView {
 fn VocabularyStory() -> impl IntoView {
     view! {
         <Story
-            title="StateLabel — the ten states"
+            title="StateLabel — nine states, ten labels"
             note="Read the words, not the colours. Each one is what the page says out loud, and \
                   the tone only sets how loudly. Steps 3 / 7 / 12 of the tone's scale, in that \
                   order: fill, edge, text. Text is step 12 rather than the scale's own text \

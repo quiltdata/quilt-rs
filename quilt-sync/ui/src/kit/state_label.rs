@@ -11,22 +11,30 @@
 //!
 //! The tone words are Primer's `Label` variants (`success`, `attention`,
 //! `danger`), which the tier-2 tokens already used. Primer has a fifth, `severe`,
-//! between attention and danger; nothing in the ten states needs it, so no orange
+//! between attention and danger; nothing in the vocabulary needs it, so no orange
 //! scale is vendored for a tone with no occupant.
 //!
 //! # The words are the meaning; the tone is emphasis
 //!
 //! Colour is never the message. Every label carries its words, so `No access` says
 //! what it is with the stylesheet switched off — the tone only decides how loudly.
-//! That ordering is what makes the ten states safe to render forty-three times on
+//! That ordering is what makes the vocabulary safe to render forty-three times on
 //! one page.
 //!
-//! # Four tones, not ten
+//! # Four tones, not nine
 //!
-//! Ten states collapse to four because the page only ever asks four questions of a
-//! row: is it fine (`Success`), is it merely reporting a number (`Neutral`), does
-//! it want you (`Attention`), or is it broken (`Danger`). A fifth tone would have
-//! to answer a question nothing asks.
+//! The states collapse to four tones because the page only ever asks four questions
+//! of a row: is it fine (`Success`), is it merely reporting a number (`Neutral`),
+//! does it want you (`Attention`), or is it broken (`Danger`). A fifth tone would
+//! have to answer a question nothing asks.
+//!
+//! # Nine states, ten labels
+//!
+//! `behind` renders as `Not the latest` on a list row and as
+//! `Newer revision available` on a queue row — quiet where it pairs against
+//! `Latest`, inviting where it sits beside the action it offers. So the words are a
+//! property of the state **and where it draws**, never of the state alone, which is
+//! why they live in the page's mapping function and not on this component.
 
 use leptos::prelude::*;
 
@@ -112,7 +120,7 @@ pub fn StateLabel(
     ///
     /// Children rather than a `label` prop, as in Primer. Two reasons beyond
     /// matching: `label` means *accessible name* everywhere else in this kit, and
-    /// three of the ten states interpolate a count, which children take without a
+    /// three of the states interpolate a count, which children take without a
     /// `format!` at the call site.
     children: Children,
     /// The light phase's guess, not yet confirmed by the heavy walk. Draws a dashed edge

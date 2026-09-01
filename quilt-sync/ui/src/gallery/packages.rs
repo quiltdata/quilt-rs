@@ -35,18 +35,16 @@ pub fn PackageRowStories() -> impl IntoView {
     view! { <StatesStory /><EdgesStory /> }
 }
 
-/// The ten states again, but on a row — which is where they are actually read, and
+/// The nine states again, but on a row — which is where they are actually read, and
 /// where the ragged left edge of the state column becomes visible.
+///
+/// Nine, not ten: `behind` renders as `Not the latest` here and as
+/// `Newer revision available` on a queue row, so only the first can appear in this story.
 #[component]
 fn StatesStory() -> impl IntoView {
     let states: Vec<(&str, StateTone, f64)> = vec![
         ("Latest", StateTone::Success, 2.0 * HOUR),
         ("Not the latest", StateTone::Attention, 3.0 * DAY),
-        (
-            "Newer revision available",
-            StateTone::Attention,
-            20.0 * MINUTE,
-        ),
         ("2 files changed", StateTone::Neutral, 8.0 * MINUTE),
         ("conflicts in 2 files", StateTone::Danger, 40.0 * MINUTE),
         ("Changed in both places", StateTone::Danger, 5.0 * HOUR),
@@ -97,15 +95,21 @@ fn EdgesStory() -> impl IntoView {
                   namespace is distinguished by its start, and there is no filename at the \
                   end worth saving. The time column is a fixed 80px — the last cell is the \
                   worst-case phrase set, and if any of those ellipsise the column wants 96px \
-                  or the phrases want shortening."
+                  or the phrases want shortening. \
+                  \
+                  The state phrase in the truncation cells is `Changed in both places`, 22 \
+                  characters, which is the widest label a LIST row can carry. It is not the \
+                  widest label in the kit — `Newer revision available` is 24 — but that one \
+                  only ever renders on a queue row, so sizing this column against it would \
+                  be testing a case that cannot occur."
         >
             <Cell full=true label="long namespace truncates right, state keeps its place">
                 <PackageRow
                     namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix"
                     href="#packagerow"
                     changed_at=ago(4.0 * DAY)
-                    state="Newer revision available"
-                    tone=StateTone::Attention
+                    state="Changed in both places"
+                    tone=StateTone::Danger
                 />
             </Cell>
             <Cell full=true label="no recorded time — a word, never a blank cell">
@@ -121,8 +125,8 @@ fn EdgesStory() -> impl IntoView {
                     namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2"
                     href="#packagerow"
                     changed_at=ago(4.0 * DAY)
-                    state="Newer revision available"
-                    tone=StateTone::Attention
+                    state="Changed in both places"
+                    tone=StateTone::Danger
                 />
             </Cell>
             <Cell wide=true label="narrow · short state — the namespace gets the slack back">
@@ -148,7 +152,7 @@ fn EdgesStory() -> impl IntoView {
                         namespace="user/package-b"
                         href="#packagerow"
                         changed_at=ago(20.0 * MINUTE)
-                        state="Newer revision available"
+                        state="Not the latest"
                         tone=StateTone::Attention
                         provisional=true
                     />
@@ -205,7 +209,7 @@ fn fixtures() -> Vec<(&'static str, &'static str, &'static str, StateTone, f64)>
         (
             "s3://my-bucket",
             "user/package-b",
-            "Newer revision available",
+            "Not the latest",
             StateTone::Attention,
             20.0 * MINUTE,
         ),

@@ -41,6 +41,12 @@ pub fn Spinner(
     /// already says the same thing: announcing "Publishing… busy Publishing" is worse
     /// than announcing it once. So an `Inline` spinner usually passes nothing and a
     /// `Region` spinner, which has no text beside it, always passes something.
+    ///
+    /// Rendered as off-screen **text inside** the live region, not as `aria-label` on it.
+    /// A live region announces its *content*; a label names it. With `role="status"` and
+    /// nothing inside, the "work has started" announcement — the entire point — may never
+    /// fire. Primer reached the same conclusion and lists `aria-label` as deprecated on its
+    /// `Spinner` in favour of `srText`.
     #[prop(optional, into)]
     aria_label: Option<String>,
 ) -> impl IntoView {
@@ -54,7 +60,12 @@ pub fn Spinner(
             // `status`, not `alert`: work starting is not an interruption. It is polite,
             // so it waits for a pause rather than cutting across what is being read.
             Some(label) => {
-                view! { <span class=class role="status" aria-label=label></span> }.into_any()
+                view! {
+                    <span class=class role="status">
+                        <span data-sr-only>{label}</span>
+                    </span>
+                }
+                    .into_any()
             }
             None => view! { <span class=class aria-hidden="true"></span> }.into_any(),
         }}
