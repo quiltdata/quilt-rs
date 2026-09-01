@@ -117,7 +117,11 @@ where
     classify_s3_error(code.as_deref(), status, &describe_sdk_error(err), fallback)
 }
 
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
+async fn get_object_stream(
+    client: &aws_sdk_s3::Client,
+    s3_uri: &S3Uri,
+    host: Option<&Host>,
+) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -125,10 +129,17 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
     };
 
     let result = result.send().await.map_err(|err| match &err {
-        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
-            Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
-        }
-        _ => Error::S3(S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw))),
+        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => Error::S3(S3Error {
+            host: host.cloned(),
+            kind: S3ErrorKind::NotFound(s3_uri.to_string()),
+        }),
+        // Carry the host: a credential rejection with none reads downstream as
+        // "ambient ~/.aws credentials", whose remedy is editing a file rather
+        // than signing back into a deployment.
+        _ => Error::S3(S3Error {
+            host: host.cloned(),
+            kind: classify_sdk_error(err, S3ErrorKind::Raw),
+        }),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -483,7 +494,7 @@ impl Remote for RemoteS3 {
             host, s3_uri
         );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        match get_object_stream(&client, s3_uri).await {
+        match get_object_stream(&client, s3_uri, host).await {
             Ok(stream) => {
                 debug!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
@@ -497,6 +508,15 @@ impl Remote for RemoteS3 {
             // on — that the active role, not the session, is the problem.
             Err(e) if e.is_access_denied() => {
                 warn!("❌ Access denied reading {}: {}", s3_uri, e);
+                Err(e)
+            }
+            // Same reasoning as the denial above, for the other half of the
+            // question: a rejected credential means the session is dead, and
+            // autosync branches on it to raise the login affordance instead of
+            // backing off. Flattening it here sent every expired-session read
+            // into transient retry.
+            Err(e) if e.is_invalid_credentials() => {
+                warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
                 Err(e)
             }
             Err(e) => {
@@ -570,7 +590,14 @@ impl Remote for RemoteS3 {
             .await?;
 
         if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
-            multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
+            multipart_upload_and_sha256_chunksum(
+                client,
+                source_path,
+                dest_uri,
+                size,
+                host_config.host.as_ref(),
+            )
+            .await
         } else {
             put_and_request_checksum(client, source_path, dest_uri, host_config).await
         }
