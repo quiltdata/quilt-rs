@@ -1,4 +1,6 @@
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::use_navigate;
 
 use super::event_target_checked;
 use crate::commands;
@@ -51,6 +53,7 @@ pub(super) fn ExperimentalSection(
 
     let main_page_v2_enabled = RwSignal::new(main_page_v2);
     let main_page_v2_saving = RwSignal::new(false);
+    let navigate = use_navigate();
 
     let on_toggle_main_page_v2 = move |ev: leptos::ev::Event| {
         let new_enabled = event_target_checked(&ev);
@@ -59,6 +62,7 @@ pub(super) fn ExperimentalSection(
         }
         main_page_v2_saving.set(true);
         main_page_v2_enabled.set(new_enabled);
+        let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
             match commands::update_experimental_settings(None, Some(new_enabled)).await {
                 Ok(()) => {
@@ -66,6 +70,10 @@ pub(super) fn ExperimentalSection(
                         "Experimental settings saved".into(),
                     )));
                     refetch.notify();
+                    // Go to `/`, the only route that asks which main page is switched on.
+                    // Saving the flag alone changed nothing on screen, so the switch
+                    // looked like it needed an app restart.
+                    navigate("/", NavigateOptions::default());
                 }
                 Err(e) => {
                     // Revert the optimistic toggle so the UI doesn't drift

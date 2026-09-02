@@ -43,10 +43,15 @@ fn PackageList(packages: Vec<(String, PackageState, bool)>) -> impl IntoView {
         .into_iter()
         .map(|(namespace, state, provisional)| {
             let rendered = render(&state, Site::ListRow);
+            // The namespace has to travel in the query string: the package page reads it
+            // with `use_query_map`, and a bare path leaves it empty — which is the
+            // "Invalid namespace" that page then reports. `filter` matches what v1's list
+            // link sends, so the destination behaves the same however you arrived at it.
+            let href = format!("/installed-package?namespace={namespace}&filter=unmodified");
             view! {
                 <PackageRow
                     namespace=namespace
-                    href="/installed-package"
+                    href=href
                     state=rendered.words
                     tone=rendered.tone
                     provisional=provisional
@@ -137,6 +142,29 @@ mod tests {
         assert!(
             !text.contains("Newer revision available"),
             "that is the queue's wording; a list row must not use it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_links_to_its_own_package() {
+        let el = mount(|| {
+            view! {
+                <PackageList packages=vec![
+                    ("user/plate-07".to_string(), PackageState::Latest, true),
+                ] />
+            }
+        });
+        let href = el
+            .query_selector("a[href*=installed-package]")
+            .unwrap()
+            .expect("the row should link to the package page")
+            .get_attribute("href")
+            .unwrap();
+        // A bare path is the bug this pins: the package page reads the namespace from the
+        // query string and reports "Invalid namespace" when it is absent.
+        assert!(
+            href.contains("namespace=user/plate-07"),
+            "href must carry the namespace, got: {href}"
         );
     }
 
