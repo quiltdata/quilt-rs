@@ -25,14 +25,20 @@ use crate::quilt::lineage::UpstreamState;
 pub enum PackageStateDto {
     Latest,
     Behind,
-    PendingChanges { files: usize },
+    PendingChanges {
+        files: usize,
+    },
     PendingCommit,
     Diverged,
-    PullConflict { files: Vec<String> },
+    PullConflict {
+        files: Vec<String>,
+    },
     /// `None` when the denial is certain but the role query behind the wording
     /// failed. The denial still stands — the bucket refused — so suppressing the
     /// state would lose a real fact; it simply cannot be named.
-    RoleDenied { role: Option<String> },
+    RoleDenied {
+        role: Option<String>,
+    },
     NoRemote,
     Unpublished,
     /// `UpstreamState::Error`. The UI's `PackageState` catches this with

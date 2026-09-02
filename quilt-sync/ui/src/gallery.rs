@@ -115,7 +115,10 @@ fn Gallery() -> impl IntoView {
         ("ToggleRow", view! { <ToggleRowStories /> }.into_any()),
         ("Countdown", view! { <CountdownStories /> }.into_any()),
         ("HostRow", view! { <HostRowStories /> }.into_any()),
-        ("SegmentedControl", view! { <SegmentedControlStories /> }.into_any()),
+        (
+            "SegmentedControl",
+            view! { <SegmentedControlStories /> }.into_any(),
+        ),
         ("SearchInput", view! { <SearchInputStories /> }.into_any()),
         ("StateLabel", view! { <StateLabelStories /> }.into_any()),
         ("PackageRow", view! { <PackageRowStories /> }.into_any()),

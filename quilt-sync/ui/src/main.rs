@@ -72,15 +72,19 @@ fn Landing() -> impl IntoView {
 /// v1 is the page that has always worked.
 fn landing_target(settings: Result<&commands::SettingsData, &str>) -> &'static str {
     let to_v2 = settings.is_ok_and(|data| data.experimental.main_page_v2);
-    if to_v2 { "/main" } else { "/installed-packages-list" }
+    if to_v2 {
+        "/main"
+    } else {
+        "/installed-packages-list"
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use commands::{
-        AutosyncSettingsData, ExperimentalSettingsData, FsWatcherSettingsData,
-        PublishSettingsData, SettingsData,
+        AutosyncSettingsData, ExperimentalSettingsData, FsWatcherSettingsData, PublishSettingsData,
+        SettingsData,
     };
     use wasm_bindgen_test::*;
 

@@ -32,14 +32,20 @@ use super::StateTone;
 pub enum PackageState {
     Latest,
     Behind,
-    PendingChanges { files: usize },
+    PendingChanges {
+        files: usize,
+    },
     PendingCommit,
     Diverged,
-    PullConflict { files: Vec<String> },
+    PullConflict {
+        files: Vec<String>,
+    },
     /// `None` when the denial is certain but the role query behind the wording
     /// failed. The denial still stands — the bucket refused — so suppressing the
     /// state would lose a real fact; it simply cannot be named.
-    RoleDenied { role: Option<String> },
+    RoleDenied {
+        role: Option<String>,
+    },
     NoRemote,
     Unpublished,
     #[serde(other)]
@@ -79,9 +85,11 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
     let (words, tone, action) = match (state, site) {
         (PackageState::Latest, _) => ("Latest".to_string(), StateTone::Success, None),
 
-        (PackageState::Behind, Site::ListRow) => {
-            ("Not the latest".to_string(), StateTone::Attention, Some("Get latest"))
-        }
+        (PackageState::Behind, Site::ListRow) => (
+            "Not the latest".to_string(),
+            StateTone::Attention,
+            Some("Get latest"),
+        ),
         (PackageState::Behind, Site::QueueRow) => (
             "Newer revision available".to_string(),
             StateTone::Attention,
@@ -143,14 +151,14 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
         // stays UI-owned, and the message renders as detail beside this. No action
         // — the fix is a workflow rule or a misconfiguration, not an operation the
         // app exposes.
-        (PackageState::Unknown, _) => (
-            "Sync stopped".to_string(),
-            StateTone::Danger,
-            None,
-        ),
+        (PackageState::Unknown, _) => ("Sync stopped".to_string(), StateTone::Danger, None),
     };
 
-    Rendered { words, tone, action }
+    Rendered {
+        words,
+        tone,
+        action,
+    }
 }
 
 #[cfg(test)]
@@ -223,7 +231,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn latest_is_the_only_success_tone() {
-        assert_eq!(render(&PackageState::Latest, Site::ListRow).tone, StateTone::Success);
+        assert_eq!(
+            render(&PackageState::Latest, Site::ListRow).tone,
+            StateTone::Success
+        );
         assert_eq!(render(&PackageState::Latest, Site::ListRow).action, None);
     }
 
@@ -254,7 +265,9 @@ mod tests {
             PackageState::PendingCommit,
             PackageState::Diverged,
             PackageState::PullConflict { files: vec![] },
-            PackageState::RoleDenied { role: Some("analyst".to_string()) },
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
             PackageState::NoRemote,
             PackageState::Unpublished,
             PackageState::Unknown,
@@ -264,7 +277,9 @@ mod tests {
                 let words = render(state, site).words.to_lowercase();
                 for bad in BANNED {
                     assert!(
-                        !words.split_whitespace().any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *bad),
+                        !words
+                            .split_whitespace()
+                            .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *bad),
                         "{words:?} contains the banned word {bad:?}"
                     );
                 }
@@ -272,25 +287,119 @@ mod tests {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "a table of expected outputs; its length is data, not branching"
+    )]
     #[wasm_bindgen_test]
     fn renders_complete_mapping_for_all_state_and_site_combinations() {
         // Table-driven test: verify words, tone, and action for every (state, site) pair.
         // Each row is (state, site, expected_words, expected_tone, expected_action).
         let cases = vec![
-            (PackageState::Latest, Site::ListRow, "Latest", StateTone::Success, None),
-            (PackageState::Latest, Site::QueueRow, "Latest", StateTone::Success, None),
-            (PackageState::Behind, Site::ListRow, "Not the latest", StateTone::Attention, Some("Get latest")),
-            (PackageState::Behind, Site::QueueRow, "Newer revision available", StateTone::Attention, Some("Get latest")),
-            (PackageState::PendingChanges { files: 2 }, Site::ListRow, "2 files changed", StateTone::Neutral, Some("Publish")),
-            (PackageState::PendingCommit, Site::ListRow, "Revision not published", StateTone::Attention, Some("Publish")),
-            (PackageState::Diverged, Site::ListRow, "Changed in both places", StateTone::Danger, Some("Resolve")),
-            (PackageState::PullConflict { files: vec!["a.csv".to_string(), "b.csv".to_string()] }, Site::ListRow, "conflicts in 2 files", StateTone::Danger, Some("Publish")),
-            (PackageState::RoleDenied { role: Some("analyst".to_string()) }, Site::ListRow, "No access", StateTone::Danger, None),
-            (PackageState::RoleDenied { role: Some("analyst".to_string()) }, Site::QueueRow, "No access as analyst", StateTone::Danger, None),
-            (PackageState::RoleDenied { role: None }, Site::QueueRow, "No access", StateTone::Danger, None),
-            (PackageState::NoRemote, Site::ListRow, "No S3 bucket yet", StateTone::Attention, Some("Choose S3 bucket")),
-            (PackageState::Unpublished, Site::ListRow, "Not published yet", StateTone::Attention, Some("Publish")),
-            (PackageState::Unknown, Site::ListRow, "Sync stopped", StateTone::Danger, None),
+            (
+                PackageState::Latest,
+                Site::ListRow,
+                "Latest",
+                StateTone::Success,
+                None,
+            ),
+            (
+                PackageState::Latest,
+                Site::QueueRow,
+                "Latest",
+                StateTone::Success,
+                None,
+            ),
+            (
+                PackageState::Behind,
+                Site::ListRow,
+                "Not the latest",
+                StateTone::Attention,
+                Some("Get latest"),
+            ),
+            (
+                PackageState::Behind,
+                Site::QueueRow,
+                "Newer revision available",
+                StateTone::Attention,
+                Some("Get latest"),
+            ),
+            (
+                PackageState::PendingChanges { files: 2 },
+                Site::ListRow,
+                "2 files changed",
+                StateTone::Neutral,
+                Some("Publish"),
+            ),
+            (
+                PackageState::PendingCommit,
+                Site::ListRow,
+                "Revision not published",
+                StateTone::Attention,
+                Some("Publish"),
+            ),
+            (
+                PackageState::Diverged,
+                Site::ListRow,
+                "Changed in both places",
+                StateTone::Danger,
+                Some("Resolve"),
+            ),
+            (
+                PackageState::PullConflict {
+                    files: vec!["a.csv".to_string(), "b.csv".to_string()],
+                },
+                Site::ListRow,
+                "conflicts in 2 files",
+                StateTone::Danger,
+                Some("Publish"),
+            ),
+            (
+                PackageState::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+                Site::ListRow,
+                "No access",
+                StateTone::Danger,
+                None,
+            ),
+            (
+                PackageState::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+                Site::QueueRow,
+                "No access as analyst",
+                StateTone::Danger,
+                None,
+            ),
+            (
+                PackageState::RoleDenied { role: None },
+                Site::QueueRow,
+                "No access",
+                StateTone::Danger,
+                None,
+            ),
+            (
+                PackageState::NoRemote,
+                Site::ListRow,
+                "No S3 bucket yet",
+                StateTone::Attention,
+                Some("Choose S3 bucket"),
+            ),
+            (
+                PackageState::Unpublished,
+                Site::ListRow,
+                "Not published yet",
+                StateTone::Attention,
+                Some("Publish"),
+            ),
+            (
+                PackageState::Unknown,
+                Site::ListRow,
+                "Sync stopped",
+                StateTone::Danger,
+                None,
+            ),
         ];
 
         for (state, site, expected_words, expected_tone, expected_action) in cases {
