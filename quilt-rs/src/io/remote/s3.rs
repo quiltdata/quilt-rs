@@ -453,16 +453,12 @@ impl RemoteS3 {
             Some(host) => map.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
             None => map.clear(),
         }
-        drop(map);
-
-        let mut locks = match self.client_locks.write() {
-            Ok(locks) => locks,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        match host {
-            Some(host) => locks.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
-            None => locks.clear(),
-        }
+        // Keep the per-principal construction locks for the lifetime of this
+        // shared cache. Removing one during invalidation would let a request
+        // already holding the old lock race a later miss holding a newly
+        // created lock; the pre-invalidation request could then overwrite the
+        // fresh client. The key space is bounded by the hosts and regions used
+        // by this RemoteS3 instance.
     }
 
     async fn get_client_for_bucket(
@@ -1289,9 +1285,20 @@ mod tests {
         assert!(cloned.s3.read().unwrap().contains_key(&key));
         assert!(cloned.client_locks.read().unwrap().contains_key(&key));
 
+        let construction_lock = remote
+            .client_locks
+            .read()
+            .unwrap()
+            .get(&key)
+            .unwrap()
+            .clone();
+
         cloned.clear_client_cache(None);
         assert!(remote.s3.read().unwrap().is_empty());
-        assert!(remote.client_locks.read().unwrap().is_empty());
+        assert!(Arc::ptr_eq(
+            &construction_lock,
+            remote.client_locks.read().unwrap().get(&key).unwrap()
+        ));
     }
 
     /// Never called: compiling these calls is the proof that the three
