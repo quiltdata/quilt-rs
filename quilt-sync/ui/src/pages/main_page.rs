@@ -5,6 +5,8 @@
 //! boundary re-shows its fallback each time, so the page would strobe. Today
 //! `reload` fires only from the Refresh button.
 
+mod autosync;
+
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -211,6 +213,7 @@ pub fn MainPage() -> impl IntoView {
             />
         }
             .into_any()>
+            <autosync::AutosyncCard />
             <Card title="Packages">
                 <Transition fallback=|| {
                     view! {

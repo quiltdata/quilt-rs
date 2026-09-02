@@ -568,10 +568,6 @@ pub enum ToggleActivityData {
 }
 
 /// UI-side mirror of the backend's `ToggleState`.
-///
-/// `#[allow(dead_code)]`: no caller in this crate reads these fields yet,
-/// hence the suppression.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToggleStateData {
@@ -610,8 +606,9 @@ pub enum PausedReasonData {
     Unrecognised,
 }
 
-/// `#[allow(dead_code)]`: no caller in this crate reads these fields yet
-/// either — see [`ToggleStateData`]'s note.
+/// `#[allow(dead_code)]`: the Autosync card carries this list but renders
+/// nothing from it — the queue (Plan 4) is what reads a pause's namespace and
+/// reason, hence the suppression.
 #[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -621,10 +618,6 @@ pub struct PausedPackageData {
 }
 
 /// Payload 3: the watcher's own state. Returned by `get_main_page_watcher`.
-///
-/// `#[allow(dead_code)]`: no caller in this crate reads these fields yet
-/// either — see [`ToggleStateData`]'s note.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPageWatcherData {
@@ -633,15 +626,13 @@ pub struct MainPageWatcherData {
     /// Rendered by the queue (Plan 4), which joins it against the package list
     /// by namespace to ask whether a pause is explained by a row the user can
     /// already see (§4.3). Carried and pinned here, read by nothing in this
-    /// build.
+    /// build — hence the field-level suppression.
+    #[allow(dead_code)]
     pub paused: Vec<PausedPackageData>,
 }
 
-/// No caller in this crate yet: the whole mirror graph above
-/// (`ToggleActivityData` through `MainPageWatcherData`) is reachable only
-/// through this function, so this is the one suppression that keeps them
-/// from being reported dead too.
-#[expect(dead_code)]
+/// v2's watcher state: both toggles and the pause list. Drawn by
+/// `pages::main_page::autosync::AutosyncCard`.
 pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
     tauri::invoke_unit("get_main_page_watcher").await
 }
