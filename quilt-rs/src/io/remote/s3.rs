@@ -13,6 +13,7 @@ use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::debug;
 use tracing::info;
 use tracing::trace;
@@ -205,7 +206,8 @@ where
 pub struct RemoteS3 {
     auth: auth::Auth,
     http: crate::io::remote::client::ReqwestClient,
-    s3: RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>,
+    s3: Arc<RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>>,
+    client_locks: Arc<RwLock<HashMap<CredsRef, Arc<AsyncMutex<()>>>>>,
     regions: RwLock<HashMap<String, Region>>,
 }
 
@@ -214,24 +216,22 @@ impl RemoteS3 {
     pub fn new(paths: DomainPaths, storage: LocalStorage) -> Self {
         RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),
-            s3: RwLock::new(HashMap::new()),
+            s3: Arc::new(RwLock::new(HashMap::new())),
+            client_locks: Arc::new(RwLock::new(HashMap::new())),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, Arc::new(storage)),
         }
     }
 
     pub fn try_clone(&self) -> Res<Self> {
-        let s3 = match self.s3.read() {
-            Ok(s3) => s3.clone(),
-            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
-        };
         let regions = match self.regions.read() {
             Ok(regions) => regions.clone(),
             Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
         };
         Ok(RemoteS3 {
             http: self.http.clone(),
-            s3: RwLock::new(s3),
+            s3: Arc::clone(&self.s3),
+            client_locks: Arc::clone(&self.client_locks),
             regions: RwLock::new(regions),
             auth: self.auth.clone(),
         })
@@ -347,6 +347,31 @@ impl RemoteS3 {
             return Ok(client);
         }
 
+        // Cache misses for the same principal can arrive together when a package
+        // opens. Share one construction lock across every cloned RemoteS3 handle,
+        // then recheck the shared cache after waiting.
+        let client_lock = {
+            let mut locks = self
+                .client_locks
+                .write()
+                .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+            locks
+                .entry(creds_ref.clone())
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+                .clone()
+        };
+        let _client_guard = client_lock.lock().await;
+        if let Some(client) = self
+            .s3
+            .read()
+            .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?
+            .get(&creds_ref)
+            .cloned()
+        {
+            info!("✔️ Using cached S3 client for region {:?}", region);
+            return Ok(client);
+        }
+
         // `debug`, and worth reading as a signal rather than noise: a *new* client
         // per fetch means the client cache is not being hit, which is TLS and config
         // work repeated for nothing. The line stays so that stays visible.
@@ -427,6 +452,16 @@ impl RemoteS3 {
         match host {
             Some(host) => map.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
             None => map.clear(),
+        }
+        drop(map);
+
+        let mut locks = match self.client_locks.write() {
+            Ok(locks) => locks,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        match host {
+            Some(host) => locks.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
+            None => locks.clear(),
         }
     }
 
@@ -1226,6 +1261,37 @@ mod tests {
         // Clearing None empties everything.
         remote.clear_client_cache(None);
         assert!(remote.s3.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cloned_remotes_share_client_cache_and_single_flight_locks() {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let cloned = remote.try_clone().unwrap();
+
+        assert!(Arc::ptr_eq(&remote.s3, &cloned.s3));
+        assert!(Arc::ptr_eq(&remote.client_locks, &cloned.client_locks));
+
+        let key = CredsRef {
+            region: Region::new("us-east-1"),
+            host: None,
+        };
+        remote
+            .s3
+            .write()
+            .unwrap()
+            .insert(key.clone(), dummy_client("us-east-1"));
+        remote
+            .client_locks
+            .write()
+            .unwrap()
+            .insert(key.clone(), Arc::new(AsyncMutex::new(())));
+
+        assert!(cloned.s3.read().unwrap().contains_key(&key));
+        assert!(cloned.client_locks.read().unwrap().contains_key(&key));
+
+        cloned.clear_client_cache(None);
+        assert!(remote.s3.read().unwrap().is_empty());
+        assert!(remote.client_locks.read().unwrap().is_empty());
     }
 
     /// Never called: compiling these calls is the proof that the three
