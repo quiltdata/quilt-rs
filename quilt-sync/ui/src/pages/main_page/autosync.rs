@@ -155,6 +155,38 @@ fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
         }
     });
 
+    // Write, then ask again. The off->on edge clears the paused set, so the
+    // payload after a write differs by more than the bit that was flipped.
+    let write = move |pull: Option<bool>, push: Option<bool>| {
+        leptos::task::spawn_local(async move {
+            if let Err(err) = commands::set_autosync_direction(pull, push).await {
+                web_sys::console::error_1(&format!("set_autosync_direction failed: {err}").into());
+            }
+            reload.notify();
+        });
+    };
+
+    // `ToggleRow` owns the `on:change`, so the change is observed through the
+    // signal rather than a handler. What the backend last heard, seeded from the
+    // payload: an effect runs once on mount, and writing back the value it just
+    // read would be a write per render.
+    let pull_written = StoredValue::new(data.pull.enabled);
+    let publish_written = StoredValue::new(data.publish.enabled);
+    Effect::new(move |_| {
+        let enabled = pull_checked.get();
+        if pull_written.get_value() != enabled {
+            pull_written.set_value(enabled);
+            write(Some(enabled), None);
+        }
+    });
+    Effect::new(move |_| {
+        let enabled = publish_checked.get();
+        if publish_written.get_value() != enabled {
+            publish_written.set_value(enabled);
+            write(None, Some(enabled));
+        }
+    });
+
     view! {
         <Card title="Autosync">
             <ToggleRow
@@ -471,6 +503,50 @@ mod tests {
             fired.get_untracked() - before,
             1,
             "the deadline must schedule exactly one refetch, not zero and not a spin"
+        );
+        drop(el);
+    }
+
+    #[wasm_bindgen_test]
+    async fn flipping_a_toggle_asks_the_backend_again() {
+        // The write and the refetch are one gesture: the off->on edge clears the
+        // paused set, so the payload after a write differs by more than the bit the
+        // user flipped. A card that wrote without refetching would keep showing
+        // `Paused` on a toggle that had just cleared every pause.
+        //
+        // `paused_payload` has no deadline, so nothing here is scheduled: the only
+        // thing that can notify `reload` in this test is the flip.
+        let fired = RwSignal::new(0);
+        let reload = Trigger::new();
+        Effect::new(move |_| {
+            reload.track();
+            fired.update(|n| *n += 1);
+        });
+        let el = mount(move || view! { <AutosyncBody data=paused_payload() reload=reload /> });
+        // Let the effect queue drain — the test's own effect and the body's two
+        // write guards all run once at mount — and pin the baseline, so a stale
+        // read cannot pass for the flip's notify.
+        sleep_ms(50).await;
+        let before = fired.get_untracked();
+        assert_eq!(
+            before, 1,
+            "the effect's first run; mounting must not write anything back"
+        );
+        let input: web_sys::HtmlInputElement = el
+            .query_selector("input[type=checkbox]")
+            .unwrap()
+            .expect("the pull toggle")
+            .dyn_into()
+            .unwrap();
+        input.click();
+        // 200ms: an absolute bound, not a multiple of any constant this file reads.
+        // There is no Tauri bridge here, so the write resolves as `Err` at once and
+        // only the notify that follows it is under test.
+        sleep_ms(200).await;
+        assert_eq!(
+            fired.get_untracked() - before,
+            1,
+            "flipping a toggle must write and then ask for the payload again"
         );
         drop(el);
     }

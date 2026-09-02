@@ -102,6 +102,40 @@ fn merge_autosync_settings_data(
     }
 }
 
+/// One direction's `enabled` flag, changed; everything else preserved.
+///
+/// `None` leaves a direction alone. The main page knows two booleans and the
+/// settings file has five fields, so a write from there must merge rather than
+/// replace — sending defaults for the intervals would reset a user's quiet window
+/// from a card that never displayed it.
+fn with_direction(
+    current: &AutosyncSettings,
+    pull: Option<bool>,
+    push: Option<bool>,
+) -> AutosyncSettings {
+    let mut next = current.clone();
+    if let Some(enabled) = pull {
+        next.pull.enabled = enabled;
+    }
+    if let Some(enabled) = push {
+        next.push.enabled = enabled;
+    }
+    next
+}
+
+/// Whether this transition is the "off -> on" edge that drops the paused set.
+///
+/// The rule `update_autosync_settings` already applies, named so both writers
+/// apply the same one: a re-enable in either direction is a signal that the user
+/// wants the watcher to retry every namespace.
+///
+/// Takes the two settings values rather than their four `enabled` flags:
+/// `clippy::fn_params_excessive_bools` rejects a four-bool signature, and both
+/// callers hold exactly these two values anyway.
+const fn clears_pauses(prev: &AutosyncSettings, next: &AutosyncSettings) -> bool {
+    !(prev.pull.enabled || prev.push.enabled) && (next.pull.enabled || next.push.enabled)
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FsWatcherSettingsData {
@@ -253,19 +287,51 @@ pub async fn update_autosync_settings(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
 
-    let prev_any_enabled = {
+    let clear = {
         let mut current = autosync_settings.write().await;
         let merged = merge_autosync_settings_data(&current, &settings);
         merged.save(&data_dir).await.map_err(|e| e.to_string())?;
-        let prev = current.pull.enabled || current.push.enabled;
+        let clear = clears_pauses(&current, &merged);
         *current = merged;
-        prev
+        clear
     };
-    // Flipping the overall "off → on" edge clears the paused set: a
-    // re-enable in either direction is a signal that the user wants
-    // the watcher to retry every namespace, not just the ones they
-    // touched manually.
-    if !prev_any_enabled && (settings.pull_enabled || settings.push_enabled) {
+    if clear {
+        watcher.clear_all_paused().await;
+    }
+    Ok(())
+}
+
+/// Flip one direction of autosync from the v2 main page.
+///
+/// v2's own command rather than a call into `update_autosync_settings`, for the
+/// reason §8 decision 2 gives: the main page knows two booleans and that command
+/// takes all five settings fields, so calling it would mean the page first
+/// fetching a settings payload it has no other use for. The two rules that
+/// matter — merge, and clear on the off->on edge — are shared functions, not
+/// duplicated logic.
+#[tauri::command]
+pub async fn set_autosync_direction(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
+    watcher: tauri::State<'_, Watcher>,
+    pull: Option<bool>,
+    push: Option<bool>,
+) -> Result<(), String> {
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let clear = {
+        let mut current = autosync_settings.write().await;
+        let next = with_direction(&current, pull, push);
+        next.save(&data_dir).await.map_err(|e| e.to_string())?;
+        let clear = clears_pauses(&current, &next);
+        *current = next;
+        clear
+    };
+    if clear {
         watcher.clear_all_paused().await;
     }
     Ok(())
@@ -459,6 +525,61 @@ mod tests {
         };
         let data = AutosyncSettingsData::from(s);
         assert!(data.close_to_tray);
+    }
+
+    #[test]
+    fn setting_one_direction_leaves_the_other_and_the_intervals_alone() {
+        // The main page knows two booleans; `AutosyncSettingsData` has five fields.
+        // A write that sent defaults for the other three would silently reset the
+        // user's pull interval and quiet window from a card that never showed them.
+        let current = AutosyncSettings {
+            pull: PullSettings {
+                enabled: false,
+                focused_secs: 5,
+                unfocused_secs: 60,
+                closed_secs: 300,
+            },
+            push: PushSettings {
+                enabled: true,
+                idle_timeout_secs: 45,
+            },
+            close_to_tray: true,
+        };
+        let next = with_direction(&current, Some(true), None);
+        assert!(next.pull.enabled);
+        assert!(next.push.enabled, "the untouched direction is untouched");
+        assert_eq!(next.pull.focused_secs, 5);
+        assert_eq!(next.pull.unfocused_secs, 60);
+        assert_eq!(next.pull.closed_secs, 300);
+        assert_eq!(next.push.idle_timeout_secs, 45);
+        assert!(next.close_to_tray);
+    }
+
+    #[test]
+    fn turning_everything_off_and_one_thing_on_is_the_edge_that_clears_pauses() {
+        // The rule `update_autosync_settings` already applies: a re-enable in either
+        // direction means the user wants every namespace retried, not just the ones
+        // they touched. A second write path that skipped it would leave the user
+        // flipping a switch that used to clear pauses and now does not.
+
+        /// One moment's pair of direction flags. Nothing else matters to the rule.
+        fn enabled(pull: bool, push: bool) -> AutosyncSettings {
+            AutosyncSettings {
+                pull: PullSettings {
+                    enabled: pull,
+                    ..Default::default()
+                },
+                push: PushSettings {
+                    enabled: push,
+                    ..Default::default()
+                },
+                close_to_tray: false,
+            }
+        }
+        assert!(clears_pauses(&enabled(false, false), &enabled(true, false)));
+        assert!(clears_pauses(&enabled(false, false), &enabled(false, true)));
+        assert!(!clears_pauses(&enabled(true, false), &enabled(true, true)));
+        assert!(!clears_pauses(&enabled(true, true), &enabled(false, false)));
     }
 
     #[test]

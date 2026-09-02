@@ -882,6 +882,20 @@ pub async fn update_autosync_settings(settings: AutosyncSettingsData) -> Result<
     tauri::invoke("update_autosync_settings", &Args { settings }).await
 }
 
+/// Flip one direction of autosync. `None` leaves a direction alone — the v2 main
+/// page knows two booleans, and `update_autosync_settings` takes all five settings
+/// fields, so writing through that one would mean fetching a payload this page has
+/// no other use for.
+pub async fn set_autosync_direction(pull: Option<bool>, push: Option<bool>) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        pull: Option<bool>,
+        push: Option<bool>,
+    }
+    tauri::invoke("set_autosync_direction", &Args { pull, push }).await
+}
+
 pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
