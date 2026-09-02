@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.35.1-alpha3] - 2026-09-01
+
+### Added
+
+- `InstalledPackage::undo_commit` discards a package's newest local commit and restores the one before it — available while the pending-commit chain still records a parent, which is until the first push. Contract in [`docs/architecture.md`](../docs/architecture.md) (<https://github.com/quiltdata/quilt-rs/pull/860>)
+
 ## [v0.35.1-alpha2] - 2026-09-01
 
 ### Added

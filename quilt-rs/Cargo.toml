@@ -5,7 +5,7 @@ keywords = ["data", "versioning", "s3", "manifest", "reproducibility"]
 categories = ["filesystem", "science", "api-bindings"]
 
 # Inherit from workspace
-version = "0.35.1-alpha2"
+version = "0.35.1-alpha3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -18,6 +18,7 @@ pub(crate) mod push;
 mod recommit;
 mod reset_to_latest;
 mod status;
+mod undo_commit;
 mod uninstall_package;
 mod uninstall_paths;
 
@@ -45,7 +46,9 @@ pub use push::PushResult;
 pub use push::push_package as push;
 pub use recommit::recommit_for_remote as recommit;
 pub use reset_to_latest::reset_to_latest;
+
 pub use status::create_status as status;
 pub use status::refresh_latest_hash;
+pub use undo_commit::undo_commit;
 pub use uninstall_package::uninstall_package;
 pub use uninstall_paths::uninstall_paths;

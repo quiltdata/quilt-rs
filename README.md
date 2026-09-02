@@ -177,9 +177,15 @@ issue, and [roadmap.md](roadmap.md) records how the work is sequenced.
 Telling us which one actually blocks you is the most useful feedback you can
 give — it is how we order the queue.
 
-- **No undo yet.** No `revert`/`reset` verb, and a local-only package has no
-  rollback path at all
-  ([#840](https://github.com/quiltdata/quilt-rs/issues/840)).
+- **Undo reaches back only as far as your unpushed commits.** `quilt
+  undo-commit` discards the newest commit and restores the one before it, and
+  it works until the package's first push — pushing consumes the record of
+  what each revision's parent was, and nothing on disk replaces it
+  ([#840](https://github.com/quiltdata/quilt-rs/issues/840)). It also refuses
+  while a tracked file has uncommitted changes, and on a package with no
+  remote there is nothing that discards those for you
+  ([#880](https://github.com/quiltdata/quilt-rs/issues/880)) — commit them or
+  restore them by hand first.
 - **`quilt log` lists only the revisions this copy has, dated by when it got
   them.** A package's published revision history is not available from the
   CLI, and neither are the dates its revisions were actually made: the

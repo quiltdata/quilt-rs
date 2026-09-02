@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.30.0-alpha7] - 2026-09-01
+
+### Added
+
+- `quilt undo-commit` discards the newest commit and restores the one before it. Works until a package's first push, and refuses rather than overwriting anything uncommitted (<https://github.com/quiltdata/quilt-rs/pull/860>)
+
 ## [v0.30.0-alpha6] - 2026-08-31
 
 ### Added
