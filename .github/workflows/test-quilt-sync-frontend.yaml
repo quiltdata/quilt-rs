@@ -64,6 +64,15 @@ jobs:
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
 
+      # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
+      # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml: the
+      # CLI generates the hashed class names the library resolves, so a skew
+      # between them breaks styling silently rather than loudly.
+      - name: Install stylance
+        uses: taiki-e/install-action@v2
+        with:
+          tool: stylance-cli@0.8.4
+
       - name: Build
         run: trunk build --release
         working-directory: ./quilt-sync/ui
