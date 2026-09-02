@@ -6,8 +6,9 @@
 //! different places** — which is why [`render`] takes a [`Site`] and not just a
 //! state.
 //!
-//! Nine states, ten labels. `Behind` and `RoleDenied` are the two that differ by
-//! site; every other state says the same thing wherever it draws.
+//! The words are a property of the state AND where it draws. `Behind` and
+//! `RoleDenied` are the two that differ by site; every other state says the same
+//! thing wherever it draws.
 
 use serde::Deserialize;
 
@@ -248,6 +249,46 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn renders_complete_mapping_for_all_state_and_site_combinations() {
+        // Table-driven test: verify words, tone, and action for every (state, site) pair.
+        // Each row is (state, site, expected_words, expected_tone, expected_action).
+        let cases = vec![
+            (PackageState::Latest, Site::ListRow, "Latest", StateTone::Success, None),
+            (PackageState::Latest, Site::QueueRow, "Latest", StateTone::Success, None),
+            (PackageState::Behind, Site::ListRow, "Not the latest", StateTone::Attention, Some("Get latest")),
+            (PackageState::Behind, Site::QueueRow, "Newer revision available", StateTone::Attention, Some("Get latest")),
+            (PackageState::PendingChanges { files: 2 }, Site::ListRow, "2 files changed", StateTone::Neutral, Some("Publish")),
+            (PackageState::PendingCommit, Site::ListRow, "Revision not published", StateTone::Attention, Some("Publish")),
+            (PackageState::Diverged, Site::ListRow, "Changed in both places", StateTone::Danger, Some("Resolve")),
+            (PackageState::PullConflict { files: vec!["a.csv".to_string(), "b.csv".to_string()] }, Site::ListRow, "conflicts in 2 files", StateTone::Danger, Some("Publish")),
+            (PackageState::RoleDenied { role: "analyst".to_string() }, Site::ListRow, "No access", StateTone::Danger, None),
+            (PackageState::RoleDenied { role: "analyst".to_string() }, Site::QueueRow, "No access as analyst", StateTone::Danger, None),
+            (PackageState::NoRemote, Site::ListRow, "No S3 bucket yet", StateTone::Attention, Some("Choose S3 bucket")),
+            (PackageState::Unpublished, Site::ListRow, "Not published yet", StateTone::Attention, Some("Publish")),
+            (PackageState::Unknown, Site::ListRow, "Sync stopped", StateTone::Danger, None),
+        ];
+
+        for (state, site, expected_words, expected_tone, expected_action) in cases {
+            let rendered = render(&state, site);
+            assert_eq!(
+                rendered.words, expected_words,
+                "mismatch for {:?} at {:?}: got {}, expected {}",
+                state, site, rendered.words, expected_words
+            );
+            assert_eq!(
+                rendered.tone, expected_tone,
+                "tone mismatch for {:?} at {:?}: got {:?}, expected {:?}",
+                state, site, rendered.tone, expected_tone
+            );
+            assert_eq!(
+                rendered.action, expected_action,
+                "action mismatch for {:?} at {:?}: got {:?}, expected {:?}",
+                state, site, rendered.action, expected_action
+            );
         }
     }
 }
