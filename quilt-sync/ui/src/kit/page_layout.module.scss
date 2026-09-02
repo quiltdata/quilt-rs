@@ -36,6 +36,14 @@
   text-decoration: none;
 }
 
+/* Sized to the 22px the logo image occupied, so the appbar's height does not move. */
+.logo {
+  font-size: var(--q-text-lead);
+  font-weight: 600;
+  line-height: 22px;
+  color: var(--q-fgColor-default);
+}
+
 .logo img {
   height: 22px;
   width: auto;

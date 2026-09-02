@@ -67,8 +67,13 @@ pub fn PackageRow(
                     .map_or_else(
                         || {
                             view! {
+                                // "unknown" read as a bare word with no column header to
+                                // explain it — a reader could not tell what it referred
+                                // to. This says which fact is missing. Still a word and
+                                // not a blank: a blank cell is indistinguishable from one
+                                // that failed to render.
                                 <span title="This package has no recorded change time">
-                                    "unknown"
+                                    "not recorded"
                                 </span>
                             }
                                 .into_any()
