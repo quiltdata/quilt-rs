@@ -9,18 +9,16 @@ use wasm_bindgen_futures::JsFuture;
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke)]
-    fn tauri_invoke_raw(cmd: &str, args: JsValue) -> js_sys::Promise;
-
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen)]
     fn tauri_listen_raw(event: &str, handler: &js_sys::Function) -> js_sys::Promise;
 
-    /// The same `invoke`, bound so a throw comes back as a value.
-    ///
-    /// Its own binding because its one caller runs where nothing may throw — see
-    /// [`invoke_and_forget`]. Without `catch`, a missing `window.__TAURI__` (a
-    /// browser test harness, say) would propagate a JS exception out of a panic
-    /// hook.
+    /// `invoke`, bound so a throw comes back as a value rather than an uncaught JS
+    /// exception. Without `catch`, a missing `window.__TAURI__` (a browser test
+    /// harness, or a page loaded outside Tauri) traps the wasm module instead of
+    /// returning `Err` — fatal in [`invoke_and_forget`]'s panic-hook context, and,
+    /// discovered while building v2's heavy phase, capable of corrupting the
+    /// wasm-bindgen-futures microtask queue for the rest of a test binary when hit
+    /// from an ordinary `spawn_local` call site.
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], js_name = invoke, catch)]
     fn tauri_invoke_catching(cmd: &str, args: JsValue) -> Result<js_sys::Promise, JsValue>;
 }
@@ -47,19 +45,25 @@ pub fn invoke_and_forget<A: Serialize>(cmd: &str, args: &A) {
 /// Tauri's `invoke` expects camelCase argument keys (the proc macro
 /// converts `snake_case` Rust parameter names to `camelCase` on the JS
 /// side). Use `#[serde(rename_all = "camelCase")]` on arg structs.
+///
+/// Uses the `catch`-bound `tauri_invoke_catching`: a missing bridge (a browser
+/// test harness, or a page loaded outside Tauri) must come back as an `Err`
+/// here, not an uncaught JS exception — see that binding's doc comment.
 pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> Result<R, String> {
     let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| e.to_string())?;
-    let promise = tauri_invoke_raw(cmd, args_js);
+    let promise = tauri_invoke_catching(cmd, args_js)
+        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     let result = JsFuture::from(promise)
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
 }
 
-/// Call a Tauri command with no arguments.
+/// Call a Tauri command with no arguments. See [`invoke`] for why this catches.
 pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
     let args = js_sys::Object::new();
-    let promise = tauri_invoke_raw(cmd, args.into());
+    let promise = tauri_invoke_catching(cmd, args.into())
+        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     let result = JsFuture::from(promise)
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
