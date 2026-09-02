@@ -477,7 +477,9 @@ mod tests {
                 "abcdef".to_string(),
             )
         ));
-        assert!(!misconfigured_remote(&quilt::lineage::PackageLineage::default()));
+        assert!(!misconfigured_remote(
+            &quilt::lineage::PackageLineage::default()
+        ));
     }
 
     #[test]
