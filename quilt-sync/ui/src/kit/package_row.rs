@@ -47,9 +47,15 @@ pub fn PackageRow(
     /// The state, in the page's words, and its tone. Two props rather than one
     /// struct: the caller maps a DTO status to this pair in one place, and a struct
     /// would only move the pairing without checking it.
+    ///
+    /// Both are `Signal`s, not plain values. With plain values the only producer of
+    /// a new one is `MainPage`'s `LocalResource`, so settling a row would mean
+    /// re-running `PackageList`, which re-constructs `PackageListRow`, which
+    /// re-fires its `spawn_local` refresh — a loop. A `Signal` here is what lets a
+    /// row settle without anything upstream re-running.
     #[prop(into)]
-    state: String,
-    tone: StateTone,
+    state: Signal<String>,
+    #[prop(into)] tone: Signal<StateTone>,
     /// Passed through to the state label: the light phase's guess, awaiting the heavy walk.
     ///
     /// The LIST shows provisional states; the QUEUE does not, which is why `QueueRow` has
@@ -82,7 +88,24 @@ pub fn PackageRow(
                         |at| view! { <RelativeTime at=at /> }.into_any(),
                     )}
             </span>
-            <StateLabel tone=tone provisional=provisional>{state}</StateLabel>
+            // Wrapped in its own closure, not read at the top level, so this patches
+            // in place on every settle without `PackageRow` itself needing to be
+            // called again.
+            //
+            // `state.get()`/`tone.get()` are read HERE, before `<StateLabel>` is built,
+            // and passed in as plain values — not as `{state.get()}`/`tone.get()`
+            // written directly at the call site. `#[component]` expands to a call
+            // wrapped in `untrack_with_diagnostics`, so a read deferred into
+            // `StateLabel`'s `Children` closure (evaluated inside that wrapper) would
+            // never register as a dependency of this effect, and the row would freeze
+            // on its first render.
+            {move || {
+                let words = state.get();
+                let current_tone = tone.get();
+                view! {
+                    <StateLabel tone=current_tone provisional=provisional>{words}</StateLabel>
+                }
+            }}
         </a>
     }
 }

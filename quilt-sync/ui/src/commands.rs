@@ -503,6 +503,29 @@ pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
     tauri::invoke_unit("get_main_page_packages").await
 }
 
+/// v2's package list, heavy phase. One invocation per row — see
+/// `pages::main_page::PackageListRow`, which fires this and calls `RowSignals::apply`
+/// on the answer.
+pub async fn refresh_main_page_package(
+    namespace: String,
+) -> Result<MainPagePackageRefreshData, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("refresh_main_page_package", &Args { namespace }).await
+}
+
+/// What the heavy phase corrects on a row. Mirrors `MainPagePackageRefresh` on
+/// the Tauri side; the fields the light phase already delivered are not resent.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackageRefreshData {
+    pub state: crate::kit::PackageState,
+    pub role_switch_host: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackagesData {
@@ -518,10 +541,15 @@ pub struct MainPagePackageData {
     /// `last_changed` on the Tauri side. `None` only when nothing has ever been
     /// written to the package.
     pub changed_at: Option<f64>,
-    /// Needed once the heavy phase (Plan 2) does per-package, per-bucket work.
+    /// Needed once grouping (Plan 6) puts the bucket axis on a `GroupHeader`.
     #[expect(dead_code)]
     pub bucket: Option<String>,
     pub provisional: bool,
+    /// The host whose role selector the row's switch affordance opens. The list
+    /// carries it into `RowSignals` and settles it on refresh; the switch
+    /// control itself is the queue's (Plan 4), so no `#[expect(dead_code)]`
+    /// here — the field is carried and settled, never read.
+    pub role_switch_host: Option<String>,
     /// Rendered by the queue (Plan 4); the list has no pause row yet.
     #[expect(dead_code)]
     pub paused_reason: Option<String>,
