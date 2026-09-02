@@ -96,6 +96,11 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
             Some("Get latest"),
         ),
 
+        (PackageState::PendingChanges { files: 1 }, _) => (
+            "1 file changed".to_string(),
+            StateTone::Neutral,
+            Some("Publish"),
+        ),
         (PackageState::PendingChanges { files }, _) => (
             format!("{files} files changed"),
             StateTone::Neutral,
@@ -118,6 +123,11 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
 
         // `Publish`, not `Resolve`: the merge page cannot resolve a conflict until
         // the local changes are committed, so publishing is the step that unblocks.
+        (PackageState::PullConflict { files }, _) if files.len() == 1 => (
+            "conflict in 1 file".to_string(),
+            StateTone::Danger,
+            Some("Publish"),
+        ),
         (PackageState::PullConflict { files }, _) => (
             format!("conflicts in {} files", files.len()),
             StateTone::Danger,
@@ -325,6 +335,13 @@ mod tests {
                 Some("Get latest"),
             ),
             (
+                PackageState::PendingChanges { files: 1 },
+                Site::ListRow,
+                "1 file changed",
+                StateTone::Neutral,
+                Some("Publish"),
+            ),
+            (
                 PackageState::PendingChanges { files: 2 },
                 Site::ListRow,
                 "2 files changed",
@@ -344,6 +361,15 @@ mod tests {
                 "Changed in both places",
                 StateTone::Danger,
                 Some("Resolve"),
+            ),
+            (
+                PackageState::PullConflict {
+                    files: vec!["a.csv".to_string()],
+                },
+                Site::ListRow,
+                "conflict in 1 file",
+                StateTone::Danger,
+                Some("Publish"),
             ),
             (
                 PackageState::PullConflict {
@@ -369,6 +395,13 @@ mod tests {
                 },
                 Site::QueueRow,
                 "No access as analyst",
+                StateTone::Danger,
+                None,
+            ),
+            (
+                PackageState::RoleDenied { role: None },
+                Site::ListRow,
+                "No access",
                 StateTone::Danger,
                 None,
             ),

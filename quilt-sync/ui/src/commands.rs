@@ -1458,6 +1458,63 @@ mod tests {
         );
     }
 
+    /// The mirror struct must deserialize the exact JSON the backend's light-phase
+    /// wire-shape test
+    /// (`quilt_sync::commands::main_page::get_main_page_packages_from_model_serializes_the_wire_shape`)
+    /// pins for one row. If the two drift, a light-phase row silently fails to
+    /// deserialize at the Tauri boundary.
+    #[test]
+    fn main_page_packages_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPagePackagesData>(
+            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","provisional":true,"roleSwitchHost":null,"pausedReason":"blocked by workflow rule","pausedKind":"workflow"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.packages.len(), 1);
+        let pkg = &data.packages[0];
+        assert_eq!(pkg.namespace, "team/latest");
+        assert_eq!(pkg.state, crate::kit::PackageState::Latest);
+        assert_eq!(pkg.changed_at, None);
+        assert!(pkg.provisional);
+        assert_eq!(pkg.role_switch_host, None);
+    }
+
+    /// The mirror struct must deserialize the heavy phase's two never-before-seen
+    /// kinds. UI-side mirror of the backend
+    /// `quilt_sync::commands::main_page::MainPagePackageRefresh`; these two
+    /// literals never crossed the wire before the heavy phase existed, because the
+    /// light phase could not produce either. Deserializing to `PackageState::Unknown`
+    /// is `#[serde(other)]`'s silent-drift failure mode — that is what this pins
+    /// against, not just "it parses".
+    #[test]
+    fn main_page_package_refresh_data_wire_form_is_verbatim() {
+        let pending = serde_json::from_str::<super::MainPagePackageRefreshData>(
+            r#"{"state":{"kind":"pending_changes","files":3},"roleSwitchHost":null}"#,
+        )
+        .unwrap();
+        assert!(
+            !matches!(pending.state, crate::kit::PackageState::Unknown),
+            "a kind drift would silently land here, via #[serde(other)]"
+        );
+        assert_eq!(
+            pending.state,
+            crate::kit::PackageState::PendingChanges { files: 3 }
+        );
+
+        let denied = serde_json::from_str::<super::MainPagePackageRefreshData>(
+            r#"{"state":{"kind":"role_denied","role":null},"roleSwitchHost":"h"}"#,
+        )
+        .unwrap();
+        assert!(
+            !matches!(denied.state, crate::kit::PackageState::Unknown),
+            "a kind drift would silently land here, via #[serde(other)]"
+        );
+        assert_eq!(
+            denied.state,
+            crate::kit::PackageState::RoleDenied { role: None }
+        );
+        assert_eq!(denied.role_switch_host.as_deref(), Some("h"));
+    }
+
     /// The mirror enum must serialize to the exact tagged JSON the backend
     /// (`quilt_rs::io::remote::WorkflowIntent`) deserializes, and round-trip
     /// back. If these strings drift, the Tauri commit boundary breaks silently.

@@ -69,8 +69,7 @@ pub struct MainPagePackage {
     pub changed_at: Option<f64>,
     pub bucket: Option<String>,
     /// True while the state came from cached lineage alone. The heavy phase clears
-    /// it. Every row in this build is provisional, because the heavy phase does not
-    /// exist yet.
+    /// it.
     pub provisional: bool,
     /// The host whose role selector this row's switch affordance opens. `Some`
     /// only when the user holds more than one role there, so the affordance is
@@ -503,6 +502,10 @@ pub(super) async fn refresh_main_page_package_from_model(
         ))
     })?;
     let lineage = m.get_installed_package_lineage(&installed_package).await?;
+    // Read now; `upstream_state` comes from the status call below, so a commit
+    // landing in between leaves these stale until the next refresh (e.g. `Latest`
+    // where `PendingCommit` was due). `InstalledPackageStatus` carries no commit
+    // field, so there is no better source — seen and accepted, not fixable here.
     let has_local_commit = lineage.commit.is_some();
     let has_remote = lineage.remote_uri.is_some();
     let host = lineage
@@ -561,15 +564,18 @@ pub(super) async fn refresh_main_page_package_from_model(
                 role_switch_host: mark.role_switch_host,
             })
         }
+        // A failure to reach the remote is not evidence about the package — it is
+        // not "Sync stopped" (Unknown), which asserts a state the call never
+        // earned. Propagate the error instead: the command surfaces it, and the
+        // UI's `PackageListRow` `Err` arm already takes the honest path, keeping
+        // the light phase's guess and leaving the row provisional (dashed) rather
+        // than replacing it with a false answer.
         Err(err) => {
             tracing::warn!(
                 "Failed to get status for {}: {err}",
                 installed_package.namespace,
             );
-            Ok(MainPagePackageRefresh {
-                state: PackageStateDto::Unknown,
-                role_switch_host: None,
-            })
+            Err(err)
         }
     }
 }
@@ -1290,9 +1296,13 @@ mod tests {
             });
         // `return_once`, not `returning`: `Error` is not `Clone`, and each of these
         // tests makes exactly one status call. This is the idiom `model/mocks.rs`
-        // already uses for this same method.
+        // already uses for this same method. `.times(1)` makes that "exactly one"
+        // an assertion rather than a description: without it, mockall's default
+        // `TimesRange` is satisfied at zero calls too, so a caller that skipped
+        // the status call entirely would pass silently.
         model
             .expect_get_installed_package_status()
+            .times(1)
             .return_once(move |_, _| status);
         if let Some(roles) = roles {
             model
@@ -1365,12 +1375,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_generic_status_failure_is_unknown_not_a_denial() {
+    async fn a_generic_status_failure_is_propagated_not_a_denial() {
+        // A failure to reach the remote is not evidence about the package. Manufacturing
+        // `Unknown` here would overwrite the light phase's cached-correct guess with an
+        // assertion the call never earned, so the command surfaces the error instead and
+        // `PackageListRow`'s `Err` arm keeps the row provisional. It is still not a
+        // denial: a generic failure must not be mistaken for one and routed through the
+        // access-denied arm's role-naming path.
         let m = mock_one_package(Err(Error::General("network down".to_string())), None);
-        let refreshed = refresh(&m, &RoleCache::default()).await;
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
 
-        assert_eq!(refreshed.state, PackageStateDto::Unknown);
-        assert_eq!(refreshed.role_switch_host, None);
+        let err = refresh_main_page_package_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &ns,
+        )
+        .await
+        .expect_err("a generic status failure must surface as an error, not a manufactured state");
+
+        assert!(
+            !err.is_access_denied(),
+            "a generic failure must not take the denial path"
+        );
     }
 
     #[tokio::test]

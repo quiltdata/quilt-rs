@@ -1,8 +1,9 @@
 //! The v2 main page. Behind `ExperimentalSettings.main_page_v2`.
 //!
-//! One region so far. `Transition`, never `Suspense` (§6): a refetch fires on
-//! every autosync transition, publish and pause, and a `Suspense` boundary
-//! re-shows its fallback each time, so the page would strobe.
+//! One region so far. `Transition`, never `Suspense` (§6): a later plan will wire a
+//! refetch on every autosync transition, publish and pause, and a `Suspense`
+//! boundary re-shows its fallback each time, so the page would strobe. Today
+//! `reload` fires only from the Refresh button.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
