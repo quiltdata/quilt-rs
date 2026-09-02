@@ -29,7 +29,10 @@ pub enum PackageStateDto {
     PendingCommit,
     Diverged,
     PullConflict { files: Vec<String> },
-    RoleDenied { role: String },
+    /// `None` when the denial is certain but the role query behind the wording
+    /// failed. The denial still stands — the bucket refused — so suppressing the
+    /// state would lose a real fact; it simply cannot be named.
+    RoleDenied { role: Option<String> },
     NoRemote,
     Unpublished,
     /// `UpstreamState::Error`. The UI's `PackageState` catches this with
@@ -496,6 +499,21 @@ mod tests {
     fn pending_changes_carries_the_count_because_the_ui_cannot_measure_it() {
         let json = serde_json::to_string(&PackageStateDto::PendingChanges { files: 2 }).unwrap();
         assert_eq!(json, r#"{"kind":"pending_changes","files":2}"#);
+    }
+
+    #[test]
+    fn an_unnameable_role_crosses_the_wire_as_null_not_as_an_empty_name() {
+        assert_eq!(
+            serde_json::to_string(&PackageStateDto::RoleDenied { role: None }).unwrap(),
+            r#"{"kind":"role_denied","role":null}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PackageStateDto::RoleDenied {
+                role: Some("ReadOnly".to_string())
+            })
+            .unwrap(),
+            r#"{"kind":"role_denied","role":"ReadOnly"}"#
+        );
     }
 
     /// Drives `get_main_page_packages_from_model`'s real loop over a mock model —

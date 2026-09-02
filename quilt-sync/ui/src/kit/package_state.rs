@@ -36,7 +36,10 @@ pub enum PackageState {
     PendingCommit,
     Diverged,
     PullConflict { files: Vec<String> },
-    RoleDenied { role: String },
+    /// `None` when the denial is certain but the role query behind the wording
+    /// failed. The denial still stands — the bucket refused — so suppressing the
+    /// state would lose a real fact; it simply cannot be named.
+    RoleDenied { role: Option<String> },
     NoRemote,
     Unpublished,
     #[serde(other)]
@@ -113,15 +116,16 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
             Some("Publish"),
         ),
 
-        (PackageState::RoleDenied { .. }, Site::ListRow) => {
+        // The list never names the role, and the queue can't when the role query
+        // behind it failed — named or not, the denial is the same denial.
+        (PackageState::RoleDenied { .. }, Site::ListRow)
+        | (PackageState::RoleDenied { role: None }, Site::QueueRow) => {
             ("No access".to_string(), StateTone::Danger, None)
         }
         // The queue states a shared cause once, so this one names the role.
-        (PackageState::RoleDenied { role }, Site::QueueRow) => (
-            format!("No access as {role}"),
-            StateTone::Danger,
-            None,
-        ),
+        (PackageState::RoleDenied { role: Some(role) }, Site::QueueRow) => {
+            (format!("No access as {role}"), StateTone::Danger, None)
+        }
 
         (PackageState::NoRemote, _) => (
             "No S3 bucket yet".to_string(),
@@ -164,13 +168,24 @@ mod tests {
     #[wasm_bindgen_test]
     fn role_denied_states_the_cause_once_on_a_queue_row() {
         let s = PackageState::RoleDenied {
-            role: "analyst".to_string(),
+            role: Some("analyst".to_string()),
         };
         assert_eq!(render(&s, Site::ListRow).words, "No access");
         assert!(
             render(&s, Site::QueueRow).words.contains("analyst"),
             "the queue row names the role, so the cause is stated once"
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_denial_whose_role_could_not_be_named_still_has_words() {
+        // The role query can fail while the denial is certain — the bucket said no.
+        // The queue names the role when it can and says what the list says when it
+        // cannot; it never renders "No access as " with nothing after it.
+        let rendered = render(&PackageState::RoleDenied { role: None }, Site::QueueRow);
+        assert_eq!(rendered.words, "No access");
+        assert_eq!(rendered.tone, StateTone::Danger);
+        assert_eq!(rendered.action, None);
     }
 
     #[wasm_bindgen_test]
@@ -239,7 +254,7 @@ mod tests {
             PackageState::PendingCommit,
             PackageState::Diverged,
             PackageState::PullConflict { files: vec![] },
-            PackageState::RoleDenied { role: "analyst".to_string() },
+            PackageState::RoleDenied { role: Some("analyst".to_string()) },
             PackageState::NoRemote,
             PackageState::Unpublished,
             PackageState::Unknown,
@@ -270,8 +285,9 @@ mod tests {
             (PackageState::PendingCommit, Site::ListRow, "Revision not published", StateTone::Attention, Some("Publish")),
             (PackageState::Diverged, Site::ListRow, "Changed in both places", StateTone::Danger, Some("Resolve")),
             (PackageState::PullConflict { files: vec!["a.csv".to_string(), "b.csv".to_string()] }, Site::ListRow, "conflicts in 2 files", StateTone::Danger, Some("Publish")),
-            (PackageState::RoleDenied { role: "analyst".to_string() }, Site::ListRow, "No access", StateTone::Danger, None),
-            (PackageState::RoleDenied { role: "analyst".to_string() }, Site::QueueRow, "No access as analyst", StateTone::Danger, None),
+            (PackageState::RoleDenied { role: Some("analyst".to_string()) }, Site::ListRow, "No access", StateTone::Danger, None),
+            (PackageState::RoleDenied { role: Some("analyst".to_string()) }, Site::QueueRow, "No access as analyst", StateTone::Danger, None),
+            (PackageState::RoleDenied { role: None }, Site::QueueRow, "No access", StateTone::Danger, None),
             (PackageState::NoRemote, Site::ListRow, "No S3 bucket yet", StateTone::Attention, Some("Choose S3 bucket")),
             (PackageState::Unpublished, Site::ListRow, "Not published yet", StateTone::Attention, Some("Publish")),
             (PackageState::Unknown, Site::ListRow, "Sync stopped", StateTone::Danger, None),
