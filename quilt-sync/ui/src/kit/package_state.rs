@@ -25,7 +25,7 @@ use super::StateTone;
 /// `#[serde(other)]`, which is what stops a `kind` this build has never heard of
 /// from failing the whole payload — and it carries no data because
 /// `#[serde(other)]` accepts only unit variants, and does not need to: the message
-/// for an unexplained pause travels on the row's `paused_reason`, not in here.
+/// for an unexplained pause travels on the watcher payload's `paused` list, not in here.
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

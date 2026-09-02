@@ -550,12 +550,100 @@ pub struct MainPagePackageData {
     /// control itself is the queue's (Plan 4), so no `#[expect(dead_code)]`
     /// here — the field is carried and settled, never read.
     pub role_switch_host: Option<String>,
-    /// Rendered by the queue (Plan 4); the list has no pause row yet.
-    #[expect(dead_code)]
-    pub paused_reason: Option<String>,
-    /// Rendered by the queue (Plan 4), paired with `paused_reason`.
-    #[expect(dead_code)]
-    pub paused_kind: Option<String>,
+}
+
+/// Whether a direction's machinery is counting down, waiting, or stopped.
+///
+/// A closed set with **no catch-all**, unlike [`PausedReasonData`]: these three
+/// are the whole vocabulary of the toggle's trailing slot (§4.2), a fourth would
+/// be a design change rather than a wire addition, and `#[serde(other)]` does
+/// not apply to a plainly-serialized unit enum anyway. Drift is caught by
+/// `main_page_watcher_data_wire_form_is_verbatim`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToggleActivityData {
+    Armed,
+    Idle,
+    Paused,
+}
+
+/// UI-side mirror of the backend's `ToggleState`.
+///
+/// `#[allow(dead_code)]`: no caller in this crate reads these fields yet,
+/// hence the suppression.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleStateData {
+    pub enabled: bool,
+    pub activity: ToggleActivityData,
+    /// Epoch milliseconds. `Some` exactly when `activity` is `Armed` — the
+    /// backend derives both from one expression.
+    pub deadline: Option<f64>,
+    pub interval_ms: f64,
+}
+
+/// Why the watcher stopped syncing one package. UI-side mirror of the backend's
+/// `PausedDto`.
+///
+/// `Unrecognised` is `#[serde(other)]`: a reason added to the backend without an
+/// arm here degrades to one variant instead of failing the whole payload and
+/// taking the card with it. It carries no data, because `#[serde(other)]`
+/// accepts only unit variants — and does not need to, since the fixed words for
+/// an unexplained pause are the UI's anyway.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PausedReasonData {
+    PendingChanges,
+    PendingCommit,
+    Diverged,
+    PullConflict {
+        files: Vec<String>,
+    },
+    RoleDenied {
+        role: Option<String>,
+    },
+    Other {
+        message: String,
+    },
+    #[serde(other)]
+    Unrecognised,
+}
+
+/// `#[allow(dead_code)]`: no caller in this crate reads these fields yet
+/// either — see [`ToggleStateData`]'s note.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PausedPackageData {
+    pub namespace: String,
+    pub reason: PausedReasonData,
+}
+
+/// Payload 3: the watcher's own state. Returned by `get_main_page_watcher`.
+///
+/// `#[allow(dead_code)]`: no caller in this crate reads these fields yet
+/// either — see [`ToggleStateData`]'s note.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageWatcherData {
+    pub pull: ToggleStateData,
+    pub publish: ToggleStateData,
+    /// Rendered by the queue (Plan 4), which joins it against the package list
+    /// by namespace to ask whether a pause is explained by a row the user can
+    /// already see (§4.3). Carried and pinned here, read by nothing in this
+    /// build.
+    pub paused: Vec<PausedPackageData>,
+}
+
+/// No caller in this crate yet: the whole mirror graph above
+/// (`ToggleActivityData` through `MainPageWatcherData`) is reachable only
+/// through this function, so this is the one suppression that keeps them
+/// from being reported dead too.
+#[expect(dead_code)]
+pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
+    tauri::invoke_unit("get_main_page_watcher").await
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1278,6 +1366,7 @@ mod tests {
         CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, RolesData, ViolationField,
         WorkflowInfo, WorkflowIntent,
     };
+    use wasm_bindgen_test::*;
 
     /// The mirror struct must deserialize the exact JSON the backend
     /// (`quilt_sync::commands::package_list::InstalledPackageListItem`)
@@ -1463,10 +1552,10 @@ mod tests {
     /// (`quilt_sync::commands::main_page::get_main_page_packages_from_model_serializes_the_wire_shape`)
     /// pins for one row. If the two drift, a light-phase row silently fails to
     /// deserialize at the Tauri boundary.
-    #[test]
+    #[wasm_bindgen_test]
     fn main_page_packages_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPagePackagesData>(
-            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","provisional":true,"roleSwitchHost":null,"pausedReason":"blocked by workflow rule","pausedKind":"workflow"}]}"#,
+            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","provisional":true,"roleSwitchHost":null}]}"#,
         )
         .unwrap();
         assert_eq!(data.packages.len(), 1);
@@ -1536,6 +1625,104 @@ mod tests {
             assert_eq!(
                 serde_json::from_str::<WorkflowIntent>(json).unwrap(),
                 intent
+            );
+        }
+    }
+
+    /// The mirror struct must deserialize the exact JSON the backend's
+    /// `quilt_sync::commands::main_page::the_watcher_payload_serializes_the_wire_shape`
+    /// pins. Character-for-character: a literal the backend does not emit looks like
+    /// a guard and proves nothing (plan 2's Fix 2).
+    #[wasm_bindgen_test]
+    fn main_page_watcher_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPageWatcherData>(
+            r#"{"pull":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":30000.0},"publish":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":300000.0},"paused":[{"namespace":"team/plate-07","reason":{"kind":"pull_conflict","files":["a.csv","b.csv"]}}]}"#,
+        )
+        .unwrap();
+        assert!(data.pull.enabled);
+        assert_eq!(data.pull.activity, super::ToggleActivityData::Paused);
+        assert_eq!(data.pull.deadline, None);
+        assert!((data.pull.interval_ms - 30_000.0).abs() < f64::EPSILON);
+        assert!((data.publish.interval_ms - 300_000.0).abs() < f64::EPSILON);
+        assert_eq!(data.paused.len(), 1);
+        assert_eq!(data.paused[0].namespace, "team/plate-07");
+        match &data.paused[0].reason {
+            super::PausedReasonData::PullConflict { files } => {
+                assert_eq!(files, &["a.csv".to_string(), "b.csv".to_string()]);
+            }
+            other => panic!("expected a pull conflict with two paths, got {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn an_armed_toggle_arrives_with_its_deadline() {
+        let data = serde_json::from_str::<super::MainPageWatcherData>(
+            r#"{"pull":{"enabled":true,"activity":"armed","deadline":1754500030000.0,"intervalMs":30000.0},"publish":{"enabled":false,"activity":"idle","deadline":null,"intervalMs":300000.0},"paused":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.pull.activity, super::ToggleActivityData::Armed);
+        assert_eq!(data.pull.deadline, Some(1_754_500_030_000.0));
+        assert_eq!(data.publish.activity, super::ToggleActivityData::Idle);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_conflict_arrives_as_a_list_with_its_commas_intact() {
+        // `qhq-8mgw.9`'s whole point, asserted at the boundary that used to flatten
+        // it: a filename containing ", " must not become two paths.
+        let data = serde_json::from_str::<super::PausedReasonData>(
+            r#"{"kind":"pull_conflict","files":["plate, run 3.csv","b.csv"]}"#,
+        )
+        .unwrap();
+        match data {
+            super::PausedReasonData::PullConflict { files } => {
+                assert_eq!(files.len(), 2);
+                assert_eq!(files[0], "plate, run 3.csv");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn a_reason_this_build_has_never_heard_of_degrades_instead_of_failing_the_payload() {
+        // A reason added to the backend without an arm here would otherwise fail the
+        // WHOLE payload and the card would vanish. Same treatment
+        // `PackageState::Unknown` gets, for the same reason.
+        assert_eq!(
+            serde_json::from_str::<super::PausedReasonData>(r#"{"kind":"some_future_reason"}"#)
+                .unwrap(),
+            super::PausedReasonData::Unrecognised
+        );
+        // And the guard against `#[serde(other)]`'s silent-drift failure mode: a
+        // kind we DO know must not land in the catch-all.
+        assert_ne!(
+            serde_json::from_str::<super::PausedReasonData>(r#"{"kind":"diverged"}"#).unwrap(),
+            super::PausedReasonData::Unrecognised
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_three_named_fields_arrive_separately() {
+        for (json, expected) in [
+            (
+                r#"{"kind":"other","message":"workflow rejected metadata"}"#,
+                super::PausedReasonData::Other {
+                    message: "workflow rejected metadata".to_string(),
+                },
+            ),
+            (
+                r#"{"kind":"role_denied","role":"analyst"}"#,
+                super::PausedReasonData::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+            ),
+            (
+                r#"{"kind":"role_denied","role":null}"#,
+                super::PausedReasonData::RoleDenied { role: None },
+            ),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<super::PausedReasonData>(json).unwrap(),
+                expected
             );
         }
     }
