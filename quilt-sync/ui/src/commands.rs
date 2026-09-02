@@ -498,6 +498,35 @@ pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListD
     tauri::invoke_unit("get_installed_packages_list_data").await
 }
 
+/// v2's package list, light phase. Every row arrives `provisional`.
+///
+/// Not yet called: the page that consumes it lands in the next task. Same
+/// `#[allow(dead_code)]` treatment as `kit::PackageState` while it waits.
+#[allow(dead_code)]
+pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
+    tauri::invoke_unit("get_main_page_packages").await
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackagesData {
+    pub packages: Vec<MainPagePackageData>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackageData {
+    pub namespace: String,
+    pub state: crate::kit::PackageState,
+    pub changed_at: Option<f64>,
+    pub bucket: Option<String>,
+    pub provisional: bool,
+    pub paused_reason: Option<String>,
+    pub paused_kind: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshedPackageStatus {
