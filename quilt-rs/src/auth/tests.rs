@@ -1108,6 +1108,10 @@ async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
         auth_io.read_credentials().await?.is_none(),
         "the flush must outlive the vend it was serialized behind"
     );
+    assert!(
+        auth.cached_credentials(&host).is_none(),
+        "the flush must also outlive the vend's in-memory cache write"
+    );
     Ok(())
 }
 

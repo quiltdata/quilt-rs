@@ -837,29 +837,10 @@ impl<S: Storage + Send + Sync> Auth<S> {
 
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
 
-        match auth_io.read_credentials().await {
-            Ok(Some(creds)) => {
-                // A cache hit is the normal case and says nothing.
-                self.cache_credentials(host, &creds);
-                trace!("✔️ Found valid credentials for {}", host);
-                return Ok(creds);
-            }
-            Ok(None) => {
-                info!("❌ No existing credentials found for {}", host);
-            }
-            Err(e) => {
-                error!("❌ Failed to read credentials for {}: {}", host, e);
-                return Err(Error::Auth(
-                    host.to_owned(),
-                    AuthError::CredentialsRead(e.to_string()),
-                ));
-            }
-        }
-
-        // Serialize refreshes for this host so N concurrent callers
-        // fire one HTTP `/get_credentials` call instead of N. The
-        // loser of the race re-reads the credentials the winner
-        // wrote to disk and returns them without hitting the network.
+        // Own the host lock before reading credentials from disk as well as
+        // before refreshing them. Besides single-flighting refreshes, this
+        // serializes the read-and-cache pair with logout/expiry: an in-flight
+        // read must not repopulate credentials after expiry has cleared them.
         let lock = self.refresh_lock_for(host);
         let _guard = lock.lock().await;
 
@@ -871,12 +852,14 @@ impl<S: Storage + Send + Sync> Auth<S> {
         match auth_io.read_credentials().await {
             Ok(Some(creds)) => {
                 self.cache_credentials(host, &creds);
-                debug!("✔️ Another task refreshed credentials for {}", host);
+                trace!("✔️ Found valid credentials for {}", host);
                 return Ok(creds);
             }
-            Ok(None) => {}
+            Ok(None) => {
+                info!("❌ No existing credentials found for {}", host);
+            }
             Err(e) => {
-                error!("❌ Failed to re-read credentials for {}: {}", host, e);
+                error!("❌ Failed to read credentials for {}: {}", host, e);
                 return Err(Error::Auth(
                     host.to_owned(),
                     AuthError::CredentialsRead(e.to_string()),
