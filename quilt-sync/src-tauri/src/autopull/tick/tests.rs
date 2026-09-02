@@ -2,9 +2,11 @@ use super::*;
 
 use std::sync::Arc;
 
+use chrono::Utc;
 use tokio::sync::RwLock;
 
 use crate::autopull::AutosyncSettings;
+use crate::autopull::Clocks;
 use crate::autopull::PullSettings;
 use crate::autopull::PushSettings;
 use crate::autopull::WindowMode;
@@ -43,6 +45,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: Arc::new(LogReporter),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     }
 }
 
@@ -426,6 +429,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -518,6 +522,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -616,6 +621,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -707,6 +713,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -852,6 +859,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -924,6 +932,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1074,6 +1083,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1142,4 +1152,31 @@ fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
         LoginBlock::Began,
         "a failure that could not name its deployment is not that deployment's"
     );
+}
+
+#[tokio::test]
+async fn arming_the_pull_records_a_deadline_one_cadence_out() {
+    let inner = make_inner(enabled());
+    let before = Utc::now();
+    crate::autopull::arm_next_pull(&inner, Duration::from_secs(30)).await;
+    let at = inner
+        .clocks
+        .next_pull_at
+        .read()
+        .await
+        .expect("arming must record a deadline");
+    // Absolute bounds. A test that asserted `at - before == cadence` would pass
+    // for any cadence, including a wrong one read from the wrong setting.
+    assert!(
+        at >= before + Duration::from_secs(29) && at <= before + Duration::from_secs(31),
+        "expected ~30s out, got {at} from {before}"
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_armed_before_the_loop_runs() {
+    // Cold start: `main_page_facts` must be able to tell "not armed yet" from
+    // "armed for a moment in the past".
+    let inner = make_inner(enabled());
+    assert!(inner.clocks.next_pull_at.read().await.is_none());
 }

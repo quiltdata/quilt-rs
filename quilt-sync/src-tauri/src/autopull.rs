@@ -3,6 +3,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::DateTime;
+use chrono::Utc;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use tauri::Manager;
@@ -85,6 +87,30 @@ pub struct Watcher {
     inner: Arc<WatcherInner>,
 }
 
+/// The two deadlines the watcher knows and used to discard.
+///
+/// Neither is derivable from anything already exposed, and both belong to the
+/// loop rather than to the tray: `SyncTrayAggregator` folds per-namespace state
+/// for the tray icon, and parking a countdown's deadline in it would put the
+/// page's clock inside the tray's fold.
+#[derive(Default)]
+pub(crate) struct Clocks {
+    /// When the loop will next tick, recorded before it sleeps.
+    ///
+    /// Not derived from `last_sync + interval`, which is wrong twice over:
+    /// `note_tick_ended_err` deliberately does not bump `last_sync`, so a run of
+    /// failing ticks would push the derived deadline further and further into
+    /// the past; and it is `None` until the first tick *completes*, so an
+    /// enabled toggle would read idle for the first cadence of every session.
+    pub next_pull_at: RwLock<Option<DateTime<Utc>>>,
+    /// Per namespace: when its quiet window expires and autopush may publish.
+    /// Written only where it is known — the deferral branch of
+    /// `refresh_then_maybe_sync`, which is the one place that holds both
+    /// `most_recent_mtime` and the quiet window — and cleared by any other
+    /// outcome, because any other outcome means the package is not waiting.
+    pub publish_arm: RwLock<BTreeMap<Namespace, DateTime<Utc>>>,
+}
+
 /// Shared, long-lived watcher state. `pub(crate)` so `tick.rs` can read
 /// the maps in place without round-tripping through `Watcher` methods.
 pub(crate) struct WatcherInner {
@@ -100,6 +126,7 @@ pub(crate) struct WatcherInner {
     pub login_blocked: RwLock<BTreeMap<Namespace, Option<Host>>>,
     pub reporter: Arc<dyn StatusReporter>,
     pub aggregator: Arc<SyncTrayAggregator>,
+    pub clocks: Clocks,
 }
 
 pub fn create_window_mode() -> SharedWindowMode {
@@ -133,6 +160,7 @@ impl Watcher {
             login_blocked: RwLock::new(BTreeMap::new()),
             reporter,
             aggregator,
+            clocks: Clocks::default(),
         });
         let task_inner = Arc::clone(&inner);
         tauri::async_runtime::spawn(async move {
@@ -142,6 +170,9 @@ impl Watcher {
                     let mode = *task_inner.window_mode.read().await;
                     cadence_for_mode(&settings.pull, mode)
                 };
+                // Recorded before the wait, not after: the deadline has to be
+                // readable for the whole cadence, which is when the card draws it.
+                arm_next_pull(&task_inner, cadence).await;
                 tokio::time::sleep(cadence).await;
                 task_inner.aggregator.note_tick_started();
                 let model_state = app_handle.state::<Model>();
@@ -277,6 +308,7 @@ impl Watcher {
                 login_blocked: RwLock::new(BTreeMap::new()),
                 reporter,
                 aggregator,
+                clocks: Clocks::default(),
             }),
         }
     }
@@ -304,6 +336,15 @@ impl Watcher {
     async fn paused_count(&self) -> usize {
         self.inner.paused.read().await.len()
     }
+}
+
+/// Record when the loop will next tick.
+///
+/// A free function rather than a line inside `Watcher::spawn` because the spawn
+/// loop needs a Tauri runtime and cannot be driven from a test, and an untested
+/// rule is a rule that survives only as prose.
+pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
+    *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
 }
 
 pub fn cadence_for_mode(pull: &PullSettings, mode: WindowMode) -> Duration {

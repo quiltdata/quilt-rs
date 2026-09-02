@@ -38,6 +38,11 @@ pub(crate) struct RefreshOutcome {
     /// consumer. Set from the observed status, except the mutation-success
     /// paths, which reach a settled `UpToDate` tree (`clean_uptodate_fingerprint`).
     pub fingerprint: String,
+    /// When this package's quiet window expires, set **only** by the deferral
+    /// branch. Every other outcome leaves it `None`, and `run_once` reads that
+    /// as "not waiting" and clears any recorded arm time — so one decision
+    /// covers both directions.
+    pub publish_arm_at: Option<SystemTime>,
 }
 
 impl RefreshOutcome {
@@ -52,6 +57,24 @@ impl RefreshOutcome {
             has_changes,
             published: None,
             fingerprint,
+            publish_arm_at: None,
+        }
+    }
+
+    /// An outcome that reports the observed tree and says when publishing will
+    /// become possible.
+    fn deferred(
+        upstream: quilt::lineage::UpstreamState,
+        has_changes: bool,
+        fingerprint: String,
+        arm_at: SystemTime,
+    ) -> Self {
+        Self {
+            upstream,
+            has_changes,
+            published: None,
+            fingerprint,
+            publish_arm_at: Some(arm_at),
         }
     }
 }
@@ -382,7 +405,16 @@ pub(crate) async fn refresh_then_maybe_sync(
         let now = SystemTime::now();
         if !status.working_tree_quiet(now, quiet_window) {
             info!("autosync: namespace={namespace} working tree not quiet, deferring");
-            return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
+            // `working_tree_quiet` returns true when `most_recent_mtime` is
+            // `None`, so reaching here means it is `Some` — the `unwrap_or(now)`
+            // is a total function's shape, not a guess.
+            let edited_at = status.most_recent_mtime.unwrap_or(now);
+            return Ok(RefreshOutcome::deferred(
+                upstream,
+                has_changes,
+                fingerprint,
+                edited_at + quiet_window,
+            ));
         }
         // `publish_with_settings` is shared with the manual one-click
         // Publish command in `commands.rs`, so a change to publish
@@ -396,6 +428,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                     has_changes: false,
                     published: Some(message),
                     fingerprint: clean_uptodate_fingerprint(),
+                    publish_arm_at: None,
                 })
             }
             Err(err) => classify_sync_err(err)
@@ -474,6 +507,12 @@ pub(crate) async fn run_once(
         .write()
         .await
         .retain(|ns, _| current.contains(ns));
+    inner
+        .clocks
+        .publish_arm
+        .write()
+        .await
+        .retain(|ns, _| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
 
     // Snapshot publish settings once per tick so we don't reacquire the
@@ -526,7 +565,7 @@ pub(crate) async fn run_once(
             continue;
         }
 
-        match refresh_then_maybe_sync(
+        let result = refresh_then_maybe_sync(
             model,
             &namespace,
             &lineage,
@@ -536,8 +575,22 @@ pub(crate) async fn run_once(
             push_enabled,
             resolve_sync_scope(lineage.sync_scope, &experimental),
         )
-        .await
+        .await;
+
+        // One place decides this namespace's arm time. It is armed only by a
+        // quiet-window deferral; a publish, a pull, a pause, a login block and a
+        // transient failure all mean it is not waiting, and a stale deadline
+        // would have the card count down to a moment with no meaning.
         {
+            let mut arm = inner.clocks.publish_arm.write().await;
+            if let Some(at) = result.as_ref().ok().and_then(|o| o.publish_arm_at) {
+                arm.insert(namespace.clone(), at.into());
+            } else {
+                arm.remove(&namespace);
+            }
+        }
+
+        match result {
             Ok(outcome) => {
                 inner.backoff.write().await.remove(&namespace);
                 inner.login_blocked.write().await.remove(&namespace);

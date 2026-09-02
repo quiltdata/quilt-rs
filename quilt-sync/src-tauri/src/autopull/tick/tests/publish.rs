@@ -96,6 +96,7 @@ fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInner {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter,
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     }
 }
 
@@ -124,6 +125,7 @@ fn make_inner_with_flags(
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter,
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     }
 }
 
@@ -243,6 +245,180 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
     // Stays in the pre-publish state.
     assert_eq!(statuses[0].1.status, "up_to_date");
     assert!(statuses[0].1.has_changes);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
+    // The one place the arm time is knowable: the branch that today logs
+    // "working tree not quiet, deferring" and discards it.
+    let ns: Namespace = ("acme", "demo").into();
+    let edited_at = SystemTime::now() - Duration::from_secs(60);
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
+    status.most_recent_mtime = Some(edited_at);
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+    let (mut model, _) = fixture_with_lineage_and_status(lineage.clone(), status);
+    model.expect_package_publish().times(0);
+
+    let outcome = refresh_then_maybe_sync(
+        &model,
+        &ns,
+        &lineage,
+        &PublishSettings::default(),
+        Duration::from_secs(300),
+        false,
+        true,
+        SyncScope::default(),
+    )
+    .await
+    .expect("a deferral is an Ok outcome");
+
+    assert_eq!(
+        outcome.publish_arm_at,
+        Some(edited_at + Duration::from_secs(300)),
+        "the arm time is the last edit plus the quiet window, not now plus it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> {
+    // Nothing is waiting, so the publish countdown must be absent rather than
+    // full — `Countdown` renders nothing for a `None` deadline and the caller
+    // supplies "nothing to publish".
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+    let (mut model, _) = fixture_with_lineage_and_status(
+        lineage.clone(),
+        quiet_status(UpstreamState::UpToDate, changes),
+    );
+    let ns_for_push = ns.clone();
+    model
+        .expect_package_publish()
+        .times(1)
+        .returning(move |_, _, _, _, _, _| {
+            Ok(quilt::PublishOutcome::CommittedAndPushed(
+                fake_push_outcome(&ns_for_push),
+            ))
+        });
+
+    let outcome = refresh_then_maybe_sync(
+        &model,
+        &ns,
+        &lineage,
+        &PublishSettings::default(),
+        Duration::from_secs(300),
+        false,
+        true,
+        SyncScope::default(),
+    )
+    .await
+    .expect("a quiet tree publishes");
+
+    assert!(
+        outcome.published.is_some(),
+        "the fixture must actually reach the publish path, or the None below is vacuous"
+    );
+    assert!(outcome.publish_arm_at.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_once_clears_an_arm_time_when_the_package_stops_waiting() -> Result<(), Error> {
+    // Without this, a package that published once keeps a stale deadline and
+    // the card counts down to a moment that has no meaning.
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+    let (mut model, _) =
+        fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+    let ns_for_push = ns.clone();
+    model
+        .expect_package_publish()
+        .times(1)
+        .returning(move |_, _, _, _, _, _| {
+            Ok(quilt::PublishOutcome::CommittedAndPushed(
+                fake_push_outcome(&ns_for_push),
+            ))
+        });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone());
+    // Seeded under the *installed* namespace, so the per-tick `retain` cannot
+    // be what removes it — only the arm-time decision can.
+    inner
+        .clocks
+        .publish_arm
+        .write()
+        .await
+        .insert(ns.clone(), Utc::now() + Duration::from_secs(300));
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(
+        reporter.published.lock().unwrap().len(),
+        1,
+        "the tick must actually publish, or the cleared entry proves nothing"
+    );
+    assert!(inner.clocks.publish_arm.read().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn run_once_clears_an_arm_time_when_the_package_pauses() -> Result<(), Error> {
+    // A paused namespace is skipped by every later tick, so if the pause does
+    // not clear the entry nothing ever will.
+    let ns: Namespace = ("acme", "demo").into();
+    let lineage = quilt::lineage::PackageLineage {
+        commit: Some(quilt::lineage::CommitState {
+            hash: "local".to_string(),
+            ..quilt::lineage::CommitState::default()
+        }),
+        remote_uri: Some(remote_for(&ns)),
+        base_hash: "h0".to_string(),
+        latest_hash: "h1".to_string(),
+        ..quilt::lineage::PackageLineage::default()
+    };
+    let (mut model, _) = fixture_with_lineage_and_status(
+        lineage,
+        quiet_status(UpstreamState::Diverged, BTreeMap::new()),
+    );
+    model.expect_package_publish().times(0);
+    model.expect_package_pull().times(0);
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone());
+    inner
+        .clocks
+        .publish_arm
+        .write()
+        .await
+        .insert(ns.clone(), Utc::now() + Duration::from_secs(300));
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(
+        matches!(
+            inner.paused.read().await.get(&ns),
+            Some(PausedReason::Diverged)
+        ),
+        "the tick must actually pause, or the cleared entry proves nothing"
+    );
+    assert!(inner.clocks.publish_arm.read().await.is_empty());
     Ok(())
 }
 
@@ -740,6 +916,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -854,6 +1031,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator,
+        clocks: Clocks::default(),
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
     let after = rx.borrow().clone();
@@ -905,6 +1083,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator,
+        clocks: Clocks::default(),
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
     assert_eq!(rx.borrow().pending_changes, 1);
