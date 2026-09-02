@@ -5,6 +5,8 @@
 //! re-shows its fallback each time, so the page would strobe.
 
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 
@@ -12,10 +14,36 @@ use crate::commands;
 /// guess, and when the copy last changed. A tuple rather than a struct because it is
 /// local to this file and never crosses a boundary.
 type PackageRowData = (String, PackageState, bool, Option<f64>);
+
+/// Copied from the gallery's own helpers rather than shared: the gallery modules are
+/// not compiled into the app binary, and the kit deliberately owns no icons — a caller
+/// passes the glyph, so the appbar's owner draws it.
+fn gear_icon() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.4">
+            <circle cx="8" cy="8" r="2.1" />
+            <path d="M8 1.6v1.7M8 12.7v1.7M2.5 8H4.2M11.8 8h1.7M4.1 4.1l1.2 1.2M10.7 10.7l1.2 1.2M11.9 4.1l-1.2 1.2M5.3 10.7l-1.2 1.2" />
+        </svg>
+    }
+    .into_any()
+}
+
+fn refresh_icon() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.4" stroke-linecap="round">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.15" />
+            <path d="M13.6 1.9v2.4h-2.4" />
+        </svg>
+    }
+    .into_any()
+}
 use crate::kit::Card;
 use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
 use crate::kit::PackageState;
+use crate::kit::IconButton;
 use crate::kit::PageLayout;
 use crate::kit::Site;
 use crate::kit::render;
@@ -69,10 +97,29 @@ fn PackageList(packages: Vec<PackageRowData>) -> impl IntoView {
 
 #[component]
 pub fn MainPage() -> impl IntoView {
-    let packages = LocalResource::new(|| async move { commands::get_main_page_packages().await });
+    let reload = Trigger::new();
+    let packages = LocalResource::new(move || {
+        reload.track();
+        async move { commands::get_main_page_packages().await }
+    });
+    let navigate = use_navigate();
 
     view! {
-        <PageLayout>
+        <PageLayout actions=view! {
+            <IconButton
+                icon=refresh_icon()
+                aria_label="Refresh"
+                on_click=move |_| reload.notify()
+            />
+            // The only way back to Settings from here. `/` redirects straight back to
+            // this page while the experiment is on, so the logo is not an escape.
+            <IconButton
+                icon=gear_icon()
+                aria_label="Settings"
+                on_click=move |_| navigate("/settings", NavigateOptions::default())
+            />
+        }
+            .into_any()>
             <Card title="Packages">
                 <Transition fallback=|| {
                     view! {
@@ -122,7 +169,16 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn renders_a_packages_card() {
-        let el = mount(|| view! { <MainPage /> });
+        // Inside a `Router`, because `MainPage` is a routed page and its appbar asks for
+        // `use_navigate`. Mounting it bare passed only while nothing in it needed router
+        // context — a false premise that happened to hold.
+        let el = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <MainPage />
+                </leptos_router::components::Router>
+            }
+        });
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Packages"),
