@@ -34,7 +34,7 @@ impl fmt::Debug for Tokens {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Credentials {
     pub access_key: String,
     pub secret_key: String,
