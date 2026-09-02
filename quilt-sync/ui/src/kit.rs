@@ -67,6 +67,10 @@ pub use icon_button::IconButtonVariant;
 pub use list_toolbar::ListToolbar;
 pub use package_row::PackageRow;
 pub use package_row::PackageRowSkeleton;
+// `#[expect]` cannot replace these: the app binary (`main.rs`) uses all four, so
+// there the expectation goes unfulfilled and `-D warnings` turns that into a
+// build failure. Only the gallery binary (`gallery.rs`) leaves them unused —
+// see its unallowed `mod kit;`, the intended dead-code backstop for the crate.
 #[allow(unused_imports)]
 pub use package_state::PackageState;
 #[allow(unused_imports)]

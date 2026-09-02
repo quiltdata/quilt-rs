@@ -190,6 +190,7 @@ pub async fn get_main_page_packages(
 mod tests {
     use super::*;
 
+    use crate::commands::test_support::*;
     use crate::quilt::lineage::UpstreamState;
 
     #[test]
@@ -273,5 +274,74 @@ mod tests {
     fn pending_changes_carries_the_count_because_the_ui_cannot_measure_it() {
         let json = serde_json::to_string(&PackageStateDto::PendingChanges { files: 2 }).unwrap();
         assert_eq!(json, r#"{"kind":"pending_changes","files":2}"#);
+    }
+
+    /// Drives `get_main_page_packages_from_model`'s real loop over a mock model —
+    /// the paused map, the per-package lineage read, and the warn-and-skip on a
+    /// failed lineage — and pins the result's serialized JSON. That JSON is the
+    /// contract the UI's `MainPagePackageData` must deserialize (`kit/package_state.rs`),
+    /// so this one test buys both the loop's integration coverage and the wire-shape
+    /// pin the final review asked for, rather than two separate tests.
+    #[tokio::test]
+    async fn get_main_page_packages_from_model_serializes_the_wire_shape() {
+        let mut model = crate::model::mocks::create();
+
+        let pkgs = vec![
+            make_installed_package(("team", "latest")),
+            make_installed_package(("team", "broken")),
+        ];
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(pkgs));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let ns = pkg.namespace.to_string();
+                if ns == "team/broken" {
+                    // A package whose lineage load fails must be skipped, not
+                    // fail the whole list — asserted below via `packages.len()`.
+                    return Err(access_denied_error());
+                }
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&ns),
+                    "abcdef".to_string(),
+                ))
+            });
+
+        let mut paused_reasons = HashMap::new();
+        paused_reasons.insert(
+            "team/latest".to_string(),
+            PausedRow {
+                kind: "workflow".to_string(),
+                message: "blocked by workflow rule".to_string(),
+            },
+        );
+
+        let result = get_main_page_packages_from_model(&model, &paused_reasons)
+            .await
+            .expect("one bad lineage must not fail the whole list");
+
+        assert_eq!(
+            result.packages.len(),
+            1,
+            "team/broken's lineage failure must be skipped, not surfaced"
+        );
+
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "packages": [{
+                    "namespace": "team/latest",
+                    "state": {"kind": "latest"},
+                    "changedAt": null,
+                    "bucket": "test",
+                    "provisional": true,
+                    "pausedReason": "blocked by workflow rule",
+                    "pausedKind": "workflow",
+                }]
+            }),
+            "this shape is what the UI's MainPagePackageData must deserialize"
+        );
     }
 }

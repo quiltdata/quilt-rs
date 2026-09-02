@@ -22,35 +22,38 @@ use crate::kit::render;
 const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
 
 /// The failure branch, split out from `MainPage` so it can be tested without a
-/// Tauri host. Logs the backend's error for a developer and renders only the
-/// fixed sentence for the user.
-fn render_fetch_error(err: &str) -> impl IntoView {
-    web_sys::console::error_1(&format!("get_main_page_packages failed: {err}").into());
+/// Tauri host. Renders only the fixed sentence for the user — logging the
+/// backend's error for a developer happens once, where the fetch result is
+/// handled (`MainPage`'s `Err` arm below), not here: this is a view function,
+/// and view functions can re-run on every re-render, which would re-log the
+/// same failure each time.
+fn render_fetch_error() -> impl IntoView {
     view! { <p>{FETCH_ERROR_WORDS}</p> }
 }
 
-/// The rows. Split out from `MainPage` so it can be tested without a Tauri host.
+/// The rows, as direct children of the card body — no wrapper element. The
+/// card's own `.body > * + *` rule (`kit/card.module.scss`) spaces them; a
+/// wrapping `div` would defeat that direct-child selector, and gallery
+/// chrome's `.g-rows` is not shipped to the app bundle at all (`app.scss`
+/// excludes it). Split out from `MainPage` so it can be tested without a
+/// Tauri host.
 #[component]
 fn PackageList(packages: Vec<(String, PackageState, bool)>) -> impl IntoView {
-    view! {
-        <div class="g-rows">
-            {packages
-                .into_iter()
-                .map(|(namespace, state, provisional)| {
-                    let rendered = render(&state, Site::ListRow);
-                    view! {
-                        <PackageRow
-                            namespace=namespace
-                            href="/installed-package"
-                            state=rendered.words
-                            tone=rendered.tone
-                            provisional=provisional
-                        />
-                    }
-                })
-                .collect_view()}
-        </div>
-    }
+    packages
+        .into_iter()
+        .map(|(namespace, state, provisional)| {
+            let rendered = render(&state, Site::ListRow);
+            view! {
+                <PackageRow
+                    namespace=namespace
+                    href="/installed-package"
+                    state=rendered.words
+                    tone=rendered.tone
+                    provisional=provisional
+                />
+            }
+        })
+        .collect_view()
 }
 
 #[component]
@@ -62,11 +65,9 @@ pub fn MainPage() -> impl IntoView {
             <Card title="Packages">
                 <Transition fallback=|| {
                     view! {
-                        <div class="g-rows">
-                            <PackageRowSkeleton />
-                            <PackageRowSkeleton />
-                            <PackageRowSkeleton />
-                        </div>
+                        <PackageRowSkeleton />
+                        <PackageRowSkeleton />
+                        <PackageRowSkeleton />
                     }
                 }>
                     {move || Suspend::new(async move {
@@ -79,7 +80,12 @@ pub fn MainPage() -> impl IntoView {
                                     .collect();
                                 view! { <PackageList packages=rows /> }.into_any()
                             }
-                            Err(err) => render_fetch_error(&err).into_any(),
+                            Err(err) => {
+                                web_sys::console::error_1(
+                                    &format!("get_main_page_packages failed: {err}").into(),
+                                );
+                                render_fetch_error().into_any()
+                            }
                         }
                     })}
                 </Transition>
@@ -151,9 +157,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_fetch_failure_shows_fixed_words_never_the_raw_error() {
-        let el = mount(|| {
-            render_fetch_error("connection reset by peer: os error 104 at line 42")
-        });
+        let el = mount(render_fetch_error);
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Could not load your packages."),

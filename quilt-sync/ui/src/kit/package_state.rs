@@ -9,6 +9,11 @@
 //! The words are a property of the state AND where it draws. `Behind` and
 //! `RoleDenied` are the two that differ by site; every other state says the same
 //! thing wherever it draws.
+//!
+//! Every `#[allow(dead_code)]` below stays: the gallery binary's `mod kit;`
+//! never wires up [`render`], so this module is genuinely unused there, and
+//! `#[expect(dead_code)]` fails on the app binary, where it IS used —
+//! confirmed against the compiler, not carried over from habit.
 
 use serde::Deserialize;
 

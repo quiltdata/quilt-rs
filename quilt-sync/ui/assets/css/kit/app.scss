@@ -1,6 +1,6 @@
 // Application bundle: tokens + every component module, and NOT the gallery
-// chrome. Not yet linked from index.html — v1 keeps its own theme.css until the
-// v2 page exists. This entrypoint exists so the split stays visible: gallery
+// chrome. Linked from index.html alongside v1's theme.css, which still styles
+// v1's own pages. This entrypoint exists so the split stays visible: gallery
 // and app share `modules`, and only the gallery adds `chrome`.
 @use 'normalize';
 @use 'tokens';
