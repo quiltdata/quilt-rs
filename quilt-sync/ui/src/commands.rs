@@ -499,31 +499,33 @@ pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListD
 }
 
 /// v2's package list, light phase. Every row arrives `provisional`.
-///
-/// Not yet called: the page that consumes it lands in the next task. Same
-/// `#[allow(dead_code)]` treatment as `kit::PackageState` while it waits.
-#[allow(dead_code)]
 pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
     tauri::invoke_unit("get_main_page_packages").await
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackagesData {
     pub packages: Vec<MainPagePackageData>,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackageData {
     pub namespace: String,
     pub state: crate::kit::PackageState,
+    /// Plumbed by Plan 2 (`qhq-8mgw.3`); this phase's page leaves it off `PackageRow`
+    /// so the time column renders its own no-recorded-time word.
+    #[allow(dead_code)]
     pub changed_at: Option<f64>,
+    /// Needed once the heavy phase (Plan 2) does per-package, per-bucket work.
+    #[allow(dead_code)]
     pub bucket: Option<String>,
     pub provisional: bool,
+    /// Rendered by the queue (Plan 4); the list has no pause row yet.
+    #[allow(dead_code)]
     pub paused_reason: Option<String>,
+    #[allow(dead_code)]
     pub paused_kind: Option<String>,
 }
 
