@@ -464,6 +464,135 @@ pub async fn get_main_page_packages(
     result.map_err(|e| e.to_frontend_string())
 }
 
+// ── The heavy phase ──
+
+/// What the per-package refresh corrects on a row.
+///
+/// Deliberately not the whole `MainPagePackage`: `namespace`, `bucket` and
+/// `changed_at` are facts the light phase read from `data.json` and the network
+/// has nothing to say about them. Sending them again would be a second source
+/// for a value that already arrived.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackageRefresh {
+    pub state: PackageStateDto,
+    /// See [`MainPagePackage::role_switch_host`]. Carried here too, and cleared
+    /// here too: the refresh is the real call, so it has the last word in BOTH
+    /// directions. Only ever *adding* the mark made a false positive permanent
+    /// for the life of the page.
+    pub role_switch_host: Option<String>,
+}
+
+/// The heavy phase: one real status call, resolved through the SAME
+/// [`resolve_state`] the light phase uses.
+///
+/// §1 — resolution happens exactly once, upstream of every payload. The light
+/// and heavy phases differ in what they *measure*, never in how they decide:
+/// both hand `quilt-rs`'s `UpstreamState` to one function. That is what stops
+/// the two phases contradicting each other, which is the 2026-07-11 bug at
+/// row scale.
+pub(super) async fn refresh_main_page_package_from_model(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    tracing: &crate::telemetry::Telemetry,
+    namespace: &quilt_uri::Namespace,
+) -> Result<MainPagePackageRefresh, Error> {
+    let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
+    let lineage = m.get_installed_package_lineage(&installed_package).await?;
+    let has_local_commit = lineage.commit.is_some();
+    let has_remote = lineage.remote_uri.is_some();
+    let host = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|uri| uri.origin.clone());
+
+    // A remote with a bucket but no catalog host: nowhere to vend credentials
+    // from, so the status call cannot succeed and its answer would not be
+    // actionable if it did. The SAME predicate the light phase uses, so the two
+    // phases cannot disagree about this shape.
+    if misconfigured_remote(&lineage) {
+        return Ok(MainPagePackageRefresh {
+            state: PackageStateDto::Unknown,
+            role_switch_host: None,
+        });
+    }
+
+    // No remote at all: `resolve_state` ignores the file count for `Local`, so the
+    // status call would be a local hash walk whose answer nothing reads. A remote
+    // that exists but has never been pushed to still goes through the call below —
+    // it is reachable, and `Unpublished` is what comes back.
+    if !has_remote {
+        return Ok(MainPagePackageRefresh {
+            state: resolve_state(lineage.into(), has_local_commit, false, None),
+            role_switch_host: None,
+        });
+    }
+
+    if let Some(host) = host.as_ref() {
+        tracing.add_host(host);
+    }
+
+    match m
+        .get_installed_package_status(&installed_package, None)
+        .await
+    {
+        Ok(status) => Ok(MainPagePackageRefresh {
+            state: resolve_state(
+                status.upstream_state,
+                has_local_commit,
+                has_remote,
+                Some(status.changes.len()),
+            ),
+            // The refresh did not deny, so any pre-filter mark is cleared.
+            role_switch_host: None,
+        }),
+        Err(err) if err.is_access_denied() => {
+            // Ruling R3: denial is precedence rank 1, so it REPLACES the state
+            // rather than riding beside it, and `render` gives it no action —
+            // which is the invariant
+            // `denied_row_hides_publish_that_a_readable_row_with_the_same_changes_offers`.
+            let mark = denied_mark(m, roles, host.as_ref()).await;
+            Ok(MainPagePackageRefresh {
+                state: mark.state(),
+                role_switch_host: mark.role_switch_host,
+            })
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Failed to get status for {}: {err}",
+                installed_package.namespace,
+            );
+            Ok(MainPagePackageRefresh {
+                state: PackageStateDto::Unknown,
+                role_switch_host: None,
+            })
+        }
+    }
+}
+
+/// One package's real state. Called once per row, concurrently — see Ruling R0
+/// in the plan and `RoleCache::get`'s doc comment, which is written for exactly
+/// this caller.
+#[tauri::command]
+pub async fn refresh_main_page_package(
+    m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+) -> Result<MainPagePackageRefresh, String> {
+    let namespace: quilt_uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+
+    refresh_main_page_package_from_model(&*m, &roles, &tracing, &namespace)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1138,6 +1267,184 @@ mod tests {
             calls.load(std::sync::atomic::Ordering::SeqCst),
             2,
             "roles.invalidate(None) must run at the top of every load, or the second load would serve the first load's cached role name"
+        );
+    }
+
+    /// A single package on `test.quilt.dev` whose status call answers with `status`,
+    /// with the host's roles under the test's control.
+    fn mock_one_package(
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+        roles: Option<RoleInfo>,
+    ) -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                ))
+            });
+        // `return_once`, not `returning`: `Error` is not `Clone`, and each of these
+        // tests makes exactly one status call. This is the idiom `model/mocks.rs`
+        // already uses for this same method.
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| status);
+        if let Some(roles) = roles {
+            model
+                .expect_refresh_roles()
+                .returning(move |_| Ok(roles.clone()));
+        }
+        model.expect_clear_remote_client_cache().returning(|_| ());
+        model
+    }
+
+    fn status_with(
+        upstream: UpstreamState,
+        changed_files: usize,
+    ) -> quilt::lineage::InstalledPackageStatus {
+        let mut changes = quilt::lineage::ChangeSet::new();
+        for i in 0..changed_files {
+            changes.insert(
+                std::path::PathBuf::from(format!("f{i}.csv")),
+                quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+            );
+        }
+        quilt::lineage::InstalledPackageStatus::new(upstream, changes)
+    }
+
+    async fn refresh(m: &impl model::QuiltModel, roles: &RoleCache) -> MainPagePackageRefresh {
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+        refresh_main_page_package_from_model(m, roles, &crate::telemetry::Telemetry::default(), &ns)
+            .await
+            .expect("refresh")
+    }
+
+    #[tokio::test]
+    async fn a_measured_working_tree_reports_how_many_files_changed() {
+        // The one count the wire carries, because the UI has no collection to measure.
+        let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 3)), None);
+        assert_eq!(
+            refresh(&m, &RoleCache::default()).await.state,
+            PackageStateDto::PendingChanges { files: 3 }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_clean_tree_that_is_up_to_date_is_latest() {
+        let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 0)), None);
+        assert_eq!(
+            refresh(&m, &RoleCache::default()).await.state,
+            PackageStateDto::Latest
+        );
+    }
+
+    #[tokio::test]
+    async fn a_denial_resolves_the_row_to_no_access_never_to_an_error() {
+        // Not an auth failure: credential vending succeeded and the active role
+        // simply cannot reach this bucket. Resolving to `Unknown` here — whose words
+        // are "Sync stopped" — is what sent the original bug reporter into an
+        // unrecoverable re-login loop, because the re-vend hands back the same role.
+        let m = mock_one_package(Err(access_denied_error()), Some(two_roles()));
+        let refreshed = refresh(&m, &RoleCache::default()).await;
+
+        assert_eq!(
+            refreshed.state,
+            PackageStateDto::RoleDenied {
+                role: Some("ReadOnly".to_string())
+            }
+        );
+        assert_eq!(
+            refreshed.role_switch_host.as_deref(),
+            Some("test.quilt.dev")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_generic_status_failure_is_unknown_not_a_denial() {
+        let m = mock_one_package(Err(Error::General("network down".to_string())), None);
+        let refreshed = refresh(&m, &RoleCache::default()).await;
+
+        assert_eq!(refreshed.state, PackageStateDto::Unknown);
+        assert_eq!(refreshed.role_switch_host, None);
+    }
+
+    #[tokio::test]
+    async fn a_refresh_that_does_not_deny_carries_no_switch_host() {
+        // The pre-filter is an optimistic hint and can be wrong in both directions;
+        // the refresh has the last word. A row the light phase greyed must be able to
+        // come back — Task 5's `apply` is the other half of this.
+        let m = mock_one_package(Ok(status_with(UpstreamState::Behind, 0)), Some(two_roles()));
+        let refreshed = refresh(&m, &RoleCache::default()).await;
+
+        assert_eq!(refreshed.state, PackageStateDto::Behind);
+        assert_eq!(refreshed.role_switch_host, None);
+    }
+
+    #[tokio::test]
+    async fn a_local_only_package_needs_no_status_call() {
+        // No expectation is set for `get_installed_package_status`; mockall panics if
+        // it is called. `Local` ignores the file count, so making the call would be
+        // a local hash walk whose answer nothing reads.
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+
+        assert_eq!(
+            refresh(&model, &RoleCache::default()).await.state,
+            PackageStateDto::NoRemote
+        );
+    }
+
+    #[tokio::test]
+    async fn a_remote_with_no_catalog_host_never_reaches_the_network() {
+        // No expectation for `get_installed_package_status`: mockall panics if it is
+        // called. There is nowhere to vend credentials from, so the call cannot
+        // succeed — and the hash comparison behind it answers a question the app
+        // cannot act on.
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri_no_origin(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                ))
+            });
+
+        assert_eq!(
+            refresh(&model, &RoleCache::default()).await.state,
+            PackageStateDto::Unknown
+        );
+    }
+
+    #[tokio::test]
+    async fn a_package_that_is_not_installed_is_an_error_not_a_state() {
+        let mut model = crate::model::mocks::create();
+        model.expect_get_installed_package().returning(|_| Ok(None));
+        let ns: quilt_uri::Namespace = "team/gone".try_into().unwrap();
+
+        assert!(
+            refresh_main_page_package_from_model(
+                &model,
+                &RoleCache::default(),
+                &crate::telemetry::Telemetry::default(),
+                &ns,
+            )
+            .await
+            .is_err(),
+            "an uninstalled package has no state to report"
         );
     }
 }
