@@ -246,6 +246,7 @@ fn main() {
             commands::update_experimental_settings,
             commands::get_main_page_packages,
             commands::refresh_main_page_package,
+            commands::get_main_page_watcher,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,

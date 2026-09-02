@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Duration;
 
+use chrono::DateTime;
+use chrono::Utc;
 use serde::Serialize;
 use tokio::time::timeout;
 
@@ -13,6 +15,7 @@ use quilt_uri::Host;
 
 use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
+use crate::autopull::WatcherFacts;
 use crate::commands::RoleCache;
 use crate::error::Error;
 use crate::model;
@@ -68,10 +71,6 @@ pub enum PackageStateDto {
 /// Kinds are `snake_case`, matching [`PackageStateDto`] rather than v1's
 /// camelCase reason strings. The queue reads a pause and a state side by side,
 /// so those two vocabularies are the pair that must agree.
-///
-/// Nothing constructs a `PausedPackage` outside tests yet, so `PausedDto` is
-/// unused in a non-test build — hence the `#[allow(dead_code)]` below.
-#[allow(dead_code)]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PausedDto {
@@ -120,9 +119,6 @@ impl From<&PausedReason> for PausedDto {
 /// One paused package. The namespace is the join key: the queue matches it
 /// against the package list's rows to answer §4.3's question — *is this pause
 /// explained by a row the user can already see?*
-///
-/// Not constructed outside tests yet, hence the `#[allow(dead_code)]` below.
-#[allow(dead_code)]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedPackage {
@@ -673,6 +669,132 @@ pub async fn refresh_main_page_package(
     refresh_main_page_package_from_model(&*m, &roles, &tracing, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
+}
+
+// ── The watcher's payload ──
+
+/// Whether a direction's machinery is counting down, waiting for something to
+/// do, or stopped. §4.2's three states, and the whole vocabulary of the toggle's
+/// trailing slot — a closed set, because a fourth would be a design change and
+/// not a wire addition.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToggleActivity {
+    Armed,
+    Idle,
+    Paused,
+}
+
+/// One direction of autosync, as the Autosync card needs it.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleState {
+    /// The **setting**, which stays `true` while paused — what stopped is the
+    /// machinery.
+    pub enabled: bool,
+    pub activity: ToggleActivity,
+    /// Epoch milliseconds. `Some` exactly when `activity` is `Armed`.
+    pub deadline: Option<f64>,
+    /// The whole wait, in milliseconds. A determinate ring cannot be drawn from
+    /// a remaining time alone.
+    pub interval_ms: f64,
+}
+
+/// Payload 3 of the three (§8 decision 3). Carries no counts: the queue derives
+/// its own from the collections it renders.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageWatcher {
+    pub pull: ToggleState,
+    pub publish: ToggleState,
+    /// The paused set, typed. **Read by the queue (Plan 4), not by anything in
+    /// this build** — the card needs only `activity`, which is derived from this
+    /// same list on the way past. It ships now because the split that makes it
+    /// legible is this plan's deliverable (`qhq-8mgw.9`, `qhq-8mgw.4`).
+    pub paused: Vec<PausedPackage>,
+}
+
+/// `i64` milliseconds into `f64`, because JavaScript has no other number.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "epoch millis fit f64 exactly for any date this program can see"
+)]
+fn epoch_millis(at: DateTime<Utc>) -> f64 {
+    at.timestamp_millis() as f64
+}
+
+/// One direction's state, derived once and called twice.
+///
+/// The ordering is the ruling: `enabled` is checked before `paused`, because a
+/// setting that is off has no machinery to have stopped. And `deadline` is
+/// returned by the same expression that decides `activity`, so §4.2's "`armed`
+/// only" holds by construction rather than by two callers agreeing.
+fn toggle_state(
+    enabled: bool,
+    any_paused: bool,
+    deadline: Option<DateTime<Utc>>,
+    interval: Duration,
+) -> ToggleState {
+    let (activity, deadline) = if !enabled {
+        (ToggleActivity::Idle, None)
+    } else if any_paused {
+        (ToggleActivity::Paused, None)
+    } else {
+        match deadline {
+            Some(at) => (ToggleActivity::Armed, Some(epoch_millis(at))),
+            None => (ToggleActivity::Idle, None),
+        }
+    };
+    ToggleState {
+        enabled,
+        activity,
+        deadline,
+        // `as_secs_f64` rather than `as_millis()`: no cast, no lint, no
+        // truncation to argue about.
+        interval_ms: interval.as_secs_f64() * 1000.0,
+    }
+}
+
+impl From<WatcherFacts> for MainPageWatcher {
+    fn from(facts: WatcherFacts) -> Self {
+        // R2: a pause of any reason stops both directions, because `run_once`
+        // skips a paused namespace above both branches (`tick.rs`). There is no
+        // per-direction pause state in the watcher to read, and inventing one
+        // would be a second resolution of what this map already decides.
+        let any_paused = !facts.paused.is_empty();
+        Self {
+            pull: toggle_state(
+                facts.pull_enabled,
+                any_paused,
+                facts.next_pull_at,
+                facts.pull_interval,
+            ),
+            publish: toggle_state(
+                facts.publish_enabled,
+                any_paused,
+                facts.publish_arm_at,
+                facts.publish_interval,
+            ),
+            paused: facts
+                .paused
+                .iter()
+                .map(|(namespace, reason)| PausedPackage {
+                    namespace: namespace.to_string(),
+                    reason: PausedDto::from(reason),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The watcher's own payload. A memory read — the settings, the paused map and
+/// the two clocks are all `RwLock`s the watcher already holds — so it has no
+/// skeleton and needs none (§6: chrome is never skeletonised).
+#[tauri::command]
+pub async fn get_main_page_watcher(
+    watcher: tauri::State<'_, Watcher>,
+) -> Result<MainPageWatcher, String> {
+    Ok(MainPageWatcher::from(watcher.main_page_facts().await))
 }
 
 #[cfg(test)]
@@ -1674,5 +1796,152 @@ mod tests {
             refresh(&m, &RoleCache::default()).await.state,
             PackageStateDto::Unpublished
         );
+    }
+
+    #[test]
+    fn an_armed_toggle_is_exactly_the_one_that_carries_a_deadline() {
+        // The biconditional, over every input combination. §4.2 says `deadline` is
+        // `armed` only; two fields that can disagree about the same fact is §1's
+        // rule at payload scale, so this is derived once and asserted here.
+        let at = Utc::now() + Duration::from_secs(30);
+        let interval = Duration::from_secs(30);
+        for (enabled, any_paused, deadline, expected) in [
+            (true, false, Some(at), ToggleActivity::Armed),
+            (true, false, None, ToggleActivity::Idle),
+            (true, true, Some(at), ToggleActivity::Paused),
+            (true, true, None, ToggleActivity::Paused),
+            (false, false, Some(at), ToggleActivity::Idle),
+            (false, true, Some(at), ToggleActivity::Idle),
+        ] {
+            let state = toggle_state(enabled, any_paused, deadline, interval);
+            assert_eq!(
+                state.activity,
+                expected,
+                "enabled={enabled} paused={any_paused} deadline={}",
+                deadline.is_some()
+            );
+            assert_eq!(
+                state.deadline.is_some(),
+                expected == ToggleActivity::Armed,
+                "a deadline crosses the wire exactly when the toggle is armed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_toggle_that_is_off_is_idle_not_paused() {
+        // The loop arms `next_pull_at` regardless of settings — it sleeps whether or
+        // not either direction is enabled — so an unguarded derivation would report
+        // a disabled toggle as armed, counting down to a tick that does nothing.
+        // And a setting that is off has no machinery to have stopped.
+        let state = toggle_state(
+            false,
+            true,
+            Some(Utc::now() + Duration::from_secs(30)),
+            Duration::from_secs(30),
+        );
+        assert_eq!(state.activity, ToggleActivity::Idle);
+        assert!(!state.enabled);
+    }
+
+    #[test]
+    fn the_interval_crosses_as_milliseconds_because_that_is_what_the_ring_needs() {
+        // `Countdown.interval` is "the whole wait, in milliseconds" — a determinate
+        // ring cannot be drawn from a remaining time alone.
+        let state = toggle_state(true, false, None, Duration::from_secs(300));
+        assert!((state.interval_ms - 300_000.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn a_pause_stops_both_toggles_and_appears_once_in_the_list() {
+        // R2: `run_once` skips a paused namespace ABOVE both the pull branch and the
+        // publish branch, so a pause of any reason stops both directions. And the
+        // paused list and both activities come from ONE read of the map — the
+        // 2026-07-11 bug was two sources answering the same question, so this test
+        // asserts they agree by construction rather than by coincidence.
+        let facts = WatcherFacts {
+            pull_enabled: true,
+            publish_enabled: true,
+            paused: vec![(
+                ("team", "plate-07").into(),
+                PausedReason::Other("workflow rejected metadata".to_string()),
+            )],
+            next_pull_at: Some(Utc::now() + Duration::from_secs(30)),
+            publish_arm_at: None,
+            pull_interval: Duration::from_secs(30),
+            publish_interval: Duration::from_secs(300),
+        };
+        let payload = MainPageWatcher::from(facts);
+        assert_eq!(payload.pull.activity, ToggleActivity::Paused);
+        assert_eq!(payload.publish.activity, ToggleActivity::Paused);
+        assert_eq!(payload.paused.len(), 1);
+        assert_eq!(payload.paused[0].namespace, "team/plate-07");
+        assert_eq!(
+            payload.paused[0].reason,
+            PausedDto::Other {
+                message: "workflow rejected metadata".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn the_watcher_payload_serializes_the_wire_shape() {
+        // The contract Task 5's `MainPageWatcherData` must deserialize. Pinned as a
+        // whole-payload literal, so a renamed field or a changed case fails here
+        // rather than silently at the Tauri boundary.
+        let facts = WatcherFacts {
+            pull_enabled: true,
+            publish_enabled: true,
+            paused: vec![(
+                ("team", "plate-07").into(),
+                PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]),
+            )],
+            next_pull_at: Some(chrono::DateTime::from_timestamp_millis(1_754_500_030_000).unwrap()),
+            publish_arm_at: None,
+            pull_interval: Duration::from_secs(30),
+            publish_interval: Duration::from_secs(300),
+        };
+        assert_eq!(
+            serde_json::to_value(MainPageWatcher::from(facts)).unwrap(),
+            serde_json::json!({
+                "pull": {
+                    "enabled": true,
+                    "activity": "paused",
+                    "deadline": null,
+                    "intervalMs": 30_000.0
+                },
+                "publish": {
+                    "enabled": true,
+                    "activity": "paused",
+                    "deadline": null,
+                    "intervalMs": 300_000.0
+                },
+                "paused": [{
+                    "namespace": "team/plate-07",
+                    "reason": {"kind": "pull_conflict", "files": ["a.csv", "b.csv"]}
+                }]
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_armed_payload_carries_its_deadline_as_epoch_millis() {
+        // The other half of the pin: the arm above is paused, so nothing in it
+        // exercises the `armed` shape or the millisecond conversion.
+        let at = chrono::DateTime::from_timestamp_millis(1_754_500_030_000).unwrap();
+        let facts = WatcherFacts {
+            pull_enabled: true,
+            publish_enabled: false,
+            paused: Vec::new(),
+            next_pull_at: Some(at),
+            publish_arm_at: None,
+            pull_interval: Duration::from_secs(30),
+            publish_interval: Duration::from_secs(300),
+        };
+        let json = serde_json::to_value(MainPageWatcher::from(facts)).unwrap();
+        assert_eq!(json["pull"]["activity"], "armed");
+        assert_eq!(json["pull"]["deadline"], 1_754_500_030_000.0);
+        assert_eq!(json["publish"]["activity"], "idle");
+        assert_eq!(json["publish"]["deadline"], serde_json::Value::Null);
     }
 }

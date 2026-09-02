@@ -129,6 +129,31 @@ pub(crate) struct WatcherInner {
     pub clocks: Clocks,
 }
 
+/// Everything the main page's watcher payload is derived from, read in one call.
+///
+/// One value, not several accessors, and that is the point: §1's constraint is
+/// about **how many places decide what is true**. The payload's paused list and
+/// both toggles' `paused` activity come from this struct's `paused` field, so
+/// they cannot contradict each other the way the 2026-07-11 report's watcher and
+/// `data.json` did.
+pub struct WatcherFacts {
+    pub pull_enabled: bool,
+    pub publish_enabled: bool,
+    /// Every paused namespace with its reason, from one read of the map.
+    pub paused: Vec<(Namespace, PausedReason)>,
+    pub next_pull_at: Option<DateTime<Utc>>,
+    /// The **earliest** arm time across every namespace waiting out its quiet
+    /// window — the next thing that will publish, which is what one countdown
+    /// can honestly represent. `None` when nothing is waiting.
+    pub publish_arm_at: Option<DateTime<Utc>>,
+    /// The cadence the loop is actually sleeping, which depends on window mode.
+    /// Not `pull_interval_secs` from the settings payload: `focused_secs`,
+    /// `unfocused_secs` and `closed_secs` can differ, and a ring drawn from the
+    /// wrong one of the three is a ring that finishes at the wrong time.
+    pub pull_interval: Duration,
+    pub publish_interval: Duration,
+}
+
 pub fn create_window_mode() -> SharedWindowMode {
     Arc::new(RwLock::new(WindowMode::Focused))
 }
@@ -271,6 +296,47 @@ impl Watcher {
             .map(|(ns, reason)| reporter::PausedEvent::from_reason(ns, reason))
             .collect();
         reporter::WatcherSnapshot { paused }
+    }
+
+    /// One read, for the main page's watcher payload.
+    pub async fn main_page_facts(&self) -> WatcherFacts {
+        let settings = self.inner.settings.read().await.clone();
+        let mode = *self.inner.window_mode.read().await;
+        let paused = self
+            .inner
+            .paused
+            .read()
+            .await
+            .iter()
+            .map(|(ns, reason)| (ns.clone(), reason.clone()))
+            .collect();
+        WatcherFacts {
+            pull_enabled: settings.pull.enabled,
+            publish_enabled: settings.push.enabled,
+            paused,
+            next_pull_at: *self.inner.clocks.next_pull_at.read().await,
+            publish_arm_at: self
+                .inner
+                .clocks
+                .publish_arm
+                .read()
+                .await
+                .values()
+                .min()
+                .copied(),
+            pull_interval: cadence_for_mode(&settings.pull, mode),
+            publish_interval: Duration::from_secs(settings.push.idle_timeout_secs),
+        }
+    }
+
+    /// One namespace's pause, for the per-package refresh. A lookup, not a
+    /// second resolution: the map is still the only thing that decides.
+    ///
+    /// `expect` rather than `allow`: the per-package refresh that calls this
+    /// lands next, and the expectation fails the build the moment it does.
+    #[expect(dead_code, reason = "the per-package refresh calls this next")]
+    pub async fn paused_reason(&self, namespace: &Namespace) -> Option<PausedReason> {
+        self.inner.paused.read().await.get(namespace).cloned()
     }
 
     /// The shared state the tick loop reads. Lets a test drive
