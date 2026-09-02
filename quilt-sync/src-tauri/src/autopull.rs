@@ -331,10 +331,6 @@ impl Watcher {
 
     /// One namespace's pause, for the per-package refresh. A lookup, not a
     /// second resolution: the map is still the only thing that decides.
-    ///
-    /// `expect` rather than `allow`: the per-package refresh that calls this
-    /// lands next, and the expectation fails the build the moment it does.
-    #[expect(dead_code, reason = "the per-package refresh calls this next")]
     pub async fn paused_reason(&self, namespace: &Namespace) -> Option<PausedReason> {
         self.inner.paused.read().await.get(namespace).cloned()
     }

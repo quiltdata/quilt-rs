@@ -27,11 +27,9 @@ use crate::quilt::lineage::UpstreamState;
 /// §2: a discriminator, never prose. The UI owns the words; a rewording must not
 /// need a backend release.
 ///
-/// `PullConflict` is never constructed in this build (see its doc comment) —
-/// it exists only for wire-shape stability, hence the blanket `dead_code`
-/// allowance. `RoleDenied` IS constructed, by the access pass below
-/// (`AccessMark::state`), not by `resolve_state`.
-#[allow(dead_code)]
+/// Two variants come from outside `resolve_state`: `PullConflict` from the
+/// watcher's paused map (see [`conflict_files`]), `RoleDenied` from the access
+/// pass below (`AccessMark::state`).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PackageStateDto {
@@ -150,8 +148,6 @@ pub struct MainPagePackage {
     /// The denial itself is not a second field — it is `state ==
     /// RoleDenied`. Two fields carrying one fact is §1's rule at payload scale.
     pub role_switch_host: Option<String>,
-    pub paused_reason: Option<String>,
-    pub paused_kind: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -223,16 +219,22 @@ fn misconfigured_remote(lineage: &quilt::lineage::PackageLineage) -> bool {
         .is_some_and(|uri| uri.origin.is_none())
 }
 
-// `PullConflict` and `RoleDenied` are not produced by `resolve_state`: the first
-// comes from the watcher's paused map (Plan 3), the second from the access pass
-// below, which resolves a denied row after the state has been mapped.
-
-/// A message-bearing autosync pause for a namespace, keyed by namespace in the
-/// map the loop below consumes. Deliberately not `package_list.rs`'s `PausedRow`:
-/// that type is v1's and frozen, even though the shape is the same.
-struct PausedRow {
-    kind: String,
-    message: String,
+/// Precedence rank 2: a pull-conflict pause outranks everything the tree's own
+/// state can say (ranks 5-7). It is outranked only by a denial (rank 1), which
+/// is why the heavy phase applies this **after** its access-denied arm and the
+/// light phase applies it before `mark_unreadable_buckets`, which overwrites.
+/// The invariant is `a_denial_outranks_a_pause_even_a_pull_conflict`.
+///
+/// `Other` is deliberately absent: it has no state in the vocabulary, and
+/// folding it would destroy the case the queue exists to surface — a package
+/// `latest` by hash and paused by a workflow rejection. It travels as a pause on
+/// the watcher payload instead. The other three reasons are absent because the
+/// tree's own state already says what they say.
+fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
+    match paused {
+        Some(PausedReason::PullConflict(files)) => Some(files.clone()),
+        _ => None,
+    }
 }
 
 /// How long the roster waits on one host's readable-bucket query before giving
@@ -382,7 +384,7 @@ async fn get_main_page_packages_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
-    paused_reasons: &HashMap<String, PausedRow>,
+    paused_reasons: &HashMap<String, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
     // COPIED from `package_list.rs:193` per `qhq-8mgw.1`. A load is the cadence
     // the role refresh is pinned to. A switch is server-side and global, so it can
@@ -450,12 +452,9 @@ async fn load_main_page_package(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
     installed_package: &quilt::InstalledPackage,
-    paused_reasons: &HashMap<String, PausedRow>,
+    paused_reasons: &HashMap<String, PausedReason>,
 ) -> Result<Row, Error> {
     let namespace = installed_package.namespace.to_string();
-    let paused = paused_reasons.get(&namespace);
-    let paused_reason = paused.map(|p| p.message.clone());
-    let paused_kind = paused.map(|p| p.kind.clone());
 
     let lineage = m.get_installed_package_lineage(installed_package).await?;
     // Computed before `lineage` is moved by the `into()` below.
@@ -475,6 +474,10 @@ async fn load_main_page_package(
     }
     let state = if misconfigured_remote(&lineage) {
         PackageStateDto::Unknown
+    } else if let Some(files) = conflict_files(paused_reasons.get(&namespace)) {
+        // Rank 2, below the arm above: a remote with no catalog host is a package
+        // the tick never touched, so a conflict pause cannot be describing it.
+        PackageStateDto::PullConflict { files }
     } else {
         // `None`, not `Some(0)`: this phase has not looked at the working tree.
         // The heavy phase (`refresh_main_page_package`) measures it.
@@ -489,8 +492,6 @@ async fn load_main_page_package(
             bucket,
             provisional: true,
             role_switch_host: None,
-            paused_reason,
-            paused_kind,
         },
         uri: typed_uri,
     })
@@ -507,22 +508,16 @@ pub async fn get_main_page_packages(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
 ) -> Result<MainPagePackages, String> {
-    let paused_reasons: HashMap<String, PausedRow> = watcher
-        .snapshot()
+    // From the same one read the watcher payload uses. The old route went
+    // through `PausedEvent` and `filter_map`ped away every pause with no
+    // message — `PendingChanges`, `PendingCommit` and `Diverged` — so three of
+    // the six reasons never reached this map at all.
+    let paused_reasons: HashMap<String, PausedReason> = watcher
+        .main_page_facts()
         .await
         .paused
         .into_iter()
-        .filter_map(|entry| {
-            entry.message.map(|message| {
-                (
-                    entry.namespace,
-                    PausedRow {
-                        kind: entry.reason,
-                        message,
-                    },
-                )
-            })
-        })
+        .map(|(namespace, reason)| (namespace.to_string(), reason))
         .collect();
 
     let started = std::time::Instant::now();
@@ -567,6 +562,7 @@ pub(super) async fn refresh_main_page_package_from_model(
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
     namespace: &quilt_uri::Namespace,
+    paused: Option<&PausedReason>,
 ) -> Result<MainPagePackageRefresh, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -616,12 +612,17 @@ pub(super) async fn refresh_main_page_package_from_model(
         .await
     {
         Ok(status) => Ok(MainPagePackageRefresh {
-            state: resolve_state(
-                status.upstream_state,
-                has_local_commit,
-                has_remote,
-                Some(status.changes.len()),
-            ),
+            // Rank 2, applied here rather than at the top of the function: the
+            // access-denied arm below is rank 1 and must keep its chance to win.
+            state: match conflict_files(paused) {
+                Some(files) => PackageStateDto::PullConflict { files },
+                None => resolve_state(
+                    status.upstream_state,
+                    has_local_commit,
+                    has_remote,
+                    Some(status.changes.len()),
+                ),
+            },
             // The refresh did not deny, so any pre-filter mark is cleared.
             role_switch_host: None,
         }),
@@ -660,13 +661,19 @@ pub async fn refresh_main_page_package(
     m: tauri::State<'_, model::Model>,
     roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<MainPagePackageRefresh, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    refresh_main_page_package_from_model(&*m, &roles, &tracing, &namespace)
+    // One lookup, at the moment of the refresh. It can differ from what the
+    // light phase saw — the tick runs in between — which is the same
+    // between-phases staleness `provisional` already exists to express.
+    let paused = watcher.paused_reason(&namespace).await;
+
+    refresh_main_page_package_from_model(&*m, &roles, &tracing, &namespace, paused.as_ref())
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -1182,12 +1189,11 @@ mod tests {
             .returning(|_| Err(Error::General("no bucket list in this test".to_string())));
 
         let mut paused_reasons = HashMap::new();
+        // A pause that does NOT fold (§R5), so the row's own `latest` stands and
+        // the payload below is the no-fold shape.
         paused_reasons.insert(
             "team/latest".to_string(),
-            PausedRow {
-                kind: "workflow".to_string(),
-                message: "blocked by workflow rule".to_string(),
-            },
+            PausedReason::Other("blocked by workflow rule".to_string()),
         );
 
         let result = get_main_page_packages_from_model(
@@ -1216,11 +1222,126 @@ mod tests {
                     "bucket": "test",
                     "provisional": true,
                     "roleSwitchHost": null,
-                    "pausedReason": "blocked by workflow rule",
-                    "pausedKind": "workflow",
                 }]
             }),
             "this shape is what the UI's MainPagePackageData must deserialize"
+        );
+    }
+
+    /// A one-package roster whose lineage is a clean remote on a bucket the role
+    /// can read: `resolve_state` alone answers `Latest` (asserted by
+    /// `other_and_the_three_duplicates_do_not_fold_into_a_state`, which drives
+    /// this same fixture), and the access pass marks nothing. So any other state
+    /// a test below sees came from the fold and nowhere else.
+    fn mock_clean_roster() -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_get_installed_packages_list()
+            .return_once(|| Ok(vec![make_installed_package(("team", "one"))]));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                ))
+            });
+        // `make_manifest_uri`'s bucket, so the intersection is full and the access
+        // pass has nothing to overwrite the fold with. `.times(1)`: without it the
+        // expectation is satisfied at zero calls and would prove nothing about the
+        // pass having run at all.
+        model
+            .expect_readable_buckets()
+            .times(1)
+            .returning(|_| Ok(vec!["test".to_string()]));
+        model
+    }
+
+    /// The light phase over [`mock_clean_roster`], with its one package paused.
+    async fn light_phase_state(
+        m: &impl model::QuiltModel,
+        paused: PausedReason,
+    ) -> PackageStateDto {
+        let paused_reasons = HashMap::from([("team/one".to_string(), paused)]);
+        let packages = get_main_page_packages_from_model(
+            m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &paused_reasons,
+        )
+        .await
+        .expect("list")
+        .packages;
+        row(&packages, "team/one").state.clone()
+    }
+
+    #[tokio::test]
+    async fn a_pull_conflict_pause_resolves_the_row_to_pull_conflict() {
+        // Lattice rank 2. `resolve_state` maps an `UpstreamState` and a pull
+        // conflict is not one, which is why `PackageStateDto::PullConflict` has
+        // been declared in both crates and constructed nowhere since Plan 1.
+        let m = mock_clean_roster();
+        let files = vec!["a.csv".to_string(), "b.csv".to_string()];
+
+        assert_eq!(
+            light_phase_state(&m, PausedReason::PullConflict(files.clone())).await,
+            PackageStateDto::PullConflict { files },
+            "both paths, in the order the pause carried them"
+        );
+    }
+
+    #[tokio::test]
+    async fn other_and_the_three_duplicates_do_not_fold_into_a_state() {
+        // `Other` has no state in the vocabulary and folding it to `Unknown` would
+        // destroy the case the queue exists to surface: a package latest by hash and
+        // paused by a workflow rejection, which would otherwise render as stopped
+        // with no queue row, permanently, because `Other` is non-transient.
+        // `PendingChanges` / `PendingCommit` / `Diverged` do not fold either — the
+        // tree's own state already says what they say, and two fields carrying one
+        // fact is §1's rule at payload scale.
+        for reason in [
+            PausedReason::Other("workflow rejected metadata".to_string()),
+            PausedReason::PendingChanges,
+            PausedReason::PendingCommit,
+            PausedReason::Diverged,
+        ] {
+            let m = mock_clean_roster();
+            assert_eq!(
+                light_phase_state(&m, reason.clone()).await,
+                PackageStateDto::Latest,
+                "{reason:?} must leave the row's own state alone"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_package_payload_carries_no_prose() {
+        // §2. `paused_reason` was prose on the wire, shipped by Plan 1 and logged by
+        // plan 2's final review as this plan's to fix. The pause now travels typed on
+        // the watcher payload, where §8 decision 3 puts it; carrying it on both is
+        // two payloads resolving the same fact, which is what §1 forbids. A pause
+        // with a message is the one that used to reach the wire verbatim, so it is
+        // the fixture that can catch a regression.
+        let m = mock_clean_roster();
+        let paused_reasons: HashMap<String, PausedReason> = HashMap::from([(
+            "team/one".to_string(),
+            PausedReason::Other("workflow rejected metadata".to_string()),
+        )]);
+        let payload = get_main_page_packages_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &paused_reasons,
+        )
+        .await
+        .expect("list");
+
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(!json.contains("pausedReason"), "{json}");
+        assert!(!json.contains("pausedKind"), "{json}");
+        assert!(
+            !json.contains("workflow rejected metadata"),
+            "the words live in `kit::render`, not on this payload: {json}"
         );
     }
 
@@ -1618,10 +1739,26 @@ mod tests {
     }
 
     async fn refresh(m: &impl model::QuiltModel, roles: &RoleCache) -> MainPagePackageRefresh {
+        refresh_with_pause(m, roles, None).await
+    }
+
+    /// The heavy phase with a pause in hand — the second half of the fold, which
+    /// must reach the same answer as the light phase's.
+    async fn refresh_with_pause(
+        m: &impl model::QuiltModel,
+        roles: &RoleCache,
+        paused: Option<&PausedReason>,
+    ) -> MainPagePackageRefresh {
         let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
-        refresh_main_page_package_from_model(m, roles, &crate::telemetry::Telemetry::default(), &ns)
-            .await
-            .expect("refresh")
+        refresh_main_page_package_from_model(
+            m,
+            roles,
+            &crate::telemetry::Telemetry::default(),
+            &ns,
+            paused,
+        )
+        .await
+        .expect("refresh")
     }
 
     #[tokio::test]
@@ -1640,6 +1777,51 @@ mod tests {
         assert_eq!(
             refresh(&m, &RoleCache::default()).await.state,
             PackageStateDto::Latest
+        );
+    }
+
+    #[tokio::test]
+    async fn the_heavy_phase_reaches_the_same_answer_as_the_light_one() {
+        // The two phases differ in what they MEASURE, never in how they decide. A
+        // fold in one and not the other is a row that flips from "conflicts in 2
+        // files" to "Latest" as it settles. This is the same conflict, and the same
+        // expectation, as `a_pull_conflict_pause_resolves_the_row_to_pull_conflict`
+        // — over a status call that `a_clean_tree_that_is_up_to_date_is_latest`
+        // shows resolves to `Latest` on its own.
+        let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 0)), None);
+        let files = vec!["a.csv".to_string(), "b.csv".to_string()];
+
+        let refreshed = refresh_with_pause(
+            &m,
+            &RoleCache::default(),
+            Some(&PausedReason::PullConflict(files.clone())),
+        )
+        .await;
+
+        assert_eq!(refreshed.state, PackageStateDto::PullConflict { files });
+    }
+
+    #[tokio::test]
+    async fn a_denial_outranks_a_pull_conflict_pause() {
+        // The named invariant `a_denial_outranks_a_pause_even_a_pull_conflict`, from
+        // v1's `installed_packages_list.rs`. Denial is rank 1 and the conflict is
+        // rank 2, so the fold must sit AFTER the denial arm has had its chance — an
+        // early return at the top of the heavy phase would silently invert this.
+        let m = mock_one_package(Err(access_denied_error()), Some(two_roles()));
+
+        let refreshed = refresh_with_pause(
+            &m,
+            &RoleCache::default(),
+            Some(&PausedReason::PullConflict(vec!["a.csv".to_string()])),
+        )
+        .await;
+
+        assert_eq!(
+            refreshed.state,
+            PackageStateDto::RoleDenied {
+                role: Some("ReadOnly".to_string())
+            },
+            "rank 1 outranks rank 2"
         );
     }
 
@@ -1680,6 +1862,7 @@ mod tests {
             &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &ns,
+            None,
         )
         .await
         .expect_err("a generic status failure must surface as an error, not a manufactured state");
@@ -1761,6 +1944,7 @@ mod tests {
             &RoleCache::default(),
             &crate::telemetry::Telemetry::default(),
             &ns,
+            None,
         )
         .await
         .expect_err("an uninstalled package has no state to report");
@@ -1940,6 +2124,13 @@ mod tests {
         };
         let json = serde_json::to_value(MainPageWatcher::from(facts)).unwrap();
         assert_eq!(json["pull"]["activity"], "armed");
+        // `PartialEq<f64> for Value` coerces through `as_f64`, so the literal below
+        // compares equal to an integer `Number` too. The UI's field is an `f64`;
+        // this is what pins the form rather than only the value.
+        assert!(
+            json["pull"]["deadline"].is_f64(),
+            "the deadline crosses as a JSON float, not an integer"
+        );
         assert_eq!(json["pull"]["deadline"], 1_754_500_030_000.0);
         assert_eq!(json["publish"]["activity"], "idle");
         assert_eq!(json["publish"]["deadline"], serde_json::Value::Null);
