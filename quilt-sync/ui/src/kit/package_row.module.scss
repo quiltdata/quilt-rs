@@ -49,13 +49,13 @@
   white-space: nowrap;
 }
 
-/* Same 80px column as `FileRow`, and the same warning applies — see the note
- * there. Duplicated rather than shared because it is four declarations and a
- * width; a token for it would imply the two columns must agree, and they only
- * happen to. */
+/* 96px, widened from 80 once real timestamps arrived and the worst phrases could
+ * be seen rather than guessed at. `FileRow` still has 80 — the two columns are
+ * duplicated rather than shared precisely so one can move without the other, and
+ * this is that. */
 .time {
   flex: none;
-  width: 80px;
+  width: 96px;
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
