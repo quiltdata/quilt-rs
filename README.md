@@ -168,45 +168,27 @@ web catalog compares any two revisions of a package; the CLI does not have a
 The two compose: code in git, the data that code consumes and produces in
 `quilt`, each referencing the other by hash.
 
-## Current limitations
+## How we scope work — build vs. borrow
 
-We chose to ship something simple that handles large binary files and
-arbitrary document types over something complete. These are the sharp edges
-that choice left, not positions we intend to defend forever. Each has an
-issue, and [roadmap.md](roadmap.md) records how the work is sequenced.
-Telling us which one actually blocks you is the most useful feedback you can
-give — it is how we order the queue.
+We build the one hard, unique part ourselves and borrow the rest from two
+systems that already do it well.
 
-- **Undo reaches back only as far as your unpushed commits.** `quilt
-  undo-commit` discards the newest commit and restores the one before it, and
-  it works until the package's first push — pushing consumes the record of
-  what each revision's parent was, and nothing on disk replaces it
-  ([#840](https://github.com/quiltdata/quilt-rs/issues/840)). It also refuses
-  while a tracked file has uncommitted changes, and on a package with no
-  remote there is nothing that discards those for you
-  ([#880](https://github.com/quiltdata/quilt-rs/issues/880)) — commit them or
-  restore them by hand first.
-- **`quilt log` lists only the revisions this copy has, dated by when it got
-  them.** A package's published revision history is not available from the
-  CLI, and neither are the dates its revisions were actually made: the
-  manifest format carries no timestamp, so the only date on disk is when this
-  machine wrote the file — the commit time for your own commits, the fetch
-  time for anything pulled. QuiltSync and the Quilt catalog show the full
-  history in the meantime
-  ([#841](https://github.com/quiltdata/quilt-rs/issues/841)).
-- **Disk usage only grows.** `objects/` and the manifest cache are never
-  pruned. Content is shared across packages with no reference counting, so
-  leaking bytes beats deleting something another package still addresses.
-  Refcounted pruning is a real feature we have not built.
-- **Divergence is resolved per package, not per file.** When two people move
-  past the same base, you pick your manifest or theirs. Relatedly, a first
-  push certifies itself as `latest` even if a teammate published that
-  namespace first. Both are deliberate given binary payloads;
-  [Resolving Diverged](docs/architecture.md#resolving-diverged) records the
-  reasoning and the exact gaps versus git.
-- **Prebuilt CLI binaries for macOS and Linux only.** Windows builds from
-  source ([#844](https://github.com/quiltdata/quilt-rs/issues/844)), though
-  QuiltSync ships a signed Windows app.
+- **Build (ours):** local sync and a real native-desktop app — keeping the
+  files on your machine and the ones in the cloud in agreement.
+- **Borrow from quilt3:** the proven Python tool defines how data is packaged,
+  hashed, and validated; we match it exactly.
+- **Borrow from the Web Catalog and top sync apps:** the web app sets the
+  friendly Quilt experience (search, AI, previews, wording) and apps like
+  Dropbox and Google Drive set the bar for effortless sync; we mirror both
+  rather than invent our own.
+
+We shipped something simple that handles large binary files and arbitrary
+document types over something complete, and the sharp edges that choice left
+are not positions we intend to defend forever. The
+[Roadmap](https://github.com/quiltdata/quilt-rs/issues/889) tracks what is
+missing and roughly in what order we mean to fix it. Telling us which gap
+actually blocks you is the most useful feedback you can give — it is how we
+order the queue.
 
 ## What is in this repo
 
