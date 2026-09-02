@@ -23,9 +23,10 @@ use crate::quilt::lineage::UpstreamState;
 /// §2: a discriminator, never prose. The UI owns the words; a rewording must not
 /// need a backend release.
 ///
-/// `PullConflict` and `RoleDenied` are never constructed by `resolve_state` in
-/// this build (see its doc comment) — they exist only for wire-shape stability,
-/// hence the blanket `dead_code` allowance.
+/// `PullConflict` is never constructed in this build (see its doc comment) —
+/// it exists only for wire-shape stability, hence the blanket `dead_code`
+/// allowance. `RoleDenied` IS constructed, by the access pass below
+/// (`AccessMark::state`), not by `resolve_state`.
 #[allow(dead_code)]
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -184,13 +185,7 @@ const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 /// COPIED from `package_list.rs:81-87`. v2 carries the ROLE NAME rather than
 /// v1's rendered `reason` string: §2 keeps prose off the wire, and
 /// `kit::render` already words `RoleDenied` for both sites.
-#[derive(Clone, Debug, Default)]
 struct AccessMark {
-    /// Read by Task 4's reactive marking to decide whether the heavy phase's
-    /// own resolved state should be overridden. This pass only ever
-    /// constructs a mark when denying, so the field is unread here.
-    #[allow(dead_code)]
-    denied: bool,
     role: Option<String>,
     role_switch_host: Option<String>,
 }
@@ -203,7 +198,6 @@ impl AccessMark {
     fn denied(host: Option<&Host>, roles: Option<&RoleInfo>) -> Self {
         let holds_another_role = roles.is_some_and(|roles| roles.available.len() > 1);
         Self {
-            denied: true,
             role: roles.map(|roles| roles.current.clone()),
             role_switch_host: host
                 .filter(|_| holds_another_role)
@@ -805,10 +799,6 @@ mod tests {
         );
     }
 
-    use crate::commands::RoleCache;
-    use quilt_rs::RoleInfo;
-    use quilt_uri::Host;
-
     /// A `ManifestUri` in an explicit bucket, so two rows can sit on one host in
     /// different buckets — the shape the readable-bucket intersection is about.
     fn make_manifest_uri_in_bucket(bucket: &str, namespace: &str) -> quilt_uri::ManifestUri {
@@ -857,11 +847,17 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
-        model.expect_readable_buckets().returning(move |_| {
-            readable
-                .clone()
-                .map_err(|()| Error::General("bucket list unavailable".to_string()))
-        });
+        // `.times(1)`: one query per HOST, not per package — judgement 1. Both
+        // rows in this roster share one host, so a per-row implementation would
+        // call this twice and mockall would fail the test.
+        model
+            .expect_readable_buckets()
+            .times(1)
+            .returning(move |_| {
+                readable
+                    .clone()
+                    .map_err(|()| Error::General("bucket list unavailable".to_string()))
+            });
         if let Some(roles) = roles {
             model
                 .expect_refresh_roles()
@@ -1020,8 +1016,11 @@ mod tests {
         }
 
         async fn readable_buckets(&self, _host: &Host) -> Result<Vec<String>, Error> {
+            // Absolute, not a multiple of `BUCKET_LIST_BUDGET`: scaling with the
+            // production constant would make the elapsed assertion below hold no
+            // matter what the constant is, which proves nothing about the timeout.
             // Far beyond any budget the roster could reasonably wait.
-            tokio::time::sleep(BUCKET_LIST_BUDGET * 100).await;
+            tokio::time::sleep(Duration::from_secs(200)).await;
             Ok(Vec::new())
         }
     }
@@ -1087,6 +1086,58 @@ mod tests {
             calls.load(std::sync::atomic::Ordering::SeqCst),
             1,
             "one role query per host per load, however many rows deny"
+        );
+    }
+
+    /// COPIED judgement 4's own regression guard: `roles.invalidate(None)` runs
+    /// at the top of every load. Without it, a `RoleCache` shared across two
+    /// loads would serve the first load's cached role forever, and
+    /// `refresh_roles` would be called once rather than once per load.
+    ///
+    /// v1's analogue is `package_list.rs:1126-1132`; this is v2's own version,
+    /// against v2's own `roster` helper.
+    #[tokio::test]
+    async fn a_second_load_re_fetches_the_role_rather_than_serving_the_cache() {
+        let mut model = crate::model::mocks::create();
+        model.expect_get_installed_packages_list().returning(|| {
+            Ok(vec![
+                make_installed_package(("team", "open")),
+                make_installed_package(("team", "locked")),
+            ])
+        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                let ns = pkg.namespace.to_string();
+                let bucket = if ns == "team/locked" {
+                    "locked"
+                } else {
+                    "reachable"
+                };
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri_in_bucket(bucket, &ns),
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_readable_buckets()
+            .returning(|_| Ok(vec!["reachable".to_string()]));
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        model.expect_refresh_roles().returning(move |_| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(two_roles())
+        });
+        model.expect_clear_remote_client_cache().returning(|_| ());
+
+        let roles = RoleCache::default();
+        roster(&model, &roles).await;
+        roster(&model, &roles).await;
+
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "roles.invalidate(None) must run at the top of every load, or the second load would serve the first load's cached role name"
         );
     }
 }
