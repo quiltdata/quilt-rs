@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use tempfile::TempDir;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -59,7 +60,24 @@ impl LogsDir {
 /// after startup.
 pub struct Logging {
     pub dir: LogsDir,
-    _writer: Option<WorkerGuard>,
+    writer: Mutex<Option<WorkerGuard>>,
+}
+
+impl Logging {
+    /// Stop the non-blocking writer and wait for its queue to drain.
+    ///
+    /// Tauri terminates through the event loop instead of returning from
+    /// main, so the guard would otherwise never be dropped. The mutex lets
+    /// the exit callback take the guard while the managed App state remains
+    /// shared and immutable to command handlers.
+    pub fn shutdown(&self) {
+        let writer = self
+            .writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(writer);
+    }
 }
 
 fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
@@ -120,7 +138,7 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
     let writer = init_tracing(&dir);
     Ok(Logging {
         dir,
-        _writer: writer,
+        writer: Mutex::new(writer),
     })
 }
 
