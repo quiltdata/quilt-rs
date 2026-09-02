@@ -3,6 +3,8 @@ use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
@@ -208,6 +210,7 @@ pub struct RemoteS3 {
     http: crate::io::remote::client::ReqwestClient,
     s3: Arc<RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>>,
     client_locks: Arc<RwLock<HashMap<CredsRef, Arc<AsyncMutex<()>>>>>,
+    client_cache_generation: Arc<AtomicU64>,
     regions: RwLock<HashMap<String, Region>>,
 }
 
@@ -218,6 +221,7 @@ impl RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),
             s3: Arc::new(RwLock::new(HashMap::new())),
             client_locks: Arc::new(RwLock::new(HashMap::new())),
+            client_cache_generation: Arc::new(AtomicU64::new(0)),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, Arc::new(storage)),
         }
@@ -232,6 +236,7 @@ impl RemoteS3 {
             http: self.http.clone(),
             s3: Arc::clone(&self.s3),
             client_locks: Arc::clone(&self.client_locks),
+            client_cache_generation: Arc::clone(&self.client_cache_generation),
             regions: RwLock::new(regions),
             auth: self.auth.clone(),
         })
@@ -371,6 +376,7 @@ impl RemoteS3 {
             info!("✔️ Using cached S3 client for region {:?}", region);
             return Ok(client);
         }
+        let cache_generation = self.client_cache_generation.load(Ordering::SeqCst);
 
         // `debug`, and worth reading as a signal rather than noise: a *new* client
         // per fetch means the client cache is not being hit, which is TLS and config
@@ -413,11 +419,27 @@ impl RemoteS3 {
         // The construction is already announced above; this only says it finished.
         trace!("✔️ created new S3 client for region {:?}", region);
 
-        // Cache the new client
+        self.cache_client_if_current(creds_ref, client, cache_generation)
+    }
+
+    fn cache_client_if_current(
+        &self,
+        creds_ref: CredsRef,
+        client: aws_sdk_s3::Client,
+        cache_generation: u64,
+    ) -> Res<aws_sdk_s3::Client> {
         let mut map = self
             .s3
             .write()
             .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+
+        // Invalidation takes this same write lock before advancing the
+        // generation. If it ran while the async client was being built, the
+        // client may serve its already in-flight caller but must not repopulate
+        // the shared cache with pre-invalidation state.
+        if self.client_cache_generation.load(Ordering::SeqCst) != cache_generation {
+            return Ok(client);
+        }
 
         match map.entry(creds_ref) {
             Entry::Occupied(mut entry) => {
@@ -449,6 +471,7 @@ impl RemoteS3 {
             Ok(map) => map,
             Err(poisoned) => poisoned.into_inner(),
         };
+        self.client_cache_generation.fetch_add(1, Ordering::SeqCst);
         match host {
             Some(host) => map.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
             None => map.clear(),
@@ -1266,6 +1289,10 @@ mod tests {
 
         assert!(Arc::ptr_eq(&remote.s3, &cloned.s3));
         assert!(Arc::ptr_eq(&remote.client_locks, &cloned.client_locks));
+        assert!(Arc::ptr_eq(
+            &remote.client_cache_generation,
+            &cloned.client_cache_generation
+        ));
 
         let key = CredsRef {
             region: Region::new("us-east-1"),
@@ -1293,12 +1320,39 @@ mod tests {
             .unwrap()
             .clone();
 
+        let generation = remote.client_cache_generation.load(Ordering::SeqCst);
         cloned.clear_client_cache(None);
         assert!(remote.s3.read().unwrap().is_empty());
+        assert_eq!(
+            remote.client_cache_generation.load(Ordering::SeqCst),
+            generation + 1
+        );
         assert!(Arc::ptr_eq(
             &construction_lock,
             remote.client_locks.read().unwrap().get(&key).unwrap()
         ));
+    }
+
+    #[test]
+    fn invalidation_rejects_a_client_built_by_an_older_generation() {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let key = CredsRef {
+            region: Region::new("us-east-1"),
+            host: None,
+        };
+        let stale_generation = remote.client_cache_generation.load(Ordering::SeqCst);
+
+        remote.clear_client_cache(None);
+        remote
+            .cache_client_if_current(key.clone(), dummy_client("us-east-1"), stale_generation)
+            .unwrap();
+        assert!(!remote.s3.read().unwrap().contains_key(&key));
+
+        let current_generation = remote.client_cache_generation.load(Ordering::SeqCst);
+        remote
+            .cache_client_if_current(key.clone(), dummy_client("us-east-1"), current_generation)
+            .unwrap();
+        assert!(remote.s3.read().unwrap().contains_key(&key));
     }
 
     /// Never called: compiling these calls is the proof that the three
