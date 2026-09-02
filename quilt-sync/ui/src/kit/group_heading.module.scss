@@ -1,0 +1,42 @@
+/*
+ * Group header. A quiet divider that names a run of rows and counts them.
+ *
+ * The annotation slot is what lets a list explain itself without repeating an
+ * action on every row: on the bucket axis a shared cause annotates its group
+ * ("no access as analyst") instead of thirty rows each carrying the same note.
+ */
+
+.root {
+  display: flex;
+  align-items: baseline;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) 2px 3px;
+  border-bottom: 1px solid var(--q-borderColor-muted);
+}
+
+.title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Attention tone, because an annotation only ever exists to say something is
+ * wrong with the whole group. A header is not hoverable, which is what makes
+ * `fg` rather than `onMuted` safe here — see the tone block in `_tokens`. */
+.annotation {
+  color: var(--q-fgColor-attention);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pushed right and never shrinking: the count is the one thing that stays
+ * readable when the title has to truncate. */
+.count {
+  margin-left: auto;
+  flex: none;
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}

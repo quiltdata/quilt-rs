@@ -1,0 +1,80 @@
+/*
+ * Package row. Namespace, time, state — and nothing you can click except the row.
+ *
+ * Its own stylesheet rather than a layout class shared with `FileRow`. The two
+ * agree on the frame (flex, gap, 5px rhythm, bottom rule) and disagree on
+ * everything the frame contains: truncation direction, typeface, and whether the
+ * row is an anchor or a div. A shared class would carry the three lines they
+ * actually share, so it is not worth the indirection until a third row exists.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  /* Fills its container and truncates inside, at any width — which is a row's job,
+   * not its parent's. Without this the row is only correct in a block parent: as a
+   * flex item it would size to content, and a flex item's automatic minimum size is
+   * its max-content width, so a long namespace would push the row past its
+   * container instead of ellipsising. A definite `width` clamps that automatic
+   * minimum, which is the whole mechanism.
+   *
+   * Found in the gallery, where a two-column cell IS the narrow-window case. */
+  width: 100%;
+  gap: var(--q-space-3);
+  padding: 5px 2px;
+  border-bottom: 1px solid var(--q-borderColor-muted);
+  /* It IS an anchor, so the document conventions have to be switched off
+   * explicitly — colour and underline both. */
+  color: var(--q-fgColor-default);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* The only affordance, and there is no `:hover` underline to go with it: the tint
+ * already says "this responds", and two signals for one target is noise. The focus
+ * ring comes from the baseline's global `:focus-visible`, which lands on the row
+ * because the row is the focusable element — nothing to add here. */
+.root:hover {
+  background: var(--q-overlay-hover);
+}
+
+/* Truncates from the right, the ordinary direction. `min-width: 0` because a flex
+ * item's automatic minimum size is its content, so without it the namespace refuses
+ * to shrink and pushes the state out of the row instead of ellipsising. */
+.namespace {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 96px, widened from 80 once real timestamps arrived and the worst phrases could
+ * be seen rather than guessed at. `FileRow` still has 80 — the two columns are
+ * duplicated rather than shared precisely so one can move without the other, and
+ * this is that. */
+.time {
+  flex: none;
+  width: 96px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--q-fgColor-muted);
+}
+
+/* The state sits hard right and is deliberately NOT a fixed column. Fixing it
+ * would need ~160px for "Newer revision available" and waste that on the forty
+ * rows that say "Latest"; leaving it ragged means the forty identical boxes form
+ * a pattern and the three that differ break it, which is what scanning a list
+ * actually uses. */
+
+/* The skeleton variant, sharing `.root` for its geometry and switching off the two things
+ * that would lie about it: a pointer cursor and a hover tint on something inert. */
+.skeleton {
+  cursor: default;
+}
+
+.skeleton:hover {
+  background: none;
+}

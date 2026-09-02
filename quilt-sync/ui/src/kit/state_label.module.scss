@@ -1,0 +1,97 @@
+/*
+ * The state vocabulary made visual. Nine states, ten labels, four tones.
+ *
+ * Each tone sets four private properties and `.root` paints from them, so the
+ * tone classes are data and the layout exists once. That also means a
+ * colourblind-safe or high-contrast override only has to re-point tier 2 — no
+ * rule in this file mentions a colour by name.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  /* 5px, not a grid step: the gap between a 12px glyph and its words is optical,
+   * and 4px reads as touching while 8px reads as two things. Same reasoning as
+   * Button's 5px/12px padding. */
+  gap: 5px;
+  padding: 0 var(--q-space-2) 0 6px;
+  border: 1px solid var(--tone-edge);
+  border-radius: var(--q-radius);
+  background: var(--tone-fill);
+  color: var(--tone-text);
+  font-size: var(--q-text-body);
+  line-height: 20px;
+  /* Never truncates and never shrinks. Every state in the vocabulary is short by
+   * design, and half a state is worse than a state that pushes the row:
+   * "conflicts in 2 files" clipped to "conflicts in…" has lost the number that
+   * made it worth showing. If one overflows, the words are wrong, not the box. */
+  white-space: nowrap;
+}
+
+/* The glyph is the tone's second channel. Tier 1 lightness-matches step 11 across
+ * hues on purpose, so the four tones are near-identical in greyscale and hue is
+ * doing all the work — which is exactly what the design record forbids. A
+ * silhouette survives desaturation: tick, dot, triangle, cross.
+ *
+ * Step 11 rather than step 12, so the tint lands somewhere. It is a graphical
+ * object, not text, so the threshold is 3:1 and the worst pairing (green-11 on
+ * green-3) measures 4.21. */
+.root svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--tone-mark);
+}
+
+/* The light phase's guess. A dashed edge and nothing else — no opacity, no animation.
+ *
+ * Dimming was the other option the design record offered, and it is the wrong one: the
+ * text was measured to 9.2:1 at worst against its own fill, and any opacity low enough to
+ * read as provisional takes it under AA. A dashed border costs no contrast at all. And the
+ * value here is still information — the light phase is right most of the time — so making
+ * it harder to read in order to say "not final" trades away the wrong thing.
+ *
+ * Static, not animated: 43 rows settling one by one is already the activity signal, and
+ * WCAG 2.2.2 rules out blinking text regardless. */
+.provisional {
+  border-style: dashed;
+}
+
+/* ─── TONES ───────────────────────────────────────────────────────────────────
+ * `muted` is step 3, the lightest of the three fills that pass AA under step-12
+ * text (step 4 measures 9.7:1 worst case and step 5 8.8:1, so either is a legal
+ * swap in `_tokens`). Step 3 because this repeats once per row and the border
+ * carries the shape.
+ *
+ * Contrast measurement cannot settle that choice, and it is worth saying why: a
+ * pale yellow and white differ in chroma far more than in luminance, so every
+ * fill step scores a near-identical 1.1–1.4:1 against the card. The numbers say
+ * the text is legible; only looking says whether the tint is visible. */
+.success {
+  --tone-fill: var(--q-bgColor-success-muted);
+  --tone-edge: var(--q-borderColor-success-muted);
+  --tone-text: var(--q-fgColor-success-onMuted);
+  --tone-mark: var(--q-fgColor-success);
+}
+
+.neutral {
+  --tone-fill: var(--q-bgColor-neutral-muted);
+  --tone-edge: var(--q-borderColor-neutral-muted);
+  --tone-text: var(--q-fgColor-neutral-onMuted);
+  --tone-mark: var(--q-fgColor-neutral);
+}
+
+.attention {
+  --tone-fill: var(--q-bgColor-attention-muted);
+  --tone-edge: var(--q-borderColor-attention-muted);
+  --tone-text: var(--q-fgColor-attention-onMuted);
+  --tone-mark: var(--q-fgColor-attention);
+}
+
+.danger {
+  --tone-fill: var(--q-bgColor-danger-muted);
+  --tone-edge: var(--q-borderColor-danger-muted);
+  --tone-text: var(--q-fgColor-danger-onMuted);
+  --tone-mark: var(--q-fgColor-danger);
+}

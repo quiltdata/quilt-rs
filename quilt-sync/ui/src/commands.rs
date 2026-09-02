@@ -248,6 +248,8 @@ impl Default for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
+    #[serde(default)]
+    pub main_page_v2: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -494,6 +496,38 @@ pub async fn get_setup_data() -> Result<SetupData, String> {
 
 pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListData, String> {
     tauri::invoke_unit("get_installed_packages_list_data").await
+}
+
+/// v2's package list, light phase. Every row arrives `provisional`.
+pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
+    tauri::invoke_unit("get_main_page_packages").await
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackagesData {
+    pub packages: Vec<MainPagePackageData>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackageData {
+    pub namespace: String,
+    pub state: crate::kit::PackageState,
+    /// Epoch milliseconds, from the last commit or the last installed path — see
+    /// `last_changed` on the Tauri side. `None` only when nothing has ever been
+    /// written to the package.
+    pub changed_at: Option<f64>,
+    /// Needed once the heavy phase (Plan 2) does per-package, per-bucket work.
+    #[expect(dead_code)]
+    pub bucket: Option<String>,
+    pub provisional: bool,
+    /// Rendered by the queue (Plan 4); the list has no pause row yet.
+    #[expect(dead_code)]
+    pub paused_reason: Option<String>,
+    /// Rendered by the queue (Plan 4), paired with `paused_reason`.
+    #[expect(dead_code)]
+    pub paused_kind: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -750,18 +784,23 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
     tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
 }
 
-/// Turn the entire-package sync experiment on or off. Reveals the per-package
-/// scope control; downloads nothing by itself.
-pub async fn update_experimental_settings(entire_package_sync: bool) -> Result<(), String> {
+/// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
+/// knows about one experiment must not reset another.
+pub async fn update_experimental_settings(
+    entire_package_sync: Option<bool>,
+    main_page_v2: Option<bool>,
+) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
-        entire_package_sync: bool,
+        entire_package_sync: Option<bool>,
+        main_page_v2: Option<bool>,
     }
     tauri::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
+            main_page_v2,
         },
     )
     .await

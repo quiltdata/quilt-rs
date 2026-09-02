@@ -1,0 +1,31 @@
+/*
+ * Empty state. One component for both "nothing here yet" and "nothing matched",
+ * because they differ only in copy and in whether there is anything to offer.
+ */
+
+/* `width: 100%` is what makes the centring work. Without it the root is only as
+ * wide as its content, so "centre the children" centres them inside a box that is
+ * already hugging them — and the whole block sits wherever its parent put it. */
+.root {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--q-space-3);
+  padding: var(--q-space-10) var(--q-space-4);
+  text-align: center;
+  color: var(--q-fgColor-muted);
+}
+
+.heading {
+  font-size: var(--q-text-lead);
+  font-weight: 600;
+  color: var(--q-fgColor-default);
+}
+
+/* Held narrow: a centred explanation running the full width of a 1200px window is
+ * unreadable however well written. */
+.description {
+  max-width: 46ch;
+}

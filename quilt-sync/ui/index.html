@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="assets/css/external/400.css" />
   <link rel="stylesheet" href="assets/css/external/500.css" />
   <link rel="stylesheet" href="assets/css/external/700.css" />
+  <!-- v2 kit bundle: tokens + every component module (not the gallery chrome). -->
+  <link data-trunk rel="scss" href="assets/css/kit/app.scss" />
   <!-- base styles -->
   <link rel="stylesheet" href="assets/css/theme.css" />
   <link rel="stylesheet" href="assets/css/spinner.css" />
@@ -47,7 +49,7 @@
   <!-- json editor for commit page -->
   <script src="assets/js/json-editor.js"></script>
   <!-- WASM -->
-  <link data-trunk rel="rust" data-wasm-opt="z" />
+  <link data-trunk rel="rust" data-bin="quilt-sync-ui" data-wasm-opt="z" />
 </head>
 <body></body>
 </html>

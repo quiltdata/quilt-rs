@@ -1,0 +1,103 @@
+/*
+ * Shared cause. Glyph, text with a count, a trailing slot, an expander.
+ *
+ * Wraps rather than truncating, which is the opposite of every other row in the kit.
+ * A cause is a sentence — "No access as analyst on custom.registry.io" — and the end
+ * of it is where the specifics are. Losing that leaves the user with a warning and no
+ * subject. Rows truncate because a namespace is an identifier; this is prose.
+ */
+
+.root {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  /* Matches `QueueRow`'s gap, which is what makes the two rows' text start at the
+   * same x — both lead with a 24px column and this gap follows it. */
+  gap: var(--q-space-2);
+  /* The 2px left padding matches `QueueRow`'s exactly, and it has to: the disclosure
+   * column starts after it in both rows, so 2px here and 0 there would misalign the
+   * chevron against the bullets by 2px — small, and visible the moment the rows are
+   * adjacent, which they always are. */
+  padding: 6px 2px;
+  color: var(--q-fgColor-default);
+}
+
+/* The row is `flex-start` aligned, not centred, because it wraps to two or three lines
+ * and a centred control would drift to the middle of the paragraph. So the text is
+ * nudged onto the FIRST line instead: the expander is 24px, a 20px line box centres
+ * inside it at 2px. Derived from the expander's height. */
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-top: 2px;
+  line-height: var(--q-line-body);
+}
+
+/* Muted, and part of the same text flow rather than pushed right. The count is a
+ * clause of the sentence — "…— 11 packages" — so it wraps with it.
+ *
+ * This is where a severity tint would go if the region ever wants one back; see the
+ * module doc on why there is no tone here now. */
+.count {
+  color: var(--q-fgColor-muted);
+}
+
+/* Holds either a Button or a sentence, and it is the LAST thing in the row — so its
+ * right edge is the row's right edge, which is the edge every action in the region
+ * lines up on. Nothing may follow it. */
+.trailing {
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* 24px so a Button or a sentence centres on the same first line as the glyph and
+   * the text — same derivation as those two. */
+  min-height: 24px;
+  gap: var(--q-space-2);
+  color: var(--q-fgColor-muted);
+}
+
+/* The disclosure column. A hit target first and a chevron second: 24px square, so it
+ * is reachable on a touch screen and by an imprecise pointer, with the glyph small
+ * inside it. Same shape as `IconButton`'s Bare — not that component, because it
+ * carries no icon of the caller's and its label is generated from the count.
+ *
+ * `QueueRow` reserves this width as left padding, so the two rows' text starts at the
+ * same x. Both must agree; changing it here means changing it there. */
+.expander {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--q-radius);
+  background: none;
+  color: var(--q-fgColor-muted);
+  cursor: pointer;
+}
+
+.expander:hover {
+  background: var(--q-overlay-hover);
+  color: var(--q-fgColor-default);
+}
+
+.expander svg {
+  width: 13px;
+  height: 13px;
+  /* Not tone-coloured — it is a control, and the tone belongs to the cause. */
+  color: inherit;
+  transition: transform 120ms ease;
+}
+
+/* Right at rest, down when open — 90 degrees, not 180. The glyph is drawn pointing
+ * right, so this is the only rotation in play. */
+.expander[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+/* Rotation is decoration; `aria-expanded` is the state. Stopping the transition
+ * loses nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .expander svg { transition: none; }
+}

@@ -1,4 +1,6 @@
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::use_navigate;
 
 use super::event_target_checked;
 use crate::commands;
@@ -16,6 +18,7 @@ use crate::components::Notification;
 #[component]
 pub(super) fn ExperimentalSection(
     entire_package_sync: bool,
+    main_page_v2: bool,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
 ) -> impl IntoView {
@@ -30,7 +33,7 @@ pub(super) fn ExperimentalSection(
         saving.set(true);
         enabled.set(new_enabled);
         leptos::task::spawn_local(async move {
-            match commands::update_experimental_settings(new_enabled).await {
+            match commands::update_experimental_settings(Some(new_enabled), None).await {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Experimental settings saved".into(),
@@ -45,6 +48,41 @@ pub(super) fn ExperimentalSection(
                 }
             }
             saving.set(false);
+        });
+    };
+
+    let main_page_v2_enabled = RwSignal::new(main_page_v2);
+    let main_page_v2_saving = RwSignal::new(false);
+    let navigate = use_navigate();
+
+    let on_toggle_main_page_v2 = move |ev: leptos::ev::Event| {
+        let new_enabled = event_target_checked(&ev);
+        if main_page_v2_saving.get_untracked() {
+            return;
+        }
+        main_page_v2_saving.set(true);
+        main_page_v2_enabled.set(new_enabled);
+        let navigate = navigate.clone();
+        leptos::task::spawn_local(async move {
+            match commands::update_experimental_settings(None, Some(new_enabled)).await {
+                Ok(()) => {
+                    notification.set(Some(Notification::Success(
+                        "Experimental settings saved".into(),
+                    )));
+                    refetch.notify();
+                    // Go to `/`, the only route that asks which main page is switched on.
+                    // Saving the flag alone changed nothing on screen, so the switch
+                    // looked like it needed an app restart.
+                    navigate("/", NavigateOptions::default());
+                }
+                Err(e) => {
+                    // Revert the optimistic toggle so the UI doesn't drift
+                    // from on-disk state.
+                    main_page_v2_enabled.set(!new_enabled);
+                    notification.set(Some(Notification::Error(e)));
+                }
+            }
+            main_page_v2_saving.set(false);
         });
     };
 
@@ -65,6 +103,21 @@ pub(super) fn ExperimentalSection(
                             "Adds a per-package choice — sync the entire package, including \
                              files added later, instead of picking files. Off until you \
                              choose it on a package."
+                        </span>
+                    </label>
+                </dd>
+                <dt>"New main page"</dt>
+                <dd>
+                    <label class="checkbox-option">
+                        <input
+                            type="checkbox"
+                            prop:checked=move || main_page_v2_enabled.get()
+                            prop:disabled=move || main_page_v2_saving.get()
+                            on:change=on_toggle_main_page_v2
+                        />
+                        <span class="value default">
+                            "One page for everything that needs you, over separate package \
+                             screens. Switch back at any time — nothing is lost."
                         </span>
                     </label>
                 </dd>

@@ -1935,7 +1935,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c54e03a951783e8b327515db3f2a2fd0e3bed362a96b066f341ce66ed49b4ead"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -5724,6 +5724,7 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
+ "stylance",
  "urlencoding",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -7368,6 +7369,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "stylance"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "252bdc37547d27ee7ccd20e028dced7acfdb64b561ac4d8a58393cf1adec0f14"
+dependencies = [
+ "stylance-macros",
+]
+
+[[package]]
+name = "stylance-core"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd267d69de4c0bcb01423fdd641a3007798842c19fe4da6b6acac0efa9ed0b41"
+dependencies = [
+ "anyhow",
+ "serde",
+ "siphasher",
+ "toml 1.1.4+spec-1.1.0",
+ "winnow 1.0.4",
+]
+
+[[package]]
+name = "stylance-macros"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c7a1fdbb4d152b969919646561e8a2d3beb0b03b1014570fd573e55a3b3b627"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "quote",
+ "stylance-core",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7397,7 +7433,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
 dependencies = [
  "proc-macro2",
- "quote",
  "unicode-ident",
 ]
 

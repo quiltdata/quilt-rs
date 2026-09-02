@@ -1,0 +1,55 @@
+/*
+ * Card. A bordered, titled container for a list of related rows — the state
+ * strip's Autosync and Accounts blocks, and the five sections Settings will
+ * reuse it for.
+ *
+ * Flat and bordered, never elevated: no shadow at any size.
+ */
+
+/* No `flex` here. It used to carry `flex: 1 1 300px` for the state strip's two-card
+ * row, which was its parent's layout living in the child — and actively wrong once a
+ * card went into the page's flex COLUMN, where `flex-basis` sizes the HEIGHT, so the
+ * card asked to be 300px tall. The strip sets it on its own children now. */
+.root {
+  min-width: 0;
+  padding: var(--q-space-3);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+}
+
+/* Uppercase and muted, so it labels the block without competing with the rows inside
+ * it. At the 14px floor this is chunkier than an 11px design would be — letter-spacing
+ * does the work that shrinking used to.
+ *
+ * Upper-cased in CSS and not in the string: `text-transform` leaves the text itself
+ * alone, while typing NEEDS YOUR ATTENTION makes some screen readers spell it out as
+ * an initialism. */
+.title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 var(--q-space-2);
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--q-fgColor-muted);
+}
+
+/* Neither upper-cased nor tracked — it is a number, and spacing digits apart makes
+ * them read as separate figures. */
+.count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The card owns the rhythm of its contents, not the rows. A hairline between
+ * *any* two children means a card holding a mix — ToggleRows and HostRows — is
+ * divided consistently, which a `.row + .row` rule inside one row's module
+ * could not do. */
+.body > * + * {
+  border-top: 1px solid var(--q-borderColor-muted);
+}

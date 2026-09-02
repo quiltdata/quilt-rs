@@ -244,6 +244,7 @@ fn main() {
             commands::get_autosync_snapshot,
             commands::update_fswatcher_settings,
             commands::update_experimental_settings,
+            commands::get_main_page_packages,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,

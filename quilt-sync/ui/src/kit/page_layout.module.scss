@@ -1,0 +1,73 @@
+/*
+ * Page frame. The appbar is full-bleed and its contents are not — the rule under it
+ * has to reach both window edges or it reads as a box rather than as the top of the
+ * page, while what sits on it must line up with the regions below.
+ */
+
+.root {
+  min-height: 100%;
+  background: var(--q-bgColor-page);
+}
+
+.appbar {
+  /* Lighter than the page, like every other raised surface in the kit. */
+  background: var(--q-bgColor-default);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+}
+
+/* Not `position: sticky`. It would be defensible — the refresh control is useful from
+ * anywhere in a long list — but a sticky bar costs vertical space permanently in
+ * exchange for two buttons, and this page is already spending its height on a queue.
+ * Worth reconsidering once the real page is scrolled with 43 rows in it. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  max-width: var(--q-container);
+  margin: 0 auto;
+  padding: var(--q-space-2) var(--q-space-4);
+  min-height: 44px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  /* An anchor, so the underline has to be switched off explicitly. */
+  text-decoration: none;
+}
+
+/* 22px keeps the appbar's height where it was. The mark is square, so this is a
+ * 22x22 tile rather than v1's 230x48 wordmark. */
+.logo img {
+  height: 22px;
+  width: auto;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  flex: none;
+  gap: var(--q-space-2);
+}
+
+/* The banner's own row: width-capped like the appbar's contents and the page column,
+ * so a bar lines up with the regions rather than with the window. Only the top padding is
+ * the row's — the bottom gap belongs to whatever follows, and `.main`'s padding already
+ * provides it. */
+.notice {
+  max-width: var(--q-container);
+  margin: 0 auto;
+  padding: var(--q-space-4) var(--q-space-4) 0;
+}
+
+/* The page column, and the one place the gap between regions is set. Regions carry no
+ * outer margin of their own: one of them spacing itself would look right alone and
+ * wrong beside the others, and there would be no single place to change the rhythm. */
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-6);
+  max-width: var(--q-container);
+  margin: 0 auto;
+  padding: var(--q-space-5) var(--q-space-4) var(--q-space-8);
+}

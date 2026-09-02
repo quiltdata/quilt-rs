@@ -227,6 +227,8 @@ fn row_host(item: &InstalledPackageListItem) -> Option<&Host> {
 /// as "nothing is readable": an empty set would grey the entire roster.
 /// A query that does not answer inside [`BUCKET_LIST_BUDGET`] counts as
 /// failed, which is what keeps the roster local-only in effect.
+///
+/// The v2 main page copies this. Mirror fixes there until v1 is deleted.
 async fn mark_unreadable_buckets(
     m: &impl model::QuiltModel,
     roles: &RoleCache,

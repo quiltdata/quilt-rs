@@ -364,6 +364,280 @@ at the top of the app (outside the router). It polls
 and Dismiss actions. Dismissal is persisted in localStorage for 5
 minutes.
 
+## Design System: Radix Values, Primer Names
+
+> **Scope**: this section governs the `ui/src/kit/` component kit and
+> `ui/assets/css/kit/` tokens. The rest of this document still describes
+> the v1 page code, which predates the kit.
+
+### The decision
+
+Two external authorities, one for each half of the problem:
+
+| Half | Authority | What we take |
+|---|---|---|
+| **Values** | [Radix Colors](https://www.radix-ui.com/colors) | The hex scales, vendored verbatim as tier 1 |
+| **Names** | [GitHub Primer](https://primer.style) | Token vocabulary and component names |
+| **Code** | neither | Hand-written Leptos; no component library |
+
+Radix publishes scales that are algorithmically consistent and
+contrast-tested, but names them by number -- `--green-3` says nothing
+about what it is for. Primer publishes a semantic vocabulary that says
+exactly that -- `--bgColor-success-muted` -- but ships React components
+we cannot use.
+
+Taking values from one and names from the other means **every naming
+argument has an external answer**. Nobody has to win a debate about
+whether a pale green background is "subtle", "light", "tint", "washed",
+or "muted": Primer already chose, and we follow. The cost is that our
+divergences must be deliberate and written down, which is the rest of
+this section.
+
+Verified against Primer on 2026-08-07:
+`primer.style/foundations/primitives/{color,size}` and
+`primer.style/components`.
+
+### Primer's conventions, as verified
+
+**Tokens are property-first**, then tone, then role:
+
+```text
+--{property}Color-{tone}-{role}      e.g. --bgColor-success-muted
+--{property}Color-{role}             e.g. --fgColor-muted
+```
+
+- Properties: `fgColor`, `bgColor`, `borderColor`
+- Tones: `accent`, `attention`, `closed`, `danger`, `done`, `draft`,
+  `neutral`, `open`, `severe`, `sponsors`, `success`, `upsell`
+- Roles: `muted` (pale tint), `emphasis` (solid), `default`, `inset`,
+  `inverse`, `disabled`, `onEmphasis` / `onInverse` (text over a solid)
+- **There is no `subtle` role.** `subtle` belonged to `primer/css` v18
+  (`--color-success-subtle`) and was retired when primitives moved to
+  the property-first shape. Ours predates that check.
+- Sizes are **value-named**, not index-named: `--base-size-8` is 8px
+- Radii: `--borderRadius-small` 3px, `-medium` / `-default` 6px,
+  `-large` 12px, `-full`
+- Interaction states live in **component** tokens, not global ones:
+  `--control-bgColor-hover`, `--button-primary-bgColor-rest`
+- Focus: `--focus-outlineColor`
+
+**Components** are unabbreviated nouns; `variant` names the visual axis;
+`aria-label` is required on icon-only controls; and structured content
+arrives as compound children (`FormControl.Caption`) rather than as
+string props.
+
+### Component names
+
+| Ours | Primer | |
+|---|---|---|
+| `Button` | `Button` | ✅ |
+| `IconButton` | `IconButton` | ✅ |
+| `Select` | `Select` | ✅ |
+| `TextInput` | `TextInput` | ✅ |
+| `Dialog` | `Dialog` | ✅ |
+| `Spinner` | `Spinner` | ✅ |
+| `Card` | `Card` | ✅ (experimental in Primer) |
+| `RelativeTime` | `RelativeTime` | ✅ |
+| `Banner` | `Banner` | ✅ was `Notification` |
+| `PageLayout` | `PageLayout` | ✅ was `Layout` |
+| `Blankslate` | `Blankslate` | ✅ was `EmptyState` |
+| `SegmentedControl` | `SegmentedControl` | ✅ was `ViewToggle` |
+| `SkeletonBox` | `SkeletonBox` | ✅ was `Skeleton` |
+| `GroupHeading` | `ActionList.GroupHeading` | ✅ was `GroupHeader` |
+| `StateLabel` | `StateLabel` / `Label` | ⚠️ see below |
+| `FormControl` | `FormControl` | ✅ was `Field` |
+| `ControlId`, `Naming` | — | ours; see below |
+| `SearchInput` | — (`TextInput` + `trailingAction`) | ours |
+| `ToggleRow` | — (wraps `ToggleSwitch`) | ours |
+| `ListToolbar` | — | ours |
+| `Countdown` | — | ours |
+| `PackageRow`, `QueueRow`, `CauseRow`, `HostRow`, `FileRow`, `ZeroLine` | — | ours |
+
+The bottom group is domain composition, not kit primitives. Primer's
+nearest equivalents are `ActionList.Item` and `Timeline.Item`, neither of
+which describes a row that carries a namespace, a state and an action.
+These keep our names.
+
+**`StateLabel` is a hybrid, deliberately.** Primer has two components
+where we have one:
+
+- Primer's `StateLabel` takes a `status` from a closed vocabulary
+  (`issueOpened`, `pullMerged`, …), pairs each with an icon, and fills
+  the background solid.
+- Primer's `Label` takes an open `variant` for colour, tints the
+  background pale, and has no icon.
+
+Ours names a state from a closed vocabulary and carries a per-tone glyph,
+which is `StateLabel`'s semantics; but it tints pale rather than filling
+solid, which is `Label`'s treatment. We keep the name `StateLabel`
+because the *closed vocabulary* is the load-bearing property -- and we
+keep the pale treatment because the label repeats on every row of a list,
+where ten solid fills would be louder than the content.
+
+### Token names
+
+Tier 2 is property-first, matching Primer; only the `--q-` prefix is
+ours. Tier 1 keeps Radix's names, because Radix owns the values.
+
+| Ours | Primer | |
+|---|---|---|
+| `--q-fgColor-{default,muted,disabled,onEmphasis}` | `--fgColor-…` | ✅ |
+| `--q-bgColor-{default,muted,inset}` | `--bgColor-…` | ✅ |
+| `--q-borderColor-{default,muted,emphasis}` | `--borderColor-…` | ✅ |
+| `--q-fgColor-{tone}` | `--fgColor-{tone}` | ✅ |
+| `--q-bgColor-{tone}-muted` | `--bgColor-{tone}-muted` | ✅ |
+| `--q-borderColor-{tone}-muted` | `--borderColor-{tone}-muted` | ✅ |
+| `--q-bgColor-accent-emphasis` | `--bgColor-accent-emphasis` | ✅ |
+| `--q-focus-outlineColor` | `--focus-outlineColor` | ✅ |
+| `--q-fgColor-{tone}-onMuted` | — | ours, in Primer's grammar |
+| `--q-focus-outline{Width,Offset}` | — | ours, in Primer's grammar |
+| `--q-bgColor-page`, `--q-container` | — | ours |
+| `--q-bgColor-accent-emphasis-hover` | `--button-primary-bgColor-hover` | ⚠️ global vs component token |
+| `--q-overlay-{hover,active,selected}` | `--control-bgColor-{hover,active,selected}` | ⚠️ alpha overlay vs resolved colour |
+| `--q-text-{body,lead,title}` | `--text-body-size-medium`, … | ⚠️ collapsed |
+| `--q-space-{1..12}` | `--base-size-{4..48}` | ❌ index vs value |
+| `--q-radius` | `--borderRadius-small` | ❌ value diverges |
+
+Before the migration these were tone-first -- `--q-success-subtle`,
+`--q-success-border` -- which left no slot for the property, so the
+property leaked into the role slot: the fill role was called `subtle`
+(how loud it is) and the border role was called `border` (what it
+paints), two words on different axes sharing one position. Two of the
+role words were also retired Primer vocabulary rather than merely
+different: `subtle` and `canvas` were `primer/css` v18 and were dropped
+when primitives moved to property-first.
+
+`--q-fgColor-{tone}-onMuted` is invented: Primer has `onEmphasis` and
+`onInverse` but no `onMuted`, because Primer has only one foreground per
+tone. We need two -- step 11 is what a glyph wants on a step-3 fill, and
+step 12 is what *text* needs to hold 4.5:1 there. Inventing it in
+Primer's grammar rather than in our own is the point: it reads as the
+role it is, and the next person looking for it will guess right.
+
+`--q-overlay-*` keeps its own name deliberately. Primer's
+`--control-bgColor-hover` is a resolved colour; ours is an **alpha**
+overlay that composites with whatever it sits on, which is what lets a
+`StateLabel` inside a hovered row tint along with the row. Calling it
+`bgColor` would claim a model we do not use.
+
+### `FormControl`, and using the type system where Primer uses a linter
+
+Primer composes `FormControl` from children -- `FormControl.Label`,
+`.Caption`, `.Validation`. In JSX that is free. In Leptos `children` is an
+opaque closure, so `FormControl` cannot reach inside it to wire `for`/`id`,
+and a `Label` child that fetched the id from context would fail silently
+the day someone forgot the provider. Primer's reason for children --
+arbitrary ordering and omission -- is not a need we have. So ours takes
+props.
+
+The interesting part is the id. Primer's `FormControl` is **optional at
+the type level**: a bare unlabelled `Select` compiles, and eslint plus axe
+catch it in CI. We have neither, and we shipped that exact bug once --
+`Select`'s label rendered nowhere and only clippy's unused-parameter
+warning noticed.
+
+So `ControlId`'s constructor is private to its module. The only way to get
+one is from the closure `FormControl` hands you:
+
+```rust
+<FormControl label="Bucket" control=move |id| view! {
+    <TextInput id=id value=bucket />
+}.into_any() />
+```
+
+`TextInput` requires a `ControlId`, so **an unlabelled text input does not
+compile**. That is stricter than Primer, and it is the one place where
+being unable to use their components turned into an advantage.
+
+`Naming` does the same job for `Select`, which is named three different
+ways in this app -- by an enclosing `FormControl`, by a hidden
+`aria-label`, or by a `Group by:` prefix drawn inside the control. It is a
+required enum with no anonymous variant, so the caller has to say which.
+`SearchInput` and `SegmentedControl` take a plain `aria_label` instead:
+both live only in toolbars, where a stacked label would cost a line to say
+what the magnifier or the visible options already say.
+
+Two things this fixed rather than renamed:
+
+- **The caption and the error are now announced.** They are
+  `aria-describedby`, which needs ids on both ends and so was impossible
+  before. Under the old wrapping-`<label>` design they were visually
+  associated and programmatically invisible -- they could not go *inside*
+  the label, because everything in a label becomes part of the accessible
+  name, and "Package name owner/package-name Use owner/name" is a worse
+  name than "Package name".
+- **`BucketForm` was double-labelling its Workflow select** -- the
+  `FormControl` labelled it and the `Select` was also passed
+  `label="Workflow"`, nesting two labels around one control. With
+  `Naming::FormControl(id)` there is no second name to pass.
+
+### Deliberate divergences
+
+These do **not** get fixed. Each was decided against a measurement or an
+explicit product call, and Primer is the weaker authority in each case:
+
+| Divergence | Why |
+|---|---|
+| `--q-radius: 4px` everywhere, against Primer's 3 / 6 / 12px scale | A single radius was chosen deliberately -- there was no case where two radii were justifiable. 4px is the settled value. |
+| `--q-fgColor-{tone}-onMuted` exists at all | Primer has one `--fgColor-{tone}` per tone. Ours needs two: step 11 is what a glyph wants on a step-3 fill, and step 12 is what *text* needs to hold 4.5:1 there. Primer's single token cannot express a measurement we took. |
+| No `emphasis` role for `success` / `attention` / `danger` | No solid tone fill passes AA with any foreground we have. A token that cannot be used legally should not exist. |
+| `TextInput` takes `invalid: bool`, not `validationStatus: 'error' \| 'success'` | We have no success validation state and no plan for one. |
+| `FormControl` takes `error: Option<String>`, not a `Validation` child with a required `variant` | Same reason, plus `children` in Leptos is opaque — see below. |
+| `FormControl` has no `layout` prop | Primer offers vertical and horizontal; nothing here needs horizontal, and a prop with one value lies about being a choice. |
+| `FormControl` has no `visuallyHidden` label | Every call site shows its label. The two controls that want an invisible name are toolbar controls that never sit in a `FormControl` at all, and they take `aria_label`. |
+| `required` renders the word "Required", not Primer's `*` | An asterisk is a convention you have to have learned. |
+| Prefix `--q-` on every token | Primer's are unprefixed and would collide in a webview that also loads vendored Radix scales. |
+| The Radix scales themselves | Primer's own palette is not published as a scale we can vendor, and Radix's is contrast-tested per step. This is the whole point of splitting the two authorities. |
+
+### What was applied
+
+Applied 2026-08-07 (`qhq-o2ov`), beyond the six component renames above:
+
+- `Banner`'s tone prop is `variant: BannerVariant`, not `kind` --
+  `variant` is Primer's word for the visual axis and is what `Button`,
+  `Spinner` and `IconButton` already call it. Its `Error` variant became
+  `Critical`, Primer's word for the tone.
+- `Button.icon` → `leading_visual`. Primer's word, and it removes a
+  collision: `icon` on `IconButton` is the entire content, while on
+  `Button` it was a leading slot. One word, two meanings, one kit.
+- `IconButtonVariant::Bare` → `Invisible`, `::Framed` → `Default`.
+  `invisible` is Primer's established word for a chromeless button.
+- `Blankslate`'s props took the words from Primer's sub-components:
+  `title` → `heading`, `body` → `description`, `action` →
+  `primary_action`. Renaming the component and leaving the props would
+  have been a half-match.
+
+`Field` became `FormControl` the same day (`qhq-kt31`), and that one was
+not a rename -- see the next section.
+
+Still outstanding:
+
+1. **`ButtonVariant`** lacks Primer's `Danger` and `Invisible`. Add when
+   a call site needs one, not before.
+2. **A prop-by-prop audit of the components that were already
+   correctly named.** Only the renamed ones had their props checked. One
+   spot-check found `Spinner`, where Primer takes `srText` and lists
+   `aria-label` as *deprecated* -- and the reason is mechanical, not
+   cosmetic: our `role="status"` element has no text content, and a live
+   region announces its content, not its label. `qhq-m5s6`.
+
+The token migration to property-first (`qhq-mowp`) landed the same day,
+across `_tokens.scss` and all 26 module stylesheets in one commit -- a
+half-migrated vocabulary is worse than either shape. It retired `subtle`,
+`canvas` and `strong` together and makes the fill-vs-border collision
+impossible to reintroduce. v1's page CSS was untouched: it reads a
+separate `--q-ui-*` namespace.
+
+Two checks are worth repeating after any future token sweep, because a
+dangling `var()` fails **silently** -- the declaration is simply dropped
+and the element renders unstyled rather than erroring:
+
+- every `var(--q-*)` in the kit resolves to a name defined in
+  `_tokens.scss` (diff the used set against the defined set);
+- the count of distinct token names is unchanged, which is what proves
+  the rename was bijective and did not quietly collapse two roles into
+  one.
+
 ## CSS Organization
 
 ```text

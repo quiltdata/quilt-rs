@@ -1,0 +1,12 @@
+/*
+ * The list region's toolbar. A wrapping row, so a narrow window stacks the
+ * controls rather than scrolling them out of reach — there is no breakpoint.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  flex-wrap: wrap;
+  padding-bottom: var(--q-space-2);
+}

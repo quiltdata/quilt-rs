@@ -1,0 +1,37 @@
+/*
+ * One line, and it has to stay one line at any width (acceptance criterion 8).
+ * Truncating is the price of that, and it is the right price here: the tick and the
+ * first words carry the meaning, and the tail is a count.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 5px 2px;
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-tight);
+}
+
+/* No fill and no box, unlike a `StateLabel` — which is what keeps this from
+ * reading as a row that needs something. It is the absence of rows.
+ *
+ * `fg` and not `onMuted` because there is no fill under it, and legal here
+ * because this line does not hover: 4.72:1 on the card. */
+.root svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-success);
+}
+
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

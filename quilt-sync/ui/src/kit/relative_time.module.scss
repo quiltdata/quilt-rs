@@ -1,0 +1,11 @@
+/*
+ * Relative timestamp. Muted, never shrinking, and tabular so a column of them
+ * lines up rather than jittering between "2 min ago" and "18 min ago".
+ */
+
+.root {
+  flex: none;
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
