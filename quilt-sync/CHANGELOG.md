@@ -11,6 +11,10 @@
 
 ## [v0.21.2-alpha1] - 2026-09-01
 
+### Added
+
+- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It lists your packages with each one's state and when it last changed, on a page built to hold everything that needs you in one place. The rest of that page — the attention queue, the Autosync and Accounts cards, recent files, and filtering — arrives in later releases, so it is sparse for now. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
+
 ### Fixed
 
 - An expired session no longer shows raw AWS error text. On a page, it sends you to sign in and returns you to the page you were on. A push or a publish reports through a toast, which cannot navigate, so the toast names the deployment to sign in to. If the bucket was reached with your own `~/.aws` credentials, both say to update that file instead — there is no deployment to sign in to (<https://github.com/quiltdata/quilt-rs/pull/861>)
