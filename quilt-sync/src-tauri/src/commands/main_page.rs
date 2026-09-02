@@ -11,6 +11,7 @@ use tokio::time::timeout;
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
 
+use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
 use crate::commands::RoleCache;
 use crate::error::Error;
@@ -52,6 +53,81 @@ pub enum PackageStateDto {
     /// `UpstreamState::Error`. The UI's `PackageState` catches this with
     /// `#[serde(other)]`, the same arm that catches a kind added after this build.
     Unknown,
+}
+
+/// Why the watcher stopped syncing one package, as it crosses the wire.
+///
+/// **v2's own type.** `reporter::PausedEvent` is v1's and frozen: its `reason` is
+/// a plain string and its `message` is a single `Option<String>` whose meaning
+/// depends on that string — the raw refusal for `other`, the **comma-joined**
+/// file names for `pullConflict`, the role name for `roleDenied`. One slot with
+/// three meanings forces the UI to know that a comma means "list here but not
+/// there", and a joined list cannot be counted back apart when a filename
+/// contains one (`qhq-8mgw.9`). Three meanings, three fields.
+///
+/// Kinds are `snake_case`, matching [`PackageStateDto`] rather than v1's
+/// camelCase reason strings. The queue reads a pause and a state side by side,
+/// so those two vocabularies are the pair that must agree.
+///
+/// Nothing constructs a `PausedPackage` outside tests yet, so `PausedDto` is
+/// unused in a non-test build — hence the `#[allow(dead_code)]` below.
+#[allow(dead_code)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PausedDto {
+    PendingChanges,
+    PendingCommit,
+    Diverged,
+    /// The conflicting paths, as a list. `kit::render` counts them for
+    /// `conflicts in n files`, which is §1's rule: the count derives from the
+    /// collection it counts.
+    PullConflict {
+        files: Vec<String>,
+    },
+    /// `None` when the role query behind the wording failed. The pause still
+    /// stands — the bucket refused — it simply cannot name the role.
+    RoleDenied {
+        role: Option<String>,
+    },
+    /// `PausedReason`'s fallback arm, not a missing state (`qhq-8mgw.4`,
+    /// 2026-09-01). The vocabulary gains nothing from it: the UI pairs fixed
+    /// words with this message as a detail line, which is the shape v1 already
+    /// ships — minus v1's "push manually to resume", because there is no resume.
+    Other {
+        message: String,
+    },
+}
+
+impl From<&PausedReason> for PausedDto {
+    fn from(reason: &PausedReason) -> Self {
+        match reason {
+            PausedReason::PendingChanges => Self::PendingChanges,
+            PausedReason::PendingCommit => Self::PendingCommit,
+            PausedReason::Diverged => Self::Diverged,
+            PausedReason::PullConflict(files) => Self::PullConflict {
+                files: files.clone(),
+            },
+            PausedReason::RoleDenied { role } => Self::RoleDenied {
+                role: (!role.is_empty()).then(|| role.clone()),
+            },
+            PausedReason::Other(message) => Self::Other {
+                message: message.clone(),
+            },
+        }
+    }
+}
+
+/// One paused package. The namespace is the join key: the queue matches it
+/// against the package list's rows to answer §4.3's question — *is this pause
+/// explained by a row the user can already see?*
+///
+/// Not constructed outside tests yet, hence the `#[allow(dead_code)]` below.
+#[allow(dead_code)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PausedPackage {
+    pub namespace: String,
+    pub reason: PausedDto,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -605,6 +681,98 @@ mod tests {
 
     use crate::commands::test_support::*;
     use crate::quilt::lineage::UpstreamState;
+
+    #[test]
+    fn a_conflict_crosses_the_wire_as_a_list_not_a_joined_string() {
+        // `qhq-8mgw.9`: `reporter.rs:146` sends `files.join(", ")`, so a label of
+        // the form "conflicts in N files" has to re-split on comma-space — which
+        // breaks on exactly this filename.
+        let reason =
+            PausedReason::PullConflict(vec!["plate, run 3.csv".to_string(), "b.csv".to_string()]);
+        let json = serde_json::to_string(&PausedDto::from(&reason)).unwrap();
+        assert_eq!(
+            json,
+            r#"{"kind":"pull_conflict","files":["plate, run 3.csv","b.csv"]}"#
+        );
+        assert!(
+            !json.contains(r#""plate, run 3.csv, b.csv""#),
+            "a joined list cannot be counted back apart"
+        );
+    }
+
+    #[test]
+    fn the_three_meanings_of_one_field_become_three_named_fields() {
+        // `PausedEvent.message` is one `Option<String>` carrying a raw error for
+        // `other`, comma-joined filenames for `pullConflict`, and a role name for
+        // `roleDenied`. Each gets its own field and its own name here.
+        assert_eq!(
+            serde_json::to_string(&PausedDto::from(&PausedReason::Other(
+                "workflow rejected metadata".to_string()
+            )))
+            .unwrap(),
+            r#"{"kind":"other","message":"workflow rejected metadata"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PausedDto::from(&PausedReason::RoleDenied {
+                role: "analyst".to_string()
+            }))
+            .unwrap(),
+            r#"{"kind":"role_denied","role":"analyst"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PausedDto::from(&PausedReason::PullConflict(vec![
+                "a.csv".to_string()
+            ])))
+            .unwrap(),
+            r#"{"kind":"pull_conflict","files":["a.csv"]}"#
+        );
+    }
+
+    #[test]
+    fn an_unresolved_role_crosses_as_null_not_as_an_empty_name() {
+        // `PausedReason::RoleDenied { role: String }` uses `""` for "the role query
+        // itself failed" — `reporter.rs:170-172` already drops the message in that
+        // case. The denial stands; it just cannot be named. Same shape plan 2's R2
+        // gave `PackageStateDto::RoleDenied`.
+        assert_eq!(
+            serde_json::to_string(&PausedDto::from(&PausedReason::RoleDenied {
+                role: String::new()
+            }))
+            .unwrap(),
+            r#"{"kind":"role_denied","role":null}"#
+        );
+    }
+
+    #[test]
+    fn the_reasons_that_carry_nothing_carry_nothing() {
+        // Three of the six are fully described by their kind. A `message: null` on
+        // these is the overloaded field surviving in a new shape.
+        for (reason, expected) in [
+            (
+                PausedReason::PendingChanges,
+                r#"{"kind":"pending_changes"}"#,
+            ),
+            (PausedReason::PendingCommit, r#"{"kind":"pending_commit"}"#),
+            (PausedReason::Diverged, r#"{"kind":"diverged"}"#),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&PausedDto::from(&reason)).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn a_paused_package_names_itself_and_its_reason() {
+        let row = PausedPackage {
+            namespace: "team/plate-07".to_string(),
+            reason: PausedDto::from(&PausedReason::Diverged),
+        };
+        assert_eq!(
+            serde_json::to_string(&row).unwrap(),
+            r#"{"namespace":"team/plate-07","reason":{"kind":"diverged"}}"#
+        );
+    }
 
     #[test]
     fn local_with_no_bucket_is_no_remote() {
