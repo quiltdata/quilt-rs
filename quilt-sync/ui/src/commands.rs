@@ -516,16 +516,17 @@ pub struct MainPagePackageData {
     pub state: crate::kit::PackageState,
     /// Plumbed by Plan 2 (`qhq-8mgw.3`); this phase's page leaves it off `PackageRow`
     /// so the time column renders its own no-recorded-time word.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub changed_at: Option<f64>,
     /// Needed once the heavy phase (Plan 2) does per-package, per-bucket work.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub bucket: Option<String>,
     pub provisional: bool,
     /// Rendered by the queue (Plan 4); the list has no pause row yet.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub paused_reason: Option<String>,
-    #[allow(dead_code)]
+    /// Rendered by the queue (Plan 4), paired with `paused_reason`.
+    #[expect(dead_code)]
     pub paused_kind: Option<String>,
 }
 

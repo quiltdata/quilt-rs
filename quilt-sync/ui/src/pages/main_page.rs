@@ -15,6 +15,20 @@ use crate::kit::PageLayout;
 use crate::kit::Site;
 use crate::kit::render;
 
+/// The fixed sentence shown when the fetch fails. The backend's error text is
+/// logged (see `render_fetch_error`) but never shown: §5's words-come-from-`render`
+/// constraint applies to this file too, and a raw `Result<_, String>` error is not
+/// a word from the vocabulary.
+const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
+
+/// The failure branch, split out from `MainPage` so it can be tested without a
+/// Tauri host. Logs the backend's error for a developer and renders only the
+/// fixed sentence for the user.
+fn render_fetch_error(err: &str) -> impl IntoView {
+    web_sys::console::error_1(&format!("get_main_page_packages failed: {err}").into());
+    view! { <p>{FETCH_ERROR_WORDS}</p> }
+}
+
 /// The rows. Split out from `MainPage` so it can be tested without a Tauri host.
 #[component]
 fn PackageList(packages: Vec<(String, PackageState, bool)>) -> impl IntoView {
@@ -65,7 +79,7 @@ pub fn MainPage() -> impl IntoView {
                                     .collect();
                                 view! { <PackageList packages=rows /> }.into_any()
                             }
-                            Err(err) => view! { <p>{err}</p> }.into_any(),
+                            Err(err) => render_fetch_error(&err).into_any(),
                         }
                     })}
                 </Transition>
@@ -132,6 +146,22 @@ mod tests {
         assert!(
             el.query_selector("[class*=provisional]").unwrap().is_some(),
             "the light phase's guess is drawn dashed until the heavy phase confirms it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_fetch_failure_shows_fixed_words_never_the_raw_error() {
+        let el = mount(|| {
+            render_fetch_error("connection reset by peer: os error 104 at line 42")
+        });
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Could not load your packages."),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("connection reset by peer"),
+            "the raw backend error must not reach the page; got: {text}"
         );
     }
 }
