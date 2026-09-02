@@ -514,9 +514,9 @@ pub struct MainPagePackagesData {
 pub struct MainPagePackageData {
     pub namespace: String,
     pub state: crate::kit::PackageState,
-    /// Plumbed by Plan 2 (`qhq-8mgw.3`); this phase's page leaves it off `PackageRow`
-    /// so the time column renders its own no-recorded-time word.
-    #[expect(dead_code)]
+    /// Epoch milliseconds, from the last commit or the last installed path — see
+    /// `last_changed` on the Tauri side. `None` only when nothing has ever been
+    /// written to the package.
     pub changed_at: Option<f64>,
     /// Needed once the heavy phase (Plan 2) does per-package, per-bucket work.
     #[expect(dead_code)]

@@ -36,17 +36,12 @@
   text-decoration: none;
 }
 
-/* Sized to the 22px the logo image occupied, so the appbar's height does not move. */
-.logo {
-  font-size: var(--q-text-lead);
-  font-weight: 600;
-  line-height: 22px;
-  color: var(--q-fgColor-default);
-}
-
+/* 22px keeps the appbar's height where it was. The mark is square, so this is a
+ * 22x22 tile rather than v1's 230x48 wordmark. */
 .logo img {
   height: 22px;
   width: auto;
+  border-radius: var(--q-radius);
 }
 
 .actions {

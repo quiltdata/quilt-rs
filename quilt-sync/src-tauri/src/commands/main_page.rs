@@ -45,9 +45,10 @@ pub struct MainPagePackage {
     /// Epoch milliseconds. The backend being generous with a format the UI can use
     /// directly, rather than the UI carrying date arithmetic.
     ///
-    /// Always `None` in this build: deriving a "last changed" timestamp is Plan
-    /// 2's job (`qhq-8mgw.3`), plumbed through the heavy phase. The light phase
-    /// has nothing to compute it from.
+    /// Epoch milliseconds: the most recent thing that happened to this copy.
+    ///
+    /// `None` only when nothing has, which is genuine rather than a gap — see
+    /// [`last_changed`].
     pub changed_at: Option<f64>,
     pub bucket: Option<String>,
     /// True while the state came from cached lineage alone. The heavy phase clears
@@ -126,6 +127,39 @@ async fn get_main_page_packages_from_model(
     Ok(MainPagePackages { packages })
 }
 
+/// When this copy last changed: the last local commit, or the last file we installed
+/// or committed, whichever is later. Epoch milliseconds.
+///
+/// **Not a filesystem mtime, and no directory walk happens here.** Both values come
+/// out of `data.json`, which the light phase has already read and deserialized —
+/// `qhq-8mgw.3` called this plumbing rather than I/O, and it was right.
+///
+/// `PathState`'s own doc says why the distinction matters: *"We don't track files
+/// modifications in real time. We calculate hash when we commit or install file."* So
+/// this is the last time `QuiltSync` touched the copy, not the last time anything on
+/// disk did. A file edited in the working directory since does not move it — that is
+/// what the heavy phase's hashing is for.
+///
+/// `None` means we have never written to this package: no commit, and no installed
+/// paths. That is a real answer, not a missing one, which is why the row says
+/// `not recorded` rather than leaving the cell blank.
+fn last_changed(lineage: &quilt::lineage::PackageLineage) -> Option<f64> {
+    let newest = lineage
+        .commit
+        .as_ref()
+        .map(|commit| commit.timestamp)
+        .into_iter()
+        .chain(lineage.paths.values().map(|path| path.timestamp).max())
+        .max()?;
+    // i64 milliseconds into f64: exact until year 287396, and `f64` is what crosses
+    // the wire because JavaScript has no other number.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "epoch millis fit f64 exactly for any date this program can see"
+    )]
+    Some(newest.timestamp_millis() as f64)
+}
+
 async fn load_main_page_package(
     m: &impl model::QuiltModel,
     installed_package: &quilt::InstalledPackage,
@@ -141,12 +175,13 @@ async fn load_main_page_package(
     let has_local_commit = lineage.commit.is_some();
     let has_remote = lineage.remote_uri.is_some();
     let bucket = lineage.remote_uri.as_ref().map(|uri| uri.bucket.clone());
+    let changed_at = last_changed(&lineage);
     let upstream_state: UpstreamState = lineage.into();
 
     Ok(MainPagePackage {
         namespace,
         state: resolve_state(upstream_state, has_local_commit, has_remote),
-        changed_at: None,
+        changed_at,
         bucket,
         provisional: true,
         paused_reason,
@@ -258,6 +293,53 @@ mod tests {
             resolve_state(UpstreamState::Error, false, true),
             PackageStateDto::Unknown
         );
+    }
+
+    /// A lineage carrying only the timestamps `last_changed` reads.
+    fn lineage_with(commit_ms: Option<i64>, path_ms: &[i64]) -> quilt::lineage::PackageLineage {
+        let mut lineage = quilt::lineage::PackageLineage::default();
+        lineage.commit = commit_ms.map(|ms| quilt::lineage::CommitState {
+            timestamp: chrono::DateTime::from_timestamp_millis(ms).unwrap(),
+            hash: String::new(),
+            prev_hashes: Vec::new(),
+        });
+        for (i, ms) in path_ms.iter().enumerate() {
+            lineage.paths.insert(
+                std::path::PathBuf::from(format!("f{i}.csv")),
+                quilt::lineage::PathState {
+                    timestamp: chrono::DateTime::from_timestamp_millis(*ms).unwrap(),
+                    // `Multihash` by name would mean taking the `multihash` crate as a
+                    // direct dependency of this one — it is not, and `quilt-rs` does not
+                    // re-export it — purely to spell a test fixture's zero value.
+                    #[allow(
+                        clippy::default_trait_access,
+                        reason = "the type is not nameable here without a new dependency"
+                    )]
+                    hash: Default::default(),
+                },
+            );
+        }
+        lineage
+    }
+
+    #[test]
+    fn last_changed_takes_the_newest_path_when_it_beats_the_commit() {
+        let l = lineage_with(Some(1_000), &[5_000, 3_000]);
+        assert_eq!(last_changed(&l), Some(5_000.0));
+    }
+
+    #[test]
+    fn last_changed_takes_the_commit_when_it_beats_every_path() {
+        let l = lineage_with(Some(9_000), &[5_000, 3_000]);
+        assert_eq!(last_changed(&l), Some(9_000.0));
+    }
+
+    #[test]
+    fn last_changed_is_none_only_when_nothing_has_ever_been_written() {
+        // No commit and no installed paths — a real answer, not a gap.
+        assert_eq!(last_changed(&lineage_with(None, &[])), None);
+        // Paths but no commit still has an answer.
+        assert_eq!(last_changed(&lineage_with(None, &[7_000])), Some(7_000.0));
     }
 
     #[test]

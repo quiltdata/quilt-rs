@@ -7,6 +7,11 @@
 use leptos::prelude::*;
 
 use crate::commands;
+
+/// One row's data: namespace, state, whether the state is still the light phase's
+/// guess, and when the copy last changed. A tuple rather than a struct because it is
+/// local to this file and never crosses a boundary.
+type PackageRowData = (String, PackageState, bool, Option<f64>);
 use crate::kit::Card;
 use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
@@ -38,10 +43,10 @@ fn render_fetch_error() -> impl IntoView {
 /// excludes it). Split out from `MainPage` so it can be tested without a
 /// Tauri host.
 #[component]
-fn PackageList(packages: Vec<(String, PackageState, bool)>) -> impl IntoView {
+fn PackageList(packages: Vec<PackageRowData>) -> impl IntoView {
     packages
         .into_iter()
-        .map(|(namespace, state, provisional)| {
+        .map(|(namespace, state, provisional, changed_at)| {
             let rendered = render(&state, Site::ListRow);
             // The namespace has to travel in the query string: the package page reads it
             // with `use_query_map`, and a bare path leaves it empty — which is the
@@ -52,6 +57,7 @@ fn PackageList(packages: Vec<(String, PackageState, bool)>) -> impl IntoView {
                 <PackageRow
                     namespace=namespace
                     href=href
+                    changed_at=changed_at
                     state=rendered.words
                     tone=rendered.tone
                     provisional=provisional
@@ -81,7 +87,7 @@ pub fn MainPage() -> impl IntoView {
                                 let rows = data
                                     .packages
                                     .into_iter()
-                                    .map(|p| (p.namespace, p.state, p.provisional))
+                                    .map(|p| (p.namespace, p.state, p.provisional, p.changed_at))
                                     .collect();
                                 view! { <PackageList packages=rows /> }.into_any()
                             }
@@ -133,6 +139,7 @@ mod tests {
                         "user/plate-07".to_string(),
                         PackageState::Behind,
                         true,
+                        None,
                     ),
                 ] />
             }
@@ -150,7 +157,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <PackageList packages=vec![
-                    ("user/plate-07".to_string(), PackageState::Latest, true),
+                    ("user/plate-07".to_string(), PackageState::Latest, true, None),
                 ] />
             }
         });
@@ -173,7 +180,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <PackageList packages=vec![
-                    ("user/a".to_string(), PackageState::Latest, true),
+                    ("user/a".to_string(), PackageState::Latest, true, None),
                 ] />
             }
         });

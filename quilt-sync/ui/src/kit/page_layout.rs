@@ -59,14 +59,16 @@ pub fn PageLayout(
             // screen reader offers to skip between, and they cost nothing.
             <header class=style::appbar>
                 <div class=style::bar>
-                    // A wordmark, not the logo image. `assets/img/quilt.png` is white
-                    // ink drawn for v1's inverted appbar; this appbar is
-                    // `--q-bgColor-default`, so the image is invisible here apart from
-                    // its orange dot. Text needs no asset and themes itself, and the
-                    // `<img>` comes back the day a dark-ink or `currentColor` SVG mark
-                    // exists. Inverting the PNG is not the answer — it would turn the
-                    // dot blue.
-                    <a class=style::logo href="/">"QuiltSync"</a>
+                    <a class=style::logo href="/">
+                        // `quilt-mark.png`, not v1's `quilt.png`: that one is white ink
+                        // for v1's inverted appbar and is invisible on this one, which is
+                        // `--q-bgColor-default`. This mark carries its own dark ground, so
+                        // it reads on either. v1 keeps its own asset — it is frozen.
+                        //
+                        // Alt text, not `aria-hidden`: it is the only content of a link,
+                        // so hiding it would leave the link unnamed.
+                        <img src="/assets/img/quilt-mark.png" alt="QuiltSync home" />
+                    </a>
                     {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}
                 </div>
             </header>

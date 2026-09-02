@@ -42,8 +42,8 @@ pub fn PackageRow(
     /// When the package last changed. `None` prints an explicit word rather than
     /// leaving the column blank — it should not happen, and a blank cell is
     /// indistinguishable from a cell that failed to render.
-    #[prop(optional)]
-    changed_at: Option<EpochMillis>,
+    #[prop(optional, into)]
+    changed_at: MaybeProp<EpochMillis>,
     /// The state, in the page's words, and its tone. Two props rather than one
     /// struct: the caller maps a DTO status to this pair in one place, and a struct
     /// would only move the pairing without checking it.
@@ -63,7 +63,8 @@ pub fn PackageRow(
         <a class=style::root href=href>
             <span class=style::namespace>{namespace}</span>
             <span class=style::time>
-                {changed_at
+                {move || changed_at
+                    .get()
                     .map_or_else(
                         || {
                             view! {
