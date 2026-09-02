@@ -1374,10 +1374,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_refresh_that_does_not_deny_carries_no_switch_host() {
-        // The pre-filter is an optimistic hint and can be wrong in both directions;
-        // the refresh has the last word. A row the light phase greyed must be able to
-        // come back — Task 5's `apply` is the other half of this.
+    async fn a_behind_result_passes_through_resolve_state_and_clears_the_switch_host() {
+        // A `Behind` status is not a denial, so it maps straight through
+        // `resolve_state` like any other successful call, and `role_switch_host` is
+        // unconditionally `None` on this arm regardless of what roles the caller
+        // holds — the success arm never reads the pre-filter mark. This is a
+        // `Behind` pass-through check, not proof that a row the light phase greyed
+        // can come back: that needs an actual light-phase row plus a second call to
+        // `apply`, which is Task 5's job.
         let m = mock_one_package(Ok(status_with(UpstreamState::Behind, 0)), Some(two_roles()));
         let refreshed = refresh(&m, &RoleCache::default()).await;
 
@@ -1435,16 +1439,45 @@ mod tests {
         model.expect_get_installed_package().returning(|_| Ok(None));
         let ns: quilt_uri::Namespace = "team/gone".try_into().unwrap();
 
+        let err = refresh_main_page_package_from_model(
+            &model,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &ns,
+        )
+        .await
+        .expect_err("an uninstalled package has no state to report");
+
+        // Not just `is_err()`: a refactor that made the lineage lookup fail first
+        // (unreachable today, since it is never called with no installed package,
+        // but not enforced by the type system) would still return SOME error and
+        // this test would no longer be testing what its name claims.
         assert!(
-            refresh_main_page_package_from_model(
-                &model,
-                &RoleCache::default(),
-                &crate::telemetry::Telemetry::default(),
-                &ns,
-            )
-            .await
-            .is_err(),
-            "an uninstalled package has no state to report"
+            matches!(
+                err,
+                Error::Quilt(quilt::Error::InstallPackage(
+                    quilt::InstallPackageError::NotInstalled(_)
+                ))
+            ),
+            "expected InstallPackageError::NotInstalled, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reachable_but_unpublished_remote_still_makes_the_call() {
+        // The mirror of `a_local_only_package_needs_no_status_call` and
+        // `a_remote_with_no_catalog_host_never_reaches_the_network` above: THIS
+        // remote has both a bucket and a catalog host, so it is reachable, and
+        // `refresh_main_page_package_from_model`'s doc comment says the call still
+        // happens — `Local` on an existing, reachable remote resolves to
+        // `Unpublished`, not `NoRemote`. Without this test that claim survived only
+        // as prose: nothing would catch a refactor that widened the skip condition
+        // from `!has_remote` to "any `Local` upstream", which would silently stop
+        // refreshing every package with a bucket nobody has pushed to yet.
+        let m = mock_one_package(Ok(status_with(UpstreamState::Local, 0)), None);
+        assert_eq!(
+            refresh(&m, &RoleCache::default()).await.state,
+            PackageStateDto::Unpublished
         );
     }
 }
