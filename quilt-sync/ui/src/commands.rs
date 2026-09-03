@@ -644,6 +644,47 @@ pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
     tauri::invoke_unit("get_main_page_watcher").await
 }
 
+/// One host in the Accounts card, as it arrives.
+///
+/// Mirrors `quilt_sync::commands::main_page::AccountHost`. `currentRole` is
+/// `null` both before the role is resolved and when the query failed — the two
+/// are told apart by `provisional`, not by the role.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct AccountHostData {
+    pub host: String,
+    pub signed_in: bool,
+    pub current_role: Option<String>,
+    pub roles: Vec<String>,
+    pub provisional: bool,
+}
+
+/// Payload of `get_main_page_accounts`: the Accounts card's light phase.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct MainPageAccountsData {
+    pub hosts: Vec<AccountHostData>,
+}
+
+/// v2's accounts list, light phase: one row per host, `signedIn` only.
+#[expect(dead_code)]
+pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
+    tauri::invoke_unit("get_main_page_accounts").await
+}
+
+/// v2's accounts list, heavy phase: fills in the given host's role.
+#[expect(dead_code)]
+pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        host: String,
+    }
+    tauri::invoke("refresh_main_page_account", &Args { host }).await
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshedPackageStatus {
@@ -1737,5 +1778,52 @@ mod tests {
                 expected
             );
         }
+    }
+
+    /// The mirror must deserialize the exact JSON the backend's
+    /// `the_accounts_payload_serializes_the_wire_shape` pins. Character-for-character:
+    /// a literal the backend does not emit looks like a guard and proves nothing.
+    #[wasm_bindgen_test]
+    fn main_page_accounts_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPageAccountsData>(
+            r#"{"hosts":[{"host":"open.quiltdata.com","signedIn":true,"currentRole":null,"roles":[],"provisional":true},{"host":"solo.registry.io","signedIn":false,"currentRole":null,"roles":[],"provisional":false}]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.hosts.len(), 2);
+        assert!(data.hosts[0].signed_in);
+        assert!(
+            data.hosts[0].provisional,
+            "a signed-in host waits for its role"
+        );
+        assert_eq!(data.hosts[0].current_role, None);
+        assert!(!data.hosts[1].signed_in);
+        assert!(
+            !data.hosts[1].provisional,
+            "a signed-out host is already final"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_settled_account_arrives_with_its_role_and_alternatives() {
+        let host = serde_json::from_str::<super::AccountHostData>(
+            r#"{"host":"open.quiltdata.com","signedIn":true,"currentRole":"analyst","roles":["analyst","admin"],"provisional":false}"#,
+        )
+        .unwrap();
+        assert_eq!(host.current_role.as_deref(), Some("analyst"));
+        assert_eq!(host.roles, vec!["analyst".to_string(), "admin".to_string()]);
+        assert!(!host.provisional);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_nameless_role_is_null_not_an_empty_string() {
+        // R5's wire form. `HostRow` maps this to "Role unavailable"; an empty string
+        // would be indistinguishable from a role literally named "".
+        let host = serde_json::from_str::<super::AccountHostData>(
+            r#"{"host":"open.quiltdata.com","signedIn":true,"currentRole":null,"roles":[],"provisional":false}"#,
+        )
+        .unwrap();
+        assert!(host.signed_in);
+        assert_eq!(host.current_role, None);
+        assert!(!host.provisional);
     }
 }
