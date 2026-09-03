@@ -2,16 +2,6 @@
 //! given the resolved package list and the host facts, the grouping, the
 //! counts and the order are all computed here, and [`QueueRegion`] draws what
 //! that computation produces.
-//!
-//! Every item down to `QueueRegion` itself carries its own `#[cfg_attr(not(test),
-//! expect(dead_code))]`, checked against `trunk build`: nothing outside `cfg(test)`
-//! mounts `QueueRegion` before Task 4 wires it into `main_page.rs`, so the whole
-//! chain stays genuinely dead in a production build until then. The one exception
-//! is `QueueRegion`'s own two props — `#[component]` forwards only doc comments
-//! onto the struct it generates for them, never a lint attribute, so a per-field
-//! `expect` there pins the wrong span and fails as unfulfilled. This module-level
-//! `allow` is the narrowest lever left; verified empirically, not assumed.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -34,12 +24,6 @@ use crate::kit::render;
 
 /// One row in the queue, in draw order: a cause shared by several packages,
 /// or a package needing its own decision.
-///
-/// `#[expect(dead_code)]` outside `cfg(test)`: `QueueRegion` reads this, but
-/// `QueueRegion` is not yet mounted anywhere production reaches — Task 4's
-/// job — so the whole chain from here down stays genuinely dead in a `trunk
-/// build` until then. Verified empirically, not assumed.
-#[cfg_attr(not(test), expect(dead_code))]
 #[derive(Clone, Debug)]
 pub enum QueueItem {
     /// Several packages collapsed under one explanation (R2, R3). `members`
@@ -64,22 +48,24 @@ pub enum QueueItem {
 }
 
 /// What a cause's trailing slot offers.
-#[cfg_attr(not(test), expect(dead_code))]
 #[derive(Clone, Debug)]
 pub enum CauseAction {
     /// `[Sign in]`, targeting this host.
     SignIn { host: String },
     /// No control here — switching role is host-scoped, so it belongs to the
     /// host row in the Accounts card; the trailing slot points at it instead
-    /// of duplicating it. `None` only when the denial itself carries no host,
-    /// which nothing upstream should produce but this function does not
-    /// assume.
-    SwitchRole { host: Option<String> },
+    /// of duplicating it.
+    ///
+    /// A unit variant, carrying no host: the slot is a fixed sentence rather
+    /// than a control, and the host a denial names is already in the cause's
+    /// own `text` (see [`role_denied_text`]). A field nothing renders would be
+    /// the same fact stored twice, told apart only by which copy a later
+    /// change forgot.
+    SwitchRole,
 }
 
 /// The queue, derived. Section 4.3: it has no payload — given the resolved
 /// package list and the host facts, everything below is computed here.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn derive_queue(packages: &[MainPagePackageData], hosts: &[AccountHostData]) -> Vec<QueueItem> {
     let signed_out: HashSet<&str> = hosts
         .iter()
@@ -147,9 +133,7 @@ pub fn derive_queue(packages: &[MainPagePackageData], hosts: &[AccountHostData])
             text.clone(),
             QueueItem::Cause {
                 text,
-                action: CauseAction::SwitchRole {
-                    host: first.host.clone(),
-                },
+                action: CauseAction::SwitchRole,
                 members: members.iter().map(|p| p.namespace.clone()).collect(),
             },
         ));
@@ -186,7 +170,6 @@ pub fn derive_queue(packages: &[MainPagePackageData], hosts: &[AccountHostData])
 /// unknown, and the `on {host}` clause when the package has no host. The
 /// count is never part of this string — `CauseRow` renders `— N packages`
 /// itself from `members.len()`.
-#[cfg_attr(not(test), expect(dead_code))]
 fn role_denied_text(role: Option<&str>, host: Option<&str>, bucket: &str) -> String {
     match (role, host) {
         (Some(role), Some(host)) => format!("No access as {role} on {host} in s3://{bucket}"),
@@ -204,7 +187,6 @@ fn role_denied_text(role: Option<&str>, host: Option<&str>, bucket: &str) -> Str
 /// `RoleDenied` sorts last only to keep this match total: R2 groups every
 /// denial by bucket, so a `RoleDenied` package never reaches `rows` unless
 /// its bucket is absent, and a denial is not unimportant.
-#[cfg_attr(not(test), expect(dead_code))]
 fn precedence(state: &PackageState) -> u8 {
     match state {
         PackageState::PullConflict { .. } => 0,
@@ -221,12 +203,6 @@ fn precedence(state: &PackageState) -> u8 {
 
 /// `Everything is Latest — 43 packages`. One string, because the singular case
 /// is not a plural rule `ZeroLine` can apply.
-///
-/// `#[expect(dead_code)]` outside `cfg(test)`, like everything below it down
-/// to `QueueRegion`'s own props: nothing outside a mounted `QueueRegion` calls
-/// these yet, and `QueueRegion` itself is not mounted until Task 4 wires it
-/// into `main_page.rs` — verified against `trunk build`, not assumed.
-#[cfg_attr(not(test), expect(dead_code))]
 fn zero_line_text(total: usize) -> String {
     if total == 1 {
         "Everything is Latest — 1 package".to_string()
@@ -244,7 +220,6 @@ fn zero_line_text(total: usize) -> String {
 /// Total over the labels `render` ever hands back for a state that has one —
 /// `RoleDenied`, `Unknown` and `Latest` never reach here because their action
 /// is `None`.
-#[cfg_attr(not(test), expect(dead_code))]
 fn action_href(label: &str, namespace: &str) -> String {
     match label {
         "Publish" => format!("/commit?namespace={namespace}"), // content.rs:195
@@ -260,7 +235,6 @@ fn action_href(label: &str, namespace: &str) -> String {
 /// A package row's `[Publish]` / `[Resolve]` / `[Get latest]` / `[Choose S3
 /// bucket]` — whichever `render`'s `Rendered.action` names. The click
 /// navigates; there is no mutation here.
-#[cfg_attr(not(test), expect(dead_code))]
 fn package_action(
     label: &'static str,
     namespace: &str,
@@ -274,7 +248,6 @@ fn package_action(
 /// A cause's trailing slot: `[Sign in]` for a signed-out host, or the pointer
 /// line for a role denial — never both, and never a `[Switch role]` (ruling 3):
 /// that control is host-scoped and lives on the Accounts card's host row.
-#[cfg_attr(not(test), expect(dead_code))]
 fn cause_trailing(
     action: &CauseAction,
     navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
@@ -289,9 +262,7 @@ fn cause_trailing(
             }
             .into_any()
         }
-        CauseAction::SwitchRole { .. } => {
-            view! { "Change your role in Accounts, above." }.into_any()
-        }
+        CauseAction::SwitchRole => view! { "Change your role in Accounts, above." }.into_any(),
     }
 }
 
@@ -544,12 +515,15 @@ mod tests {
             .collect();
         assert_eq!(causes.len(), 2, "two buckets, two causes, one host");
         for cause in causes {
-            let QueueItem::Cause { action, .. } = cause else {
+            let QueueItem::Cause { text, .. } = cause else {
                 unreachable!("filtered to causes above")
             };
+            // The host is named in the cause's own words, which is where a user
+            // reads it: the trailing slot is a fixed sentence pointing at the
+            // Accounts card, so nothing else in the row can carry it.
             assert!(
-                matches!(action, CauseAction::SwitchRole { host } if host.as_deref() == Some("h.io")),
-                "the pointer line's host still has to be right even with no control to click: {action:?}"
+                text.contains("on h.io"),
+                "a denial has to name the host it is on: {text}"
             );
         }
     }

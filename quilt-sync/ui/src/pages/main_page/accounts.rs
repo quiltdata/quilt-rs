@@ -32,13 +32,17 @@ pub(super) fn sign_in_href(host: &str) -> String {
     format!("/login?host={host}&back=/main")
 }
 
-/// The card, on one payload. Split from [`AccountsCard`] so it can be tested
-/// without a Tauri host, the same way [`AutosyncBody`](super::autosync) is.
+/// The card, on one payload — the shape [`AutosyncBody`](super::autosync) has,
+/// and testable without a Tauri host for the same reason. A failed read renders
+/// nothing at all rather than this card with no rows: asserting anything about a
+/// user's sessions on the strength of a failed read would be a manufactured
+/// state. The page owns that decision, along with the resource — see
+/// [`MainPageRegions`](super::MainPageRegions).
 ///
 /// The rows are direct children of the card body — no wrapper element, so the
 /// card's own `.body > * + *` rule keeps spacing them.
 #[component]
-fn AccountsBody(
+pub(super) fn AccountsBody(
     data: MainPageAccountsData,
     /// The **page's** reload trigger, notified after a role switch. A switch moves
     /// more than this card — see [`AccountRow`].
@@ -150,42 +154,6 @@ fn AccountRow(
     }
 }
 
-/// The card and its payload.
-///
-/// Same shape as [`AutosyncCard`](super::autosync::AutosyncCard): `Transition`
-/// rather than `Suspense` (§6), the page's Refresh feeding the same resource as
-/// the card's own reasons, and a body rebuilt from plain values. A failed fetch
-/// renders nothing and logs — asserting anything about a user's sessions on the
-/// strength of a failed read would be a manufactured state.
-#[component]
-pub fn AccountsCard(
-    /// The page's own reload trigger. It feeds this card, so the appbar's Refresh
-    /// refetches it alongside the package rows — and a role switch notifies the
-    /// same trigger, so the switch refetches the page rather than only itself.
-    refresh: Trigger,
-) -> impl IntoView {
-    let accounts = LocalResource::new(move || {
-        refresh.track();
-        commands::get_main_page_accounts()
-    });
-
-    view! {
-        <Transition fallback=|| ()>
-            {move || Suspend::new(async move {
-                match accounts.await {
-                    Ok(data) => view! { <AccountsBody data=data refresh=refresh /> }.into_any(),
-                    Err(err) => {
-                        web_sys::console::error_1(
-                            &format!("get_main_page_accounts failed: {err}").into(),
-                        );
-                        ().into_any()
-                    }
-                }
-            })}
-        </Transition>
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,8 +202,9 @@ mod tests {
 
     /// [`mount_body`] with the caller's own trigger, for the one test that counts
     /// what the card asks for. The trigger is the **page's** — the one
-    /// `AccountsCard` also feeds its resource from — so counting it counts the
-    /// refetch of the whole page, which is what a role switch owes.
+    /// [`MainPage`](super::super::main_page::MainPage) feeds both of its
+    /// light-phase resources from — so counting it counts the refetch of the
+    /// whole page, which is what a role switch owes.
     fn mount_body_refreshing(data: MainPageAccountsData, refresh: Trigger) -> web_sys::Element {
         mount(move || {
             view! {

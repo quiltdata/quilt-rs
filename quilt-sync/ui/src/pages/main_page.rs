@@ -1,10 +1,20 @@
 //! The v2 main page. Behind `ExperimentalSettings.main_page_v2`.
 //!
-//! Two regions so far: the state strip — Autosync beside Accounts — and the
-//! package list. `Transition`, never `Suspense` (§6): a later plan will wire a
-//! refetch on every autosync transition, publish and pause, and a `Suspense`
-//! boundary re-shows its fallback each time, so the page would strobe. Today
-//! `reload` fires only from the Refresh button.
+//! Three regions: the state strip — Autosync beside Accounts — the attention
+//! queue, and the package list. `Transition`, never `Suspense` (§6): a later plan
+//! will wire a refetch on every autosync transition, publish and pause, and a
+//! `Suspense` boundary re-shows its fallback each time, so the page would strobe.
+//! Today `reload` fires from the Refresh button and from a role switch, which
+//! moves the package rows as surely as it moves the Accounts card.
+//!
+//! # One read of each payload, held here
+//!
+//! §1: resolution happens once, upstream of every region. The queue is derived
+//! from the same package rows the list draws and the same host facts the Accounts
+//! card draws, so both light-phase resources live on the page rather than inside
+//! the region that happens to draw them first — a region fetching its own copy
+//! would ask the same question twice and could be told two different answers.
+//! Both are awaited in one place and handed down as plain values.
 
 mod accounts;
 mod autosync;
@@ -19,7 +29,9 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
+use crate::commands::MainPageAccountsData;
 use crate::commands::MainPagePackageRefreshData;
+use crate::commands::MainPagePackagesData;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 
@@ -193,12 +205,155 @@ fn PackageList(packages: Vec<PackageRowData>) -> impl IntoView {
         .collect_view()
 }
 
+/// The page's three regions, in the order they are read: the state strip, the
+/// attention queue, then the package list. §2's arrangement, and the reason the
+/// queue sits above the list — it is what you look at first.
+///
+/// # Why this takes resources and not payloads
+///
+/// The strip has to be constructed **exactly once**. Its Autosync card owns a
+/// resource of its own whose fetcher tracks this same trigger, so a card rebuilt
+/// by a refetch would ask the backend a second time for the payload the standing
+/// card is already refetching — and worse, the new card's `Transition` has no
+/// previous body to hold, so it would render its empty fallback until the second
+/// read returned. The strip would blank on every Refresh, which is exactly the
+/// strobe §6's Transition-never-Suspense rule exists to forbid.
+///
+/// So the boundaries live **inside** this component rather than around it, and
+/// what it takes is the page's two resources. A test supplies its own —
+/// `LocalResource::new(|| async { Ok(fixture()) })` resolves with no Tauri host —
+/// which is what makes all three regions visible to an assertion at once.
+///
+/// # Two boundaries, and where the line falls
+///
+/// The strip's Accounts card gets its own small `Transition`, so the strip does
+/// not wait for the package rows and each card holds its previous body through a
+/// refetch. The queue and the list share one, because the queue is derived from
+/// the same rows the list draws: separate boundaries would let the list arrive
+/// above a queue still deciding whether it has anything to say.
+///
+/// Inside that boundary everything is a plain value, never a signal. A refetch
+/// rebuilds the subtree, and that is what re-collapses an expanded cause group
+/// (R6): `QueueRegion` builds its expander signals when it is constructed, so a
+/// region kept across a refetch would leave a group open over rows the new
+/// payload no longer holds.
+#[component]
+fn MainPageRegions(
+    /// The page's package read. Awaited once, by the boundary the queue and the
+    /// list share.
+    packages: LocalResource<Result<MainPagePackagesData, String>>,
+    /// The page's accounts read. Awaited by both boundaries — the Accounts card
+    /// draws it and the queue joins against it (§4.3, R3) — and fetched once:
+    /// awaiting a resource reads its value, it does not re-run its fetcher.
+    accounts: LocalResource<Result<MainPageAccountsData, String>>,
+    /// The page's reload trigger, which every resource here tracks.
+    reload: Trigger,
+) -> impl IntoView {
+    view! {
+        // Outside every boundary, so both cards are constructed once and each one
+        // owns when it blanks.
+        <div class=style::strip>
+            <autosync::AutosyncCard refresh=reload />
+            <Transition fallback=|| ()>
+                {move || Suspend::new(async move {
+                    match accounts.await {
+                        Ok(data) => {
+                            view! { <accounts::AccountsBody data=data refresh=reload /> }
+                                .into_any()
+                        }
+                        Err(err) => {
+                            // Logged here, once, and rendered as nothing: asserting
+                            // anything about a user's sessions on the strength of a
+                            // failed read would be a manufactured state.
+                            web_sys::console::error_1(
+                                &format!("get_main_page_accounts failed: {err}").into(),
+                            );
+                            ().into_any()
+                        }
+                    }
+                })}
+            </Transition>
+        </div>
+        // The queue and the list, from one read of the package rows. This
+        // `Suspend` must stay a `Suspend` — memoising it, or keeping its subtree
+        // across a resolve with a `Show` or a `StoredValue`, would reuse the
+        // `QueueRegion` instance and with it the expander signals a refetch is
+        // supposed to reset (R6).
+        <Transition fallback=|| {
+            view! {
+                <Card title="Packages">
+                    <PackageRowSkeleton />
+                    <PackageRowSkeleton />
+                    <PackageRowSkeleton />
+                </Card>
+            }
+        }>
+            {move || Suspend::new(async move {
+                match packages.await {
+                    Ok(data) => {
+                        let rows: Vec<PackageRowData> = data
+                            .packages
+                            .iter()
+                            .map(|p| {
+                                (
+                                    p.namespace.clone(),
+                                    p.state.clone(),
+                                    p.provisional,
+                                    p.changed_at,
+                                    p.role_switch_host.clone(),
+                                )
+                            })
+                            .collect();
+                        // The accounts read is awaited here too, for the queue's
+                        // join — inside this arm, because a page with no rows has
+                        // no queue to join anything to. Its failure is not logged a
+                        // second time (the strip's branch above handles that) and
+                        // leaves the queue with no host facts, so no cause can be
+                        // attributed to a host and those packages fall to rows of
+                        // their own. What is unknown is which hosts are signed out.
+                        let hosts = accounts.await.map(|data| data.hosts).unwrap_or_default();
+                        view! {
+                            // No wrapper and no margin: `PageLayout`'s column owns
+                            // the gap between regions, and the queue is a direct
+                            // child of it like the other two.
+                            <queue::QueueRegion packages=data.packages hosts=hosts />
+                            <Card title="Packages">
+                                <PackageList packages=rows />
+                            </Card>
+                        }
+                            .into_any()
+                    }
+                    Err(err) => {
+                        web_sys::console::error_1(
+                            &format!("get_main_page_packages failed: {err}").into(),
+                        );
+                        // No queue at all, rather than a zero line: `Everything is
+                        // Latest — 0 packages` over a read that never answered is a
+                        // manufactured all-clear.
+                        view! {
+                            <Card title="Packages">{render_fetch_error()}</Card>
+                        }
+                            .into_any()
+                    }
+                }
+            })}
+        </Transition>
+    }
+}
+
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
     let packages = LocalResource::new(move || {
         reload.track();
         async move { commands::get_main_page_packages().await }
+    });
+    // Held here rather than inside the Accounts card, which is where it used to
+    // live: the queue joins against these same host facts (§4.3, R3), and a second
+    // resource for them would be a second read of one question.
+    let accounts = LocalResource::new(move || {
+        reload.track();
+        commands::get_main_page_accounts()
     });
     let navigate = use_navigate();
 
@@ -218,46 +373,7 @@ pub fn MainPage() -> impl IntoView {
             />
         }
             .into_any()>
-            <div class=style::strip>
-                <autosync::AutosyncCard refresh=reload />
-                <accounts::AccountsCard refresh=reload />
-            </div>
-            <Card title="Packages">
-                <Transition fallback=|| {
-                    view! {
-                        <PackageRowSkeleton />
-                        <PackageRowSkeleton />
-                        <PackageRowSkeleton />
-                    }
-                }>
-                    {move || Suspend::new(async move {
-                        match packages.await {
-                            Ok(data) => {
-                                let rows = data
-                                    .packages
-                                    .into_iter()
-                                    .map(|p| {
-                                        (
-                                            p.namespace,
-                                            p.state,
-                                            p.provisional,
-                                            p.changed_at,
-                                            p.role_switch_host,
-                                        )
-                                    })
-                                    .collect();
-                                view! { <PackageList packages=rows /> }.into_any()
-                            }
-                            Err(err) => {
-                                web_sys::console::error_1(
-                                    &format!("get_main_page_packages failed: {err}").into(),
-                                );
-                                render_fetch_error().into_any()
-                            }
-                        }
-                    })}
-                </Transition>
-            </Card>
+            <MainPageRegions packages=packages accounts=accounts reload=reload />
         </PageLayout>
     }
 }
@@ -265,6 +381,8 @@ pub fn MainPage() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::AccountHostData;
+    use crate::commands::MainPagePackageData;
     use crate::kit::StateTone;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
@@ -278,11 +396,289 @@ mod tests {
         container.into()
     }
 
+    /// Two packages on one host, one of them stuck behind a signed-out session.
+    /// The queue therefore has something to say — `Needs your attention` — which
+    /// is the case the ordering test must be able to fail on: a queue that renders
+    /// nothing would leave the assertion with nothing to find between the strip
+    /// and the list.
+    fn a_package_needing_attention() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: "user/plate-07".to_string(),
+                    state: PackageState::Unknown,
+                    changed_at: None,
+                    bucket: None,
+                    host: Some("solo.registry.io".to_string()),
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/plate-08".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: None,
+                    host: Some("solo.registry.io".to_string()),
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
+    /// The host the fixture above points at, signed out — the other half of R3's
+    /// join. Settled (`provisional: false`), because a provisional row spawns an
+    /// invoke that can only fail without a Tauri host.
+    fn one_signed_out_host() -> MainPageAccountsData {
+        MainPageAccountsData {
+            hosts: vec![AccountHostData {
+                host: "solo.registry.io".to_string(),
+                signed_in: false,
+                current_role: None,
+                roles: Vec::new(),
+                provisional: false,
+            }],
+        }
+    }
+
+    /// The page's body on two resolving reads, inside a `Router` because both
+    /// `AccountRow` and `QueueRegion` ask for `use_navigate`.
+    ///
+    /// `MainPageRegions` takes the page's resources rather than their payloads —
+    /// the strip has to be constructed exactly once, so the boundaries live inside
+    /// it — so a test hands it resources of its own. A `LocalResource` over a ready
+    /// future resolves with no Tauri host, which is what puts all three regions on
+    /// screen at once.
+    fn mount_regions(
+        packages: Result<MainPagePackagesData, String>,
+        accounts: Result<MainPageAccountsData, String>,
+    ) -> web_sys::Element {
+        mount_regions_reloading(packages, accounts, Trigger::new())
+    }
+
+    /// [`mount_regions`] with the caller's own trigger, for the test that drives a
+    /// refetch. Both resources track it, exactly as the page's own do.
+    fn mount_regions_reloading(
+        packages: Result<MainPagePackagesData, String>,
+        accounts: Result<MainPageAccountsData, String>,
+        reload: Trigger,
+    ) -> web_sys::Element {
+        mount(move || {
+            let packages = LocalResource::new(move || {
+                reload.track();
+                let packages = packages.clone();
+                async move { packages }
+            });
+            let accounts = LocalResource::new(move || {
+                reload.track();
+                let accounts = accounts.clone();
+                async move { accounts }
+            });
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions packages=packages accounts=accounts reload=reload />
+                </leptos_router::components::Router>
+            }
+        })
+    }
+
+    /// The strip element itself, so a test can ask what is inside it rather than
+    /// only where its text falls in the document.
+    fn strip_of(el: &web_sys::Element) -> web_sys::Element {
+        el.query_selector("[class*=strip]")
+            .unwrap()
+            .expect("the state strip")
+    }
+
     #[wasm_bindgen_test]
-    fn renders_a_packages_card() {
+    async fn the_queue_sits_between_the_strip_and_the_list() {
+        // Section 2's arrangement, and the reason the queue exists above the list:
+        // it is what you look at first.
+        //
+        // The word asserted for the strip is `Accounts` rather than `Autosync`:
+        // `Autosync` lives inside `AutosyncBody`, behind that card's own resource,
+        // which has no Tauri host to answer it here.
+        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let html = el.inner_html();
+        let strip = html.find("Accounts").expect("strip");
+        let queue = html
+            .find("Everything is Latest")
+            .or_else(|| html.find("Needs your attention"))
+            .expect("queue");
+        let list = html.find("Packages").expect("list");
+        assert!(
+            strip < queue && queue < list,
+            "strip, then queue, then list"
+        );
+
+        // Index order alone cannot tell "between the two regions" from "a third
+        // card inside the strip" — the first occurrence of `Accounts` still
+        // precedes a queue rendered after `AccountsBody` and inside the same
+        // `div`. So ask the strip what it holds.
+        let strip = strip_of(&el).text_content().unwrap();
+        assert!(
+            strip.contains("Accounts"),
+            "the strip is what was found: {strip}"
+        );
+        assert!(
+            !strip.contains("Needs your attention"),
+            "the queue is a region of the page, not a card in the strip: {strip}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_is_drawn_from_the_same_payloads_as_the_cards() {
+        // §1, at the seam: one package read feeds the queue and the list, and one
+        // accounts read feeds the Accounts card and the queue's join. The queue's
+        // cause names the host the accounts payload says is signed out — which
+        // needs both halves of R3's join — and the list still holds every row.
+        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Signed out from solo.registry.io"),
+            "the queue joined the packages against the accounts payload: {text}"
+        );
+        assert!(
+            strip_of(&el)
+                .text_content()
+                .unwrap()
+                .contains("solo.registry.io"),
+            "and the same accounts payload drew the card"
+        );
+        assert_eq!(
+            el.query_selector_all("a[href*=installed-package]")
+                .unwrap()
+                .length(),
+            2,
+            "and the list still draws every row of the same package payload"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_packages_read_leaves_no_queue_to_claim_all_is_well() {
+        // A failed read is not an empty one: `Everything is Latest — 0 packages`
+        // over a fetch that never answered is a manufactured all-clear. The strip
+        // is unaffected, because it is outside that boundary.
+        let el = mount_regions(
+            Err("connection reset by peer".to_string()),
+            Ok(one_signed_out_host()),
+        );
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains(FETCH_ERROR_WORDS), "got: {text}");
+        assert!(
+            !text.contains("connection reset by peer"),
+            "the raw backend error must not reach the page: {text}"
+        );
+        assert!(
+            !text.contains("Everything is Latest"),
+            "nothing answered; the page cannot say everything is fine: {text}"
+        );
+        assert!(
+            strip_of(&el).text_content().unwrap().contains("Accounts"),
+            "and the strip still stands: it is outside that boundary"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_accounts_read_still_draws_the_queue_and_the_list() {
+        // The other direction. Without host facts no cause can be attributed to a
+        // host, so the signed-out package falls to a row of its own rather than
+        // vanishing — and the Accounts card renders nothing at all rather than a
+        // card with no rows, which would assert the user has no sessions.
+        let el = mount_regions(Ok(a_package_needing_attention()), Err("nope".to_string()));
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            !text.contains("Signed out from"),
+            "nothing said any host was signed out: {text}"
+        );
+        assert!(
+            !strip_of(&el).text_content().unwrap().contains("Accounts"),
+            "no card, rather than an empty one: {text}"
+        );
+        assert_eq!(
+            el.query_selector_all("a[href*=installed-package]")
+                .unwrap()
+                .length(),
+            2,
+            "the list is drawn from its own read, which answered"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refetch_rebuilds_the_queue_rather_than_reusing_it() {
+        // R6, driven through the page's own machinery: the trigger the Refresh
+        // button notifies, the resources that track it, and the `Suspend` that
+        // re-runs when they resolve. An expanded cause group re-collapses because
+        // `QueueRegion` is constructed again and builds new expander signals — a
+        // memoised subtree, or one held across the resolve, would keep the old
+        // ones and this would stay open.
+        let reload = Trigger::new();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            reload,
+        );
+        sleep_ms(50).await;
+
+        let expander = el
+            .query_selector("[aria-expanded]")
+            .unwrap()
+            .expect("the cause row's expander");
+        expander.dyn_ref::<web_sys::HtmlElement>().unwrap().click();
+        leptos::task::tick().await;
+        assert_eq!(
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .unwrap()
+                .get_attribute("aria-expanded")
+                .as_deref(),
+            Some("true"),
+            "the group is open before the refetch"
+        );
+
+        reload.notify();
+        sleep_ms(50).await;
+
+        assert_eq!(
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .expect("the cause row survives the refetch")
+                .get_attribute("aria-expanded")
+                .as_deref(),
+            Some("false"),
+            "a refetch rebuilds the region, which re-collapses the group"
+        );
+    }
+
+    /// A promise-backed sleep, the same four lines over `set_timeout` that
+    /// [`accounts`](super::accounts)'s tests use.
+    async fn sleep_ms(ms: i32) {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            window()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+                .unwrap();
+        });
+        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn renders_a_packages_card() {
         // Inside a `Router`, because `MainPage` is a routed page and its appbar asks for
         // `use_navigate`. Mounting it bare passed only while nothing in it needed router
         // context — a false premise that happened to hold.
+        //
+        // Awaited, because there is no Tauri host here: both of the page's reads
+        // reject, and the list region is drawn by the seam on the far side of that.
+        // So this is the whole failure path end to end — the page still draws the
+        // region, carrying the fixed sentence rather than the backend's error.
         let el = mount(|| {
             view! {
                 <leptos_router::components::Router>
@@ -290,10 +686,16 @@ mod tests {
                 </leptos_router::components::Router>
             }
         });
+        sleep_ms(200).await;
+
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Packages"),
             "expected a Packages card, got: {text}"
+        );
+        assert!(
+            text.contains(FETCH_ERROR_WORDS),
+            "and the fixed sentence for a read that failed, got: {text}"
         );
     }
 
