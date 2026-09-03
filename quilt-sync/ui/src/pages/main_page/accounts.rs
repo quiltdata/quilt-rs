@@ -25,7 +25,10 @@ use crate::kit::HostRow;
 
 /// Where the [Sign in] button goes. `pages/login.rs` reads both parameters from
 /// the query string; `back` is what returns the user to this page afterwards.
-fn sign_in_href(host: &str) -> String {
+///
+/// `pub(super)`, not private: the queue's own `[Sign in]` (§4.3) reuses this
+/// rather than writing a second copy of the format string.
+pub(super) fn sign_in_href(host: &str) -> String {
     format!("/login?host={host}&back=/main")
 }
 
