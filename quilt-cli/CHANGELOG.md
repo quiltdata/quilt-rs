@@ -9,59 +9,31 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.30.0-alpha7] - 2026-09-01
-
-### Added
-
-- `quilt undo-commit` discards the newest commit and restores the one before it. Works until a package's first push, and refuses rather than overwriting anything uncommitted (<https://github.com/quiltdata/quilt-rs/pull/860>)
-
-## [v0.30.0-alpha6] - 2026-08-31
-
-### Added
-
-- `quilt list --json` and `quilt status --json` print a machine-readable form, so `quilt list --json | jq` works (<https://github.com/quiltdata/quilt-rs/pull/851>)
-
-### Fixed
-
-- A command that fails now exits non-zero. It reported the error and exited 0, so a shell script could not tell success from failure (<https://github.com/quiltdata/quilt-rs/pull/851>)
-
-## [v0.30.0-alpha5] - 2026-08-31
-
-### Added
-
-- `quilt log` lists a package's revisions, newest first, with the short hash, the commit message, and the date this copy obtained the revision. That date is what is recorded locally and nothing more: a manifest carries no timestamp of its own, so for a revision fetched from a remote it is the fetch time rather than the commit time — hence the `obtained` heading. A package's full published history is not available yet (<https://github.com/quiltdata/quilt-rs/pull/849>)
-
-## [v0.30.0-alpha4] - 2026-08-31
-
-### Changed
-
-- `commit`, `pull`, `push`, `status` and `uninstall` infer the package from the directory you are standing in, so `--namespace` is only needed from outside a package's working copy. Inference reads the two path components below the configured home; anywhere else it is an error naming the flag (<https://github.com/quiltdata/quilt-rs/pull/850>)
-
-## [v0.30.0-alpha3] - 2026-08-31
-
-### Changed
-
-- `quilt` no longer needs `--home` on first use — it defaults to `~/QuiltSync`, the same working-copy directory QuiltSync uses. Pass `--home` to choose a different one; it is still remembered after that (<https://github.com/quiltdata/quilt-rs/pull/848>)
-
-### Fixed
-
-- A command that cannot resolve the package home now exits non-zero, instead of reporting the error and exiting 0 (<https://github.com/quiltdata/quilt-rs/pull/848>)
-
-## [v0.30.0-alpha2] - 2026-08-31
+## [v0.30.0] - 2026-09-02
 
 ### Added
 
 - `-v` / `--verbose` shows INFO-level logs on stderr; `RUST_LOG` still takes precedence for target-specific filtering (<https://github.com/quiltdata/quilt-rs/pull/847>)
+- `quilt log` lists a package's revisions, newest first, with the short hash, the commit message, and the date this copy obtained the revision. That date is what is recorded locally and nothing more: a manifest carries no timestamp of its own, so for a revision fetched from a remote it is the fetch time rather than the commit time — hence the `obtained` heading. A package's full published history is not available yet (<https://github.com/quiltdata/quilt-rs/pull/849>)
+- `quilt list --json` and `quilt status --json` print a machine-readable form, so `quilt list --json | jq` works (<https://github.com/quiltdata/quilt-rs/pull/851>)
+- `quilt undo-commit` discards the newest commit and restores the one before it. Works until a package's first push, and refuses rather than overwriting anything uncommitted (<https://github.com/quiltdata/quilt-rs/pull/860>)
 
 ### Changed
 
+- `quilt list` prints a table of bucket, namespace and status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package. The status compares commits: your last commit against the last-known remote tip, read from the local lineage record so listing stays offline. It is not the package's overall state — uncommitted edits are invisible to it, so a package with local changes still lists as `up_to_date`. `quilt status <namespace>` reads the working copy and refreshes the tip (<https://github.com/quiltdata/quilt-rs/pull/846>)
 - Piping a command's output now works — stdout carries only the command's own output, and logs go to stderr at WARN and above (was INFO on stdout) (<https://github.com/quiltdata/quilt-rs/pull/847>)
+- `quilt` no longer needs `--home` on first use — it defaults to `~/QuiltSync`, the same working-copy directory QuiltSync uses. Pass `--home` to choose a different one; it is still remembered after that (<https://github.com/quiltdata/quilt-rs/pull/848>)
+- `commit`, `pull`, `push`, `status` and `uninstall` infer the package from the directory you are standing in, so `--namespace` is only needed from outside a package's working copy. Inference reads the two path components below the configured home; anywhere else it is an error naming the flag (<https://github.com/quiltdata/quilt-rs/pull/850>)
 
-## [v0.30.0-alpha1] - 2026-08-07
+### Fixed
 
-### Changed
+- A command that fails now exits non-zero: it used to report the error and exit 0, so a shell script could not tell success from failure
+  - <https://github.com/quiltdata/quilt-rs/pull/848>
+  - <https://github.com/quiltdata/quilt-rs/pull/851>
 
-- `quilt list` prints a table of bucket, namespace and upstream status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package. Status comes from the local lineage record, so listing stays offline and reports the last-known remote tip; `quilt status <namespace>` refreshes it (<https://github.com/quiltdata/quilt-rs/pull/846>)
+### quilt-rs
+
+- Updated [from v0.35.0 to v0.36.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.35.0...quilt-rs/v0.36.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.29.2] - 2026-08-07
 
