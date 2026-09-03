@@ -246,6 +246,7 @@ fn main() {
             commands::update_fswatcher_settings,
             commands::update_experimental_settings,
             commands::get_main_page_packages,
+            commands::get_main_page_accounts,
             commands::refresh_main_page_package,
             commands::get_main_page_watcher,
             commands::refresh_package_status,

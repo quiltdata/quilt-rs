@@ -8,6 +8,8 @@ use std::time::Duration;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Serialize;
+use tauri::Manager;
+use tokio::sync;
 use tokio::time::timeout;
 
 use quilt_rs::RoleInfo;
@@ -154,6 +156,66 @@ pub struct MainPagePackage {
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackages {
     pub packages: Vec<MainPagePackage>,
+}
+
+/// One host in the Accounts card.
+///
+/// `signed_in` is whether the host has a directory under the auth dir, which
+/// `erase_auth` removes on logout — so it tracks the session, not a guess about
+/// one. The words are `HostRow`'s: this carries `bool` and `Option<String>`, and
+/// "Signed out" / "Role unavailable" / "Role: analyst" are the component's.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountHost {
+    pub host: String,
+    pub signed_in: bool,
+    /// `None` when the role is not yet resolved, and also when the query failed:
+    /// the session stands either way, so this never implies signed out.
+    pub current_role: Option<String>,
+    /// Every role held here. `HostRow` renders a switcher only above one, so a
+    /// short list is not a bug.
+    pub roles: Vec<String>,
+    /// Still waiting on the role query. Always `false` for a signed-out host —
+    /// there is no session to ask.
+    pub provisional: bool,
+}
+
+impl AccountHost {
+    /// The light phase's answer: everything readable from disk, and nothing else.
+    fn light(host: String, signed_in: bool) -> Self {
+        Self {
+            host,
+            signed_in,
+            current_role: None,
+            roles: Vec::new(),
+            // A signed-out host has no role to fetch, so it is already final.
+            provisional: signed_in,
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageAccounts {
+    pub hosts: Vec<AccountHost>,
+}
+
+/// Every host worth a row: the catalogs the roster points at, plus the ones with
+/// a session on disk.
+///
+/// Two sources because each is incomplete. The roster's hosts are what the
+/// queue's shared causes name; the auth dir's are what makes a session with no
+/// installed packages manageable at all.
+fn account_hosts(rows: &[Row], auth_hosts: &[String]) -> Vec<String> {
+    let mut hosts: Vec<String> = rows
+        .iter()
+        .filter_map(row_host)
+        .map(ToString::to_string)
+        .chain(auth_hosts.iter().cloned())
+        .collect();
+    hosts.sort();
+    hosts.dedup();
+    hosts
 }
 
 /// The light phase's resolution: **map** the state `quilt-rs` already derived.
@@ -380,6 +442,30 @@ async fn mark_unreadable_buckets(m: &impl model::QuiltModel, roles: &RoleCache, 
     }
 }
 
+/// Walk the installed packages and load each one's row. One roster walk for
+/// both the Autosync card and the Accounts card — see `load_main_page_package`
+/// for what a row carries and how a failure is handled.
+async fn load_rows(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    paused_reasons: &HashMap<String, PausedReason>,
+) -> Result<Vec<Row>, Error> {
+    let list = m.get_installed_packages_list().await?;
+    let mut rows = Vec::new();
+    for installed_package in list {
+        match load_main_page_package(m, tracing, &installed_package, paused_reasons).await {
+            Ok(row) => rows.push(row),
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to load package {}: {err}",
+                    installed_package.namespace,
+                );
+            }
+        }
+    }
+    Ok(rows)
+}
+
 async fn get_main_page_packages_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
@@ -396,19 +482,7 @@ async fn get_main_page_packages_from_model(
     // known until the list below is fetched, and an entry is only a name.
     roles.invalidate(None).await;
 
-    let list = m.get_installed_packages_list().await?;
-    let mut rows = Vec::new();
-    for installed_package in list {
-        match load_main_page_package(m, tracing, &installed_package, paused_reasons).await {
-            Ok(row) => rows.push(row),
-            Err(err) => {
-                tracing::warn!(
-                    "Failed to load package {}: {err}",
-                    installed_package.namespace,
-                );
-            }
-        }
-    }
+    let mut rows = load_rows(m, tracing, paused_reasons).await?;
     mark_unreadable_buckets(m, roles, &mut rows).await;
     Ok(MainPagePackages {
         packages: rows.into_iter().map(|row| row.package).collect(),
@@ -528,6 +602,41 @@ pub async fn get_main_page_packages(
         "main page light phase"
     );
     result.map_err(|e| e.to_frontend_string())
+}
+
+/// The Accounts card, light phase: one row per host, resolved from disk alone.
+///
+/// No network. The role costs a `/me` per host and arrives via
+/// `refresh_main_page_account`, one invocation per row. The roster walk is
+/// [`load_rows`] — the same one `get_main_page_packages` uses — with an empty
+/// paused-reasons map: the Accounts card has no use for package state.
+#[tauri::command]
+pub async fn get_main_page_accounts(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+) -> Result<MainPageAccounts, String> {
+    let data_dir = {
+        let app_handle = app_handle.lock().await;
+        app_handle
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| Error::from(e).to_string())?
+    };
+    let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
+    let rows = load_rows(&*m, &tracing, &HashMap::new())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let hosts = account_hosts(&rows, &auth_hosts)
+        .into_iter()
+        .map(|host| {
+            let signed_in = auth_hosts.contains(&host);
+            AccountHost::light(host, signed_in)
+        })
+        .collect();
+
+    Ok(MainPageAccounts { hosts })
 }
 
 // ── The heavy phase ──
@@ -900,6 +1009,107 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&row).unwrap(),
             r#"{"namespace":"team/plate-07","reason":{"kind":"diverged"}}"#
+        );
+    }
+
+    /// Rows whose only interesting property is their catalog host. `None` entries
+    /// in `hosts` are not representable here — use an empty slice for the
+    /// no-catalog case, which `rows_for_hosts(&[])` gives.
+    fn rows_for_hosts(hosts: &[&str]) -> Vec<Row> {
+        hosts
+            .iter()
+            .enumerate()
+            .map(|(i, host)| Row {
+                package: MainPagePackage {
+                    namespace: format!("team/pkg{i}"),
+                    state: PackageStateDto::Latest,
+                    changed_at: None,
+                    bucket: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                uri: Some(quilt_uri::S3PackageUri {
+                    catalog: Some(host.parse().unwrap()),
+                    bucket: "bucket".to_string(),
+                    namespace: "team/pkg".try_into().unwrap(),
+                    revision: quilt_uri::RevisionPointer::Hash("abcdef".to_string()),
+                    path: None,
+                }),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_host_set_is_the_union_of_the_roster_and_the_auth_dir() {
+        // R2. Roster-only would hide a session the user holds but has no packages
+        // from, making it impossible to sign out of from this page. Auth-only would
+        // hide the host every "signed out from X — 11 packages" cause names.
+        let rows = rows_for_hosts(&["open.quiltdata.com", "team.registry.io"]);
+        let auth = vec![
+            "open.quiltdata.com".to_string(),
+            "solo.registry.io".to_string(),
+        ];
+        assert_eq!(
+            account_hosts(&rows, &auth),
+            vec![
+                "open.quiltdata.com".to_string(),
+                "solo.registry.io".to_string(),
+                "team.registry.io".to_string(),
+            ],
+            "sorted, deduplicated, and a host in both appears once"
+        );
+    }
+
+    #[test]
+    fn a_row_without_a_catalog_contributes_no_host() {
+        // `row_host` is `row.uri.and_then(|uri| uri.catalog)`, so a local-only
+        // package has no host at all. It must not become an empty-string row.
+        let rows = rows_for_hosts(&[]);
+        assert!(account_hosts(&rows, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_signed_out_host_is_settled_not_provisional() {
+        // R4. There is no session to ask about, so the row is final on arrival and
+        // the heavy phase must never be asked to fill it in.
+        let host = AccountHost::light("solo.registry.io".to_string(), false);
+        assert!(!host.signed_in);
+        assert!(!host.provisional, "nothing to wait for");
+        assert_eq!(host.current_role, None);
+        assert!(host.roles.is_empty());
+    }
+
+    #[test]
+    fn a_signed_in_host_arrives_provisional() {
+        // Its role costs a round trip, so the light phase paints it unresolved and
+        // the heavy phase settles it — the same split `provisional` already carries
+        // on the package payload.
+        let host = AccountHost::light("open.quiltdata.com".to_string(), true);
+        assert!(host.signed_in);
+        assert!(host.provisional);
+        assert_eq!(host.current_role, None);
+    }
+
+    #[test]
+    fn the_accounts_payload_serializes_the_wire_shape() {
+        // Character-for-character what `MainPageAccountsData` must deserialize.
+        // Compared against real serializer output, never a literal against itself.
+        let payload = MainPageAccounts {
+            hosts: vec![
+                AccountHost::light("open.quiltdata.com".to_string(), true),
+                AccountHost::light("solo.registry.io".to_string(), false),
+            ],
+        };
+        assert_eq!(
+            serde_json::to_value(&payload).unwrap(),
+            serde_json::json!({
+                "hosts": [
+                    {"host": "open.quiltdata.com", "signedIn": true, "currentRole": null,
+                     "roles": [], "provisional": true},
+                    {"host": "solo.registry.io", "signedIn": false, "currentRole": null,
+                     "roles": [], "provisional": false}
+                ]
+            })
         );
     }
 
