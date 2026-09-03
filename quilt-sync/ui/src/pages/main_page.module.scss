@@ -12,6 +12,10 @@
   display: flex;
   gap: var(--q-space-3);
   flex-wrap: wrap;
+  /* Each card is as tall as its own contents. The default `stretch` pads the
+   * shorter card to the taller one's height, and one host is the common case —
+   * so Accounts would hold a row of text above an empty half-card. */
+  align-items: flex-start;
 
   > * {
     flex: 1 1 300px;
