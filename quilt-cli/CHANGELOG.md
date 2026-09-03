@@ -27,7 +27,7 @@
 
 ### Fixed
 
-- A command that fails now exits non-zero. It reported the error and exited 0, so a shell script could not tell success from failure
+- A command that fails now exits non-zero: it used to report the error and exit 0, so a shell script could not tell success from failure
   - <https://github.com/quiltdata/quilt-rs/pull/848>
   - <https://github.com/quiltdata/quilt-rs/pull/851>
 
