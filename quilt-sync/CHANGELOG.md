@@ -13,8 +13,8 @@
 
 ### Fixed
 
-- An expired session no longer shows raw AWS error text where S3 names the cause. On a page, it sends you to sign in and returns you to the page you were on. A publish reports through a toast, which cannot navigate, so the toast names the deployment to sign in to. If the bucket was reached with your own `~/.aws` credentials, both say to update that file instead — there is no deployment to sign in to. Still uncovered: an operation whose first failing call is an existence check answers 403 without a code, so a push — which starts by reading the bucket's workflow config — continues to report a rejected credential as a role denial (<https://github.com/quiltdata/quilt-rs/pull/861>)
-- Background sync no longer treats an expired session as a network blip and retries it quietly. It now records a sign-in problem, once per deployment rather than once per package. There is no notification for it yet (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- A credential S3 refuses is no longer reported as raw AWS error text: where the response names the cause, it is told apart from a role denial, and where the bucket was reached with your own `~/.aws` credentials it says to update that file rather than offering a sign-in that cannot help. Two paths do not benefit yet — an installed package's page and the packages list keep showing last-known state, and a push reports the rejection as a role denial (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- Background sync tells a refused credential from a network blip instead of retrying it quietly, and counts one episode per deployment rather than one per package. What you see is unchanged: the affordance still renders per package, and there is no notification (<https://github.com/quiltdata/quilt-rs/pull/861>)
 - A missing package or object now reads "Package not found: the requested version or object does not exist" instead of the AWS error text (<https://github.com/quiltdata/quilt-rs/pull/861>)
 
 ### quilt-rs
