@@ -478,8 +478,9 @@ async fn get_main_page_packages_from_model(
     // session, the cached name would make a row name a role that in fact has
     // access, and — worse — `observe_role` would never re-run, leaving the S3
     // clients signing as the old role until Settings is opened or the ~1h
-    // credential TTL expires. Every host, not just the roster's: the roster is not
-    // known until the list below is fetched, and an entry is only a name.
+    // credential TTL expires. Every host, not just the roster's: the roster is
+    // only known once `load_rows` below has fetched it, and an entry is only a
+    // name.
     roles.invalidate(None).await;
 
     let mut rows = load_rows(m, tracing, paused_reasons).await?;
@@ -1012,10 +1013,11 @@ mod tests {
         );
     }
 
-    /// Rows whose only interesting property is their catalog host. `None` entries
-    /// in `hosts` are not representable here — use an empty slice for the
-    /// no-catalog case, which `rows_for_hosts(&[])` gives.
-    fn rows_for_hosts(hosts: &[&str]) -> Vec<Row> {
+    /// Rows whose only interesting property is their catalog host. `None`
+    /// builds a row with no `uri` at all — the shape a local-only package
+    /// takes in `load_main_page_package`, where `typed_uri` stays `None`
+    /// when there is no remote to derive it from.
+    fn rows_for_hosts(hosts: &[Option<&str>]) -> Vec<Row> {
         hosts
             .iter()
             .enumerate()
@@ -1028,7 +1030,7 @@ mod tests {
                     provisional: false,
                     role_switch_host: None,
                 },
-                uri: Some(quilt_uri::S3PackageUri {
+                uri: host.map(|host| quilt_uri::S3PackageUri {
                     catalog: Some(host.parse().unwrap()),
                     bucket: "bucket".to_string(),
                     namespace: "team/pkg".try_into().unwrap(),
@@ -1044,7 +1046,7 @@ mod tests {
         // R2. Roster-only would hide a session the user holds but has no packages
         // from, making it impossible to sign out of from this page. Auth-only would
         // hide the host every "signed out from X — 11 packages" cause names.
-        let rows = rows_for_hosts(&["open.quiltdata.com", "team.registry.io"]);
+        let rows = rows_for_hosts(&[Some("open.quiltdata.com"), Some("team.registry.io")]);
         let auth = vec![
             "open.quiltdata.com".to_string(),
             "solo.registry.io".to_string(),
@@ -1063,9 +1065,14 @@ mod tests {
     #[test]
     fn a_row_without_a_catalog_contributes_no_host() {
         // `row_host` is `row.uri.and_then(|uri| uri.catalog)`, so a local-only
-        // package has no host at all. It must not become an empty-string row.
-        let rows = rows_for_hosts(&[]);
-        assert!(account_hosts(&rows, &[]).is_empty());
+        // package (no `uri` at all) has no host. It must not become an
+        // empty-string row, and must not suppress the host of a row that
+        // legitimately has one — the roster's own hosts are not just this one.
+        let rows = rows_for_hosts(&[None, Some("team.registry.io")]);
+        assert_eq!(
+            account_hosts(&rows, &[]),
+            vec!["team.registry.io".to_string()]
+        );
     }
 
     #[test]
