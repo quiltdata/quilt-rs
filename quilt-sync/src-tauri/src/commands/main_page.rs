@@ -141,6 +141,12 @@ pub struct MainPagePackage {
     /// [`last_changed`].
     pub changed_at: Option<f64>,
     pub bucket: Option<String>,
+    /// The catalog this package points at, as the queue's join key.
+    ///
+    /// `None` for a package with no remote. Not `role_switch_host`, which is
+    /// `Some` only where the user holds more than one role — absent exactly in
+    /// the signed-out case the queue groups on.
+    pub host: Option<String>,
     /// True while the state came from cached lineage alone. The heavy phase clears
     /// it.
     pub provisional: bool,
@@ -548,6 +554,10 @@ async fn load_main_page_package(
     if let Some(host) = typed_uri.as_ref().and_then(|uri| uri.catalog.as_ref()) {
         tracing.add_host(host);
     }
+    let host = typed_uri
+        .as_ref()
+        .and_then(|uri| uri.catalog.as_ref())
+        .map(ToString::to_string);
     let state = if misconfigured_remote(&lineage) {
         PackageStateDto::Unknown
     } else if let Some(files) = conflict_files(paused_reasons.get(&namespace)) {
@@ -566,6 +576,7 @@ async fn load_main_page_package(
             state,
             changed_at,
             bucket,
+            host,
             provisional: true,
             role_switch_host: None,
         },
@@ -1103,6 +1114,7 @@ mod tests {
                     state: PackageStateDto::Latest,
                     changed_at: None,
                     bucket: None,
+                    host: None,
                     provisional: false,
                     role_switch_host: None,
                 },
@@ -1115,6 +1127,60 @@ mod tests {
                 }),
             })
             .collect()
+    }
+
+    /// One `Row` built through `load_main_page_package`'s real path — not a
+    /// hand-built `Row` like [`rows_for_hosts`], which only ever proves what
+    /// its own fixture already asserts. `Some(host)` drives a lineage with a
+    /// remote whose origin is that host; `None` drives a lineage with no
+    /// remote at all, the shape a local-only package takes.
+    fn row_for_catalog(host: Option<&str>) -> Row {
+        let installed = make_installed_package(("team", "one"));
+        let lineage = match host {
+            Some(host) => quilt::lineage::PackageLineage::from_remote(
+                quilt_uri::ManifestUri {
+                    origin: Some(host.parse().unwrap()),
+                    bucket: "test".to_string(),
+                    namespace: "team/one".try_into().unwrap(),
+                    hash: "abcdef".to_string(),
+                },
+                "abcdef".to_string(),
+            ),
+            None => quilt::lineage::PackageLineage::default(),
+        };
+
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_get_installed_package_lineage()
+            .return_once(move |_| Ok(lineage));
+
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(load_main_page_package(
+                &model,
+                &crate::telemetry::Telemetry::default(),
+                &installed,
+                &HashMap::new(),
+            ))
+            .expect("load_main_page_package should succeed")
+    }
+
+    #[test]
+    fn a_package_carries_the_catalog_it_points_at() {
+        // R1. The queue groups signed-out packages by host, and `role_switch_host`
+        // cannot serve: it is `Some` only when the user holds more than one role
+        // there, so it is absent exactly when the user is signed out.
+        let row = row_for_catalog(Some("open.quiltdata.com"));
+        assert_eq!(row.package.host.as_deref(), Some("open.quiltdata.com"));
+    }
+
+    #[test]
+    fn a_local_only_package_has_no_host() {
+        // `row_host` is `row.uri.and_then(|uri| uri.catalog)`, so a package with no
+        // remote has no catalog. It must be `None`, never an empty string — the
+        // queue would otherwise group every local package under a host named "".
+        let row = row_for_catalog(None);
+        assert_eq!(row.package.host, None);
     }
 
     #[test]
@@ -1636,6 +1702,7 @@ mod tests {
                     "state": {"kind": "latest"},
                     "changedAt": null,
                     "bucket": "test",
+                    "host": "test.quilt.dev",
                     "provisional": true,
                     "roleSwitchHost": null,
                 }]

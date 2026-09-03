@@ -544,6 +544,11 @@ pub struct MainPagePackageData {
     /// Needed once grouping (Plan 6) puts the bucket axis on a `GroupHeader`.
     #[expect(dead_code)]
     pub bucket: Option<String>,
+    /// The catalog this package points at, as the queue's join key. Read only
+    /// by this module's own wire-shape pin until Task 2's `derive_queue` reads
+    /// it for real.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub host: Option<String>,
     pub provisional: bool,
     /// The host whose role selector the row's switch affordance opens. The list
     /// carries it into `RowSignals` and settles it on refresh; the switch
@@ -1604,7 +1609,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn main_page_packages_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPagePackagesData>(
-            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","provisional":true,"roleSwitchHost":null}]}"#,
+            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","host":"test.quilt.dev","provisional":true,"roleSwitchHost":null}]}"#,
         )
         .unwrap();
         assert_eq!(data.packages.len(), 1);
@@ -1612,6 +1617,7 @@ mod tests {
         assert_eq!(pkg.namespace, "team/latest");
         assert_eq!(pkg.state, crate::kit::PackageState::Latest);
         assert_eq!(pkg.changed_at, None);
+        assert_eq!(pkg.host.as_deref(), Some("test.quilt.dev"));
         assert!(pkg.provisional);
         assert_eq!(pkg.role_switch_host, None);
     }
