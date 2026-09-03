@@ -9,7 +9,9 @@ Thin wrapper around [`quilt-rs`](../quilt-rs/) — see
 [`docs/architecture.md`](../docs/architecture.md) for what each command does
 under the hood, and the
 [repository README](https://github.com/quiltdata/quilt-rs#readme) for
-positioning and known limitations.
+positioning, and the
+[Roadmap](https://github.com/quiltdata/quilt-rs/issues/889) for what is missing
+and roughly when.
 
 The binary is named `quilt`.
 

@@ -74,6 +74,19 @@ is not named `live_*` lands in the credential-free step, and fails there on
 every run — including your own pushes, not just fork pull requests. If a test
 you just wrote fails with a credentials error, check its name first.
 
+## Filing an issue
+
+An issue is something someone can pick up and finish, which needs two parts:
+what cannot be done today, observable from outside, and how anyone will know
+when it is done. A direction with no acceptance criteria is not a bad issue —
+it is not an issue, and belongs on the
+[Roadmap](https://github.com/quiltdata/quilt-rs/issues/889) instead.
+
+State a specific about the code — a file, a field, what the fix involves —
+only where you checked it. An unchecked guess in the problem statement reads
+as a premise and gets built to; the same guess in the form's unverified box
+costs nobody anything.
+
 ## Getting a pull request merged
 
 Three things are checked on every pull request. Meeting them is necessary
@@ -99,12 +112,14 @@ holds below 5/5 over something we have deliberately decided against, say so in a
 reply and a maintainer will merge past it.
 
 **The docs still tell the truth.** This is the one most pull requests miss. The
-`README.md` files describe current behaviour and cite open issues by number for
-known limitations, so a change that closes an issue tends to falsify a paragraph
-somewhere else in the tree. Grep for the issue number *and* for the behaviour
-you changed; they do not find the same lines. A command that gains a flag, a
-default, or a subcommand usually touches the root `README.md` quickstart, the
-crate's own `README.md`, and any "known issues" list that named the gap.
+`README.md` files describe current behaviour, and what is missing is tracked in
+the [Roadmap](https://github.com/quiltdata/quilt-rs/issues/889), so a change
+that closes a gap tends to falsify a sentence somewhere else. Grep for the
+issue number *and* for the behaviour you changed; they do not find the same
+lines. A command that gains a flag, a default, or a subcommand usually touches
+the root `README.md` quickstart, the crate's own `README.md`, and the Roadmap
+line that named the gap — a roadmap entry is a claim about the product too, and
+it goes stale the same way a README paragraph does.
 
 Changelog entries are welcome but not required — a maintainer will write one
 if you have not.
