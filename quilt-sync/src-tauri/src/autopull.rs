@@ -580,6 +580,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn main_page_facts_puts_each_clock_in_its_own_slot() {
+        // The state-to-payload path itself. Every payload test starts from a
+        // hand-built `WatcherFacts`, so a transposition here — the pull deadline
+        // into the publish slot, or `.max()` where the rule is `.min()` — would
+        // pass all of them. Every value below is distinguishable from every other
+        // for exactly that reason.
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        {
+            let mut settings = watcher.inner_for_test().settings.write().await;
+            settings.pull.enabled = true;
+            settings.push.enabled = false;
+            settings.pull.focused_secs = 11;
+            settings.pull.unfocused_secs = 22;
+            settings.pull.closed_secs = 33;
+            settings.push.idle_timeout_secs = 44;
+        }
+        // Unfocused, so the cadence can only be right by reading the mode: it is
+        // the middle of three different values, and `pull_interval_secs` is not
+        // one of them.
+        watcher.set_window_mode(WindowMode::Unfocused).await;
+
+        let pull_at = Utc::now() + Duration::from_mins(15);
+        *watcher.inner_for_test().clocks.next_pull_at.write().await = Some(pull_at);
+        // Two namespaces waiting, arming at different moments: the earliest is the
+        // next thing that will publish, so `.max()` cannot pass this.
+        let earliest = Utc::now() + Duration::from_secs(60);
+        let latest = Utc::now() + Duration::from_secs(600);
+        {
+            let mut arm = watcher.inner_for_test().clocks.publish_arm.write().await;
+            arm.insert(("acme", "early").into(), earliest);
+            arm.insert(("acme", "late").into(), latest);
+        }
+
+        let facts = watcher.main_page_facts().await;
+        assert!(facts.pull_enabled, "the pull setting, not the push one");
+        assert!(!facts.publish_enabled, "the push setting, not the pull one");
+        assert_eq!(
+            facts.next_pull_at,
+            Some(pull_at),
+            "the pull clock belongs in the pull slot"
+        );
+        assert_eq!(
+            facts.publish_arm_at,
+            Some(earliest),
+            "the earliest arm across every waiting namespace, not the last"
+        );
+        assert_eq!(
+            facts.pull_interval,
+            Duration::from_secs(22),
+            "the cadence for the current window mode"
+        );
+        assert_eq!(
+            facts.publish_interval,
+            Duration::from_secs(44),
+            "the quiet window, from the push settings"
+        );
+    }
+
+    #[tokio::test]
+    async fn nothing_waiting_to_publish_arms_nothing() {
+        // The `None` half of the same rule: an empty arm map is "nothing is
+        // waiting", which is what makes the publish toggle read idle rather than
+        // counting down to a moment with no meaning.
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let facts = watcher.main_page_facts().await;
+        assert_eq!(facts.publish_arm_at, None);
+        assert_eq!(facts.next_pull_at, None);
+    }
+
+    #[tokio::test]
     async fn clear_paused_also_clears_aggregator_error() {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));

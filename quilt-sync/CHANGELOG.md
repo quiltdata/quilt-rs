@@ -13,7 +13,7 @@
 
 ### Added
 
-- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It lists your packages with each one's state and when it last changed, on a page built to hold everything that needs you in one place. The rest of that page — the attention queue, the Autosync and Accounts cards, recent files, and filtering — arrives in later releases, so it is sparse for now. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It lists your packages with each one's state and when it last changed, on a page built to hold everything that needs you in one place. It also shows you whether background syncing is running and when it will next run, and lets you turn either direction on or off from the page. The rest of that page — the attention queue, the Accounts card, recent files, and filtering — arrives in later releases, so it is sparse for now. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
 
 ### Fixed
 

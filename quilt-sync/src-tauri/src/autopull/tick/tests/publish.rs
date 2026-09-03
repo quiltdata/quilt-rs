@@ -227,8 +227,9 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
-    // Just edited → not quiet (focused cadence is 30 s by default).
-    status.most_recent_mtime = Some(SystemTime::now());
+    // Just edited → not quiet (the quiet window is 300 s by default).
+    let edited_at = SystemTime::now();
+    status.most_recent_mtime = Some(edited_at);
 
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
@@ -238,6 +239,18 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
     run_once(&model, &RoleCache::default(), &inner).await?;
+
+    // The deferral has to *write* the arm time, not merely return it: the card's
+    // publish countdown is drawn from this map and from nothing else. Nothing else
+    // asserts an insert ever happens — the other tests cover the returned outcome
+    // and the removal — so a dropped or mis-keyed insert would ship green.
+    assert_eq!(
+        inner.clocks.publish_arm.read().await.get(&ns).copied(),
+        Some(chrono::DateTime::<chrono::Utc>::from(
+            edited_at + Duration::from_secs(300)
+        )),
+        "the last edit plus the quiet window, keyed by the namespace that is waiting"
+    );
 
     assert!(reporter.published.lock().unwrap().is_empty());
     let statuses = reporter.statuses.lock().unwrap();

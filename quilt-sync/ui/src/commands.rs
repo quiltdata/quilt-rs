@@ -606,10 +606,15 @@ pub enum PausedReasonData {
     Unrecognised,
 }
 
-/// `#[allow(dead_code)]`: the Autosync card carries this list but renders
-/// nothing from it — the queue (Plan 4) is what reads a pause's namespace and
-/// reason, hence the suppression.
-#[allow(dead_code)]
+/// The Autosync card carries this list but renders nothing from it: a pause's
+/// namespace and reason are intended for the queue, and nothing in this build
+/// reads either — hence the suppression.
+///
+/// `expect` rather than `allow`, and only outside `cfg(test)`: the wire-form
+/// test does read these fields, so the attribute has to be absent there to stay
+/// fulfilled. In the shipped build it hard-errors the moment a real caller
+/// appears, so the suppression cannot outlive its reason.
+#[cfg_attr(not(test), expect(dead_code))]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedPackageData {
@@ -623,11 +628,13 @@ pub struct PausedPackageData {
 pub struct MainPageWatcherData {
     pub pull: ToggleStateData,
     pub publish: ToggleStateData,
-    /// Rendered by the queue (Plan 4), which joins it against the package list
-    /// by namespace to ask whether a pause is explained by a row the user can
-    /// already see (§4.3). Carried and pinned here, read by nothing in this
-    /// build — hence the field-level suppression.
-    #[allow(dead_code)]
+    /// Intended for the queue, which joins it against the package list by
+    /// namespace to ask whether a pause is explained by a row the user can
+    /// already see (§4.3). Carried and pinned here; no reader in this build —
+    /// hence the field-level suppression, `expect`-shaped so it reports itself
+    /// the moment one arrives. Absent under `cfg(test)`, where the wire-form
+    /// test reads the field.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub paused: Vec<PausedPackageData>,
 }
 

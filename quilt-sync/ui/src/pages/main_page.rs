@@ -213,7 +213,7 @@ pub fn MainPage() -> impl IntoView {
             />
         }
             .into_any()>
-            <autosync::AutosyncCard />
+            <autosync::AutosyncCard refresh=reload />
             <Card title="Packages">
                 <Transition fallback=|| {
                     view! {

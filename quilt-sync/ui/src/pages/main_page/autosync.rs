@@ -18,6 +18,7 @@
 //! supplies its own idle text — `nothing to publish` belongs to the publish
 //! toggle, not to a clock.
 
+use std::future::Future;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -46,16 +47,28 @@ fn human_interval(ms: f64) -> String {
     }
 }
 
-/// The shortest wait this card will schedule.
+/// The shortest wait this card will schedule for a deadline still ahead of it.
 ///
-/// A deadline already past would otherwise schedule an immediate refetch that can
-/// beat the watcher's own tick to the lock, read the same deadline back, and do it
-/// again. Two seconds bounds that to one memory read per two seconds in the
-/// pathological case (a wedged loop), and costs nothing in the ordinary one: a ring
-/// that sits full for up to two seconds of a thirty-second cycle is what
-/// `kit/countdown.rs` already documents as truthful — *"A full ring means 'due',
-/// not 'fired'"*.
+/// Protects against a deadline a few milliseconds out: waking for it schedules a
+/// refetch that can beat the watcher to the lock and read the same deadline back.
+/// Two seconds bounds that, and costs nothing — a ring that sits full for up to two
+/// seconds of a thirty-second cycle is what `kit/countdown.rs` already documents as
+/// truthful: *"A full ring means 'due', not 'fired'"*.
 const REFETCH_FLOOR: Duration = Duration::from_secs(2);
+
+/// The wait for a deadline that has already passed.
+///
+/// Protects against something different, and longer-lived: `next_pull_at` is armed
+/// *before* the loop sleeps, so it names the moment the sleep ends — the moment the
+/// tick starts. For the whole of that tick (a status walk with a network round trip
+/// per package) the recorded deadline is in the past, and nothing will move it. At
+/// `REFETCH_FLOOR` the card would refetch every two seconds for the length of the
+/// tick, and every refetch rebuilds the body, re-mounts the ring's svg and re-seeds
+/// its CSS animation — a ring restarting from zero over and over, where sitting
+/// full is the truthful drawing. A past deadline is *due*, not imminent, so waiting
+/// longer for it costs nothing: `visibilitychange` still beats this, and a tick that
+/// finishes arms a fresh deadline the next wake reads.
+const REFETCH_DUE_FLOOR: Duration = Duration::from_secs(10);
 
 /// The longest wait this card will schedule.
 ///
@@ -71,20 +84,30 @@ const REFETCH_CEILING: Duration = Duration::from_hours(24);
 /// `None` when nothing is counting down: an idle or paused toggle has no moment
 /// worth waking for, and polling one would be a timer where the design has none.
 ///
+/// Which floor applies depends on whether the deadline is merely imminent or
+/// already due — see the two constants for what each protects against.
+///
 /// Total, and deliberately so — a panic in wasm takes the page, and every argument
 /// that could cause one is bounded here. `Duration::from_secs_f64` panics on a
 /// negative, NaN, or infinite argument; `set_timeout_with_handle` throws on a delay
-/// that does not fit `i32` milliseconds. The floor and the ceiling between them
+/// that does not fit `i32` milliseconds. The floors and the ceiling between them
 /// leave nothing outside `[2s, 24h]`.
 ///
 /// The order is load-bearing: `f64::max` returns the non-NaN operand, so the floor
 /// absorbs NaN first. `f64::clamp` would not do — it returns NaN for a NaN
-/// receiver, reinstating the panic the floor exists to prevent.
+/// receiver, reinstating the panic the floor exists to prevent. NaN is not `<= 0.0`
+/// either, so it takes the imminent branch and lands on `REFETCH_FLOOR` — a floor
+/// still, which is all totality asks.
 fn delay_until(deadline: Option<f64>, now: f64) -> Option<Duration> {
     let remaining_secs = (deadline? - now) / 1000.0;
+    let floor = if remaining_secs <= 0.0 {
+        REFETCH_DUE_FLOOR
+    } else {
+        REFETCH_FLOOR
+    };
     Some(Duration::from_secs_f64(
         remaining_secs
-            .max(REFETCH_FLOOR.as_secs_f64())
+            .max(floor.as_secs_f64())
             .min(REFETCH_CEILING.as_secs_f64()),
     ))
 }
@@ -234,6 +257,34 @@ fn AutosyncListener(reload: Trigger) -> impl IntoView {
     on_cleanup(move || handle.remove());
 }
 
+/// The card's payload resource, and the two triggers that refetch it.
+///
+/// A free function rather than a line inside [`AutosyncCard`] because the fetch is
+/// the only observable a refetch has — with the fetcher as a parameter a test can
+/// mount this exact wiring and count the calls. `AutosyncCard` passes the real
+/// command.
+///
+/// Two triggers, not one. `reload` is the card's own: the expiring deadline, the
+/// visibility listener, a toggle write. `refresh` is the page's, so the appbar's
+/// Refresh button reaches this card too — without it a Refresh updates the package
+/// rows and leaves the card asserting `Paused` beside rows that have just stopped
+/// being conflicted, and a paused card has no deadline, so its own trigger has
+/// nothing scheduled to correct it.
+fn watcher_resource<Fut>(
+    reload: Trigger,
+    refresh: Trigger,
+    fetch: impl Fn() -> Fut + 'static,
+) -> LocalResource<Result<MainPageWatcherData, String>>
+where
+    Fut: Future<Output = Result<MainPageWatcherData, String>> + 'static,
+{
+    LocalResource::new(move || {
+        reload.track();
+        refresh.track();
+        fetch()
+    })
+}
+
 /// The card and its payload.
 ///
 /// **No skeleton and no fallback content.** §6: chrome is never skeletonised,
@@ -244,14 +295,15 @@ fn AutosyncListener(reload: Trigger) -> impl IntoView {
 /// autosync on the strength of a failed read would be the manufactured state
 /// plan 2's final review removed from the row path.
 #[component]
-pub fn AutosyncCard() -> impl IntoView {
-    // Notified when a deadline expires and when the window becomes visible again;
-    // tracked here so either one refetches the payload.
+pub fn AutosyncCard(
+    /// The page's own reload trigger, so the appbar's Refresh refetches this card
+    /// as well as the package rows.
+    refresh: Trigger,
+) -> impl IntoView {
+    // Notified when a deadline expires, when the window becomes visible again, and
+    // after a toggle write.
     let reload = Trigger::new();
-    let watcher = LocalResource::new(move || {
-        reload.track();
-        async move { commands::get_main_page_watcher().await }
-    });
+    let watcher = watcher_resource(reload, refresh, commands::get_main_page_watcher);
 
     view! {
         <AutosyncListener reload=reload />
@@ -435,20 +487,39 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn a_deadline_already_past_waits_the_floor_not_zero() {
-        // A refetch fired the instant the deadline passes can beat the watcher's
-        // own tick to the lock, read the same deadline back, and schedule another
-        // immediate refetch — a spin. The floor bounds that to one poll every two
-        // seconds, and `Countdown`'s own doc sanctions the visible cost: "A
-        // wake-up that sits at full for a few seconds is therefore truthful
-        // rather than broken."
+    fn a_deadline_about_to_arrive_waits_the_imminent_floor() {
+        // Still ahead, but not worth a wake of its own: the refetch would race the
+        // watcher's tick to the lock and read the same deadline back.
         // One of these two names the constant and one pins its value, so changing
         // `REFETCH_FLOOR` cannot pass unnoticed.
         assert_eq!(
-            delay_until(Some(0.0), 60_000.0),
+            delay_until(Some(60_100.0), 60_000.0),
             Some(Duration::from_secs(2))
         );
-        assert_eq!(delay_until(Some(60_000.0), 60_000.0), Some(REFETCH_FLOOR));
+        assert_eq!(delay_until(Some(60_500.0), 60_000.0), Some(REFETCH_FLOOR));
+    }
+
+    #[wasm_bindgen_test]
+    fn a_deadline_already_past_waits_the_due_floor_not_the_imminent_one() {
+        // A deadline already past is not one about to arrive. `next_pull_at` is
+        // armed before the loop sleeps, so it stays in the past for the whole of
+        // the tick that follows — a status walk with a network round trip per
+        // package — and nothing moves it in the meantime. At the imminent floor
+        // the card would refetch every two seconds for the length of that tick,
+        // re-seeding the ring's animation each time, where `Countdown`'s own doc
+        // says sitting full is the truthful drawing: "A wake-up that sits at full
+        // for a few seconds is therefore truthful rather than broken."
+        // The deadline exactly at `now` is due, not imminent — it has arrived.
+        // One of these two names the constant and one pins its value, so changing
+        // `REFETCH_DUE_FLOOR` cannot pass unnoticed.
+        assert_eq!(
+            delay_until(Some(0.0), 60_000.0),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(
+            delay_until(Some(60_000.0), 60_000.0),
+            Some(REFETCH_DUE_FLOOR)
+        );
     }
 
     #[wasm_bindgen_test]
@@ -487,8 +558,13 @@ mod tests {
             reload.track();
             fired.update(|n| *n += 1);
         });
+        // 500ms, not 30: comfortably inside `REFETCH_FLOOR`, and comfortably
+        // ahead of the clock `delay_until` reads a moment later, so the body takes
+        // the imminent branch even if the runtime stalls between building this
+        // payload and mounting it. A deadline that had slipped into the past would
+        // take the due branch and wait `REFETCH_DUE_FLOOR` instead.
         let el = mount(move || {
-            view! { <AutosyncBody data=armed_in_ms(30.0) reload=reload /> }
+            view! { <AutosyncBody data=armed_in_ms(500.0) reload=reload /> }
         });
         // Let the effect's own first, unprompted run land before counting, and
         // pin it — otherwise a delta of one could be that run and no wake at all.
@@ -549,6 +625,50 @@ mod tests {
             "flipping a toggle must write and then ask for the payload again"
         );
         drop(el);
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_pages_refresh_asks_the_backend_again() {
+        // The appbar's Refresh notifies `MainPage`'s trigger, which is this card's
+        // `refresh` prop. Without that wiring a Refresh updates the package rows
+        // and leaves the card asserting `Paused` beside rows that have just
+        // stopped being conflicted — and a paused payload carries no deadline, so
+        // the card's own trigger has nothing scheduled to correct it.
+        //
+        // The fetch is the only observable a refetch has, which is why
+        // `watcher_resource` takes its fetcher: this mounts the card's exact
+        // wiring with a counting one.
+        let calls = RwSignal::new(0);
+        let reload = Trigger::new();
+        let refresh = Trigger::new();
+        let _el = mount(move || {
+            let watcher = watcher_resource(reload, refresh, move || {
+                calls.update(|n| *n += 1);
+                async move { Ok(armed_payload()) }
+            });
+            view! {
+                <Transition fallback=|| ()>
+                    {move || Suspend::new(async move {
+                        let _ = watcher.await;
+                    })}
+                </Transition>
+            }
+        });
+        // Let the first fetch land and pin the baseline, so a stale read cannot
+        // pass for the refresh's own.
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+        assert_eq!(before, 1, "the resource's first fetch, before any refresh");
+        refresh.notify();
+        // 200ms: an absolute bound, not a multiple of any constant this file
+        // reads. Nothing else here can fetch — the payload is idle-and-armed but
+        // no body is mounted to schedule a wake from it.
+        sleep_ms(200).await;
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "the page's Refresh must refetch the card, exactly once"
+        );
     }
 
     #[wasm_bindgen_test]

@@ -714,8 +714,8 @@ pub struct ToggleState {
 pub struct MainPageWatcher {
     pub pull: ToggleState,
     pub publish: ToggleState,
-    /// The paused set, typed. **Read by the queue (Plan 4), not by anything in
-    /// this build** — the card needs only `activity`, which is derived from this
+    /// The paused set, typed. **Intended for the queue; no reader in this
+    /// build** — the card needs only `activity`, which is derived from this
     /// same list on the way past. It ships now because the split that makes it
     /// legible is this plan's deliverable (`qhq-8mgw.9`, `qhq-8mgw.4`).
     pub paused: Vec<PausedPackage>,
