@@ -8,6 +8,7 @@
 
 mod accounts;
 mod autosync;
+mod queue;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;

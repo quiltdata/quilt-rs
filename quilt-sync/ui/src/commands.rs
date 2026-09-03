@@ -541,13 +541,13 @@ pub struct MainPagePackageData {
     /// `last_changed` on the Tauri side. `None` only when nothing has ever been
     /// written to the package.
     pub changed_at: Option<f64>,
-    /// Needed once grouping (Plan 6) puts the bucket axis on a `GroupHeader`.
-    #[expect(dead_code)]
+    /// The queue's group key for `RoleDenied` (§4.3, R2): one host can hold
+    /// both readable and unreadable buckets, so `derive_queue` groups a
+    /// denial by this rather than by `host`.
     pub bucket: Option<String>,
-    /// The catalog this package points at, as the queue's join key. Read only
-    /// by this module's own wire-shape pin until Task 2's `derive_queue` reads
-    /// it for real.
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// The catalog this package points at, as the queue's join key: R3 groups
+    /// an `Unknown` package under its host's `Signed out from {host}` cause
+    /// only when the accounts payload agrees that host is signed out.
     pub host: Option<String>,
     pub provisional: bool,
     /// The host whose role selector the row's switch affordance opens. The list
