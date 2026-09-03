@@ -1,0 +1,20 @@
+/* The state strip's two-card row: Autosync beside Accounts.
+ *
+ * No breakpoint and no media query — the strip is one row while both cards fit
+ * and two rows when they do not, which `flex-wrap` decides from the space it has.
+ *
+ * `flex: 1 1 300px` belongs here rather than on `Card`, where it would be the
+ * parent's layout living in the child — and wrong the moment a card enters the
+ * page's flex column, since there `flex-basis` sizes the height and every card
+ * would ask to be 300px tall. `min-width: 0` lets a card shrink below 300px
+ * rather than overflowing a narrow window. */
+.strip {
+  display: flex;
+  gap: var(--q-space-3);
+  flex-wrap: wrap;
+
+  > * {
+    flex: 1 1 300px;
+    min-width: 0;
+  }
+}

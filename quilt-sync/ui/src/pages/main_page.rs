@@ -1,10 +1,12 @@
 //! The v2 main page. Behind `ExperimentalSettings.main_page_v2`.
 //!
-//! One region so far. `Transition`, never `Suspense` (§6): a later plan will wire a
+//! Two regions so far: the state strip — Autosync beside Accounts — and the
+//! package list. `Transition`, never `Suspense` (§6): a later plan will wire a
 //! refetch on every autosync transition, publish and pause, and a `Suspense`
 //! boundary re-shows its fallback each time, so the page would strobe. Today
 //! `reload` fires only from the Refresh button.
 
+mod accounts;
 mod autosync;
 
 use std::sync::Arc;
@@ -17,6 +19,8 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::commands::MainPagePackageRefreshData;
+
+stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 
 /// One row's data, as the light phase delivered it: namespace, state, whether the
 /// state is still the light phase's guess, when the copy last changed, and the host
@@ -213,7 +217,10 @@ pub fn MainPage() -> impl IntoView {
             />
         }
             .into_any()>
-            <autosync::AutosyncCard refresh=reload />
+            <div class=style::strip>
+                <autosync::AutosyncCard refresh=reload />
+                <accounts::AccountsCard refresh=reload />
+            </div>
             <Card title="Packages">
                 <Transition fallback=|| {
                     view! {

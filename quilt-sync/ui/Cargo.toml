@@ -38,7 +38,7 @@ stylance = "0.8.4"
 # gitignored; Trunk's pre_build hook rebuilds it.
 [package.metadata.stylance]
 output_file = "./assets/css/kit/_modules.scss"
-folders = ["./src/kit/"]
+folders = ["./src/kit/", "./src/pages/"]
 extensions = [".module.scss"]
 
 [dev-dependencies]

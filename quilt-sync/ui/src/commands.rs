@@ -651,7 +651,6 @@ pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
 /// are told apart by `provisional`, not by the role.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct AccountHostData {
     pub host: String,
     pub signed_in: bool,
@@ -663,19 +662,16 @@ pub struct AccountHostData {
 /// Payload of `get_main_page_accounts`: the Accounts card's light phase.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct MainPageAccountsData {
     pub hosts: Vec<AccountHostData>,
 }
 
 /// v2's accounts list, light phase: one row per host, `signedIn` only.
-#[expect(dead_code)]
 pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
     tauri::invoke_unit("get_main_page_accounts").await
 }
 
 /// v2's accounts list, heavy phase: fills in the given host's role.
-#[expect(dead_code)]
 pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
