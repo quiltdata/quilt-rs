@@ -41,11 +41,17 @@ cargo install quilt-cli
 | `undo-commit` | Undo the newest commit, before the first push  |
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
-| `list`      | List installed packages                          |
+| `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, newest first    |
 | `uninstall` | Remove a package from local tracking             |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
+
+`list`'s status compares commits: your last commit against the last-known
+remote tip, read from local records so listing stays offline. It is not the
+package's overall state — uncommitted edits are invisible to it, so a package
+with local changes still shows `up_to_date`. `quilt status` reads the working
+copy.
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
