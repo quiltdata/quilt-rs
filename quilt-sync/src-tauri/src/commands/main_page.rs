@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::DateTime;
@@ -640,6 +641,81 @@ pub async fn get_main_page_accounts(
     Ok(MainPageAccounts { hosts })
 }
 
+/// Fill in one host's role. Extracted from the command so it is testable without
+/// a Tauri `AppHandle`, the same split `refresh_main_page_package` uses.
+async fn refresh_account_for(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    host: &str,
+    signed_in: bool,
+) -> AccountHost {
+    // R4: no session, nothing to ask, and the light phase already said so.
+    if !signed_in {
+        return AccountHost::light(host.to_string(), false);
+    }
+
+    // `Host::from_str` is fallible (there is no infallible `Host::from(String)`).
+    // A host string this layer cannot parse gets the same settlement R5 gives a
+    // failed query below — we asked and could not tell — rather than failing the
+    // whole command over a name the light phase already accepted.
+    let parsed = match Host::from_str(host) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            tracing::debug!("Could not parse host {host}: {err}");
+            return AccountHost {
+                host: host.to_string(),
+                signed_in: true,
+                current_role: None,
+                roles: Vec::new(),
+                provisional: false,
+            };
+        }
+    };
+
+    match roles.get(m, &parsed).await {
+        Ok(info) => AccountHost {
+            host: host.to_string(),
+            signed_in: true,
+            current_role: Some(info.current),
+            roles: info.available,
+            provisional: false,
+        },
+        // R5: asked, could not tell. The session stands; only its name is missing.
+        Err(err) => {
+            tracing::debug!("No role for {host}: {err}");
+            AccountHost {
+                host: host.to_string(),
+                signed_in: true,
+                current_role: None,
+                roles: Vec::new(),
+                provisional: false,
+            }
+        }
+    }
+}
+
+/// The Accounts card, heavy phase: one host's role, one invocation per row.
+#[tauri::command]
+pub async fn refresh_main_page_account(
+    m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    host: String,
+) -> Result<AccountHost, String> {
+    let data_dir = {
+        let app_handle = app_handle.lock().await;
+        app_handle
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| Error::from(e).to_string())?
+    };
+    // Re-read rather than trusting the caller: a logout between the two phases
+    // must not produce a role query against a host with no session.
+    let signed_in = quilt::paths::list_auth_hosts(&data_dir).contains(&host);
+
+    Ok(refresh_account_for(&*m, &roles, &host, signed_in).await)
+}
+
 // ── The heavy phase ──
 
 /// What the per-package refresh corrects on a row.
@@ -1116,6 +1192,129 @@ mod tests {
                     {"host": "solo.registry.io", "signedIn": false, "currentRole": null,
                      "roles": [], "provisional": false}
                 ]
+            })
+        );
+    }
+
+    /// A model whose `observe_role` call succeeds with `info`. `RoleCache::get`
+    /// routes through `observe_role`, which calls `refresh_roles` then
+    /// `clear_remote_client_cache` on the success path — both need an
+    /// expectation, or `mockall` panics on the unmatched one.
+    fn mock_with_role(info: RoleInfo) -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_refresh_roles()
+            .times(1)
+            .returning(move |_| Ok(info.clone()));
+        model.expect_clear_remote_client_cache().returning(|_| ());
+        model
+    }
+
+    /// A model whose role query fails. `observe_role`'s `?` on `refresh_roles`
+    /// short-circuits before `clear_remote_client_cache`, so only the first
+    /// needs an expectation.
+    fn mock_whose_role_query_fails() -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_refresh_roles()
+            .times(1)
+            .returning(|_| Err(Error::General("role query unavailable".to_string())));
+        model
+    }
+
+    /// A model that must never be asked for a role. `mockall`'s default
+    /// `TimesRange` is satisfied at zero calls, so `.times(0)` is the
+    /// assertion, not the presence of an `.expect_...`.
+    fn mock_that_must_not_be_asked() -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+        model.expect_refresh_roles().times(0);
+        model
+    }
+
+    #[tokio::test]
+    async fn the_heavy_phase_names_the_role_and_its_alternatives() {
+        // The whole point of the second phase. `RoleInfo.available` is what decides
+        // whether `HostRow` draws a switcher, so both fields cross together.
+        let m = mock_with_role(RoleInfo {
+            current: "analyst".to_string(),
+            available: vec!["analyst".to_string(), "admin".to_string()],
+        });
+        let roles = RoleCache::default();
+        let host = refresh_account_for(&m, &roles, "open.quiltdata.com", true).await;
+
+        assert_eq!(host.current_role.as_deref(), Some("analyst"));
+        assert_eq!(host.roles, vec!["analyst".to_string(), "admin".to_string()]);
+        assert!(!host.provisional, "the row has settled");
+        assert!(host.signed_in);
+    }
+
+    #[tokio::test]
+    async fn a_failed_role_query_settles_the_row_without_signing_it_out() {
+        // R5. `HostRow`'s own doc: empty role means the query failed, "the session is
+        // fine, it simply cannot be named". Conflating this with a logout would offer
+        // a [Sign in] button to someone already signed in.
+        let m = mock_whose_role_query_fails();
+        let roles = RoleCache::default();
+        let host = refresh_account_for(&m, &roles, "open.quiltdata.com", true).await;
+
+        assert!(host.signed_in, "a network failure is not a logout");
+        assert_eq!(host.current_role, None);
+        assert!(host.roles.is_empty());
+        assert!(
+            !host.provisional,
+            "we asked and could not tell — that is settled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_signed_out_host_is_never_asked_for_a_role() {
+        // R4. The mock asserts zero calls: `mockall`'s default range is satisfied at
+        // zero, so `.times(0)` is the assertion, not the absence of one.
+        let m = mock_that_must_not_be_asked();
+        let roles = RoleCache::default();
+        let host = refresh_account_for(&m, &roles, "solo.registry.io", false).await;
+
+        assert!(!host.signed_in);
+        assert!(!host.provisional);
+        assert_eq!(host.current_role, None);
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_host_settles_the_row_without_a_query() {
+        // Ruling P2: `Host::from_str` is fallible. A host string this layer cannot
+        // parse gets the same settlement R5 gives a failed query — "we asked and
+        // could not tell" — rather than failing the whole command. The mock proves
+        // no query was even attempted: parsing fails before `roles.get` runs.
+        let m = mock_that_must_not_be_asked();
+        let roles = RoleCache::default();
+        let host = refresh_account_for(&m, &roles, "[::1", true).await;
+
+        assert!(host.signed_in, "the session on disk still stands");
+        assert_eq!(host.current_role, None);
+        assert!(host.roles.is_empty());
+        assert!(
+            !host.provisional,
+            "we asked and could not tell — that is settled"
+        );
+    }
+
+    #[test]
+    fn a_settled_account_serializes_the_wire_shape() {
+        let host = AccountHost {
+            host: "open.quiltdata.com".to_string(),
+            signed_in: true,
+            current_role: Some("analyst".to_string()),
+            roles: vec!["analyst".to_string(), "admin".to_string()],
+            provisional: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&host).unwrap(),
+            serde_json::json!({
+                "host": "open.quiltdata.com",
+                "signedIn": true,
+                "currentRole": "analyst",
+                "roles": ["analyst", "admin"],
+                "provisional": false
             })
         );
     }
