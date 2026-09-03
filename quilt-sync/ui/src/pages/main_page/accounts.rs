@@ -35,13 +35,17 @@ fn sign_in_href(host: &str) -> String {
 /// The rows are direct children of the card body — no wrapper element, so the
 /// card's own `.body > * + *` rule keeps spacing them.
 #[component]
-fn AccountsBody(data: MainPageAccountsData) -> impl IntoView {
+fn AccountsBody(
+    data: MainPageAccountsData,
+    /// Notified after a role switch, so the card refetches what the switch moved.
+    reload: Trigger,
+) -> impl IntoView {
     view! {
         <Card title="Accounts">
             {data
                 .hosts
                 .into_iter()
-                .map(|host| view! { <AccountRow host=host /> })
+                .map(|host| view! { <AccountRow host=host reload=reload /> })
                 .collect_view()}
         </Card>
     }
@@ -51,7 +55,12 @@ fn AccountsBody(data: MainPageAccountsData) -> impl IntoView {
 /// one `spawn_local` per row so a row settles where it stands, and a cancel flag
 /// set in `on_cleanup` so a row unmounted mid-flight never writes.
 #[component]
-fn AccountRow(host: AccountHostData) -> impl IntoView {
+fn AccountRow(
+    host: AccountHostData,
+    /// Notified after a role switch, on success and on failure alike — see the
+    /// effect below.
+    reload: Trigger,
+) -> impl IntoView {
     let navigate = use_navigate();
     let row = RwSignal::new(host);
 
@@ -88,9 +97,37 @@ fn AccountRow(host: AccountHostData) -> impl IntoView {
         let host = row.get();
         let target = sign_in_href(&host.host);
         let navigate = navigate.clone();
+        let switch_host = host.host.clone();
         // `HostRow` wants the role as a signal because its switcher writes to it.
         // Empty string is its own convention for "cannot be named" — see R5.
-        let role = RwSignal::new(host.current_role.unwrap_or_default());
+        let current = host.current_role.unwrap_or_default();
+        // Seeded from the payload rather than from the signal, and re-seeded with
+        // it on every rebuild, so a row handed a role by a refetch cannot write
+        // that same role straight back.
+        let settled = StoredValue::new(current.clone());
+        let role = RwSignal::new(current);
+
+        // Owned by the render effect running this closure: its `with_cleanup`
+        // drops the arena node holding this effect before each re-run, so a
+        // rebuild replaces the effect instead of stacking a second one.
+        Effect::new(move |_| {
+            let chosen = role.get();
+            if chosen.is_empty() || chosen == settled.get_value() {
+                return;
+            }
+            settled.set_value(chosen.clone());
+            let host_name = switch_host.clone();
+            leptos::task::spawn_local(async move {
+                if let Err(err) = commands::switch_role(host_name, chosen).await {
+                    web_sys::console::error_1(&format!("switch_role failed: {err}").into());
+                }
+                // Either way: a switch expires the host's credentials, drops the
+                // cached clients holding them and releases role-denied pauses, so
+                // on success the whole payload moved — and on failure the refetch
+                // is what puts the true role back on screen.
+                reload.notify();
+            });
+        });
 
         view! {
             <HostRow
@@ -128,7 +165,7 @@ pub fn AccountsCard(
         <Transition fallback=|| ()>
             {move || Suspend::new(async move {
                 match accounts.await {
-                    Ok(data) => view! { <AccountsBody data=data /> }.into_any(),
+                    Ok(data) => view! { <AccountsBody data=data reload=reload /> }.into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_accounts failed: {err}").into(),
@@ -158,14 +195,42 @@ mod tests {
         container.into()
     }
 
+    /// A promise-backed sleep, the same four lines over `set_timeout` that
+    /// [`autosync`](super::super::autosync)'s tests use.
+    async fn sleep_ms(ms: i32) {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            window()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+                .unwrap();
+        });
+        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    }
+
+    /// Pick a role the way a user does: set the value, then fire `change` — the
+    /// event `Select` listens for. The value must be one of the rendered options;
+    /// a `<select>` handed anything else reports the empty string instead.
+    fn select_role(select: &web_sys::Element, role: &str) {
+        let select: &web_sys::HtmlSelectElement = select.unchecked_ref();
+        select.set_value(role);
+        select
+            .dispatch_event(&web_sys::Event::new("change").unwrap())
+            .unwrap();
+    }
+
     /// Inside a `Router`, because [`AccountRow`] asks for `use_navigate` — the
     /// [Sign in] affordance is a navigation, and `use_navigate` panics outside a
     /// `Router`. Same shape `main_page.rs`'s own `renders_a_packages_card` uses.
     fn mount_body(data: MainPageAccountsData) -> web_sys::Element {
+        mount_body_reloading(data, Trigger::new())
+    }
+
+    /// [`mount_body`] with the caller's own trigger, for the one test that counts
+    /// what the card asks for.
+    fn mount_body_reloading(data: MainPageAccountsData, reload: Trigger) -> web_sys::Element {
         mount(move || {
             view! {
                 <leptos_router::components::Router>
-                    <AccountsBody data=data />
+                    <AccountsBody data=data reload=reload />
                 </leptos_router::components::Router>
             }
         })
@@ -273,6 +338,41 @@ mod tests {
         );
         assert!(el.text_content().unwrap().contains("open.quiltdata.com"));
         assert!(el.text_content().unwrap().contains("solo.registry.io"));
+    }
+
+    #[wasm_bindgen_test]
+    async fn choosing_a_role_asks_the_backend_again() {
+        // The write and the refetch are one gesture: switching a role expires
+        // credentials, drops cached clients and clears role-denied pauses, so the
+        // payload after a switch differs by more than the name the user picked.
+        //
+        // There is no Tauri host here, so `switch_role` can only fail — which is
+        // exactly why the trigger must fire on the error path too.
+        let fired = RwSignal::new(0);
+        let reload = Trigger::new();
+        Effect::new(move |_| {
+            reload.track();
+            fired.update(|n| *n += 1);
+        });
+        let el = mount_body_reloading(one_switchable_one_not(), reload);
+
+        // Pin the baseline: the effect's own first run has happened and nothing
+        // has been switched yet. Both waits are absolute, neither derived from
+        // what is under test.
+        sleep_ms(50).await;
+        assert_eq!(
+            fired.get_untracked(),
+            1,
+            "the effect's own first run, before any switch"
+        );
+
+        // "ReadWriteQuiltBucket" is the role the fixture is not on, so the switch
+        // is a real change rather than a value the row already held.
+        let select = el.query_selector("select").unwrap().unwrap();
+        select_role(&select, "ReadWriteQuiltBucket");
+        sleep_ms(200).await;
+
+        assert_eq!(fired.get_untracked(), 2, "one refetch, and exactly one");
     }
 
     #[wasm_bindgen_test]
