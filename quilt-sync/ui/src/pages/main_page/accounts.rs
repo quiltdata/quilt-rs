@@ -37,15 +37,16 @@ fn sign_in_href(host: &str) -> String {
 #[component]
 fn AccountsBody(
     data: MainPageAccountsData,
-    /// Notified after a role switch, so the card refetches what the switch moved.
-    reload: Trigger,
+    /// The **page's** reload trigger, notified after a role switch. A switch moves
+    /// more than this card — see [`AccountRow`].
+    refresh: Trigger,
 ) -> impl IntoView {
     view! {
         <Card title="Accounts">
             {data
                 .hosts
                 .into_iter()
-                .map(|host| view! { <AccountRow host=host reload=reload /> })
+                .map(|host| view! { <AccountRow host=host refresh=refresh /> })
                 .collect_view()}
         </Card>
     }
@@ -57,9 +58,9 @@ fn AccountsBody(
 #[component]
 fn AccountRow(
     host: AccountHostData,
-    /// Notified after a role switch, on success and on failure alike — see the
-    /// effect below.
-    reload: Trigger,
+    /// The page's own trigger, notified after a role switch, on success and on
+    /// failure alike — see the effect below.
+    refresh: Trigger,
 ) -> impl IntoView {
     let navigate = use_navigate();
     let row = RwSignal::new(host);
@@ -99,7 +100,9 @@ fn AccountRow(
         let navigate = navigate.clone();
         let switch_host = host.host.clone();
         // `HostRow` wants the role as a signal because its switcher writes to it.
-        // Empty string is its own convention for "cannot be named" — see R5.
+        // Empty string is its own convention for "cannot be named" — see R5. It is
+        // `provisional` that tells the row apart from a settled failure, so the two
+        // must be passed together.
         let current = host.current_role.unwrap_or_default();
         // Seeded from the payload rather than from the signal, and re-seeded with
         // it on every rebuild, so a row handed a role by a refetch cannot write
@@ -121,11 +124,13 @@ fn AccountRow(
                 if let Err(err) = commands::switch_role(host_name, chosen).await {
                     web_sys::console::error_1(&format!("switch_role failed: {err}").into());
                 }
-                // Either way: a switch expires the host's credentials, drops the
-                // cached clients holding them and releases role-denied pauses, so
-                // on success the whole payload moved — and on failure the refetch
-                // is what puts the true role back on screen.
-                reload.notify();
+                // The page's trigger, not a card-private one: a switch expires the
+                // host's credentials, drops the cached clients holding them and
+                // releases role-denied pauses, so it moves the package rows' access
+                // marks and any role-denied pause as surely as it moves this card.
+                // Notified on failure too — the refetch is what puts the true role
+                // back on screen.
+                refresh.notify();
             });
         });
 
@@ -135,6 +140,7 @@ fn AccountRow(
                 role=role
                 roles=host.roles
                 signed_out=!host.signed_in
+                provisional=host.provisional
                 on_sign_in=move |_| navigate(&target, NavigateOptions::default())
             />
         }
@@ -150,13 +156,12 @@ fn AccountRow(
 /// strength of a failed read would be a manufactured state.
 #[component]
 pub fn AccountsCard(
-    /// The page's own reload trigger, so the appbar's Refresh refetches this card
-    /// as well as the package rows.
+    /// The page's own reload trigger. It feeds this card, so the appbar's Refresh
+    /// refetches it alongside the package rows — and a role switch notifies the
+    /// same trigger, so the switch refetches the page rather than only itself.
     refresh: Trigger,
 ) -> impl IntoView {
-    let reload = Trigger::new();
     let accounts = LocalResource::new(move || {
-        reload.track();
         refresh.track();
         commands::get_main_page_accounts()
     });
@@ -165,7 +170,7 @@ pub fn AccountsCard(
         <Transition fallback=|| ()>
             {move || Suspend::new(async move {
                 match accounts.await {
-                    Ok(data) => view! { <AccountsBody data=data reload=reload /> }.into_any(),
+                    Ok(data) => view! { <AccountsBody data=data refresh=refresh /> }.into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_accounts failed: {err}").into(),
@@ -221,24 +226,27 @@ mod tests {
     /// [Sign in] affordance is a navigation, and `use_navigate` panics outside a
     /// `Router`. Same shape `main_page.rs`'s own `renders_a_packages_card` uses.
     fn mount_body(data: MainPageAccountsData) -> web_sys::Element {
-        mount_body_reloading(data, Trigger::new())
+        mount_body_refreshing(data, Trigger::new())
     }
 
     /// [`mount_body`] with the caller's own trigger, for the one test that counts
-    /// what the card asks for.
-    fn mount_body_reloading(data: MainPageAccountsData, reload: Trigger) -> web_sys::Element {
+    /// what the card asks for. The trigger is the **page's** — the one
+    /// `AccountsCard` also feeds its resource from — so counting it counts the
+    /// refetch of the whole page, which is what a role switch owes.
+    fn mount_body_refreshing(data: MainPageAccountsData, refresh: Trigger) -> web_sys::Element {
         mount(move || {
             view! {
                 <leptos_router::components::Router>
-                    <AccountsBody data=data reload=reload />
+                    <AccountsBody data=data refresh=refresh />
                 </leptos_router::components::Router>
             }
         })
     }
 
-    /// Every fixture is settled (`provisional: false`). There is no Tauri host
-    /// under `wasm-bindgen-test`, so a provisional row would spawn an invoke that
-    /// can only fail — noise in the log, and a settle no assertion here wants.
+    /// Every fixture but [`waiting_for_a_role`] is settled (`provisional: false`).
+    /// There is no Tauri host under `wasm-bindgen-test`, so a provisional row
+    /// spawns an invoke that can only fail — noise in the log, and a settle no
+    /// assertion here wants.
     fn two_hosts() -> MainPageAccountsData {
         MainPageAccountsData {
             hosts: vec![
@@ -293,6 +301,27 @@ mod tests {
         }
     }
 
+    /// The one provisional fixture: a signed-in host whose role nobody has asked
+    /// for yet. Identical to [`nameless_role`] in every field but `provisional`,
+    /// which is the point — the two states are told apart by that flag alone.
+    ///
+    /// It does spawn a `refresh_main_page_account`, and that is harmless here:
+    /// `tauri_invoke_catching` is `catch`-bound, so a missing `window.__TAURI__`
+    /// comes back as an `Err` rather than trapping the module (`tauri.rs:15-23`).
+    /// The row therefore never settles, the assertions below cannot race it, and
+    /// the whole cost is one `console.error` line.
+    fn waiting_for_a_role() -> MainPageAccountsData {
+        MainPageAccountsData {
+            hosts: vec![AccountHostData {
+                host: "quiet.quiltdata.com".to_string(),
+                signed_in: true,
+                current_role: None,
+                roles: Vec::new(),
+                provisional: true,
+            }],
+        }
+    }
+
     #[wasm_bindgen_test]
     fn a_signed_out_host_offers_a_way_back_in() {
         // The one affordance a signed-out row has. `HostRow` renders "Signed out"
@@ -329,6 +358,54 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn a_row_waiting_for_its_role_does_not_claim_the_query_failed() {
+        // "Role unavailable" is the *settled* failure: we asked and could not tell.
+        // Saying it before anyone has asked makes a cold cache — which every first
+        // paint is, since the roster load invalidates the role cache — look exactly
+        // like an offline host.
+        //
+        // Both halves run here on purpose. The two fixtures differ by `provisional`
+        // and nothing else, so a test asserting against only one of them would pass
+        // on a component that ignored the flag entirely.
+        let waiting = mount_body(waiting_for_a_role());
+        let text = waiting.text_content().unwrap();
+        assert!(
+            !text.contains("Role unavailable"),
+            "nobody has asked yet: {text}"
+        );
+        assert!(text.contains("Checking role"), "and it says so: {text}");
+        assert!(
+            !text.contains("Signed out"),
+            "the session is a fact from disk: {text}"
+        );
+        assert!(
+            waiting
+                .query_selector("[class*='provisional']")
+                .unwrap()
+                .is_some(),
+            "and it is drawn as not-yet-final"
+        );
+
+        let settled = mount_body(nameless_role());
+        let text = settled.text_content().unwrap();
+        assert!(
+            text.contains("Role unavailable"),
+            "we asked and could not tell: {text}"
+        );
+        assert!(
+            !text.contains("Checking role"),
+            "nothing is in flight: {text}"
+        );
+        assert!(
+            settled
+                .query_selector("[class*='provisional']")
+                .unwrap()
+                .is_none(),
+            "a settled failure is final"
+        );
+    }
+
+    #[wasm_bindgen_test]
     fn every_host_gets_exactly_one_row() {
         let el = mount_body(two_hosts());
         assert_eq!(
@@ -344,17 +421,19 @@ mod tests {
     async fn choosing_a_role_asks_the_backend_again() {
         // The write and the refetch are one gesture: switching a role expires
         // credentials, drops cached clients and clears role-denied pauses, so the
-        // payload after a switch differs by more than the name the user picked.
+        // payload after a switch differs by more than the name the user picked —
+        // and by more than this card holds, which is why the trigger counted here
+        // is the page's own and not one private to the card.
         //
         // There is no Tauri host here, so `switch_role` can only fail — which is
         // exactly why the trigger must fire on the error path too.
         let fired = RwSignal::new(0);
-        let reload = Trigger::new();
+        let refresh = Trigger::new();
         Effect::new(move |_| {
-            reload.track();
+            refresh.track();
             fired.update(|n| *n += 1);
         });
-        let el = mount_body_reloading(one_switchable_one_not(), reload);
+        let el = mount_body_refreshing(one_switchable_one_not(), refresh);
 
         // Pin the baseline: the effect's own first run has happened and nothing
         // has been switched yet. Both waits are absolute, neither derived from

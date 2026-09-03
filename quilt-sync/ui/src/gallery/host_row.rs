@@ -12,6 +12,7 @@ pub fn HostRowStories() -> impl IntoView {
     let multi = RwSignal::new("analyst".to_string());
     let single = RwSignal::new("bench-scientist".to_string());
     let unknown = RwSignal::new(String::new());
+    let waiting = RwSignal::new(String::new());
     let out = RwSignal::new("analyst".to_string());
 
     let roles = || {
@@ -29,7 +30,8 @@ pub fn HostRowStories() -> impl IntoView {
                   its role is. The switcher appears only where there is a choice: with one \
                   role the name is static text, because a select with a single option is a \
                   dead control. Signed out outranks the role, since a role means nothing \
-                  without a session."
+                  without a session — and a role nobody has asked for yet outranks every \
+                  reading of the role, dashed rather than dimmed so it costs no contrast."
         >
             <Cell wide=true label="several roles — switcher, and the role is not repeated">
                 <Card title="Accounts">
@@ -47,6 +49,16 @@ pub fn HostRowStories() -> impl IntoView {
                         host="custom.registry.io"
                         role=single
                         roles=vec!["bench-scientist".to_string()]
+                        on_sign_in=|_| ()
+                    />
+                </Card>
+            </Cell>
+            <Cell wide=true label="role not asked for yet — dashed, and it says so">
+                <Card title="Accounts">
+                    <HostRow
+                        host="custom.registry.io"
+                        role=waiting
+                        provisional=true
                         on_sign_in=|_| ()
                     />
                 </Card>

@@ -46,3 +46,21 @@
 .trailing {
   flex: none;
 }
+
+/* The role has not been asked for yet. A dashed rule under the sub-line and
+ * nothing else — no opacity, no animation.
+ *
+ * Dimming is the other option the design record offered, and it is the wrong one
+ * here for the same reason StateLabel gives: this line is already `fgColor-muted`,
+ * so any opacity low enough to read as provisional takes it under AA, while a
+ * dashed rule costs no contrast at all. The line is still information — the
+ * session it names is a fact from disk — so making it harder to read in order to
+ * say "not final" trades away the wrong thing.
+ *
+ * An underline and not a border: a border adds its own line to the box, and this
+ * row must keep its height as it settles from waiting to a role, a switcher or a
+ * sign-in. `text-decoration` draws inside the line box and moves nothing. */
+.provisional {
+  text-decoration: underline dashed var(--q-borderColor-default);
+  text-underline-offset: var(--q-space-1);
+}
