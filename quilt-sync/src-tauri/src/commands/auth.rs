@@ -130,6 +130,8 @@ async fn erase_auth_command(
     tracing: &Telemetry,
     host: &str,
 ) -> Result<(), Error> {
+    let parsed_host = Host::from_str(host)?;
+    m.expire_remote_credentials(&parsed_host).await?;
     let erased = erase_auth_dir(data_dir, host);
 
     // Every logout leaves exactly one signal, and which one says what happened.
@@ -763,6 +765,13 @@ mod tests {
         }
     }
 
+    fn expect_logout_credential_expiry(model: &mut MockQuiltModel) {
+        model
+            .expect_expire_remote_credentials()
+            .times(1)
+            .returning(|_| Ok(()));
+    }
+
     /// A logout takes one host's stored auth and nothing else. The erase joins a
     /// parsed host onto the auth dir, so a bug in that addressing would show up
     /// here as the other host's credentials disappearing with it.
@@ -780,6 +789,7 @@ mod tests {
         seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
 
         let mut m = MockQuiltModel::new();
+        expect_logout_credential_expiry(&mut m);
         m.expect_clear_remote_client_cache().returning(|_| ());
 
         let telemetry = Telemetry::default();
@@ -814,6 +824,7 @@ mod tests {
         seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
 
         let mut m = MockQuiltModel::new();
+        expect_logout_credential_expiry(&mut m);
         m.expect_clear_remote_client_cache().returning(|_| ());
 
         let telemetry = Telemetry::default();
@@ -840,6 +851,7 @@ mod tests {
         seed_auth_dirs(data_dir.path(), &["a.quilt.dev", "b.quilt.dev"]);
 
         let mut m = MockQuiltModel::new();
+        expect_logout_credential_expiry(&mut m);
         m.expect_clear_remote_client_cache().returning(|_| ());
 
         erase_auth_command(
@@ -867,6 +879,7 @@ mod tests {
         let data_dir = TempDir::new().expect("temp data dir");
 
         let mut m = MockQuiltModel::new();
+        expect_logout_credential_expiry(&mut m);
         m.expect_clear_remote_client_cache().returning(|_| ());
 
         erase_auth_command(
@@ -906,6 +919,7 @@ mod tests {
         seed_auth_dirs(data_dir.path(), &["test.quilt.dev"]);
 
         let mut erasing = MockQuiltModel::new();
+        expect_logout_credential_expiry(&mut erasing);
         erasing.expect_clear_remote_client_cache().returning(|_| ());
         erase_auth_command(
             data_dir.path(),

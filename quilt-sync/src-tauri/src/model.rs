@@ -456,6 +456,14 @@ pub trait QuiltModel {
             .clear_client_cache(host.as_ref());
     }
 
+    /// Expire the host's persisted and in-memory STS credentials. Logout calls
+    /// this before removing the auth directory so no credential remains
+    /// reachable through an existing `Auth` handle.
+    async fn expire_remote_credentials(&self, host: &Host) -> Result<(), Error> {
+        let remote = self.get_quilt().lock().await.remote_handle();
+        Ok(remote.expire_credentials(host).await?)
+    }
+
     /// Buckets the active role can read on `host`.
     ///
     /// An optimistic hint, not an authoritative answer: it over-reports for
