@@ -20,6 +20,7 @@ mod accounts;
 mod autosync;
 mod queue;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -30,16 +31,19 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::commands::MainPageAccountsData;
+use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 
-/// One row's data, as the light phase delivered it: namespace, state, whether the
-/// state is still the light phase's guess, when the copy last changed, and the host
-/// whose role selector its switch affordance would open. A tuple rather than a
-/// struct because it is local to this file and never crosses a boundary.
-type PackageRowData = (String, PackageState, bool, Option<f64>, Option<String>);
+/// What a row needs that its live state does not carry: which package it is, and
+/// when the copy last changed. Everything that settles — the state, whether it is
+/// still the light phase's guess, the host whose role selector its switch
+/// affordance would open — now lives in [`PackageStore`], keyed by this namespace.
+/// A tuple rather than a struct because it is local to this file and never crosses
+/// a boundary.
+type PackageRowData = (String, Option<f64>);
 
 /// Copied from the gallery's own helpers rather than shared: the gallery modules are
 /// not compiled into the app binary, and the kit deliberately owns no icons — a caller
@@ -119,6 +123,102 @@ impl RowSignals {
     }
 }
 
+/// Every row's live state, held by the page instead of by the list row that draws
+/// it. The heavy phase's answer is what the attention queue is about — a package
+/// with uncommitted changes is exactly what the queue exists to name — and while
+/// those signals were private to each [`PackageListRow`] no other region could
+/// read them.
+///
+/// Two `Copy` handles and nothing else, so the store costs nothing to capture in
+/// as many closures as the page has readers.
+#[derive(Clone, Copy)]
+struct PackageStore {
+    /// One entry per light-phase package, keyed by namespace. A `StoredValue`
+    /// rather than a signal: seeding fixes the keys for the life of the payload,
+    /// and only the signals inside an entry ever change — so nothing that reads
+    /// the map should re-run when a row settles.
+    rows: StoredValue<HashMap<String, RowSignals>>,
+    /// Heavy-phase calls not yet answered. R3: the queue may not claim an
+    /// all-clear while any of them is outstanding, and `provisional` cannot
+    /// carry that — a failed refresh stays provisional forever.
+    outstanding: RwSignal<usize>,
+}
+
+impl PackageStore {
+    /// One row per light-phase package, each holding that phase's guess.
+    fn seed(packages: &[MainPagePackageData]) -> Self {
+        let rows = packages
+            .iter()
+            .map(|p| {
+                (
+                    p.namespace.clone(),
+                    RowSignals::new(p.state.clone(), p.role_switch_host.clone()),
+                )
+            })
+            .collect();
+        Self {
+            rows: StoredValue::new(rows),
+            // One call per package, because the list mounts one row per package
+            // and each row fires its own (R0).
+            outstanding: RwSignal::new(packages.len()),
+        }
+    }
+
+    /// This package's live state, or `None` for a namespace the store was not
+    /// seeded with.
+    fn row(&self, namespace: &str) -> Option<RowSignals> {
+        self.rows.with_value(|rows| rows.get(namespace).copied())
+    }
+
+    /// One heavy-phase call answered, successfully or not.
+    fn answered(&self) {
+        // `saturating_sub`, not `-= 1`: a double-decrement would be a bug in the
+        // caller, and underflowing a `usize` in a release build wraps to a number
+        // that leaves the queue silent forever (R3).
+        self.outstanding.update(|n| *n = n.saturating_sub(1));
+    }
+
+    /// Whether any heavy-phase call is still outstanding (R3).
+    ///
+    /// Dead in the app build until the queue reads it — the lift lands first, the
+    /// rewiring after — but live in this module's own tests, which is why the
+    /// expectation is conditional.
+    #[cfg_attr(not(test), expect(dead_code))]
+    fn in_flight(&self) -> bool {
+        self.outstanding.get() > 0
+    }
+
+    /// The light-phase payload with the heavy phase's answers written over it,
+    /// dropping every row the heavy phase has not confirmed (R2). The access
+    /// pre-filter over-reports, so a guess it made must not reach the queue as a
+    /// denial (qhq-8mgw.35).
+    ///
+    /// Reads the signals with `.get()`, never `get_untracked()`: the caller's
+    /// reactivity is the entire point of holding these signals on the page, and
+    /// "optimising" this to an untracked read would leave the queue frozen on the
+    /// light phase again.
+    ///
+    /// Dead in the app build until the queue reads it; see [`Self::in_flight`].
+    #[cfg_attr(not(test), expect(dead_code))]
+    fn settled(&self, light: &[MainPagePackageData]) -> Vec<MainPagePackageData> {
+        light
+            .iter()
+            .filter_map(|p| {
+                let row = self.row(&p.namespace)?;
+                if row.provisional.get() {
+                    return None;
+                }
+                Some(MainPagePackageData {
+                    state: row.state.get(),
+                    role_switch_host: row.role_switch_host.get(),
+                    provisional: false,
+                    ..p.clone()
+                })
+            })
+            .collect()
+    }
+}
+
 /// The package's own page, `namespace` in the query string because
 /// `installed_package` reads it with `use_query_map` and a bare path leaves it
 /// empty. Shared by the list row's own link below and by `queue::action_href`'s
@@ -137,12 +237,14 @@ fn package_page_href(namespace: &str) -> String {
 #[component]
 fn PackageListRow(
     namespace: String,
-    initial_state: PackageState,
+    /// This package's live state, owned by the page's [`PackageStore`].
+    row: RowSignals,
+    /// Notified when this row's heavy-phase call answers, successfully or not
+    /// (R3): the queue may not claim an all-clear while a call is outstanding,
+    /// and a failed call must stop the waiting too.
+    answered: Callback<()>,
     changed_at: Option<f64>,
-    role_switch_host: Option<String>,
 ) -> impl IntoView {
-    let row = RowSignals::new(initial_state, role_switch_host);
-
     // One invocation per row, concurrently. The two shared resources behind it —
     // credential vending and the `/me` role query — are already serialised inside
     // the backend, and a serial walk would make the list as slow as its slowest
@@ -168,6 +270,10 @@ fn PackageListRow(
                 );
             }
         }
+        // Both arms, and only past the cancellation check above: the call has
+        // answered either way, and a row unmounted mid-flight must neither write
+        // nor decrement.
+        answered.run(());
     });
 
     let href = package_page_href(&namespace);
@@ -193,28 +299,26 @@ fn PackageListRow(
 /// excludes it). Split out from `MainPage` so it can be tested without a
 /// Tauri host.
 #[component]
-fn PackageList(packages: Vec<PackageRowData>) -> impl IntoView {
+fn PackageList(packages: Vec<PackageRowData>, store: PackageStore) -> impl IntoView {
+    // The list holds the store, so the list is what can hand a row the counter —
+    // the row itself is given only its own signals.
+    let answered = Callback::new(move |()| store.answered());
     packages
         .into_iter()
-        // `provisional` is the light phase's own statement about the payload — every
-        // row starts provisional by construction now, so the row itself has nothing
-        // left to read here. It stays on the wire and in this tuple regardless: the
-        // attention queue (`queue::derive_queue`) is derived from the light-phase
-        // payload and does not consult `provisional` either, so a package still
-        // awaiting its heavy-phase confirmation can already appear there. Surfacing
-        // that distinction in the queue is filed as bead qhq-8mgw.35.
-        .map(
-            |(namespace, state, _provisional, changed_at, role_switch_host)| {
-                view! {
-                    <PackageListRow
-                        namespace=namespace
-                        initial_state=state
-                        changed_at=changed_at
-                        role_switch_host=role_switch_host
-                    />
-                }
-            },
-        )
+        .filter_map(|(namespace, changed_at)| {
+            // A namespace the store was not seeded with cannot happen from one
+            // payload — the rows and the store are built from the same packages —
+            // and drawing nothing is not worth a panic.
+            let row = store.row(&namespace)?;
+            Some(view! {
+                <PackageListRow
+                    namespace=namespace
+                    row=row
+                    answered=answered
+                    changed_at=changed_at
+                />
+            })
+        })
         .collect_view()
 }
 
@@ -304,18 +408,14 @@ fn MainPageRegions(
             {move || Suspend::new(async move {
                 match packages.await {
                     Ok(data) => {
+                        // Seeded here rather than inside the list: the heavy
+                        // phase's answers belong to the page, so the queue can
+                        // read them too. Wiring the queue to them is Task 4's.
+                        let store = PackageStore::seed(&data.packages);
                         let rows: Vec<PackageRowData> = data
                             .packages
                             .iter()
-                            .map(|p| {
-                                (
-                                    p.namespace.clone(),
-                                    p.state.clone(),
-                                    p.provisional,
-                                    p.changed_at,
-                                    p.role_switch_host.clone(),
-                                )
-                            })
+                            .map(|p| (p.namespace.clone(), p.changed_at))
                             .collect();
                         // The accounts read is awaited here too, for the queue's
                         // join — inside this arm, because a page with no rows has
@@ -331,7 +431,7 @@ fn MainPageRegions(
                             // child of it like the other two.
                             <queue::QueueRegion packages=data.packages hosts=hosts />
                             <Card title="Packages">
-                                <PackageList packages=rows />
+                                <PackageList packages=rows store=store />
                             </Card>
                         }
                             .into_any()
@@ -407,6 +507,140 @@ mod tests {
         doc.body().unwrap().append_child(&container).unwrap();
         leptos::mount::mount_to(container.clone(), f).forget();
         container.into()
+    }
+
+    /// One light-phase row, in any state the caller names. `provisional: true`
+    /// as the light phase always delivers it, and every other field empty: the
+    /// store's tests are about the signals, not about the payload's trimmings.
+    fn pkg(namespace: &str, state: PackageState) -> MainPagePackageData {
+        MainPagePackageData {
+            namespace: namespace.to_string(),
+            state,
+            changed_at: None,
+            bucket: None,
+            host: None,
+            provisional: true,
+            role_switch_host: None,
+        }
+    }
+
+    /// The list's own view of a light-phase payload — what `MainPageRegions`
+    /// builds beside the store it seeds from the same packages.
+    fn rows_of(packages: &[MainPagePackageData]) -> Vec<PackageRowData> {
+        packages
+            .iter()
+            .map(|p| (p.namespace.clone(), p.changed_at))
+            .collect()
+    }
+
+    #[wasm_bindgen_test]
+    fn the_store_holds_one_row_per_package_and_starts_them_all_provisional() {
+        let store = PackageStore::seed(&[
+            pkg("a/one", PackageState::Latest),
+            pkg("a/two", PackageState::Behind),
+        ]);
+
+        let one = store.row("a/one").expect("seeded from this payload");
+        assert_eq!(one.state.get_untracked(), PackageState::Latest);
+        assert!(
+            one.provisional.get_untracked(),
+            "the light phase's guess is provisional by construction"
+        );
+        assert!(store.row("b/absent").is_none());
+        assert_eq!(store.outstanding.get_untracked(), 2, "one call per package");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_settled_row_leaves_the_store_still_in_flight_until_the_last_one_answers() {
+        // The zero line may not appear while any answer is outstanding (R3), and
+        // `provisional` cannot carry that: a failed refresh stays provisional forever.
+        let store = PackageStore::seed(&[
+            pkg("a/one", PackageState::Latest),
+            pkg("a/two", PackageState::Latest),
+        ]);
+        assert!(store.in_flight());
+
+        store.answered();
+        assert!(store.in_flight(), "one call is still outstanding");
+        store.answered();
+        assert!(!store.in_flight());
+    }
+
+    #[wasm_bindgen_test]
+    fn settled_drops_what_the_heavy_phase_has_not_confirmed() {
+        // R2, and the half of qhq-8mgw.35 that manufactures a denial: the access
+        // pre-filter over-reports, so its guesses must not reach the queue.
+        let light = vec![
+            pkg("a/confirmed", PackageState::Latest),
+            pkg("a/guessed", PackageState::RoleDenied { role: None }),
+        ];
+        let store = PackageStore::seed(&light);
+        store
+            .row("a/confirmed")
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::PendingChanges { files: 1 },
+                role_switch_host: None,
+            });
+
+        let settled = store.settled(&light);
+        assert_eq!(settled.len(), 1, "only the confirmed one");
+        assert_eq!(settled[0].namespace, "a/confirmed");
+        assert_eq!(
+            settled[0].state,
+            PackageState::PendingChanges { files: 1 },
+            "the heavy phase's answer, not the light phase's guess"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_reads_the_store_and_settles_in_place() {
+        // The list must keep settling exactly as it does today, with the signals now
+        // owned a level up. `PackageList` is NOT re-rendered by a settle — that would
+        // re-fire every row's refresh (see the module's own comment).
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        assert!(el.text_content().unwrap().contains("Latest"));
+
+        store
+            .row("user/plate-07")
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Behind,
+                role_switch_host: None,
+            });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Not the latest"),
+            "the list's wording: {text}"
+        );
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_none(),
+            "settled rows are drawn solid"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_refresh_ends_the_waiting_too() {
+        // R3 on the failure path. There is no Tauri host here, so the `catch`-bound
+        // invoke rejects and every mounted row drives the `Err` arm — which is what
+        // makes this a real test of that arm's decrement rather than of the `Ok`
+        // one's. A counter only the success path decrements would leave the queue
+        // waiting for an answer that is never coming.
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        assert!(store.in_flight(), "the row's call has not answered yet");
+
+        let _el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        sleep_ms(50).await;
+
+        assert!(
+            !store.in_flight(),
+            "R3: a failed refresh must end the waiting"
+        );
     }
 
     /// Two packages on one host, one of them stuck behind a signed-out session.
@@ -763,19 +997,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_row_shows_the_list_wording_for_its_state() {
-        let el = mount(|| {
-            view! {
-                <PackageList packages=vec![
-                    (
-                        "user/plate-07".to_string(),
-                        PackageState::Behind,
-                        true,
-                        None,
-                        None,
-                    ),
-                ] />
-            }
-        });
+        let light = vec![pkg("user/plate-07", PackageState::Behind)];
+        let store = PackageStore::seed(&light);
+        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
         let text = el.text_content().unwrap();
         assert!(text.contains("Not the latest"), "got: {text}");
         assert!(
@@ -786,13 +1010,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_row_links_to_its_own_package() {
-        let el = mount(|| {
-            view! {
-                <PackageList packages=vec![
-                    ("user/plate-07".to_string(), PackageState::Latest, true, None, None),
-                ] />
-            }
-        });
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
         let href = el
             .query_selector("a[href*=installed-package]")
             .unwrap()
@@ -809,13 +1029,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_provisional_row_is_marked_provisional() {
-        let el = mount(|| {
-            view! {
-                <PackageList packages=vec![
-                    ("user/a".to_string(), PackageState::Latest, true, None, None),
-                ] />
-            }
-        });
+        let light = vec![pkg("user/a", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
         assert!(
             el.query_selector("[class*=provisional]").unwrap().is_some(),
             "the light phase's guess is drawn dashed until the heavy phase confirms it"

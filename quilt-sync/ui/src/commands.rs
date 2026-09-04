@@ -549,6 +549,12 @@ pub struct MainPagePackageData {
     /// an `Unknown` package under its host's `Signed out from {host}` cause
     /// only when the accounts payload agrees that host is signed out.
     pub host: Option<String>,
+    /// The light phase's own statement that its answer is a guess. Every row
+    /// arrives provisional, so the page seeds its rows provisional by
+    /// construction and nothing reads this — it stays on the wire, and its
+    /// wire form stays pinned by `main_page_packages_data_wire_form_is_verbatim`,
+    /// which is the one place it is read.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub provisional: bool,
     /// The host whose role selector the row's switch affordance opens. The list
     /// carries it into `RowSignals` and settles it on refresh; the switch
