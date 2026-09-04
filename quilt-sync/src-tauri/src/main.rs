@@ -63,17 +63,6 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(
-            tauri::plugin::Builder::<_, ()>::new("logging-shutdown")
-                .on_event(|app_handle, event| {
-                    if matches!(event, tauri::RunEvent::Exit)
-                        && let Some(app) = app_handle.try_state::<App>()
-                    {
-                        app.logging.shutdown();
-                    }
-                })
-                .build(),
-        )
         .setup(|app| {
             let package_info = app.package_info();
 
@@ -270,6 +259,15 @@ fn main() {
             commands::download_and_install_update,
             commands::report_ui_panic,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Runs after every plugin's exit hook, so a plugin's own exit-time
+            // logging still reaches the file. A drop hosted in a plugin would not.
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(app) = app_handle.try_state::<App>()
+            {
+                app.logging.shutdown();
+            }
+        });
 }
