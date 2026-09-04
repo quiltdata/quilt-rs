@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.21.3-alpha1] - 2026-09-04
+
+### Fixed
+
+- *Save diagnostics* now includes the end of the log. The last lines of a session were dropped when the app quit — the ones covering whatever you were doing when the problem started — so the archive you send support stopped just short of the part that explains it. A crash or a force-quit still loses them (<https://github.com/quiltdata/quilt-rs/pull/883>)
+
 ## [v0.21.2] - 2026-09-02
 
 ### Fixed

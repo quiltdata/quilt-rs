@@ -5,10 +5,9 @@
 //! upstream of this is memory, so without it an offline session reports nothing at
 //! all and looks identical to nobody using the app.
 //!
-//! **Durability is incremental, not a shutdown hook.** Nothing runs when this app
-//! exits: the framework's run call ends the process directly, so no destructor and
-//! no flush gets a chance. A buffer written on the way out would never be written,
-//! so it is written the moment a send fails instead.
+//! **Durability is incremental** — written the moment a send fails, not gathered
+//! up at exit. Exit-time work exists (the log drains there), but a send is a
+//! network round trip and a quit must not wait on one.
 //!
 //! What is stored is the **wire form** — the event exactly as the ingest API would
 //! have received it. That is what makes a replay indistinguishable from a fresh

@@ -183,18 +183,11 @@ pub fn sentry_config(
             // anomaly reports and every user-filed report arrive with no trace, so
             // they say that something happened and nothing about where.
             .attach_stacktrace(true);
-        // Release health stays **off**, which is a decision rather than the default
-        // going unexamined twice.
-        //
-        // Two reasons, and either alone is enough. This sink is for errors: a count
-        // of app runs is an analytics question, and answering it here would put the
-        // same question in two places with two definitions. And the mechanics are
-        // worse than they look — the SDK enqueues a session only from its `Drop`, so
-        // *ending* a session is what sends it, and Tauri's `run` never returns (it
-        // ends the process with `std::process::exit`, running no destructor). Turning
-        // this on therefore means doing work on the way out: an HTTP request, and a
-        // quit that blocks on it. A quit must close the app, not wait on a network
-        // round trip that might leave something half-written.
+        // Release health stays **off**, and either reason alone is enough. A count
+        // of app runs is an analytics question the event vocabulary already
+        // answers. And the SDK enqueues a session only when it is *closed*, so
+        // turning this on means an HTTP request at exit that a quit would wait on.
+        // Asserted by a test, so an upstream default cannot reinstate it.
         options.dsn = Some(dsn);
         options
     })
