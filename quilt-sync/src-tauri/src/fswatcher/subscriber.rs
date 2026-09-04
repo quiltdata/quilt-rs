@@ -8,8 +8,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use notify::ErrorKind;
+use notify::EventKind;
 use notify::RecommendedWatcher;
 use notify::RecursiveMode;
+use notify::event::ModifyKind;
 use notify_debouncer_full::Debouncer;
 use notify_debouncer_full::RecommendedCache;
 use notify_debouncer_full::new_debouncer;
@@ -242,16 +244,23 @@ impl Subscription {
 }
 
 /// Resolve which namespaces are affected by a batch of debounced events.
-/// All event kinds — including `Access(_)` and `Modify(Metadata)` that
-/// Linux inotify emits on plain reads — are forwarded. The reactor
-/// dedupes spurious wakes by fingerprinting the recomputed status; a wake
-/// here only costs one extra recompute, never a UI repaint.
+///
+/// Status computation reads package files and metadata. Some backends report
+/// those reads as `Access` or metadata-only `Modify` events; forwarding them
+/// makes the watcher schedule the same expensive status walk again. Quilt
+/// manifests track file content and paths, not access times, permissions,
+/// ownership, or extended attributes, so every metadata-only variant is safe
+/// to ignore. Unknown top-level event kinds still pass through because they may
+/// be a backend's only representation of a content mutation.
 fn affected_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, PathBuf>,
 ) -> BTreeSet<Namespace> {
     let mut touched = BTreeSet::new();
     for event in events {
+        if is_non_content_event(event.kind) {
+            continue;
+        }
         for path in &event.paths {
             if filter::is_ignored(path) {
                 continue;
@@ -262,6 +271,13 @@ fn affected_namespaces(
         }
     }
     touched
+}
+
+fn is_non_content_event(kind: EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_))
+    )
 }
 
 fn namespace_for<'a>(
@@ -315,11 +331,69 @@ mod tests {
     use super::*;
 
     use crate::autopull::reporter::test_support::RecordingReporter;
+    use notify::event::{AccessKind, DataChange, MetadataKind};
     use tempfile::TempDir;
     use tokio::time::Duration;
 
     fn test_reporter() -> Arc<dyn StatusReporter> {
         Arc::new(RecordingReporter::default())
+    }
+
+    fn debounced(kind: EventKind) -> notify_debouncer_full::DebouncedEvent {
+        notify_debouncer_full::DebouncedEvent::new(
+            notify::Event {
+                kind,
+                paths: vec![PathBuf::from("/pkg/file.txt")],
+                attrs: notify::event::EventAttributes::default(),
+            },
+            std::time::Instant::now(),
+        )
+    }
+
+    #[test]
+    fn status_reads_and_all_metadata_variants_do_not_wake_the_watcher() {
+        let namespace: Namespace = ("acme", "demo").into();
+        let watched = BTreeMap::from([(namespace, PathBuf::from("/pkg"))]);
+        let metadata_kinds = [
+            MetadataKind::Any,
+            MetadataKind::AccessTime,
+            MetadataKind::WriteTime,
+            MetadataKind::Permissions,
+            MetadataKind::Ownership,
+            MetadataKind::Extended,
+            MetadataKind::Other,
+        ];
+
+        assert!(
+            affected_namespaces(&[debounced(EventKind::Access(AccessKind::Read))], &watched)
+                .is_empty()
+        );
+        for metadata in metadata_kinds {
+            assert!(
+                affected_namespaces(
+                    &[debounced(EventKind::Modify(ModifyKind::Metadata(metadata)))],
+                    &watched,
+                )
+                .is_empty(),
+                "metadata event {metadata:?} must not trigger a status walk"
+            );
+        }
+    }
+
+    #[test]
+    fn content_mutations_still_wake_the_watcher() {
+        let namespace: Namespace = ("acme", "demo").into();
+        let watched = BTreeMap::from([(namespace.clone(), PathBuf::from("/pkg"))]);
+
+        assert_eq!(
+            affected_namespaces(
+                &[debounced(EventKind::Modify(ModifyKind::Data(
+                    DataChange::Content,
+                )))],
+                &watched,
+            ),
+            BTreeSet::from([namespace])
+        );
     }
 
     #[tokio::test]
