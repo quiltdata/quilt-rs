@@ -280,98 +280,134 @@ fn cause_trailing(
 // since a component's arguments outlive the call that builds them.
 #[allow(clippy::needless_pass_by_value)]
 pub fn QueueRegion(
-    packages: Vec<MainPagePackageData>,
+    packages: Signal<Vec<MainPagePackageData>>,
     hosts: Vec<AccountHostData>,
+    in_flight: Signal<bool>,
 ) -> impl IntoView {
-    if packages.is_empty() {
-        // A fresh install has no packages at all. "Everything is Latest — 0
-        // packages" is a non-sequitur above an empty Packages card and
-        // invents copy for a case the zero line was never meant to speak
-        // for; the honest answer is nothing here. The empty-install story
-        // belongs to the list's own blankslate, which a later plan owns.
-        return ().into_any();
-    }
-
-    let total = packages.len();
-    let items = derive_queue(&packages, &hosts);
-    if items.is_empty() {
-        // Acceptance criterion 8: one line, not an empty state — with autosync
-        // working this is the common case, and a full-height panel here would
-        // push the package list below the fold to announce that nothing is wrong.
-        return view! { <ZeroLine text=zero_line_text(total) /> }.into_any();
-    }
-
+    // Created ONCE per construction, outside the closure below — that placement
+    // is R4 and R6 in one line. A settle re-runs the closure and finds the
+    // signal a group already has; a refetch builds a new `QueueRegion` and with
+    // it a new, empty map, so every group re-collapses.
+    let expanders: StoredValue<HashMap<String, RwSignal<bool>>> = StoredValue::new(HashMap::new());
+    // The map survives the closure's re-runs, but a signal created *inside* the
+    // closure does not: its arena entry belongs to that render's owner and is
+    // disposed the moment the render is replaced, so the next read panics with
+    // "already been disposed". The region's own owner outlives every render, so
+    // the signals are created in it.
+    let owner = Owner::current().expect("a component body runs inside an owner");
     let navigate = use_navigate();
-    // Derived from the rows rendered, never written by hand — a `Cause`'s count
-    // is its members, a `Package` is one of itself.
-    let count: usize = items
-        .iter()
-        .map(|item| match item {
-            QueueItem::Cause { members, .. } => members.len(),
-            QueueItem::Package { .. } => 1,
-        })
-        .sum();
+    // Accepted now so Task 3, which holds the zero line back while the heavy
+    // phase is still answering, changes one function and not a signature.
+    let _ = in_flight;
 
-    view! {
-        // One wrapper child, so `Card`'s between-children hairline does not
-        // fire: a queue is a list of decisions, and dividing every row would
-        // make it read as a table.
-        <Card title="Needs your attention" count=count>
-            <div>
-                {items
-                    .into_iter()
-                    .map(|item| match item {
-                        QueueItem::Cause { text, action, members } => {
-                            let expanded = RwSignal::new(false);
-                            let member_count = members.len();
-                            let trailing = cause_trailing(&action, navigate.clone());
-                            view! {
-                                <CauseRow
-                                    text=text
-                                    count=member_count
-                                    expanded=expanded
-                                    trailing=trailing
-                                />
-                                <Show when=move || expanded.get()>
-                                    {members
-                                        .iter()
-                                        .map(|namespace| {
-                                            view! { <QueueRow namespace=namespace.clone() sub=true /> }
-                                        })
-                                        .collect_view()}
-                                </Show>
-                            }
-                                .into_any()
-                        }
-                        QueueItem::Package { namespace, state } => {
-                            let rendered = render(&state, Site::QueueRow);
-                            // `Rendered.action` is `Option<&'static str>` — `None` renders
-                            // a row with no button, the honest answer for a state the app
-                            // has no operation to fix. Not invented here.
-                            if let Some(label) = rendered.action {
-                                let action = package_action(label, &namespace, navigate.clone());
+    move || {
+        let packages = packages.get();
+        // Cloned per run, not per use: `view!` moves its children into closures
+        // of their own, so a captured handle cannot be borrowed out of a
+        // closure that has to stay `FnMut`.
+        let navigate = navigate.clone();
+        let owner = owner.clone();
+        if packages.is_empty() {
+            // A fresh install has no packages at all. "Everything is Latest — 0
+            // packages" is a non-sequitur above an empty Packages card and
+            // invents copy for a case the zero line was never meant to speak
+            // for; the honest answer is nothing here. The empty-install story
+            // belongs to the list's own blankslate, which a later plan owns.
+            return ().into_any();
+        }
+
+        let total = packages.len();
+        let items = derive_queue(&packages, &hosts);
+        if items.is_empty() {
+            // Acceptance criterion 8: one line, not an empty state — with autosync
+            // working this is the common case, and a full-height panel here would
+            // push the package list below the fold to announce that nothing is wrong.
+            return view! { <ZeroLine text=zero_line_text(total) /> }.into_any();
+        }
+
+        // Derived from the rows rendered, never written by hand — a `Cause`'s count
+        // is its members, a `Package` is one of itself.
+        let count: usize = items
+            .iter()
+            .map(|item| match item {
+                QueueItem::Cause { members, .. } => members.len(),
+                QueueItem::Package { .. } => 1,
+            })
+            .sum();
+
+        view! {
+            // One wrapper child, so `Card`'s between-children hairline does not
+            // fire: a queue is a list of decisions, and dividing every row would
+            // make it read as a table.
+            <Card title="Needs your attention" count=count>
+                <div>
+                    {items
+                        .into_iter()
+                        .map(|item| match item {
+                            QueueItem::Cause { text, action, members } => {
+                                // Looked up, not built: the map outlives this
+                                // render, so a group the user opened stays open
+                                // across every settle that follows.
+                                let expanded = expanders
+                                    .with_value(|map| map.get(&text).copied())
+                                    .unwrap_or_else(|| {
+                                        let signal = owner.with(|| RwSignal::new(false));
+                                        expanders
+                                            .update_value(|map| {
+                                                map.insert(text.clone(), signal);
+                                            });
+                                        signal
+                                    });
+                                let member_count = members.len();
+                                let trailing = cause_trailing(&action, navigate.clone());
                                 view! {
-                                    <QueueRow
-                                        namespace=namespace
-                                        state=rendered.words
-                                        tone=rendered.tone
-                                        action=action
+                                    <CauseRow
+                                        text=text
+                                        count=member_count
+                                        expanded=expanded
+                                        trailing=trailing
                                     />
-                                }
-                                    .into_any()
-                            } else {
-                                view! {
-                                    <QueueRow namespace=namespace state=rendered.words tone=rendered.tone />
+                                    <Show when=move || expanded.get()>
+                                        {members
+                                            .iter()
+                                            .map(|namespace| {
+                                                view! { <QueueRow namespace=namespace.clone() sub=true /> }
+                                            })
+                                            .collect_view()}
+                                    </Show>
                                 }
                                     .into_any()
                             }
-                        }
-                    })
-                    .collect_view()}
-            </div>
-        </Card>
+                            QueueItem::Package { namespace, state } => {
+                                let rendered = render(&state, Site::QueueRow);
+                                // `Rendered.action` is `Option<&'static str>` — `None` renders
+                                // a row with no button, the honest answer for a state the app
+                                // has no operation to fix. Not invented here.
+                                if let Some(label) = rendered.action {
+                                    let action = package_action(label, &namespace, navigate.clone());
+                                    view! {
+                                        <QueueRow
+                                            namespace=namespace
+                                            state=rendered.words
+                                            tone=rendered.tone
+                                            action=action
+                                        />
+                                    }
+                                        .into_any()
+                                } else {
+                                    view! {
+                                        <QueueRow namespace=namespace state=rendered.words tone=rendered.tone />
+                                    }
+                                        .into_any()
+                                }
+                            }
+                        })
+                        .collect_view()}
+                </div>
+            </Card>
+        }
+        .into_any()
     }
-    .into_any()
 }
 
 #[cfg(test)]
@@ -699,6 +735,22 @@ mod tests {
         el.click();
     }
 
+    /// One mounted `QueueRegion`, with the props it now takes. `mount` supplies
+    /// the `Router` the actions navigate through.
+    fn mount_region(
+        packages: Signal<Vec<MainPagePackageData>>,
+        hosts: Vec<AccountHostData>,
+        in_flight: Signal<bool>,
+    ) -> web_sys::Element {
+        mount(move || view! { <QueueRegion packages=packages hosts=hosts in_flight=in_flight /> })
+    }
+
+    /// The first cause row's disclosure control. `aria-expanded` is the state
+    /// `CauseRow` writes; the chevron's rotation is decoration.
+    fn expander(el: &web_sys::Element) -> web_sys::Element {
+        el.query_selector("[aria-expanded]").unwrap().unwrap()
+    }
+
     fn all_latest(n: usize) -> Vec<MainPagePackageData> {
         (0..n)
             .map(|i| pkg(&format!("pkg/{i}"), PackageState::Latest, Some("h.io")))
@@ -747,7 +799,11 @@ mod tests {
         // Acceptance criterion 8, and ZeroLine's own doc: with autosync working
         // this is the common case, and a full-height empty state here would push
         // the package list below the fold to announce that nothing is wrong.
-        let el = mount(|| view! { <QueueRegion packages=all_latest(43) hosts=one_signed_in() /> });
+        let el = mount_region(
+            Signal::stored(all_latest(43)),
+            one_signed_in(),
+            Signal::stored(false),
+        );
         let text = el.text_content().unwrap();
         assert!(text.contains("Everything is Latest"), "got: {text}");
         assert!(
@@ -767,7 +823,11 @@ mod tests {
         // A second N, never 43 again: a hard-coded "43 packages" string would
         // pass the test above and only fail here, where the fixture's count
         // actually varies.
-        let el = mount(|| view! { <QueueRegion packages=all_latest(7) hosts=one_signed_in() /> });
+        let el = mount_region(
+            Signal::stored(all_latest(7)),
+            one_signed_in(),
+            Signal::stored(false),
+        );
         assert!(
             el.text_content().unwrap().contains("7 packages"),
             "got: {}",
@@ -780,7 +840,11 @@ mod tests {
         // `zero_line_text`'s `total == 1` branch is real code, not a case ever
         // proven by the plural fixtures above — deleting it and always taking
         // the plural arm must fail exactly here.
-        let el = mount(|| view! { <QueueRegion packages=all_latest(1) hosts=one_signed_in() /> });
+        let el = mount_region(
+            Signal::stored(all_latest(1)),
+            one_signed_in(),
+            Signal::stored(false),
+        );
         let text = el.text_content().unwrap();
         assert!(text.contains("1 package"), "got: {text}");
         assert!(
@@ -796,7 +860,11 @@ mod tests {
         // non-sequitur that invents copy for a case the zero line was never
         // meant to speak for. Render nothing — the empty-install story
         // belongs to the list's own blankslate.
-        let el = mount(|| view! { <QueueRegion packages=vec![] hosts=one_signed_in() /> });
+        let el = mount_region(
+            Signal::stored(vec![]),
+            one_signed_in(),
+            Signal::stored(false),
+        );
         assert_eq!(
             el.text_content().unwrap().trim(),
             "",
@@ -812,18 +880,15 @@ mod tests {
         // collapses to one row but must still count as 2, so a payload with
         // one cause AND one package row pins the count as their SUM, not
         // `items.len()` (which would read 2, not 3).
-        let el = mount(|| {
-            view! {
-                <QueueRegion
-                    packages=vec![
-                        pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
-                        pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
-                        pkg("c/three", PackageState::Behind, Some("h.io")),
-                    ]
-                    hosts=vec![host("custom.registry.io", false), host("h.io", true)]
-                />
-            }
-        });
+        let el = mount_region(
+            Signal::stored(vec![
+                pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+                pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+                pkg("c/three", PackageState::Behind, Some("h.io")),
+            ]),
+            vec![host("custom.registry.io", false), host("h.io", true)],
+            Signal::stored(false),
+        );
         let text = el.text_content().unwrap();
         assert!(
             text.contains("(3)"),
@@ -870,8 +935,10 @@ mod tests {
         // answer for a state the app has no operation to fix. Dropping
         // `tone=rendered.tone` from the `None` branch still compiles and
         // still passes every OTHER test; this is the one that must catch it.
-        let el = mount(
-            || view! { <QueueRegion packages=one_unknown_signed_in() hosts=one_signed_in() /> },
+        let el = mount_region(
+            Signal::stored(one_unknown_signed_in()),
+            one_signed_in(),
+            Signal::stored(false),
         );
         let text = el.text_content().unwrap();
         assert!(text.contains("Sync stopped"), "render's own words: {text}");
@@ -884,8 +951,11 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_shared_cause_states_its_count_and_offers_the_one_fix() {
-        let el =
-            mount(|| view! { <QueueRegion packages=two_signed_out() hosts=one_signed_out() /> });
+        let el = mount_region(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            Signal::stored(false),
+        );
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Signed out from custom.registry.io"),
@@ -903,8 +973,11 @@ mod tests {
         // Section 5.3: a link may be duplicated across scopes, a control may not.
         // Switching role is host-scoped, so the control belongs to the Accounts
         // card and this row points at it.
-        let el =
-            mount(|| view! { <QueueRegion packages=one_role_denied() hosts=one_signed_in() /> });
+        let el = mount_region(
+            Signal::stored(one_role_denied()),
+            one_signed_in(),
+            Signal::stored(false),
+        );
         let text = el.text_content().unwrap();
         assert!(text.contains("No access as analyst"), "got: {text}");
         assert!(text.contains("s3://team-bucket"), "got: {text}");
@@ -926,15 +999,17 @@ mod tests {
         // QueueRow's doc: expanding "Signed out — 11 packages" answers WHICH
         // packages, and repeating "Signed out" on all eleven is exactly the
         // redundancy the cause row exists to remove.
-        let el =
-            mount(|| view! { <QueueRegion packages=two_signed_out() hosts=one_signed_out() /> });
+        let el = mount_region(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            Signal::stored(false),
+        );
         assert!(
             !el.text_content().unwrap().contains("a/one"),
             "collapsed by default"
         );
 
-        let expander = el.query_selector("[aria-expanded]").unwrap().unwrap();
-        click(&expander);
+        click(&expander(&el));
         leptos::task::tick().await;
 
         let text = el.text_content().unwrap();
@@ -954,12 +1029,159 @@ mod tests {
         // `render(state, Site::QueueRow)` exists precisely because two states word
         // themselves differently by site: the list says "Not the latest", the queue
         // says "Newer revision available" because it sits beside its action.
-        let el = mount(|| view! { <QueueRegion packages=one_behind() hosts=one_signed_in() /> });
+        let el = mount_region(
+            Signal::stored(one_behind()),
+            one_signed_in(),
+            Signal::stored(false),
+        );
         let text = el.text_content().unwrap();
         assert!(text.contains("Newer revision available"), "got: {text}");
         assert!(
             !text.contains("Not the latest"),
             "that is the list's wording: {text}"
+        );
+    }
+
+    // §§ The region as a function of inputs that change under it.
+
+    #[wasm_bindgen_test]
+    async fn a_settling_package_appears_in_the_queue_without_a_refetch() {
+        // qhq-8mgw.35, from the region's side: the light phase cannot see the working
+        // tree, so the package arrives Latest and the queue must pick up the heavy
+        // phase's answer when it lands.
+        let packages = RwSignal::new(vec![pkg(
+            "user/plate-07",
+            PackageState::Latest,
+            Some("h.io"),
+        )]);
+        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        assert!(
+            !el.text_content().unwrap().contains("1 file changed"),
+            "nothing to say yet"
+        );
+
+        packages.set(vec![pkg(
+            "user/plate-07",
+            PackageState::PendingChanges { files: 1 },
+            Some("h.io"),
+        )]);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("1 file changed"), "got: {text}");
+        assert!(
+            text.contains("Publish"),
+            "beside the one thing to do: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_settle_does_not_collapse_a_group_the_user_opened() {
+        // R4. The region now re-renders on every settle — up to once per package on
+        // one page load — and rebuilding the expander signals each time would close a
+        // group under the user's hands.
+        let packages = RwSignal::new(vec![
+            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("b/three", PackageState::Latest, Some("custom.registry.io")),
+        ]);
+        let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
+        click(&expander(&el));
+        leptos::task::tick().await;
+        assert!(el.text_content().unwrap().contains("a/one"), "opened");
+
+        // A third package settles into a state of its own — the cause is untouched.
+        packages.update(|p| p[2].state = PackageState::Behind);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Newer revision available"),
+            "the settle landed: {text}"
+        );
+        assert!(
+            text.contains("a/one") && text.contains("a/two"),
+            "the group the user opened is still open: {text}"
+        );
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "true"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_group_that_gains_a_member_keeps_its_expansion_and_its_count_grows() {
+        // The count is derived from the members, so it must move; the expansion is
+        // keyed on the cause's identity, which did not change.
+        let packages = RwSignal::new(vec![pkg(
+            "a/one",
+            PackageState::Unknown,
+            Some("custom.registry.io"),
+        )]);
+        let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
+        click(&expander(&el));
+        leptos::task::tick().await;
+        assert!(el.text_content().unwrap().contains("1 package"));
+
+        packages.update(|p| {
+            p.push(pkg(
+                "a/two",
+                PackageState::Unknown,
+                Some("custom.registry.io"),
+            ));
+        });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("2 packages"), "got: {text}");
+        assert!(
+            text.contains("a/two"),
+            "the new member is revealed too: {text}"
+        );
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "true"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_rebuilt_region_starts_collapsed() {
+        // R6's half, which must survive R4: a refetch constructs a new `QueueRegion`,
+        // and the expansion the user opened was about a set that no longer exists.
+        let packages = RwSignal::new(vec![
+            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+        ]);
+        let show = RwSignal::new(true);
+        let hosts = one_signed_out();
+        let el = mount(move || {
+            view! {
+                <Show when=move || show.get()>
+                    <QueueRegion
+                        packages=packages.into()
+                        hosts=hosts.clone()
+                        in_flight=Signal::stored(false)
+                    />
+                </Show>
+            }
+        });
+        click(&expander(&el));
+        leptos::task::tick().await;
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "true"
+        );
+
+        // Unmount and remount: the shape a resolved refetch produces.
+        show.set(false);
+        leptos::task::tick().await;
+        show.set(true);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "false",
+            "a new region collapses every group"
         );
     }
 }

@@ -429,7 +429,16 @@ fn MainPageRegions(
                             // No wrapper and no margin: `PageLayout`'s column owns
                             // the gap between regions, and the queue is a direct
                             // child of it like the other two.
-                            <queue::QueueRegion packages=data.packages hosts=hosts />
+                            // Still the light phase's list, and still not the
+                            // store's: wiring the queue to the settled states
+                            // is Task 4's, and until then this stays a constant
+                            // signal so the region's shape is the only thing
+                            // that changed.
+                            <queue::QueueRegion
+                                packages=Signal::stored(data.packages)
+                                hosts=hosts
+                                in_flight=Signal::stored(false)
+                            />
                             <Card title="Packages">
                                 <PackageList packages=rows store=store />
                             </Card>
