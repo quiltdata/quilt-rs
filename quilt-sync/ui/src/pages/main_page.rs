@@ -713,6 +713,10 @@ mod tests {
     /// is the case the ordering test must be able to fail on: a queue that renders
     /// nothing would leave the assertion with nothing to find between the strip
     /// and the list.
+    ///
+    /// The `provisional: false` on each row is inert, unlike the accounts fixture
+    /// below: `PackageStore::seed` marks every row provisional by construction and
+    /// never reads this field, so a page test settles its rows with `settle_all`.
     fn a_package_needing_attention() -> MainPagePackagesData {
         MainPagePackagesData {
             packages: vec![
@@ -920,6 +924,12 @@ mod tests {
         // accounts read feeds the Accounts card and the queue's join. The queue's
         // cause names the host the accounts payload says is signed out — which
         // needs both halves of R3's join — and the list still holds every row.
+        //
+        // Of the package half, the page still owns the `host` and the `namespace`:
+        // `settled` carries those through from its own `light` payload with
+        // `..p.clone()`, and the host is what the join below is about. Only the
+        // `state` is written here by `settle_all`, standing in for a heavy phase
+        // that has no Tauri host to answer it.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -1002,6 +1012,53 @@ mod tests {
         assert!(
             !text.contains("Everything is Latest"),
             "and no longer claims otherwise: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_waits_for_the_last_answer_before_it_says_all_is_well() {
+        // R3, at the page's own call site: `in_flight` is a prop like any other,
+        // and a page that wired it to a constant would pass every region-level
+        // test Task 3 wrote while still announcing an all-clear it has not earned.
+        //
+        // No fetcher seam is needed to reach that window. `outstanding` is a plain
+        // signal the store holds, so a test can put a call back in flight the way
+        // a slower row would — one row answering after the others is exactly the
+        // case R3 exists for, and R0 guarantees rows answer at different times.
+        let payload = MainPagePackagesData {
+            packages: vec![
+                pkg("user/plate-07", PackageState::Latest),
+                pkg("user/plate-08", PackageState::Latest),
+            ],
+        };
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        let store = seeded_store(slot);
+        // Both rows confirmed and both Latest, so the queue derives nothing and
+        // the zero line is the only thing left for it to draw — but one answer is
+        // still outstanding, so it may not draw it yet.
+        settle_all(store, &payload);
+        store.outstanding.set(1);
+        leptos::task::tick().await;
+        let text = el.text_content().unwrap();
+        assert!(
+            !text.contains("Everything is Latest"),
+            "R3: an answer is still outstanding, so the all-clear is not a fact yet: {text}"
+        );
+
+        store.outstanding.set(0);
+        leptos::task::tick().await;
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Everything is Latest — 2 packages"),
+            "and it says so the moment the last answer lands: {text}"
         );
     }
 
