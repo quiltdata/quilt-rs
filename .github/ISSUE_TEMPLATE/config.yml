@@ -1,0 +1,10 @@
+blank_issues_enabled: true
+contact_links:
+  - name: An idea that is not formed yet
+    url: https://github.com/quiltdata/quilt-rs/issues/889
+    about: >
+      A direction, or something you cannot yet say is done or not done. Comment
+      on the Roadmap — it holds intent that has no acceptance criteria yet.
+  - name: A security problem
+    url: https://github.com/quiltdata/quilt-rs/security/policy
+    about: Report it privately, not as an issue. See SECURITY.md.

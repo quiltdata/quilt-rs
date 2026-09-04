@@ -1,0 +1,62 @@
+name: Feature or gap
+description: Something the CLI, library, or QuiltSync cannot do today
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        For a direction rather than a specific gap — something with no way to
+        tell whether a change satisfied it — comment on the
+        [Roadmap](https://github.com/quiltdata/quilt-rs/issues/889) instead.
+
+  - type: textarea
+    id: cannot-do
+    attributes:
+      label: What you cannot do today
+      description: >
+        Observable from outside: a command with no flag, a screen with no
+        button, an error with no way past it. What you think the code is
+        missing goes in the last box, not this one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: instead
+    attributes:
+      label: What you did instead
+      description: >
+        The workaround, however ugly. "Nothing, I gave up" is an answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: done-when
+    attributes:
+      label: How we will know it is done
+      description: >
+        In terms of command output, exit status, or what a screen shows. If you
+        cannot write this yet, the Roadmap is where the idea belongs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: where-you-looked
+    attributes:
+      label: Where you already looked
+      description: >
+        Which docs you checked and what they said — `docs/`, the crate
+        `README.md` files, the Roadmap, open issues, and the internal Quilt
+        spec corpus if you have access to it. Saying where you did *not* look
+        is as useful: it tells a reader which claims to check first.
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation-notes
+    attributes:
+      label: Implementation notes — unverified
+      description: >
+        Optional, and read as a guess: where you think the code is, which file
+        you would start in, what you think the fix involves. Whoever picks this
+        up confirms it against the code first — nothing here carries authority,
+        by design.
