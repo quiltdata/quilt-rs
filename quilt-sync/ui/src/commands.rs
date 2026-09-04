@@ -556,7 +556,7 @@ pub struct MainPagePackageData {
     /// which is the one place it is read.
     #[cfg_attr(not(test), expect(dead_code))]
     pub provisional: bool,
-    /// The host whose role selector the row's switch affordance opens. The list
+    /// The host whose role selector the row's switch affordance opens. The page
     /// carries it into `RowSignals` and settles it on refresh; the switch
     /// control itself is the queue's (Plan 4), so no `#[expect(dead_code)]`
     /// here — the field is carried and settled, never read.

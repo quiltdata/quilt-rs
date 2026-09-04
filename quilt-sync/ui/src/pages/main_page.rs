@@ -179,11 +179,6 @@ impl PackageStore {
     }
 
     /// Whether any heavy-phase call is still outstanding (R3).
-    ///
-    /// Dead in the app build until the queue reads it — the lift lands first, the
-    /// rewiring after — but live in this module's own tests, which is why the
-    /// expectation is conditional.
-    #[cfg_attr(not(test), expect(dead_code))]
     fn in_flight(&self) -> bool {
         self.outstanding.get() > 0
     }
@@ -196,10 +191,8 @@ impl PackageStore {
     /// Reads the signals with `.get()`, never `get_untracked()`: the caller's
     /// reactivity is the entire point of holding these signals on the page, and
     /// "optimising" this to an untracked read would leave the queue frozen on the
-    /// light phase again.
-    ///
-    /// Dead in the app build until the queue reads it; see [`Self::in_flight`].
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// light phase again — `a_reader_of_settled_re_runs_when_a_row_settles` is
+    /// what catches that.
     fn settled(&self, light: &[MainPagePackageData]) -> Vec<MainPagePackageData> {
         light
             .iter()
@@ -309,7 +302,13 @@ fn PackageList(packages: Vec<PackageRowData>, store: PackageStore) -> impl IntoV
             // A namespace the store was not seeded with cannot happen from one
             // payload — the rows and the store are built from the same packages —
             // and drawing nothing is not worth a panic.
-            let row = store.row(&namespace)?;
+            let Some(row) = store.row(&namespace) else {
+                // But the counter still has to balance: no row means no call and
+                // so no answer, and an `outstanding` that never reaches zero
+                // leaves the queue silent for good (R3).
+                answered.run(());
+                return None;
+            };
             Some(view! {
                 <PackageListRow
                     namespace=namespace
@@ -367,6 +366,18 @@ fn MainPageRegions(
     accounts: LocalResource<Result<MainPageAccountsData, String>>,
     /// The page's reload trigger, which every resource here tracks.
     reload: Trigger,
+    /// Handed the [`PackageStore`] the moment the page seeds one, so a test can
+    /// drive a settle the way the heavy phase would. Read-only and one-shot: the
+    /// page still owns the store and still seeds it from its own payload, so a
+    /// caller cannot make the test's page differ from the app's. The app passes
+    /// nothing; there is no Tauri host in a test, so every row's real refresh
+    /// fails and nothing would ever settle without this.
+    ///
+    /// `optional_no_strip` rather than `optional`: the plain form makes the
+    /// builder take a bare `Callback`, and the one caller that passes anything
+    /// here already holds an `Option`.
+    #[prop(optional_no_strip)]
+    on_store: Option<Callback<PackageStore>>,
 ) -> impl IntoView {
     view! {
         // Outside every boundary, so both cards are constructed once and each one
@@ -410,15 +421,35 @@ fn MainPageRegions(
             {move || Suspend::new(async move {
                 match packages.await {
                     Ok(data) => {
+                        // The light phase's payload, held for the life of this
+                        // resolve: it is the base the store's projection writes
+                        // the heavy phase's answers over, and both the store and
+                        // the list's rows are built from it. Moved rather than
+                        // cloned — the page is the only owner and `rows` is taken
+                        // before the projection captures it.
+                        let light = data.packages;
                         // Seeded here rather than inside the list: the heavy
                         // phase's answers belong to the page, so the queue can
-                        // read them too. Wiring the queue to them is Task 4's.
-                        let store = PackageStore::seed(&data.packages);
-                        let rows: Vec<PackageRowData> = data
-                            .packages
+                        // read them too.
+                        let store = PackageStore::seed(&light);
+                        if let Some(on_store) = on_store {
+                            on_store.run(store);
+                        }
+                        let rows: Vec<PackageRowData> = light
                             .iter()
                             .map(|p| (p.namespace.clone(), p.changed_at))
                             .collect();
+                        // §4.3's "resolved package list", at last: the queue reads
+                        // what the heavy phase confirmed, not what the light phase
+                        // guessed — the light phase never looks at the working
+                        // tree, which is how a package with local edits ended up
+                        // under an all-clear (qhq-8mgw.35). Reactive, so a row
+                        // settling re-renders the queue and nothing else: the list
+                        // below keeps reading its own per-row signals, because
+                        // re-running `PackageList` would re-fire every row's
+                        // refresh.
+                        let settled = Signal::derive(move || store.settled(&light));
+                        let in_flight = Signal::derive(move || store.in_flight());
                         // The accounts read is awaited here too, for the queue's
                         // join — inside this arm, because a page with no rows has
                         // no queue to join anything to. Its failure is not logged a
@@ -431,15 +462,10 @@ fn MainPageRegions(
                             // No wrapper and no margin: `PageLayout`'s column owns
                             // the gap between regions, and the queue is a direct
                             // child of it like the other two.
-                            // Still the light phase's list, and still not the
-                            // store's: wiring the queue to the settled states
-                            // is Task 4's, and until then this stays a constant
-                            // signal so the region's shape is the only thing
-                            // that changed.
                             <queue::QueueRegion
-                                packages=Signal::stored(data.packages)
+                                packages=settled
                                 hosts=hosts
-                                in_flight=Signal::stored(false)
+                                in_flight=in_flight
                             />
                             <Card title="Packages">
                                 <PackageList packages=rows store=store />
@@ -605,6 +631,34 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    async fn a_reader_of_settled_re_runs_when_a_row_settles() {
+        // `settled` reads its signals with `.get()` and must keep doing so. Its
+        // only other input is a `StoredValue`, which is not reactive, so an
+        // "optimising" `get_untracked()` would leave a `Signal::derive` over it
+        // with no dependencies at all — and the queue, which is now that
+        // derivation's only reader, would freeze on the light phase. That is
+        // qhq-8mgw.35 exactly, so this is the whole plan's regression guard.
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let settled = Signal::derive(move || store.settled(&light));
+        let el = mount(move || view! { <p>{move || settled.get().len()}</p> });
+        assert_eq!(
+            el.text_content().unwrap(),
+            "0",
+            "nothing is confirmed yet (R2)"
+        );
+
+        settle(store, "user/plate-07", PackageState::Behind);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            el.text_content().unwrap(),
+            "1",
+            "the settle reached the reader; `settled` still reads through .get()"
+        );
+    }
+
+    #[wasm_bindgen_test]
     async fn a_row_reads_the_store_and_settles_in_place() {
         // The list must keep settling exactly as it does today, with the signals now
         // owned a level up. `PackageList` is NOT re-rendered by a settle — that would
@@ -711,15 +765,17 @@ mod tests {
         packages: Result<MainPagePackagesData, String>,
         accounts: Result<MainPageAccountsData, String>,
     ) -> web_sys::Element {
-        mount_regions_reloading(packages, accounts, Trigger::new())
+        mount_regions_reloading(packages, accounts, Trigger::new(), None)
     }
 
     /// [`mount_regions`] with the caller's own trigger, for the test that drives a
-    /// refetch. Both resources track it, exactly as the page's own do.
+    /// refetch, and with the store seam, for the tests that drive a settle. Both
+    /// resources track the trigger, exactly as the page's own do.
     fn mount_regions_reloading(
         packages: Result<MainPagePackagesData, String>,
         accounts: Result<MainPageAccountsData, String>,
         reload: Trigger,
+        on_store: Option<Callback<PackageStore>>,
     ) -> web_sys::Element {
         mount(move || {
             let packages = LocalResource::new(move || {
@@ -734,10 +790,74 @@ mod tests {
             });
             view! {
                 <leptos_router::components::Router>
-                    <MainPageRegions packages=packages accounts=accounts reload=reload />
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        on_store=on_store
+                    />
                 </leptos_router::components::Router>
             }
         })
+    }
+
+    /// A slot for the store the page seeds, and the callback that fills it. An
+    /// `RwSignal` rather than an `Rc<Cell<_>>` because `Callback::new` wants a
+    /// `Send + Sync` closure.
+    fn store_slot() -> (RwSignal<Option<PackageStore>>, Callback<PackageStore>) {
+        let slot = RwSignal::new(None);
+        (slot, Callback::new(move |store| slot.set(Some(store))))
+    }
+
+    /// The store the page most recently seeded. A refetch seeds a new one, so a
+    /// test that reloads must read this again afterwards.
+    fn seeded_store(slot: RwSignal<Option<PackageStore>>) -> PackageStore {
+        slot.get_untracked().expect("the page seeded a store")
+    }
+
+    /// The heavy phase's answer for one row, as [`PackageListRow`] would apply it
+    /// if there were a Tauri host to answer the call.
+    fn settle(store: PackageStore, namespace: &str, state: PackageState) {
+        store
+            .row(namespace)
+            .expect("the store was seeded with this namespace")
+            .apply(MainPagePackageRefreshData {
+                state,
+                role_switch_host: None,
+            });
+    }
+
+    /// Every row confirmed with exactly what the light phase guessed — the heavy
+    /// phase agreeing. The queue draws only confirmed rows (R2) and no row can
+    /// confirm itself without a Tauri host, so a page test whose subject is not
+    /// the settle still has to play that part or assert against an empty queue.
+    fn settle_all(store: PackageStore, packages: &MainPagePackagesData) {
+        for package in &packages.packages {
+            store
+                .row(&package.namespace)
+                .expect("seeded from this payload")
+                .apply(MainPagePackageRefreshData {
+                    state: package.state.clone(),
+                    role_switch_host: package.role_switch_host.clone(),
+                });
+        }
+    }
+
+    /// The queue card's own text, or `None` when the region drew nothing.
+    ///
+    /// Scoped to the card rather than taken from the whole page because the list
+    /// row below says some of the same words — `render(&state, Site::ListRow)`
+    /// gives `1 file changed` too — so an unscoped `contains` would pass on a
+    /// queue that never heard about the settle. Found by its title rather than by
+    /// a class: `stylance` emits `Card`'s own identifiers, which are `root`,
+    /// `title` and `body` for every card on the page.
+    fn queue_text(el: &web_sys::Element) -> Option<String> {
+        let sections = el.query_selector_all("section").unwrap();
+        (0..sections.length())
+            .filter_map(|i| sections.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .filter_map(|section| section.text_content())
+            .find(|text| text.contains("Needs your attention"))
     }
 
     /// The strip element itself, so a test can ask what is inside it rather than
@@ -756,8 +876,16 @@ mod tests {
         // The word asserted for the strip is `Accounts` rather than `Autosync`:
         // `Autosync` lives inside `AutosyncBody`, behind that card's own resource,
         // which has no Tauri host to answer it here.
-        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
         sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
 
         let html = el.inner_html();
         let strip = html.find("Accounts").expect("strip");
@@ -792,8 +920,16 @@ mod tests {
         // accounts read feeds the Accounts card and the queue's join. The queue's
         // cause names the host the accounts payload says is signed out — which
         // needs both halves of R3's join — and the list still holds every row.
-        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
         sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
 
         let text = el.text_content().unwrap();
         assert!(
@@ -813,6 +949,59 @@ mod tests {
                 .length(),
             2,
             "and the list still draws every row of the same package payload"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_names_a_package_the_heavy_phase_found_changes_in() {
+        // qhq-8mgw.35, end to end and at the page level: the operator saw
+        // "Everything is Latest" above a package with uncommitted changes. The
+        // light phase cannot see the working tree, so only the heavy phase's
+        // answer can name this package — and until this task the queue was never
+        // told about it.
+        //
+        // The accounts fixture is the signed-out host, which the packages here
+        // cannot join to: `pkg` leaves `host` at `None`, so no cause is ever
+        // attributed and every row that reaches the queue is a row of its own.
+        // That is the point — this test is about the state, not the join.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(MainPagePackagesData {
+                packages: vec![
+                    pkg("user/plate-07", PackageState::Latest),
+                    pkg("user/other", PackageState::Latest),
+                ],
+            }),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        // Every row is still provisional — the refreshes this mount fired have
+        // no Tauri host to answer them — so `settled` is empty and the region
+        // takes its `packages.is_empty()` early return. Silence for that reason,
+        // not for R3's in-flight guard, which `queue.rs`'s own tests pin: by now
+        // every one of those failed calls has decremented the counter.
+        assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+
+        settle(
+            seeded_store(slot),
+            "user/plate-07",
+            PackageState::PendingChanges { files: 1 },
+        );
+        settle(seeded_store(slot), "user/other", PackageState::Latest);
+        leptos::task::tick().await;
+
+        let queue = queue_text(&el).expect("the queue has something to say");
+        assert!(
+            queue.contains("1 file changed"),
+            "the queue names it: {queue}"
+        );
+        assert!(queue.contains("Publish"), "beside its action: {queue}");
+        let text = el.text_content().unwrap();
+        assert!(
+            !text.contains("Everything is Latest"),
+            "and no longer claims otherwise: {text}"
         );
     }
 
@@ -849,8 +1038,22 @@ mod tests {
         // host, so the signed-out package falls to a row of its own rather than
         // vanishing — and the Accounts card renders nothing at all rather than a
         // card with no rows, which would assert the user has no sessions.
-        let el = mount_regions(Ok(a_package_needing_attention()), Err("nope".to_string()));
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Err("nope".to_string()),
+            Trigger::new(),
+            Some(on_store),
+        );
         sleep_ms(50).await;
+        // Settled, so the queue really does draw — otherwise "no host was said to
+        // be signed out" would hold over a region that drew nothing at all.
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+        assert!(
+            queue_text(&el).is_some(),
+            "the queue drew, so the assertion below is about what it says"
+        );
 
         let text = el.text_content().unwrap();
         assert!(
@@ -878,13 +1081,17 @@ mod tests {
         // `QueueRegion` is constructed again and builds new expander signals — a
         // memoised subtree, or one held across the resolve, would keep the old
         // ones and this would stay open.
+        let (slot, on_store) = store_slot();
         let reload = Trigger::new();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
             Ok(one_signed_out_host()),
             reload,
+            Some(on_store),
         );
         sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
 
         let expander = el
             .query_selector("[aria-expanded]")
@@ -904,6 +1111,12 @@ mod tests {
 
         reload.notify();
         sleep_ms(50).await;
+        // The refetch re-seeds: the new store's rows are provisional again, so
+        // the heavy phase has to answer again before the queue has anything to
+        // draw. Settling here is also what keeps this test honest — a group that
+        // re-collapsed only because its row vanished would prove nothing.
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
 
         assert_eq!(
             el.query_selector("[aria-expanded]")
