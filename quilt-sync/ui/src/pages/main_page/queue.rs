@@ -287,14 +287,25 @@ pub fn QueueRegion(
     // Created ONCE per construction, outside the closure below — that placement
     // is R4 and R6 in one line. A settle re-runs the closure and finds the
     // signal a group already has; a refetch builds a new `QueueRegion` and with
-    // it a new, empty map, so every group re-collapses.
+    // it a new, empty map, so every group re-collapses. R6 rides on that
+    // freshness alone — nothing here disposes the old signals, and it does not
+    // need to.
+    //
+    // Nothing evicts, either: a cause whose text stops being derived keeps its
+    // `true`, so if that same text is derived again within one region's life the
+    // group comes back open. Intended — that is what keying on a cause's
+    // identity means — and the key space is bounded by hosts × buckets.
     let expanders: StoredValue<HashMap<String, RwSignal<bool>>> = StoredValue::new(HashMap::new());
-    // The map survives the closure's re-runs, but a signal created *inside* the
-    // closure does not: its arena entry belongs to that render's owner and is
-    // disposed the moment the render is replaced, so the next read panics with
-    // "already been disposed". The region's own owner outlives every render, so
-    // the signals are created in it.
-    let owner = Owner::current().expect("a component body runs inside an owner");
+    // The map survives the closure's re-runs; a signal created *inside* the
+    // closure would not. Leptos re-runs a render effect under `with_cleanup`,
+    // disposing everything the previous run registered, so the next read panics
+    // with "already been disposed".
+    //
+    // This is the enclosing view's owner, not one of the region's own: a
+    // non-island `#[component]` body is given no owner (`leptos_macro` wraps
+    // only islands in `Owner::new()`). It outlives the render effect, which is
+    // all R4 asks of it.
+    let owner = Owner::current().expect("a view always renders inside an owner");
     let navigate = use_navigate();
     // Accepted now so Task 3, which holds the zero line back while the heavy
     // phase is still answering, changes one function and not a signature.
@@ -302,9 +313,10 @@ pub fn QueueRegion(
 
     move || {
         let packages = packages.get();
-        // Cloned per run, not per use: `view!` moves its children into closures
-        // of their own, so a captured handle cannot be borrowed out of a
-        // closure that has to stay `FnMut`.
+        // `view!` moves its children into closures of their own, so a handle
+        // captured by this closure cannot merely be borrowed out of it and leave
+        // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
+        // cloned again at each use below.
         let navigate = navigate.clone();
         let owner = owner.clone();
         if packages.is_empty() {
@@ -1121,7 +1133,11 @@ mod tests {
         let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
         click(&expander(&el));
         leptos::task::tick().await;
-        assert!(el.text_content().unwrap().contains("1 package"));
+        assert!(
+            el.text_content().unwrap().contains("1 package"),
+            "one member, stated singular, before the second arrives: {}",
+            el.text_content().unwrap()
+        );
 
         packages.update(|p| {
             p.push(pkg(

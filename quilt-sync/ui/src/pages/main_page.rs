@@ -349,11 +349,13 @@ fn PackageList(packages: Vec<PackageRowData>, store: PackageStore) -> impl IntoV
 /// the same rows the list draws: separate boundaries would let the list arrive
 /// above a queue still deciding whether it has anything to say.
 ///
-/// Inside that boundary everything is a plain value, never a signal. A refetch
-/// rebuilds the subtree, and that is what re-collapses an expanded cause group
-/// (R6): `QueueRegion` builds its expander signals when it is constructed, so a
-/// region kept across a refetch would leave a group open over rows the new
-/// payload no longer holds.
+/// A refetch rebuilds that subtree, and the rebuild is what re-collapses an
+/// expanded cause group (R6): `QueueRegion` builds its expander map when it is
+/// constructed — and each group's signal lazily, the first time a render derives
+/// that cause — so a region kept across a refetch would leave a group open over
+/// rows the new payload no longer holds. Whether the queue's `packages` input is
+/// reactive is orthogonal to that: R6 asks that the region be *constructed*
+/// again, not that what it reads sit still.
 #[component]
 fn MainPageRegions(
     /// The page's package read. Awaited once, by the boundary the queue and the
