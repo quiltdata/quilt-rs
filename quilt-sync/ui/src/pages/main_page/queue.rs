@@ -307,9 +307,6 @@ pub fn QueueRegion(
     // all R4 asks of it.
     let owner = Owner::current().expect("a view always renders inside an owner");
     let navigate = use_navigate();
-    // Accepted now so Task 3, which holds the zero line back while the heavy
-    // phase is still answering, changes one function and not a signature.
-    let _ = in_flight;
 
     move || {
         let packages = packages.get();
@@ -331,9 +328,15 @@ pub fn QueueRegion(
         let total = packages.len();
         let items = derive_queue(&packages, &hosts);
         if items.is_empty() {
-            // Acceptance criterion 8: one line, not an empty state — with autosync
-            // working this is the common case, and a full-height panel here would
-            // push the package list below the fold to announce that nothing is wrong.
+            if in_flight.get() {
+                // R3: nothing known AND still deciding. Not the zero line — the
+                // light phase cannot see the working tree, so "everything is
+                // Latest" is not a fact yet. Not a skeleton either: see
+                // `kit/skeleton_box.rs`'s own doc, and the settling rows in the
+                // list below are the activity signal it points at.
+                return ().into_any();
+            }
+            // Acceptance criterion 8, unchanged.
             return view! { <ZeroLine text=zero_line_text(total) /> }.into_any();
         }
 
@@ -881,6 +884,64 @@ mod tests {
             el.text_content().unwrap().trim(),
             "",
             "nothing, not a zero-package announcement"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn nothing_known_yet_is_silence_and_never_an_all_clear() {
+        // R3, and the heart of qhq-8mgw.35: "Everything is Latest" before the heavy
+        // phase has answered is a claim the page has not earned. A slower false
+        // all-clear is not a fix.
+        let el = mount_region(
+            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            one_signed_in(),
+            Signal::stored(true),
+        );
+        assert_eq!(
+            el.text_content().unwrap().trim(),
+            "",
+            "the region says nothing while a call is outstanding"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn what_is_already_known_is_shown_while_the_rest_is_still_being_decided() {
+        // Rows the heavy phase HAS answered are decisions the user can act on now.
+        // Holding them back until the slowest package answers would make the region
+        // as slow as its worst row, which is the spinner §7 rejected.
+        let el = mount_region(
+            Signal::stored(vec![pkg("a/one", PackageState::Diverged, Some("h.io"))]),
+            one_signed_in(),
+            Signal::stored(true),
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Changed in both places"), "got: {text}");
+        assert!(text.contains("Resolve"), "got: {text}");
+        assert!(
+            !text.contains("Everything is Latest"),
+            "known rows, but still no all-clear: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_all_clear_arrives_only_when_nothing_is_outstanding() {
+        let in_flight = RwSignal::new(true);
+        let el = mount_region(
+            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            one_signed_in(),
+            in_flight.into(),
+        );
+        assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+
+        in_flight.set(false);
+        leptos::task::tick().await;
+
+        assert!(
+            el.text_content()
+                .unwrap()
+                .contains("Everything is Latest — 1 package"),
+            "got: {}",
+            el.text_content().unwrap()
         );
     }
 
