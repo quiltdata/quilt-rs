@@ -119,6 +119,18 @@ impl RowSignals {
     }
 }
 
+/// The package's own page, `namespace` in the query string because
+/// `installed_package` reads it with `use_query_map` and a bare path leaves it
+/// empty. Shared by the list row's own link below and by `queue::action_href`'s
+/// `[Get latest]` / `[Choose S3 bucket]` arms, which land here because neither
+/// action has a page of its own (v1 puts `Pull` in its status banner and
+/// `SetRemote` in its toolbar, both on this page). `installed_packages_list.rs`
+/// (v1, read-only) builds the identical string by hand — this helper is v2's
+/// only copy.
+fn package_page_href(namespace: &str) -> String {
+    format!("/installed-package?namespace={namespace}&filter=unmodified")
+}
+
 /// One row, with its own heavy-phase refresh. Firing one `refresh_main_page_package`
 /// call per row, rather than a single call for the whole page, is what makes a row
 /// settle where it stands instead of the page clearing all at once (Ruling R0).
@@ -158,9 +170,7 @@ fn PackageListRow(
         }
     });
 
-    // The namespace has to travel in the query string: the package page reads it
-    // with `use_query_map`, and a bare path leaves it empty.
-    let href = format!("/installed-package?namespace={namespace}&filter=unmodified");
+    let href = package_page_href(&namespace);
     let words = Signal::derive(move || render(&row.state.get(), Site::ListRow).words);
     let tone = Signal::derive(move || render(&row.state.get(), Site::ListRow).tone);
 
@@ -188,8 +198,11 @@ fn PackageList(packages: Vec<PackageRowData>) -> impl IntoView {
         .into_iter()
         // `provisional` is the light phase's own statement about the payload — every
         // row starts provisional by construction now, so the row itself has nothing
-        // left to read here. It stays on the wire and in this tuple because a later
-        // plan's attention queue reads it to decide what may not be listed yet.
+        // left to read here. It stays on the wire and in this tuple regardless: the
+        // attention queue (`queue::derive_queue`) is derived from the light-phase
+        // payload and does not consult `provisional` either, so a package still
+        // awaiting its heavy-phase confirmation can already appear there. Surfacing
+        // that distinction in the queue is filed as bead qhq-8mgw.35.
         .map(
             |(namespace, state, _provisional, changed_at, role_switch_host)| {
                 view! {
@@ -655,6 +668,55 @@ mod tests {
                 .as_deref(),
             Some("false"),
             "a refetch rebuilds the region, which re-collapses the group"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_accounts_resource_is_fetched_once_per_load_and_once_per_reload() {
+        // Finding I4: the plan's one structural judgement — one accounts
+        // `LocalResource` awaited in both the strip's `Transition` and the
+        // queue's `Suspend` — is untested. `mount_regions_reloading` already
+        // constructs the resources inside the test, so a fetcher that
+        // increments a shared counter pins the invocation count directly: 1
+        // on mount, however many places read the resolved value, and one
+        // more per `reload.notify()`, never one per boundary that awaits it.
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let reload = Trigger::new();
+        let fetch_calls = calls.clone();
+        let _el = mount(move || {
+            let packages = LocalResource::new(move || {
+                reload.track();
+                async move { Ok::<_, String>(a_package_needing_attention()) }
+            });
+            let accounts_data = one_signed_out_host();
+            let accounts = LocalResource::new(move || {
+                reload.track();
+                let fetch_calls = fetch_calls.clone();
+                let accounts_data = accounts_data.clone();
+                async move {
+                    fetch_calls.set(fetch_calls.get() + 1);
+                    Ok::<_, String>(accounts_data)
+                }
+            });
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions packages=packages accounts=accounts reload=reload />
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(50).await;
+        assert_eq!(
+            calls.get(),
+            1,
+            "one fetch on mount, however many boundaries await it"
+        );
+
+        reload.notify();
+        sleep_ms(50).await;
+        assert_eq!(
+            calls.get(),
+            2,
+            "one more fetch per reload, not one per Transition/Suspend that reads it"
         );
     }
 

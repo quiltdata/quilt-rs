@@ -376,9 +376,11 @@ async fn denied_mark(
 
 /// A row plus the URI the access pass needs and the wire does not carry.
 ///
-/// §4.4 lists `bucket` and no URI, so the host lives here for the length of the
-/// walk rather than on the DTO, where it would exist only for the backend's own
-/// convenience.
+/// §4.4 lists `bucket` and no URI. R1 later put the catalog host on the DTO
+/// too (`MainPagePackage.host`), for the queue's join key — but the parsed
+/// URI itself has no reason to follow it there: only the two scalars derived
+/// from it do, and the access pass below still needs the URI's own `bucket`
+/// for its readable-bucket comparison mid-walk.
 struct Row {
     package: MainPagePackage,
     uri: Option<quilt_uri::S3PackageUri>,
@@ -731,10 +733,10 @@ pub async fn refresh_main_page_account(
 
 /// What the per-package refresh corrects on a row.
 ///
-/// Deliberately not the whole `MainPagePackage`: `namespace`, `bucket` and
-/// `changed_at` are facts the light phase read from `data.json` and the network
-/// has nothing to say about them. Sending them again would be a second source
-/// for a value that already arrived.
+/// Deliberately not the whole `MainPagePackage`: `namespace`, `bucket`, `host`
+/// and `changed_at` are facts the light phase read from `data.json` and the
+/// network has nothing to say about them. Sending them again would be a
+/// second source for a value that already arrived.
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackageRefresh {

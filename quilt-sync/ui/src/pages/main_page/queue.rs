@@ -124,10 +124,10 @@ pub fn derive_queue(packages: &[MainPagePackageData], hosts: &[AccountHostData])
         // first member in the input's own order. A difference among members
         // here would be a backend inconsistency, not a case to render twice.
         let first = members[0];
-        let PackageState::RoleDenied { role } = &first.state else {
+        let PackageState::RoleDenied { .. } = &first.state else {
             unreachable!("role_denied_groups only ever collects RoleDenied packages")
         };
-        let text = role_denied_text(role.as_deref(), first.host.as_deref(), bucket);
+        let text = role_denied_text(&first.state, first.host.as_deref(), bucket);
         ranked_causes.push((
             0, // §5 row 1: role-denied sorts before signed-out.
             text.clone(),
@@ -166,16 +166,21 @@ pub fn derive_queue(packages: &[MainPagePackageData], hosts: &[AccountHostData])
     causes.chain(rows).collect()
 }
 
-/// Ruling 5's cause text: drop the `as {role}` clause when the role is
-/// unknown, and the `on {host}` clause when the package has no host. The
-/// count is never part of this string — `CauseRow` renders `— N packages`
-/// itself from `members.len()`.
-fn role_denied_text(role: Option<&str>, host: Option<&str>, bucket: &str) -> String {
-    match (role, host) {
-        (Some(role), Some(host)) => format!("No access as {role} on {host} in s3://{bucket}"),
-        (Some(role), None) => format!("No access as {role} in s3://{bucket}"),
-        (None, Some(host)) => format!("No access on {host} in s3://{bucket}"),
-        (None, None) => format!("No access in s3://{bucket}"),
+/// Ruling 5's cause text. Every word for the denial itself comes from
+/// `render(&state, Site::QueueRow)` — `"No access as {role}"` or, when the
+/// role query behind the wording failed, `"No access"` — the same words
+/// `kit/package_state.rs` gives a per-package `RoleDenied` row. The host and
+/// bucket clauses appended here are the one exception: composed from a host
+/// or bucket name, which the vocabulary never names. Drops the ` on {host}`
+/// clause when the package has no host; ` in s3://{bucket}` never drops,
+/// since every member of a `role_denied_groups` entry is keyed on a bucket
+/// that is present. The count is never part of this string — `CauseRow`
+/// renders `— N packages` itself from `members.len()`.
+fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> String {
+    let words = render(state, Site::QueueRow).words;
+    match host {
+        Some(host) => format!("{words} on {host} in s3://{bucket}"),
+        None => format!("{words} in s3://{bucket}"),
     }
 }
 
@@ -224,10 +229,8 @@ fn action_href(label: &str, namespace: &str) -> String {
     match label {
         "Publish" => format!("/commit?namespace={namespace}"), // content.rs:195
         "Resolve" => format!("/merge?namespace={namespace}"),  // components/buttons/merge.rs:10
-        "Get latest" | "Choose S3 bucket" => {
-            // main_page.rs:151, the same shape installed_packages_list.rs:445 uses.
-            format!("/installed-package?namespace={namespace}&filter=unmodified")
-        }
+        // Shared with the list row's own link — `super::package_page_href`.
+        "Get latest" | "Choose S3 bucket" => super::package_page_href(namespace),
         other => unreachable!("render() never offers the action {other:?}"),
     }
 }
@@ -280,6 +283,15 @@ pub fn QueueRegion(
     packages: Vec<MainPagePackageData>,
     hosts: Vec<AccountHostData>,
 ) -> impl IntoView {
+    if packages.is_empty() {
+        // A fresh install has no packages at all. "Everything is Latest — 0
+        // packages" is a non-sequitur above an empty Packages card and
+        // invents copy for a case the zero line was never meant to speak
+        // for; the honest answer is nothing here. The empty-install story
+        // belongs to the list's own blankslate, which a later plan owns.
+        return ().into_any();
+    }
+
     let total = packages.len();
     let items = derive_queue(&packages, &hosts);
     if items.is_empty() {
@@ -599,6 +611,69 @@ mod tests {
         assert!(matches!(&items[0], QueueItem::Package { .. }));
     }
 
+    #[wasm_bindgen_test]
+    fn role_denied_sorts_before_signed_out() {
+        // M5: no test built a payload holding both kinds of cause at once, so
+        // nothing pinned that §5's cause rank (role-denied row 1, signed-out
+        // row 4) — not the causes' own text — decides the order when both
+        // appear together. Swapping the rank literals 0 and 4 must fail here.
+        let items = derive_queue(
+            &[
+                pkg("a/one", PackageState::Unknown, Some("gone.io")),
+                pkg_in_bucket(
+                    "b/two",
+                    PackageState::RoleDenied {
+                        role: Some("analyst".into()),
+                    },
+                    "h.io",
+                    "team-bucket",
+                ),
+            ],
+            &[host("gone.io", false), host("h.io", true)],
+        );
+        let causes: Vec<&str> = items
+            .iter()
+            .filter_map(|i| match i {
+                QueueItem::Cause { text, .. } => Some(text.as_str()),
+                QueueItem::Package { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            causes,
+            vec![
+                "No access as analyst on h.io in s3://team-bucket",
+                "Signed out from gone.io",
+            ],
+            "role-denied (§5 row 1) sorts before signed-out (§5 row 4)"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_role_denied_package_with_no_bucket_is_its_own_row() {
+        // M5 / ruling F12: a cause keyed on a bucket cannot name one that is
+        // absent, so a `RoleDenied` package with `bucket: None` must fall
+        // through to its own row rather than being dropped or grouped under
+        // a fallback key. `pkg` always sets `bucket: None`, which is exactly
+        // the case `role_denied_groups`'s `if let Some(bucket) = ...` guard
+        // rejects.
+        let items = derive_queue(
+            &[pkg(
+                "a/one",
+                PackageState::RoleDenied {
+                    role: Some("analyst".into()),
+                },
+                Some("h.io"),
+            )],
+            &[host("h.io", true)],
+        );
+        assert_eq!(items.len(), 1, "not dropped, and not folded into a cause");
+        assert!(
+            matches!(&items[0], QueueItem::Package { namespace, .. } if namespace == "a/one"),
+            "a bucket-less denial cannot be named by a cause keyed on the bucket: {:?}",
+            items[0]
+        );
+    }
+
     // §§ QueueRegion — the drawn region, mounted inside a `Router` because the
     // actions navigate.
 
@@ -711,6 +786,52 @@ mod tests {
         assert!(
             !text.contains("1 packages"),
             "singular, not the plural branch: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn no_packages_at_all_renders_nothing() {
+        // Finding 1: a fresh install has no packages, so "Everything is
+        // Latest — 0 packages" above an empty Packages card is a
+        // non-sequitur that invents copy for a case the zero line was never
+        // meant to speak for. Render nothing — the empty-install story
+        // belongs to the list's own blankslate.
+        let el = mount(|| view! { <QueueRegion packages=vec![] hosts=one_signed_in() /> });
+        assert_eq!(
+            el.text_content().unwrap().trim(),
+            "",
+            "nothing, not a zero-package announcement"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_cards_count_is_every_package_not_every_row() {
+        // M6: `Card.count`'s own doc reads as "how many rows the card
+        // holds", which is the natural mistake here — the queue's count is
+        // every package represented, not every row drawn. A cause of 2
+        // collapses to one row but must still count as 2, so a payload with
+        // one cause AND one package row pins the count as their SUM, not
+        // `items.len()` (which would read 2, not 3).
+        let el = mount(|| {
+            view! {
+                <QueueRegion
+                    packages=vec![
+                        pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+                        pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+                        pkg("c/three", PackageState::Behind, Some("h.io")),
+                    ]
+                    hosts=vec![host("custom.registry.io", false), host("h.io", true)]
+                />
+            }
+        });
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("(3)"),
+            "2 grouped into one cause + 1 own row = 3 packages: {text}"
+        );
+        assert!(
+            !text.contains("(2)"),
+            "not the row count (one cause row + one package row): {text}"
         );
     }
 

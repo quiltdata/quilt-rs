@@ -611,9 +611,12 @@ pub enum PausedReasonData {
     Unrecognised,
 }
 
-/// The Autosync card carries this list but renders nothing from it: a pause's
-/// namespace and reason are intended for the queue, and nothing in this build
-/// reads either — hence the suppression.
+/// The Autosync card carries this list but renders nothing from it. The queue
+/// (`pages::main_page::queue`) does not read it either — it derives from the
+/// resolved package state, never from a pause map — so nothing in this build
+/// reads a pause's namespace or reason; hence the suppression. Surfacing an
+/// autosync pause that resolves to no state of its own is filed as
+/// qhq-8mgw.36.
 ///
 /// `expect` rather than `allow`, and only outside `cfg(test)`: the wire-form
 /// test does read these fields, so the attribute has to be absent there to stay
@@ -633,12 +636,13 @@ pub struct PausedPackageData {
 pub struct MainPageWatcherData {
     pub pull: ToggleStateData,
     pub publish: ToggleStateData,
-    /// Intended for the queue, which joins it against the package list by
-    /// namespace to ask whether a pause is explained by a row the user can
-    /// already see (§4.3). Carried and pinned here; no reader in this build —
-    /// hence the field-level suppression, `expect`-shaped so it reports itself
-    /// the moment one arrives. Absent under `cfg(test)`, where the wire-form
-    /// test reads the field.
+    /// The queue reads the resolved package state, never this pause map — R4
+    /// retired that reader before it was ever written. Carried and pinned
+    /// here regardless; no reader in this build — hence the field-level
+    /// suppression, `expect`-shaped so it reports itself the moment one
+    /// arrives. Absent under `cfg(test)`, where the wire-form test reads the
+    /// field. Surfacing an autosync pause that resolves to no state of its
+    /// own (§5 lattice row 3, "Paused — other") is filed as qhq-8mgw.36.
     #[cfg_attr(not(test), expect(dead_code))]
     pub paused: Vec<PausedPackageData>,
 }
