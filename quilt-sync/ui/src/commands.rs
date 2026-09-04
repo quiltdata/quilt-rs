@@ -550,10 +550,11 @@ pub struct MainPagePackageData {
     /// only when the accounts payload agrees that host is signed out.
     pub host: Option<String>,
     /// The light phase's own statement that its answer is a guess. Every row
-    /// arrives provisional, so the page seeds its rows provisional by
-    /// construction and nothing reads this — it stays on the wire, and its
-    /// wire form stays pinned by `main_page_packages_data_wire_form_is_verbatim`,
-    /// which is the one place it is read.
+    /// arrives provisional, so `pages::main_page::PackageStore::seed` marks every
+    /// row provisional by construction and never reads this field — the store,
+    /// not chance, is why it is unread. Deleting it would break
+    /// `main_page_packages_data_wire_form_is_verbatim`, which is the one place it
+    /// is read and the reason it stays on the wire.
     #[cfg_attr(not(test), expect(dead_code))]
     pub provisional: bool,
     /// The host whose role selector the row's switch affordance opens. The page

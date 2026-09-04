@@ -439,6 +439,12 @@ fn MainPageRegions(
                             .iter()
                             .map(|p| (p.namespace.clone(), p.changed_at))
                             .collect();
+                        // How many packages the page holds, confirmed or not. The
+                        // zero line speaks for all of them, and `settled` drops
+                        // the ones no answer confirmed (R2) — including the ones
+                        // whose call failed, which stop being outstanding without
+                        // ever being accounted for.
+                        let total = Signal::stored(light.len());
                         // §4.3's "resolved package list", at last: the queue reads
                         // what the heavy phase confirmed, not what the light phase
                         // guessed — the light phase never looks at the working
@@ -466,6 +472,7 @@ fn MainPageRegions(
                                 packages=settled
                                 hosts=hosts
                                 in_flight=in_flight
+                                total=total
                             />
                             <Card title="Packages">
                                 <PackageList packages=rows store=store />
@@ -1059,6 +1066,58 @@ mod tests {
         assert!(
             text.contains("Everything is Latest — 2 packages"),
             "and it says so the moment the last answer lands: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_package_the_page_could_not_read_holds_back_the_all_clear() {
+        // The other door into a false all-clear, and the one `in_flight` alone
+        // cannot close. `outstanding` decrements on failure by design (R3), and a
+        // failed row stays provisional so R2 drops it from `settled` — so a page
+        // that could not read three of its forty-three packages arrives at
+        // "nothing is outstanding, nothing needs attention" and would announce
+        // "Everything is Latest — 40 packages" over three rows still drawn dashed
+        // in the list below. A signed-out host is the ordinary way to get there:
+        // `refresh_main_page_package` propagates a login error rather than
+        // degrading it, precisely so the row stays dashed.
+        //
+        // The zero line speaks for every package, so it waits for every package.
+        let payload = MainPagePackagesData {
+            packages: vec![
+                pkg("user/plate-07", PackageState::Latest),
+                pkg("user/unreachable", PackageState::Latest),
+            ],
+        };
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        let store = seeded_store(slot);
+        // One answered, one whose call failed: still provisional, and no longer
+        // outstanding. That combination is the whole of this test.
+        settle(store, "user/plate-07", PackageState::Latest);
+        store.outstanding.set(0);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            !text.contains("Everything is Latest"),
+            "one package could not be read, so the page has not earned this: {text}"
+        );
+
+        // And the moment it can be read, the sentence appears — naming both
+        // packages, not the one that happened to answer first.
+        settle(store, "user/unreachable", PackageState::Latest);
+        leptos::task::tick().await;
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Everything is Latest — 2 packages"),
+            "every package accounted for, and the count matches the list: {text}"
         );
     }
 

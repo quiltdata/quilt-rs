@@ -280,9 +280,15 @@ fn cause_trailing(
 // since a component's arguments outlive the call that builds them.
 #[allow(clippy::needless_pass_by_value)]
 pub fn QueueRegion(
+    /// The packages the page can account for — the resolved list, which drops
+    /// every row the heavy phase has not confirmed (R2).
     packages: Signal<Vec<MainPagePackageData>>,
     hosts: Vec<AccountHostData>,
     in_flight: Signal<bool>,
+    /// How many packages the page holds altogether, confirmed or not. The zero
+    /// line speaks for all of them, so it may not be drawn until `packages`
+    /// accounts for all of them — see the guard below.
+    total: Signal<usize>,
 ) -> impl IntoView {
     // Created ONCE per construction, outside the closure below — that placement
     // is R4 and R6 in one line. A settle re-runs the closure and finds the
@@ -317,27 +323,42 @@ pub fn QueueRegion(
         let navigate = navigate.clone();
         let owner = owner.clone();
         if packages.is_empty() {
-            // A fresh install has no packages at all. "Everything is Latest — 0
-            // packages" is a non-sequitur above an empty Packages card and
-            // invents copy for a case the zero line was never meant to speak
-            // for; the honest answer is nothing here. The empty-install story
-            // belongs to the list's own blankslate, which a later plan owns.
+            // Nothing to speak for. Two ways to get here: a fresh install with
+            // no packages at all, and — since the caller began handing in the
+            // resolved list — every page load, until the first row settles.
+            // "Everything is Latest — 0 packages" is a non-sequitur in both
+            // cases; it invents copy for a case the zero line was never meant to
+            // speak for. The empty-install story belongs to the list's own
+            // blankslate, which a later plan owns.
             return ().into_any();
         }
 
-        let total = packages.len();
         let items = derive_queue(&packages, &hosts);
         if items.is_empty() {
-            if in_flight.get() {
-                // R3: nothing known AND still deciding. Not the zero line — the
-                // light phase cannot see the working tree, so "everything is
-                // Latest" is not a fact yet. Not a skeleton either: see
-                // `kit/skeleton_box.rs`'s own doc, and the settling rows in the
-                // list below are the activity signal it points at.
+            if in_flight.get() || packages.len() < total.get() {
+                // Nothing known, and the page is not entitled to say so. Two
+                // doors reach this: a call still outstanding, and a call that
+                // answered with an error. `outstanding` decrements on failure by
+                // design (R3: a queue that waited on a failed refresh would go
+                // silent forever), and a failed row stays provisional, so R2
+                // drops it from `packages` — which is why "no call outstanding"
+                // was never the same question as "every package accounted for".
+                // A signed-out host is the ordinary way to reach the second
+                // door, and announcing an all-clear over three packages the app
+                // could not read is qhq-8mgw.35 by another route.
+                //
+                // Not a skeleton either: see `kit/skeleton_box.rs`'s own doc, and
+                // the settling rows in the list below are the activity signal it
+                // points at — which is also where "we could not tell" belongs,
+                // as a row that stays dashed.
                 return ().into_any();
             }
-            // Acceptance criterion 8, unchanged.
-            return view! { <ZeroLine text=zero_line_text(total) /> }.into_any();
+            // Acceptance criterion 8, unchanged. The count is the light total,
+            // not `packages.len()`: the sentence speaks for every package the
+            // list draws. The guard above makes the two equal wherever this
+            // line is reached, and naming the one the sentence means keeps it
+            // that way.
+            return view! { <ZeroLine text=zero_line_text(total.get()) /> }.into_any();
         }
 
         // Derived from the rows rendered, never written by hand — a `Cause`'s count
@@ -757,7 +778,35 @@ mod tests {
         hosts: Vec<AccountHostData>,
         in_flight: Signal<bool>,
     ) -> web_sys::Element {
-        mount(move || view! { <QueueRegion packages=packages hosts=hosts in_flight=in_flight /> })
+        // Every test using this helper hands in a fully-accounted payload, so
+        // the light total is what it holds. The case where it is not is
+        // `main_page.rs`'s `a_package_the_page_could_not_read_holds_back_the_all_clear`.
+        mount_region_of(
+            packages,
+            hosts,
+            in_flight,
+            Signal::derive(move || packages.get().len()),
+        )
+    }
+
+    /// [`mount_region`] with the light total stated separately, for the case
+    /// where the page holds more packages than it can account for.
+    fn mount_region_of(
+        packages: Signal<Vec<MainPagePackageData>>,
+        hosts: Vec<AccountHostData>,
+        in_flight: Signal<bool>,
+        total: Signal<usize>,
+    ) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <QueueRegion
+                    packages=packages
+                    hosts=hosts
+                    in_flight=in_flight
+                    total=total
+                />
+            }
+        })
     }
 
     /// The first cause row's disclosure control. `aria-expanded` is the state
@@ -1238,6 +1287,7 @@ mod tests {
                         packages=packages.into()
                         hosts=hosts.clone()
                         in_flight=Signal::stored(false)
+                        total=Signal::derive(move || packages.get().len())
                     />
                 </Show>
             }
