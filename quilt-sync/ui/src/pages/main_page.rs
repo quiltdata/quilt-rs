@@ -90,6 +90,14 @@ use crate::kit::render;
 /// a word from the vocabulary.
 const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
 
+/// The same, for the recent-files read. A separate sentence and not the one above
+/// because the two arms fail over different reads: `Could not load your packages.`
+/// under the Recent files toggle is a wrong statement about which read failed, and
+/// a page that misreports that is worse than one that says less. The blankslate is
+/// not the alternative either — `No files yet` over a read that never answered
+/// manufactures a state the page does not know.
+const FILES_FETCH_ERROR_WORDS: &str = "Could not load your files.";
+
 /// The list region's two views, as the toggle names them. Consts because each
 /// string is the toggle's option, the value the selection signal holds, and the
 /// condition the region switches on — three uses that must not drift apart.
@@ -104,6 +112,15 @@ const FILES_VIEW: &str = "Recent files";
 /// same failure each time.
 fn render_fetch_error() -> impl IntoView {
     view! { <p>{FETCH_ERROR_WORDS}</p> }
+}
+
+/// The feed's failure branch. Same shape and same reasoning as
+/// [`render_fetch_error`]: only the fixed sentence reaches the user, and the
+/// backend's error text is logged once where the fetch result is handled — not
+/// here, because a view function can re-run on every re-render and would re-log
+/// the same failure each time.
+fn render_files_fetch_error() -> impl IntoView {
+    view! { <p>{FILES_FETCH_ERROR_WORDS}</p> }
 }
 
 /// A row's live state: the light phase's guess, replaced in place by the heavy
@@ -650,7 +667,7 @@ fn MainPageRegions(
                                                 )
                                                     .into(),
                                             );
-                                            view! { <Card>{render_fetch_error()}</Card> }
+                                            view! { <Card>{render_files_fetch_error()}</Card> }
                                                 .into_any()
                                         }
                                     }
@@ -1726,6 +1743,47 @@ mod tests {
             calls.load(Ordering::Relaxed),
             2,
             "Refresh reads it again, or the feed on screen would be stale"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_files_read_says_which_read_failed() {
+        // The two views fail over two different reads, so they cannot share one
+        // sentence: `Could not load your packages.` under the Recent files toggle
+        // is a wrong statement about what went wrong. The negative half is the
+        // point — it is what catches a later refactor collapsing the two arms back
+        // onto one helper.
+        //
+        // The packages read answers here, so the only failure on the page is the
+        // feed's, and the packages sentence has no honest way to appear.
+        let el = mount_regions_with_feed(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Err("connection reset by peer".to_string()),
+            None,
+        );
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains(FILES_FETCH_ERROR_WORDS),
+            "the feed says its own read failed: {text}"
+        );
+        assert!(
+            !text.contains(FETCH_ERROR_WORDS),
+            "and not the packages sentence, over a packages read that answered: {text}"
+        );
+        assert!(
+            !text.contains("connection reset by peer"),
+            "the raw backend error must not reach the page: {text}"
+        );
+        assert!(
+            !text.contains("No files yet"),
+            "a read that never answered is not an empty feed: {text}"
         );
     }
 
