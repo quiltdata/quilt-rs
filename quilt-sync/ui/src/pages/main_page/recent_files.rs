@@ -129,14 +129,26 @@ mod tests {
     fn the_feed_lists_every_file_in_the_order_the_backend_sent() {
         // The backend sorts and caps (§4.5). The UI must not re-sort — a second
         // ordering here would be a second source of truth for "newest".
+        //
+        // Non-monotonic in `changed_at` (middle, then high, then low) on purpose:
+        // a strictly descending fixture cannot tell "no re-sort" apart from "a
+        // redundant re-sort in the same, already-correct direction" — with two
+        // elements any order is trivially consistent with either sort direction.
+        // This order is consistent with neither, so ANY re-sort by `changed_at`,
+        // ascending or descending, reorders these rows and fails the assertion.
         let el = mount_feed(vec![
-            file("b/two.csv", "user/beta", 9_000.0),
+            file("b/two.csv", "user/beta", 5_000.0),
+            file("c/three.csv", "user/gamma", 9_000.0),
             file("a/one.csv", "user/alpha", 1_000.0),
         ]);
         let text = el.text_content().unwrap();
         let two = text.find("b/two.csv").expect("first row");
-        let one = text.find("a/one.csv").expect("second row");
-        assert!(two < one, "the wire's order is the screen's order: {text}");
+        let three = text.find("c/three.csv").expect("second row");
+        let one = text.find("a/one.csv").expect("third row");
+        assert!(
+            two < three && three < one,
+            "the wire's order is the screen's order: {text}"
+        );
     }
 
     #[wasm_bindgen_test]

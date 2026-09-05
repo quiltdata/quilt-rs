@@ -21,8 +21,22 @@ mod autosync;
 mod queue;
 // `RecentFilesRegion` is drawn here but not yet mounted by any page (Plan 7,
 // Task 4 wires it up), so the `#[component]` macro's generated props field is
-// unread outside this module's own tests — same shape as `kit`'s own
-// suppression in `main.rs`, and for the same reason.
+// unread outside this module's own tests.
+//
+// `allow`, not `expect`, and verified rather than assumed: `expect(dead_code)`
+// here — tried at the `mod recent_files;` declaration, unconditionally and
+// `cfg_attr(not(test), ...)`-gated, and as `#![cfg_attr(not(test),
+// expect(dead_code))]` inside `recent_files.rs` itself — reports "this lint
+// expectation is unfulfilled" in every placement, even though the identical
+// bare (unattributed) build emits exactly the one dead-code diagnostic this
+// is meant to catch (the `#[component]` macro's generated `files` prop
+// field), and `allow` at this same spot silences it cleanly. `expect`'s
+// fulfillment tracking does not see a diagnostic emitted from inside this
+// macro's expansion, regardless of which enclosing item carries the
+// attribute — so `expect` cannot be used here without `-D warnings` failing
+// on a lint that plainly did fire. `allow` stays broad on purpose, the way
+// `kit`'s own suppression in `main.rs` does, for an unrelated reason of its
+// own: two binaries with divergent usage.
 #[allow(dead_code)]
 mod recent_files;
 
