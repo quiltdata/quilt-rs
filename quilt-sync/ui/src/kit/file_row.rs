@@ -4,9 +4,11 @@
 //! primary enough to be one click, which is why the tag is a real link and the row
 //! is not an anchor.
 //!
-//! Three secondary actions live in the row and appear on hover or focus. They are
-//! not on the packages view's rows, and the asymmetry is deliberate: a file is a
-//! thing you act on, a package is a place you go.
+//! Up to three secondary actions live in the row and are always visible, not
+//! revealed on hover. They are not on the packages view's rows, and the asymmetry
+//! is deliberate: a file is a thing you act on, a package is a place you go. Two of
+//! the three are optional — see `on_open_catalog` and `on_copy_uri` — because a
+//! button with nothing behind it is chrome.
 
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
@@ -67,8 +69,14 @@ pub fn FileRow(
     /// would be chrome.
     on_open: impl Fn(MouseEvent) + 'static,
     on_reveal: impl Fn(MouseEvent) + 'static,
-    on_open_catalog: impl Fn(MouseEvent) + 'static,
-    on_copy_uri: impl Fn(MouseEvent) + 'static,
+    /// Optional: no command opens a *file* in the catalog yet. A button with
+    /// nothing behind it is chrome — see `on_open`'s note. Pass it and the button
+    /// appears.
+    #[prop(optional, into)]
+    on_open_catalog: Option<Callback<MouseEvent>>,
+    /// Optional: the app has no clipboard access yet (`qhq-8mgw.13`).
+    #[prop(optional, into)]
+    on_copy_uri: Option<Callback<MouseEvent>>,
 ) -> impl IntoView {
     view! {
         <div class=style::root role="button" tabindex="0" on:click=on_open>
@@ -91,19 +99,153 @@ pub fn FileRow(
                     variant=IconButtonVariant::Invisible
                     on_click=on_reveal
                 />
-                <IconButton
-                    icon=catalog_icon()
-                    aria_label="Open in catalog"
-                    variant=IconButtonVariant::Invisible
-                    on_click=on_open_catalog
-                />
-                <IconButton
-                    icon=copy_icon()
-                    aria_label="Copy Quilt+S3 URI"
-                    variant=IconButtonVariant::Invisible
-                    on_click=on_copy_uri
-                />
+                {on_open_catalog.map(|cb| {
+                    view! {
+                        <IconButton
+                            icon=catalog_icon()
+                            aria_label="Open in catalog"
+                            variant=IconButtonVariant::Invisible
+                            on_click=move |ev| cb.run(ev)
+                        />
+                    }
+                })}
+                {on_copy_uri.map(|cb| {
+                    view! {
+                        <IconButton
+                            icon=copy_icon()
+                            aria_label="Copy Quilt+S3 URI"
+                            variant=IconButtonVariant::Invisible
+                            on_click=move |ev| cb.run(ev)
+                        />
+                    }
+                })}
             </span>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// `main_page.rs`'s pattern: mount a view into a fresh, attached `div` and
+    /// hand back the element to query against. No `Router` needed here — unlike
+    /// `queue.rs`'s `mount`, nothing in this row navigates through one.
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// The action span's buttons, in document order.
+    fn buttons(el: &web_sys::Element) -> Vec<web_sys::Element> {
+        let list = el.query_selector_all("button").unwrap();
+        (0..list.length())
+            .map(|i| list.get(i).unwrap().dyn_into().unwrap())
+            .collect()
+    }
+
+    /// `queue.rs`'s pattern: `dyn_into` to the concrete element, then the DOM's
+    /// own `.click()` — a real click, not a synthesized event.
+    fn click(el: &web_sys::Element) {
+        let el: web_sys::HtmlElement = el.clone().dyn_into().unwrap();
+        el.click();
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_given_no_catalog_or_copy_action_draws_neither_button() {
+        // R1: two of this component's four actions have nothing behind them in the
+        // app. A button that does nothing is chrome, which this file's own `on_open`
+        // doc rejects in as many words.
+        let el = mount(|| {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/installed-package?namespace=user/alpha"
+                    at=0.0
+                    on_open=|_| {}
+                    on_reveal=|_| {}
+                />
+            }
+        });
+        let labels: Vec<String> = buttons(&el)
+            .into_iter()
+            .filter_map(|b| b.get_attribute("aria-label"))
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["Reveal in directory".to_string()],
+            "only the action with a command behind it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_given_every_action_draws_every_button() {
+        // The optionality must not have deleted the capability: a later plan lights
+        // these up by passing the props, and this is what pins that path.
+        let el = mount(|| {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/installed-package?namespace=user/alpha"
+                    at=0.0
+                    on_open=|_| {}
+                    on_reveal=|_| {}
+                    on_open_catalog=Callback::new(|_| {})
+                    on_copy_uri=Callback::new(|_| {})
+                />
+            }
+        });
+        let labels: Vec<String> = buttons(&el)
+            .into_iter()
+            .filter_map(|b| b.get_attribute("aria-label"))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Reveal in directory".to_string(),
+                "Open in catalog".to_string(),
+                "Copy Quilt+S3 URI".to_string(),
+            ],
+            "order is the row's, not the caller's"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn clicking_the_row_opens_and_clicking_reveal_does_not_also_open() {
+        // The row itself is the open affordance (`role="button"` on the root), and
+        // the actions span stops propagation. Deleting that `stop_propagation` would
+        // make every Reveal also open the file, which no assertion currently catches.
+        let opened = RwSignal::new(0);
+        let revealed = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/x"
+                    at=0.0
+                    on_open=move |_| opened.update(|n| *n += 1)
+                    on_reveal=move |_| revealed.update(|n| *n += 1)
+                />
+            }
+        });
+
+        click(&buttons(&el)[0]);
+        leptos::task::tick().await;
+
+        assert_eq!(revealed.get_untracked(), 1);
+        assert_eq!(
+            opened.get_untracked(),
+            0,
+            "reveal must not also open the file"
+        );
     }
 }

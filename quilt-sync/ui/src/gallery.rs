@@ -23,6 +23,13 @@
 //! component can reach, including the ones that only appear when something has
 //! gone wrong.
 
+// `main.rs`'s line: this bin is its own compilation unit, so `configure!`
+// there does not reach tests compiled here. `kit`'s DOM tests (`file_row.rs`)
+// run in this binary too — without this, `web_sys::window()` is `None` under
+// wasm-bindgen-test's default Node.js target.
+#[cfg(test)]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
 // A plain `mod`, no `#[path]`. This file lives in `src/` next to `kit.rs`
 // precisely so that works: a `#[path]`-included module resolves its *children*
 // relative to itself, so `kit.rs`'s `pub mod button;` would have looked for
