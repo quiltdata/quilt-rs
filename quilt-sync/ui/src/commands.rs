@@ -697,6 +697,45 @@ pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, 
     tauri::invoke("refresh_main_page_account", &Args { host }).await
 }
 
+/// One installed or published file, flat across every package. Mirrors the
+/// backend's `MainPageFile`; the owning package travels with the row rather
+/// than grouping it.
+///
+/// `RecentFilesRegion`'s own body reads every field, but that body is not yet
+/// reachable from `main` (Plan 7, Task 4 mounts it) — so outside this file's
+/// `main_page_recent_files_data_wire_form_is_verbatim`, the fields are unread.
+/// `not(test)`, not a bare `allow`: the moment Task 4 wires the region in,
+/// this starts failing loudly instead of staying silently stale.
+#[cfg_attr(not(test), expect(dead_code))]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageFileData {
+    pub path: String,
+    pub namespace: String,
+    /// Epoch milliseconds. Never re-sorted or re-capped on this side — see
+    /// `pages::main_page::recent_files::RecentFilesRegion`.
+    pub changed_at: f64,
+}
+
+/// Payload of `get_main_page_recent_files`: §3.2's flat feed, already newest
+/// first and already bounded by the backend (§4.5). Same suppression and
+/// reason as `MainPageFileData` above.
+#[cfg_attr(not(test), expect(dead_code))]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageRecentFilesData {
+    pub files: Vec<MainPageFileData>,
+}
+
+/// v2's recent files feed, single-phase: drawn by
+/// `pages::main_page::recent_files::RecentFilesRegion`. Nothing calls this yet
+/// — the page's own resource-fetch wiring is Plan 7 Task 4's job, not this
+/// one's — so it is dead in every build, test included, until then.
+#[expect(dead_code)]
+pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, String> {
+    tauri::invoke_unit("get_main_page_recent_files").await
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshedPackageStatus {
@@ -1631,6 +1670,25 @@ mod tests {
         assert_eq!(pkg.host.as_deref(), Some("test.quilt.dev"));
         assert!(pkg.provisional);
         assert_eq!(pkg.role_switch_host, None);
+    }
+
+    /// The mirror struct must deserialize the exact camelCase JSON the
+    /// backend's `MainPageFile`/`MainPageRecentFiles`
+    /// (`#[serde(rename_all = "camelCase")]`, both plain `Serialize`) produce.
+    /// If the two drift, the feed silently fails to deserialize at the Tauri
+    /// boundary — and this is also what keeps `MainPageFileData` and
+    /// `MainPageRecentFilesData` off the dead-code list under `cfg(test)`.
+    #[wasm_bindgen_test]
+    fn main_page_recent_files_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPageRecentFilesData>(
+            r#"{"files":[{"path":"a/one.csv","namespace":"user/alpha","changedAt":1000.0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.files.len(), 1);
+        let file = &data.files[0];
+        assert_eq!(file.path, "a/one.csv");
+        assert_eq!(file.namespace, "user/alpha");
+        assert!((file.changed_at - 1000.0).abs() < f64::EPSILON);
     }
 
     /// The mirror struct must deserialize the heavy phase's two never-before-seen

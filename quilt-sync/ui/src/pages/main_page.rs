@@ -19,6 +19,12 @@
 mod accounts;
 mod autosync;
 mod queue;
+// `RecentFilesRegion` is drawn here but not yet mounted by any page (Plan 7,
+// Task 4 wires it up), so the `#[component]` macro's generated props field is
+// unread outside this module's own tests — same shape as `kit`'s own
+// suppression in `main.rs`, and for the same reason.
+#[allow(dead_code)]
+mod recent_files;
 
 use std::collections::HashMap;
 use std::sync::Arc;
