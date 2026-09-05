@@ -523,13 +523,7 @@ fn last_changed(lineage: &quilt::lineage::PackageLineage) -> Option<f64> {
         .into_iter()
         .chain(lineage.paths.values().map(|path| path.timestamp).max())
         .max()?;
-    // i64 milliseconds into f64: exact until year 287396, and `f64` is what crosses
-    // the wire because JavaScript has no other number.
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "epoch millis fit f64 exactly for any date this program can see"
-    )]
-    Some(newest.timestamp_millis() as f64)
+    Some(epoch_millis(newest))
 }
 
 async fn load_main_page_package(
@@ -920,7 +914,10 @@ pub struct MainPageWatcher {
     pub paused: Vec<PausedPackage>,
 }
 
-/// `i64` milliseconds into `f64`, because JavaScript has no other number.
+/// `i64` milliseconds into `f64`, because JavaScript has no other number. The
+/// one conversion, shared by [`last_changed`], [`toggle_state`], and
+/// [`recent_files`] — every epoch timestamp on this page's wire goes through
+/// this function, not a second `as` chain with its own rounding.
 #[allow(
     clippy::cast_precision_loss,
     reason = "epoch millis fit f64 exactly for any date this program can see"
@@ -1001,6 +998,81 @@ pub async fn get_main_page_watcher(
     watcher: tauri::State<'_, Watcher>,
 ) -> Result<MainPageWatcher, String> {
     Ok(MainPageWatcher::from(watcher.main_page_facts().await))
+}
+
+// ── The recent files feed ──
+
+/// One installed or published file, flat across every package. §3.2: the
+/// owning package travels with the row rather than grouping it, so the list
+/// component never has to flatten what the backend already flattened.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageFile {
+    pub path: String,
+    pub namespace: String,
+    /// Epoch milliseconds — see [`MainPagePackage::changed_at`]. Never `None`
+    /// here: a path only exists in `lineage.paths` because it was installed or
+    /// committed, and both of those write a timestamp.
+    pub changed_at: f64,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageRecentFiles {
+    pub files: Vec<MainPageFile>,
+}
+
+/// §4.5: "bounded and pre-selected by the backend — newest first, ~50."
+/// Applied after the global sort, so the cap keeps the newest rather than an
+/// arbitrary fifty.
+const RECENT_FILES_LIMIT: usize = 50;
+
+/// Flatten every installed package's `paths` into one list, newest first.
+///
+/// No network and no hashing: `PathState.timestamp` is already in `data.json`
+/// and this is the same lineage read the light phase does. A package whose
+/// lineage cannot be read is warned-and-skipped, matching [`load_rows`] — one
+/// bad lineage must not blank the whole feed.
+async fn recent_files(m: &impl model::QuiltModel) -> Result<Vec<MainPageFile>, Error> {
+    let list = m.get_installed_packages_list().await?;
+    let mut files = Vec::new();
+    for installed_package in list {
+        let lineage = match m.get_installed_package_lineage(&installed_package).await {
+            Ok(lineage) => lineage,
+            Err(err) => {
+                tracing::warn!(
+                    "Failed to load lineage for {}: {err}",
+                    installed_package.namespace,
+                );
+                continue;
+            }
+        };
+        let namespace = installed_package.namespace.to_string();
+        for (path, state) in &lineage.paths {
+            files.push(MainPageFile {
+                path: path.to_string_lossy().into_owned(),
+                namespace: namespace.clone(),
+                changed_at: epoch_millis(state.timestamp),
+            });
+        }
+    }
+    // Newest first, then bound. `total_cmp` because `f64` has no `Ord` — the
+    // same comparison `last_changed`'s callers would need if they ever sorted.
+    files.sort_by(|a, b| b.changed_at.total_cmp(&a.changed_at));
+    files.truncate(RECENT_FILES_LIMIT);
+    Ok(files)
+}
+
+/// The recent files feed. Single-phase and final on arrival: a path and an
+/// mtime are facts on disk, so there is no heavy phase and no `provisional`.
+#[tauri::command]
+pub async fn get_main_page_recent_files(
+    m: tauri::State<'_, model::Model>,
+) -> Result<MainPageRecentFiles, String> {
+    recent_files(&*m)
+        .await
+        .map(|files| MainPageRecentFiles { files })
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -2619,5 +2691,190 @@ mod tests {
         assert_eq!(json["pull"]["deadline"], 1_754_500_030_000.0);
         assert_eq!(json["publish"]["activity"], "idle");
         assert_eq!(json["publish"]["deadline"], serde_json::Value::Null);
+    }
+
+    // ── The recent files feed ──
+
+    /// A lineage carrying named paths at explicit epoch-second timestamps —
+    /// the variant [`lineage_with`] cannot express, because it names every
+    /// path `f{i}.csv` and these tests need to assert on which name is
+    /// newest. Seconds rather than `lineage_with`'s milliseconds: these values
+    /// only ever round-trip through this fixture and `recent_files`'s own
+    /// `epoch_millis` conversion, so the smaller unit keeps the test numbers
+    /// readable.
+    fn lineage_with_named_paths(paths: &[(&str, u64)]) -> quilt::lineage::PackageLineage {
+        let mut lineage = quilt::lineage::PackageLineage::default();
+        for (name, secs) in paths {
+            lineage.paths.insert(
+                std::path::PathBuf::from(name),
+                quilt::lineage::PathState {
+                    timestamp: chrono::DateTime::from_timestamp(
+                        i64::try_from(*secs).expect("test timestamp fits in i64 seconds"),
+                        0,
+                    )
+                    .expect("test timestamp is a valid instant"),
+                    // `Multihash` by name would mean taking the `multihash` crate as a
+                    // direct dependency of this one — see `lineage_with`'s identical note.
+                    #[allow(
+                        clippy::default_trait_access,
+                        reason = "the type is not nameable here without a new dependency"
+                    )]
+                    hash: Default::default(),
+                },
+            );
+        }
+        lineage
+    }
+
+    /// A roster of installed packages, each with a lineage whose `paths` are
+    /// exactly the given names at the given epoch-second timestamps. The
+    /// companion to [`lineage_with_named_paths`] that also wires up
+    /// `get_installed_packages_list`, matching the mock-building pattern
+    /// `mock_clean_roster` and `mock_two_bucket_roster` use above.
+    fn mock_with_lineages(packages: &[(&str, Vec<(&str, u64)>)]) -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+
+        let installed: Vec<quilt::InstalledPackage> = packages
+            .iter()
+            .map(|(namespace, _)| {
+                let (prefix, name) = namespace
+                    .split_once('/')
+                    .expect("test namespace must be `prefix/name`");
+                make_installed_package((prefix, name))
+            })
+            .collect();
+
+        let lineages: HashMap<String, quilt::lineage::PackageLineage> = packages
+            .iter()
+            .map(|(namespace, paths)| ((*namespace).to_string(), lineage_with_named_paths(paths)))
+            .collect();
+
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(installed));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |pkg| {
+                Ok(lineages
+                    .get(&pkg.namespace.to_string())
+                    .cloned()
+                    .expect("lineage requested for a namespace the fixture did not set up"))
+            });
+
+        model
+    }
+
+    /// The same shape as [`mock_with_lineages`] for two packages, except
+    /// `failing_namespace`'s lineage read errors — the rule [`recent_files`]
+    /// shares with `load_rows`: warn and skip, don't fail the whole walk.
+    fn mock_with_one_failing_lineage(
+        failing_namespace: &str,
+        good_namespace: &str,
+        good_path: &str,
+        good_secs: u64,
+    ) -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+
+        let (failing_prefix, failing_name) = failing_namespace
+            .split_once('/')
+            .expect("test namespace must be `prefix/name`");
+        let (good_prefix, good_name) = good_namespace
+            .split_once('/')
+            .expect("test namespace must be `prefix/name`");
+        let installed = vec![
+            make_installed_package((failing_prefix, failing_name)),
+            make_installed_package((good_prefix, good_name)),
+        ];
+
+        let good_namespace = good_namespace.to_string();
+        let good_lineage = lineage_with_named_paths(&[(good_path, good_secs)]);
+
+        model
+            .expect_get_installed_packages_list()
+            .return_once(move || Ok(installed));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |pkg| {
+                if pkg.namespace.to_string() == good_namespace {
+                    Ok(good_lineage.clone())
+                } else {
+                    Err(access_denied_error())
+                }
+            });
+
+        model
+    }
+
+    #[tokio::test]
+    async fn recent_files_are_flat_and_newest_first_across_packages() {
+        // §3.2's "Why flat": one recent file in the third package must outrank
+        // three older files in the first. A per-package grouping would fail
+        // exactly here.
+        let m = mock_with_lineages(&[
+            ("user/alpha", vec![("old.csv", 1_000), ("older.csv", 500)]),
+            ("user/beta", vec![("newest.csv", 9_000)]),
+        ]);
+
+        let files = recent_files(&m).await.unwrap();
+
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(names, vec!["newest.csv", "old.csv", "older.csv"]);
+        assert_eq!(
+            files[0].namespace, "user/beta",
+            "the owning package travels"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "RECENT_FILES_LIMIT + 9 is 59, which is exact in f64"
+    )]
+    async fn recent_files_are_capped_at_the_limit_and_the_cap_keeps_the_newest() {
+        // "Bounded and pre-selected by the backend" (§4.5). The cap must be
+        // applied AFTER the global sort, or it would keep an arbitrary 50.
+        let names: Vec<String> = (0..RECENT_FILES_LIMIT + 10)
+            .map(|i| format!("f{i}.csv"))
+            .collect();
+        let many: Vec<(&str, u64)> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.as_str(), i as u64))
+            .collect();
+        let m = mock_with_lineages(&[("user/alpha", many)]);
+
+        let files = recent_files(&m).await.unwrap();
+
+        assert_eq!(files.len(), RECENT_FILES_LIMIT);
+        assert!(
+            (files[0].changed_at - (RECENT_FILES_LIMIT + 9) as f64 * 1000.0).abs() < f64::EPSILON,
+            "the cap kept the newest, not the first fifty walked"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_package_with_no_installed_paths_contributes_nothing_and_does_not_fail() {
+        // A package installed with no paths yet is a real shape, not an error.
+        let m = mock_with_lineages(&[
+            ("user/empty", vec![]),
+            ("user/alpha", vec![("one.csv", 1_000)]),
+        ]);
+
+        let files = recent_files(&m).await.unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].namespace, "user/alpha");
+    }
+
+    #[tokio::test]
+    async fn one_unreadable_lineage_does_not_blank_the_whole_feed() {
+        // The same rule `load_rows` follows (`main_page.rs:467-471`): warn and
+        // skip. One bad lineage must not cost the user every other file.
+        let m = mock_with_one_failing_lineage("user/broken", "user/alpha", "one.csv", 1_000);
+
+        let files = recent_files(&m).await.unwrap();
+
+        assert_eq!(files.len(), 1, "the readable package still arrives");
+        assert_eq!(files[0].namespace, "user/alpha");
     }
 }
