@@ -16,11 +16,8 @@ use crate::kit::FileRow;
 
 use super::package_page_href;
 
-/// The card, on one payload — no title, because the toggle above it (a later
-/// plan) names the view; see `Card::title`'s own doc for why.
-///
-/// Mounted by a later task (Plan 7, Task 4); until then only this file's own
-/// tests construct it (see `mod recent_files`'s suppression in `main_page.rs`).
+/// The card, on one payload — no title, because the list toolbar's toggle above
+/// it names the view; see `Card::title`'s own doc for why.
 #[component]
 pub fn RecentFilesRegion(files: Vec<MainPageFileData>) -> impl IntoView {
     if files.is_empty() {

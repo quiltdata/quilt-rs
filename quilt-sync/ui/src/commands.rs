@@ -700,13 +700,6 @@ pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, 
 /// One installed or published file, flat across every package. Mirrors the
 /// backend's `MainPageFile`; the owning package travels with the row rather
 /// than grouping it.
-///
-/// `RecentFilesRegion`'s own body reads every field, but that body is not yet
-/// reachable from `main` (Plan 7, Task 4 mounts it) — so outside this file's
-/// `main_page_recent_files_data_wire_form_is_verbatim`, the fields are unread.
-/// `not(test)`, not a bare `allow`: the moment Task 4 wires the region in,
-/// this starts failing loudly instead of staying silently stale.
-#[cfg_attr(not(test), expect(dead_code))]
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPageFileData {
@@ -718,9 +711,7 @@ pub struct MainPageFileData {
 }
 
 /// Payload of `get_main_page_recent_files`: §3.2's flat feed, already newest
-/// first and already bounded by the backend (§4.5). Same suppression and
-/// reason as `MainPageFileData` above.
-#[cfg_attr(not(test), expect(dead_code))]
+/// first and already bounded by the backend (§4.5).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPageRecentFilesData {
@@ -728,10 +719,8 @@ pub struct MainPageRecentFilesData {
 }
 
 /// v2's recent files feed, single-phase: drawn by
-/// `pages::main_page::recent_files::RecentFilesRegion`. Nothing calls this yet
-/// — the page's own resource-fetch wiring is Plan 7 Task 4's job, not this
-/// one's — so it is dead in every build, test included, until then.
-#[expect(dead_code)]
+/// `pages::main_page::recent_files::RecentFilesRegion`, and read by the main
+/// page's own resource only once the reader asks for that view.
 pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, String> {
     tauri::invoke_unit("get_main_page_recent_files").await
 }
@@ -1676,8 +1665,7 @@ mod tests {
     /// backend's `MainPageFile`/`MainPageRecentFiles`
     /// (`#[serde(rename_all = "camelCase")]`, both plain `Serialize`) produce.
     /// If the two drift, the feed silently fails to deserialize at the Tauri
-    /// boundary — and this is also what keeps `MainPageFileData` and
-    /// `MainPageRecentFilesData` off the dead-code list under `cfg(test)`.
+    /// boundary.
     #[wasm_bindgen_test]
     fn main_page_recent_files_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPageRecentFilesData>(
