@@ -20,6 +20,7 @@
 
 mod accounts;
 mod autosync;
+mod grouping;
 mod queue;
 mod recent_files;
 
@@ -35,16 +36,9 @@ use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
+use grouping::ListRowData;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
-
-/// What a row needs that its live state does not carry: which package it is, and
-/// when the copy last changed. Everything that settles — the state, whether it is
-/// still the light phase's guess, the host whose role selector its switch
-/// affordance would open — now lives in [`PackageStore`], keyed by this namespace.
-/// A tuple rather than a struct because it is local to this file and never crosses
-/// a boundary.
-type PackageRowData = (String, Option<f64>);
 
 /// Copied from the gallery's own helpers rather than shared: the gallery modules are
 /// not compiled into the app binary, and the kit deliberately owns no icons — a caller
@@ -70,6 +64,7 @@ fn refresh_icon() -> AnyView {
     }
     .into_any()
 }
+use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::Card;
 use crate::kit::IconButton;
@@ -328,16 +323,22 @@ fn PackageListRow(
 /// excludes it). Split out from `MainPage` so it can be tested without a
 /// Tauri host.
 #[component]
-fn PackageList(packages: Vec<PackageRowData>, store: PackageStore) -> impl IntoView {
+fn PackageList(packages: Vec<ListRowData>, store: PackageStore) -> impl IntoView {
     packages
         .into_iter()
-        .filter_map(|(namespace, changed_at)| {
+        .filter_map(|row_data| {
             // A namespace the store was not seeded with cannot happen from one
             // payload — the rows and the store are built from the same packages —
             // and drawing nothing is not worth a panic. The counter is unaffected
             // either way: it counts the calls the resolve fired, not the rows.
-            let row = store.row(&namespace)?;
-            Some(view! { <PackageListRow namespace=namespace row=row changed_at=changed_at /> })
+            let row = store.row(&row_data.namespace)?;
+            Some(view! {
+                <PackageListRow
+                    namespace=row_data.namespace
+                    row=row
+                    changed_at=row_data.changed_at
+                />
+            })
         })
         .collect_view()
 }
@@ -422,13 +423,19 @@ fn list_toolbar(
 ///
 /// Called from both arms of the packages read: the feed is an independent payload
 /// (§5's decision 3), so a failed packages read must not take it off the page.
-fn files_view(recent_files: LocalResource<Result<MainPageRecentFilesData, String>>) -> AnyView {
+fn files_view(
+    recent_files: LocalResource<Result<MainPageRecentFilesData, String>>,
+    query: RwSignal<String>,
+) -> AnyView {
     view! {
         <Transition fallback=|| ()>
             {move || Suspend::new(async move {
                 match recent_files.await {
                     Ok(data) => {
-                        view! { <recent_files::RecentFilesRegion files=data.files /> }.into_any()
+                        view! {
+                            <recent_files::RecentFilesRegion files=data.files query=query.into() />
+                        }
+                            .into_any()
                     }
                     Err(err) => {
                         web_sys::console::error_1(
@@ -651,9 +658,13 @@ fn MainPageRegions(
                                 record_refresh(row, store, result);
                             });
                         }
-                        let rows: Vec<PackageRowData> = light
+                        let rows: Vec<ListRowData> = light
                             .iter()
-                            .map(|p| (p.namespace.clone(), p.changed_at))
+                            .map(|p| ListRowData {
+                                namespace: p.namespace.clone(),
+                                changed_at: p.changed_at,
+                                bucket: p.bucket.clone(),
+                            })
                             .collect();
                         // How many packages the page holds, confirmed or not. The
                         // zero line speaks for all of them, and `settled` drops
@@ -711,12 +722,41 @@ fn MainPageRegions(
                                     let rows = rows.clone();
                                     view! {
                                         <Card>
-                                            <PackageList packages=rows store=store />
+                                            // A search-only re-arrangement, downstream
+                                            // of both the seed and the resolve's call
+                                            // loop above: this closure reads `query`
+                                            // and nothing else, so a settle (which
+                                            // writes only per-row signals) never
+                                            // re-runs it and the list is never
+                                            // rebuilt for that reason (§Loading).
+                                            {move || {
+                                                let text = query.get();
+                                                let filtered = grouping::filter_packages(
+                                                    rows.clone(),
+                                                    &text,
+                                                );
+                                                if filtered.is_empty() && !text.trim().is_empty() {
+                                                    view! {
+                                                        <Blankslate
+                                                            heading=format!(
+                                                                "No packages match \u{201c}{text}\u{201d}",
+                                                            )
+                                                            description="Search covers the names of packages installed on this machine."
+                                                        />
+                                                    }
+                                                        .into_any()
+                                                } else {
+                                                    view! {
+                                                        <PackageList packages=filtered store=store />
+                                                    }
+                                                        .into_any()
+                                                }
+                                            }}
                                         </Card>
                                     }
                                 }
                             >
-                                {files_view(recent_files)}
+                                {files_view(recent_files, query)}
                             </Show>
                         }
                             .into_any()
@@ -741,7 +781,7 @@ fn MainPageRegions(
                                 when=move || view_selected.get() == FILES_VIEW
                                 fallback=|| view! { <Card>{render_fetch_error()}</Card> }
                             >
-                                {files_view(recent_files)}
+                                {files_view(recent_files, query)}
                             </Show>
                         }
                             .into_any()
@@ -828,10 +868,14 @@ mod tests {
 
     /// The list's own view of a light-phase payload — what `MainPageRegions`
     /// builds beside the store it seeds from the same packages.
-    fn rows_of(packages: &[MainPagePackageData]) -> Vec<PackageRowData> {
+    fn rows_of(packages: &[MainPagePackageData]) -> Vec<ListRowData> {
         packages
             .iter()
-            .map(|p| (p.namespace.clone(), p.changed_at))
+            .map(|p| ListRowData {
+                namespace: p.namespace.clone(),
+                changed_at: p.changed_at,
+                bucket: p.bucket.clone(),
+            })
             .collect()
     }
 
@@ -1133,6 +1177,21 @@ mod tests {
         })
     }
 
+    /// [`mount_regions_with_feed`]'s shape with the feed's answer fixed to the
+    /// given files, for a test whose subject is the feed's own search. The
+    /// packages fixture is a plain two-package roster: this helper's tests care
+    /// about what the feed draws, not about the packages view.
+    fn mount_regions_with_files(files: Vec<MainPageFileData>) -> web_sys::Element {
+        mount_regions_with_feed(
+            Ok(two_packages_all_latest()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Ok(MainPageRecentFilesData { files }),
+            None,
+        )
+    }
+
     /// The page on reads that never answer, so the queue/list boundary stays on
     /// its fallback for as long as the test looks at it.
     fn mount_regions_pending() -> web_sys::Element {
@@ -1219,6 +1278,15 @@ mod tests {
                 namespace: "user/plate-07".to_string(),
                 changed_at: 1_700_000_000_000.0,
             }],
+        }
+    }
+
+    /// One feed row, named after `recent_files.rs`'s own `file` test helper.
+    fn file_data(path: &str, namespace: &str, changed_at: f64) -> MainPageFileData {
+        MainPageFileData {
+            path: path.to_string(),
+            namespace: namespace.to_string(),
+            changed_at,
         }
     }
 
@@ -2570,6 +2638,88 @@ mod tests {
         assert!(
             el.query_selector("[class*=provisional]").unwrap().is_none(),
             "settles to solid in place once confirmed"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn searching_narrows_the_packages_view_and_says_so_when_nothing_matches() {
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(two_packages_all_latest()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &two_packages_all_latest());
+        leptos::task::tick().await;
+
+        type_search(&el, "plate-99");
+        sleep_ms(20).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("No packages match \u{201c}plate-99\u{201d}"),
+            "the gallery's own words, with the query in them: {text}"
+        );
+        assert!(
+            text.contains("Search covers the names of packages installed on this machine."),
+            "got: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_search_that_empties_the_list_does_not_touch_the_queue() {
+        // The toolbar belongs to region 4. Filtering changes what the LIST draws
+        // and nothing else — a queue that emptied when you searched would be
+        // hiding the thing the page exists to show you.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+        let before = queue_text(&el).expect("the queue has something to say");
+
+        type_search(&el, "matches-nothing-at-all");
+        sleep_ms(20).await;
+
+        assert_eq!(
+            queue_text(&el).as_deref(),
+            Some(before.as_str()),
+            "the queue is untouched by the list's own search"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn searching_the_feed_matches_paths_and_says_so_when_nothing_matches() {
+        // R5's other half, and the feed's own words (`gallery/recent_files.rs:263`).
+        let el = mount_regions_with_files(vec![file_data("runs/a/one.csv", "user/alpha", 1_000.0)]);
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        type_search(&el, "runs/a");
+        sleep_ms(20).await;
+        assert!(
+            el.text_content().unwrap().contains("one.csv"),
+            "a path match"
+        );
+
+        type_search(&el, "plate-99");
+        sleep_ms(20).await;
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("No files match \u{201c}plate-99\u{201d}"),
+            "got: {text}"
+        );
+        assert!(
+            text.contains("Files that exist only in a bucket are not included."),
+            "got: {text}"
         );
     }
 }

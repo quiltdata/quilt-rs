@@ -19,7 +19,14 @@ use super::package_page_href;
 /// The card, on one payload — no title, because the list toolbar's toggle above
 /// it names the view; see `Card::title`'s own doc for why.
 #[component]
-pub fn RecentFilesRegion(files: Vec<MainPageFileData>) -> impl IntoView {
+pub fn RecentFilesRegion(
+    files: Vec<MainPageFileData>,
+    /// R2's search reaches this view too, on `path` (R5). A `Signal` rather
+    /// than a plain `String` keeps this region a pure view of what it is
+    /// handed — it reads the signal, it never writes it — so a keystroke
+    /// narrows the feed without rebuilding this component.
+    query: Signal<String>,
+) -> impl IntoView {
     if files.is_empty() {
         return view! {
             <Card>
@@ -34,52 +41,87 @@ pub fn RecentFilesRegion(files: Vec<MainPageFileData>) -> impl IntoView {
 
     view! {
         <Card>
-            {files
-                .into_iter()
-                .map(|f| {
-                    let namespace = f.namespace.clone();
-                    let open_ns = namespace.clone();
-                    let open_path = f.path.clone();
-                    let reveal_ns = namespace.clone();
-                    let reveal_path = f.path.clone();
+            {move || {
+                let text = query.get();
+                let needle = text.trim().to_lowercase();
+                let visible: Vec<MainPageFileData> = if needle.is_empty() {
+                    files.clone()
+                } else {
+                    files
+                        .clone()
+                        .into_iter()
+                        .filter(|f| f.path.to_lowercase().contains(&needle))
+                        .collect()
+                };
+                if visible.is_empty() {
                     view! {
-                        <FileRow
-                            path=f.path.clone()
-                            package=namespace.clone()
-                            package_href=package_page_href(&namespace)
-                            at=f.changed_at
-                            on_open=move |_| {
-                                let (ns, path) = (open_ns.clone(), open_path.clone());
-                                leptos::task::spawn_local(async move {
-                                    if let Err(err) =
-                                        commands::open_in_default_application(ns, path, None).await
-                                    {
-                                        // Logged, never rendered: the words a user
-                                        // reads come only from the kit.
-                                        web_sys::console::error_1(
-                                            &format!("open_in_default_application failed: {err}")
-                                                .into(),
-                                        );
-                                    }
-                                });
-                            }
-                            on_reveal=move |_| {
-                                let (ns, path) = (reveal_ns.clone(), reveal_path.clone());
-                                leptos::task::spawn_local(async move {
-                                    if let Err(err) =
-                                        commands::reveal_in_file_browser(ns, path, None).await
-                                    {
-                                        web_sys::console::error_1(
-                                            &format!("reveal_in_file_browser failed: {err}")
-                                                .into(),
-                                        );
-                                    }
-                                });
-                            }
+                        <Blankslate
+                            heading=format!("No files match \u{201c}{text}\u{201d}")
+                            description="Search covers the paths of files you have locally. Files that exist \
+                                  only in a bucket are not included."
                         />
                     }
-                })
-                .collect_view()}
+                        .into_any()
+                } else {
+                    visible
+                        .into_iter()
+                        .map(|f| {
+                            let namespace = f.namespace.clone();
+                            let open_ns = namespace.clone();
+                            let open_path = f.path.clone();
+                            let reveal_ns = namespace.clone();
+                            let reveal_path = f.path.clone();
+                            view! {
+                                <FileRow
+                                    path=f.path.clone()
+                                    package=namespace.clone()
+                                    package_href=package_page_href(&namespace)
+                                    at=f.changed_at
+                                    on_open=move |_| {
+                                        let (ns, path) = (open_ns.clone(), open_path.clone());
+                                        leptos::task::spawn_local(async move {
+                                            if let Err(err) = commands::open_in_default_application(
+                                                    ns,
+                                                    path,
+                                                    None,
+                                                )
+                                                .await
+                                            {
+                                                // Logged, never rendered: the words a
+                                                // user reads come only from the kit.
+                                                web_sys::console::error_1(
+                                                    &format!(
+                                                        "open_in_default_application failed: {err}",
+                                                    )
+                                                        .into(),
+                                                );
+                                            }
+                                        });
+                                    }
+                                    on_reveal=move |_| {
+                                        let (ns, path) = (reveal_ns.clone(), reveal_path.clone());
+                                        leptos::task::spawn_local(async move {
+                                            if let Err(err) = commands::reveal_in_file_browser(
+                                                    ns,
+                                                    path,
+                                                    None,
+                                                )
+                                                .await
+                                            {
+                                                web_sys::console::error_1(
+                                                    &format!("reveal_in_file_browser failed: {err}")
+                                                        .into(),
+                                                );
+                                            }
+                                        });
+                                    }
+                                />
+                            }
+                        })
+                        .collect_view()
+                        .into_any()
+                }
+            }}
         </Card>
     }
     .into_any()
@@ -116,7 +158,7 @@ mod tests {
         mount(move || {
             view! {
                 <leptos_router::components::Router>
-                    <RecentFilesRegion files=files />
+                    <RecentFilesRegion files=files query=Signal::stored(String::new()) />
                 </leptos_router::components::Router>
             }
         })
