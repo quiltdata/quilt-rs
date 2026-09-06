@@ -70,14 +70,18 @@ fn refresh_icon() -> AnyView {
     }
     .into_any()
 }
+use crate::kit::Button;
 use crate::kit::Card;
 use crate::kit::IconButton;
 use crate::kit::ListToolbar;
+use crate::kit::Naming;
 use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
 use crate::kit::PackageState;
 use crate::kit::PageLayout;
+use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
+use crate::kit::Select;
 use crate::kit::Site;
 use crate::kit::render;
 
@@ -100,6 +104,17 @@ const FILES_FETCH_ERROR_WORDS: &str = "Could not load your files.";
 /// condition the region switches on — three uses that must not drift apart.
 const PACKAGES_VIEW: &str = "Packages";
 const FILES_VIEW: &str = "Recent files";
+
+/// The packages view's `Group` axis and the feed's, which are different
+/// controls behind different signals (see `list_toolbar`'s own doc): a shared
+/// signal holding `Bucket` would render the feed's select blank the moment the
+/// reader switched to it, since `Bucket` is not one of its options.
+const GROUP_BUCKET: &str = "Bucket";
+const GROUP_PREFIX: &str = "Prefix";
+const GROUP_NONE: &str = "None";
+const GROUP_PACKAGE: &str = "Package";
+const SORT_CHANGED: &str = "Changed";
+const SORT_NAME: &str = "Name";
 
 /// The failure branch, split out from `MainPage` so it can be tested without a
 /// Tauri host. Renders only the fixed sentence for the user — logging the
@@ -336,7 +351,14 @@ fn PackageList(packages: Vec<PackageRowData>, store: PackageStore) -> impl IntoV
 /// list must keep sharing one boundary (R6), so rendering the toolbar twice from
 /// one definition is what buys "on screen at first paint" without splitting
 /// anything.
-fn list_toolbar(view_selected: RwSignal<String>) -> AnyView {
+fn list_toolbar(
+    view_selected: RwSignal<String>,
+    query: RwSignal<String>,
+    group_packages_by: RwSignal<String>,
+    group_files_by: RwSignal<String>,
+    sort_by: RwSignal<String>,
+) -> AnyView {
+    let on_packages = move || view_selected.get() == PACKAGES_VIEW;
     view! {
         <ListToolbar>
             <SegmentedControl
@@ -345,6 +367,46 @@ fn list_toolbar(view_selected: RwSignal<String>) -> AnyView {
                 options=vec![PACKAGES_VIEW.to_string(), FILES_VIEW.to_string()]
                 selected=view_selected
             />
+            <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
+            // Two selects, not one with reactive options: `Select`'s `options` is
+            // built once, and a shared `selected` holding a value the other axis
+            // does not offer renders the control blank.
+            {move || {
+                on_packages()
+                    .then(|| {
+                        view! {
+                            <Select
+                                naming=Naming::Prefix("Group".to_string())
+                                options=vec![
+                                    GROUP_BUCKET.to_string(),
+                                    GROUP_PREFIX.to_string(),
+                                    GROUP_NONE.to_string(),
+                                ]
+                                selected=group_packages_by
+                            />
+                            <Select
+                                naming=Naming::Prefix("Sort".to_string())
+                                options=vec![SORT_CHANGED.to_string(), SORT_NAME.to_string()]
+                                selected=sort_by
+                            />
+                            <Button on_click=move |_| { /* Task 7 opens the dialog */ }>
+                                "Create package"
+                            </Button>
+                        }
+                    })
+            }}
+            {move || {
+                (!on_packages())
+                    .then(|| {
+                        view! {
+                            <Select
+                                naming=Naming::Prefix("Group".to_string())
+                                options=vec![GROUP_NONE.to_string(), GROUP_PACKAGE.to_string()]
+                                selected=group_files_by
+                            />
+                        }
+                    })
+            }}
         </ListToolbar>
     }
     .into_any()
@@ -463,6 +525,13 @@ fn MainPageRegions(
     // expanders (R6) — so a view signal created inside it would reset on every
     // Refresh and throw a reader of the feed back to Packages.
     let view_selected = RwSignal::new(PACKAGES_VIEW.to_string());
+    // R2, and the same reason `view_selected` is here: a refetch rebuilds the
+    // resolved subtree, so a signal created inside it would clear the reader's
+    // search and reset their axes on every Refresh.
+    let query = RwSignal::new(String::new());
+    let group_packages_by = RwSignal::new(GROUP_BUCKET.to_string());
+    let group_files_by = RwSignal::new(GROUP_NONE.to_string());
+    let sort_by = RwSignal::new(SORT_CHANGED.to_string());
     // A one-way latch, not `view_selected` itself. The resource's source closure
     // is reactive, so gating it on the view directly would refetch on *every*
     // toggle and resolve the feed back to nothing on the way to Packages —
@@ -527,7 +596,7 @@ fn MainPageRegions(
                 // on screen with the appbar and the strip, and is never itself a
                 // skeleton. The skeletons below it are the packages view's,
                 // because that is the view the page opens on (R4).
-                {list_toolbar(view_selected)}
+                {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by)}
                 <Card>
                     <PackageRowSkeleton />
                     <PackageRowSkeleton />
@@ -625,7 +694,7 @@ fn MainPageRegions(
                                 in_flight=in_flight
                                 total=total
                             />
-                            {list_toolbar(view_selected)}
+                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by)}
                             // Neither card carries a title: the toggle immediately
                             // above names the view, and a card titled `Packages`
                             // over a Packages / Recent files switch says it twice
@@ -667,7 +736,7 @@ fn MainPageRegions(
                         // and only the Packages arm carries the sentence. No title,
                         // as in the arm above.
                         view! {
-                            {list_toolbar(view_selected)}
+                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by)}
                             <Show
                                 when=move || view_selected.get() == FILES_VIEW
                                 fallback=|| view! { <Card>{render_fetch_error()}</Card> }
@@ -1166,6 +1235,177 @@ mod tests {
             .unwrap_or_else(|| panic!("the list toolbar's `{label}` option"))
             .dyn_into()
             .unwrap()
+    }
+
+    /// The toolbar's search field.
+    fn search_field(el: &web_sys::Element) -> web_sys::HtmlInputElement {
+        el.query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field")
+            .dyn_into()
+            .unwrap()
+    }
+
+    /// Types into the search field the way a user does — set the property, then
+    /// fire the event the component listens for. `SearchInput` binds `on:input`
+    /// (`kit/search_input.rs:39`), so `input` is the event, not `change`.
+    fn type_search(el: &web_sys::Element, text: &str) {
+        let field = search_field(el);
+        field.set_value(text);
+        field
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+    }
+
+    /// A `<select>` in the toolbar, found by its `aria-label` rather than by
+    /// position. `Select` puts `aria-label` on the `<select>` element itself,
+    /// taken from `Naming::Prefix(name)` (`kit/select.rs:45`), so this is the
+    /// only other selector in this file that could match one — `host_row.rs`'s
+    /// `Role` select is the sole other `Select` on the page, and its label does
+    /// not collide with either of these.
+    fn labelled_select(el: &web_sys::Element, label: &str) -> web_sys::HtmlSelectElement {
+        el.query_selector(&format!("select[aria-label='{label}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("a select labelled `{label}`"))
+            .dyn_into()
+            .unwrap()
+    }
+
+    fn group_select(el: &web_sys::Element) -> web_sys::HtmlSelectElement {
+        labelled_select(el, "Group")
+    }
+
+    fn sort_select(el: &web_sys::Element) -> web_sys::HtmlSelectElement {
+        labelled_select(el, "Sort")
+    }
+
+    /// `Select` binds `on:change` (`kit/select.rs:70`), which is what `accounts.rs`'s
+    /// own role-switch test drives (`accounts.rs:192`).
+    fn select_option(select: &web_sys::HtmlSelectElement, value: &str) {
+        select.set_value(value);
+        select
+            .dispatch_event(&web_sys::Event::new("change").unwrap())
+            .unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_packages_view_toolbar_carries_every_control() {
+        // §2's region 4: "The toolbar carries the view toggle, search, a `Group:`
+        // select, and a `Sort:` select. `Create package` sits at its right end."
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        assert!(
+            el.query_selector("input[type=search]").unwrap().is_some(),
+            "the search field"
+        );
+        let text = el.text_content().unwrap();
+        for control in ["Group:", "Sort:", "Create package"] {
+            assert!(text.contains(control), "missing {control}: {text}");
+        }
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_feed_toolbar_drops_sort_and_create_and_keeps_its_own_group() {
+        // `kit/list_toolbar.rs`'s own doc: "the packages view adds Sort and Create
+        // package, the files view drops both, and Group's options differ between
+        // them." Search and the view toggle are on both.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Group:"),
+            "the feed groups too (§3.2): {text}"
+        );
+        assert!(
+            !text.contains("Sort:"),
+            "sort is the packages view's: {text}"
+        );
+        assert!(
+            !text.contains("Create package"),
+            "create is the packages view's: {text}"
+        );
+        assert!(
+            el.query_selector("input[type=search]").unwrap().is_some(),
+            "search is on both views"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_feed_group_select_is_not_blank_after_a_view_switch() {
+        // A native `<select>` whose value is not among its options renders blank.
+        // One shared signal holding "Bucket" would do exactly that here, and the
+        // control would look broken rather than throw.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_NONE,
+            "the feed's own axis defaults to None (§3.2), not to the packages axis's Bucket"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refetch_leaves_the_toolbar_exactly_as_the_reader_left_it() {
+        // R2. The signals live in `MainPageRegions`' body, outside the boundary a
+        // refetch rebuilds — the same placement rule `view_selected` follows. Inside
+        // it, pressing Refresh would clear the search box and reset the axes while
+        // the reader was reading the result.
+        let reload = Trigger::new();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            reload,
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        type_search(&el, "plate");
+        select_option(&group_select(&el), GROUP_PREFIX);
+        select_option(&sort_select(&el), SORT_NAME);
+        sleep_ms(20).await;
+
+        reload.notify();
+        sleep_ms(50).await;
+
+        assert_eq!(search_field(&el).value(), "plate", "the query survived");
+        assert_eq!(group_select(&el).value(), GROUP_PREFIX, "the axis survived");
+        assert_eq!(sort_select(&el).value(), SORT_NAME, "the sort survived");
     }
 
     /// A slot for the store the page seeds, and the callback that fills it. An
