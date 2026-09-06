@@ -7,6 +7,12 @@
 //! Plain functions over plain data, deliberately: they carry the ordering rules
 //! §3.1 fixes, and those are worth testing without a DOM.
 
+use std::collections::BTreeMap;
+
+use super::GROUP_BUCKET;
+#[cfg(test)]
+use super::GROUP_NONE;
+use super::GROUP_PREFIX;
 #[cfg(test)]
 use super::SORT_CHANGED;
 use super::SORT_NAME;
@@ -59,6 +65,90 @@ pub fn sort_within(rows: &mut [ListRowData], sort_by: &str) {
             (None, None) => std::cmp::Ordering::Equal,
         }),
     }
+}
+
+/// A run of rows drawn under one heading.
+pub struct PackageGroup {
+    /// `None` only for the single group the `None` axis produces — the one
+    /// case where the list draws no heading at all.
+    pub title: Option<String>,
+    pub rows: Vec<ListRowData>,
+}
+
+/// The heading for the bucket axis's local packages: the ones with no bucket,
+/// sorted first because they are the ones that most need setup.
+///
+/// Never a real bucket's own key: S3 bucket names admit no spaces and no
+/// uppercase letters, so this literal — capital `L`, a space, lower-case
+/// `only` — is unspellable as a bucket and cannot collide with one.
+const LOCAL_ONLY: &str = "Local only";
+
+/// §3.1's two axes, each already in the order the list draws them.
+///
+/// Bucket: `Local only` first, then `s3://` buckets alphabetically. The
+/// payload's `bucket` field is bare (`src-tauri/src/commands/main_page.rs:541`,
+/// built as `lineage.remote_uri.as_ref().map(|uri| uri.bucket.clone())`), so the
+/// scheme is added only for the heading, never upstream.
+///
+/// Grouped and ordered on that bare key (lower-cased, for `Local only`'s own
+/// entry), not on the formatted heading text: every heading this axis can draw
+/// starts with either `Local only`'s capital `L` or `s3://`'s lower-case `s`,
+/// and a capital sorts before any lower-case letter in byte order regardless
+/// of what follows it — so ordering by heading text would hand `Local only`
+/// first place on its own, making the reorder below dead code no fixture could
+/// ever exercise. Ordering on the bare, lower-cased key instead is what keeps
+/// it load-bearing: `"local only"` falls alphabetically between real bucket
+/// names such as `"apple"` and `"zebra"`, exactly where an implementation that
+/// forgot the local-first rule would leave it.
+///
+/// Prefix: the namespace up to the first `/`, alphabetically; a namespace with
+/// no `/` is its own prefix. Neither axis re-orders rows WITHIN a group — that
+/// is `sort_within`'s job, and the caller applies it per group.
+pub fn group_packages(rows: Vec<ListRowData>, group_by: &str) -> Vec<PackageGroup> {
+    if group_by != GROUP_BUCKET && group_by != GROUP_PREFIX {
+        return vec![PackageGroup { title: None, rows }];
+    }
+    let local_key = LOCAL_ONLY.to_lowercase();
+    let mut by_key: BTreeMap<String, Vec<ListRowData>> = BTreeMap::new();
+    for row in rows {
+        let key = if group_by == GROUP_BUCKET {
+            row.bucket.clone().unwrap_or_else(|| local_key.clone())
+        } else {
+            row.namespace
+                .split_once('/')
+                .map_or_else(|| row.namespace.clone(), |(prefix, _)| prefix.to_string())
+        };
+        by_key.entry(key).or_default().push(row);
+    }
+    // `BTreeMap` has already ordered the keys alphabetically, which is what the
+    // prefix axis wants outright. The bucket axis wants one exception: `Local
+    // only`'s bare key sorts on its own alphabetic merits — this moves it to
+    // the front regardless of where that landed it.
+    let mut ordered: Vec<(String, Vec<ListRowData>)> = by_key.into_iter().collect();
+    if group_by == GROUP_BUCKET
+        && let Some(at) = ordered.iter().position(|(key, _)| key == &local_key)
+    {
+        let local = ordered.remove(at);
+        ordered.insert(0, local);
+    }
+    ordered
+        .into_iter()
+        .map(|(key, rows)| {
+            let title = if group_by == GROUP_BUCKET {
+                if key == local_key {
+                    LOCAL_ONLY.to_string()
+                } else {
+                    format!("s3://{key}")
+                }
+            } else {
+                key
+            };
+            PackageGroup {
+                title: Some(title),
+                rows,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -168,5 +258,74 @@ mod tests {
 
         let names: Vec<&str> = rows.iter().map(|r| r.namespace.as_str()).collect();
         assert_eq!(names, vec!["user/Alpha", "user/beta", "user/gamma"]);
+    }
+
+    #[test]
+    fn the_bucket_axis_puts_local_only_first_then_buckets_alphabetically() {
+        // §3.1: "`Local only` sorts first — local packages are the ones missing a
+        // bucket, so burying them hides what most needs setup — then `s3://`
+        // buckets alphabetically."
+        //
+        // Bare bucket names, exactly as the payload carries them
+        // (`src-tauri/src/commands/main_page.rs:541`) — never `s3://`-prefixed;
+        // the scheme is the heading's, not the field's. The fixture's given order
+        // is neither alphabetical nor local-first, so an implementation that
+        // preserved input order, or sorted without the local-first rule, fails.
+        let rows = vec![
+            row("user/z", None, Some("zebra")),
+            row("user/l", None, None),
+            row("user/a", None, Some("apple")),
+        ];
+
+        let groups = group_packages(rows, GROUP_BUCKET);
+
+        let titles: Vec<Option<&str>> = groups.iter().map(|g| g.title.as_deref()).collect();
+        assert_eq!(
+            titles,
+            vec![Some("Local only"), Some("s3://apple"), Some("s3://zebra")]
+        );
+    }
+
+    #[test]
+    fn the_prefix_axis_groups_on_the_first_namespace_segment() {
+        // §4.4: "The prefix axis needs no field: it is `namespace` up to the first
+        // `/`." Two buckets under one prefix must land in ONE group — that is the
+        // whole point of the axis, and it is what a bucket-keyed implementation
+        // would get wrong while passing every other assertion here.
+        let rows = vec![
+            row("team/one", None, Some("a")),
+            row("user/x", None, Some("b")),
+            row("team/two", None, Some("c")),
+        ];
+
+        let groups = group_packages(rows, GROUP_PREFIX);
+
+        let titles: Vec<Option<&str>> = groups.iter().map(|g| g.title.as_deref()).collect();
+        assert_eq!(titles, vec![Some("team"), Some("user")]);
+        assert_eq!(groups[0].rows.len(), 2, "both team packages in one group");
+    }
+
+    #[test]
+    fn a_namespace_with_no_slash_is_its_own_prefix_rather_than_a_panic() {
+        // `split_once('/')` returns None here. Real rosters have had bare
+        // namespaces, and the axis must not care.
+        let rows = vec![row("scratch", None, None)];
+
+        let groups = group_packages(rows, GROUP_PREFIX);
+
+        assert_eq!(groups[0].title.as_deref(), Some("scratch"));
+    }
+
+    #[test]
+    fn the_none_axis_is_one_unnamed_group_holding_everything() {
+        // Not "no groups": the renderer walks groups either way, and the single
+        // untitled group is what tells it to draw no heading.
+        let rows = vec![row("user/a", None, None), row("user/b", None, Some("x"))];
+
+        let groups = group_packages(rows, GROUP_NONE);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].title, None, "no heading for the ungrouped list");
+        assert_eq!(groups[0].rows.len(), 2);
     }
 }

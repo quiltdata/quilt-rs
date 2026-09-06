@@ -67,6 +67,7 @@ fn refresh_icon() -> AnyView {
 use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::Card;
+use crate::kit::GroupHeading;
 use crate::kit::IconButton;
 use crate::kit::ListToolbar;
 use crate::kit::Naming;
@@ -722,20 +723,29 @@ fn MainPageRegions(
                                     let rows = rows.clone();
                                     view! {
                                         <Card>
-                                            // A search-and-sort re-arrangement, downstream
+                                            // A search/group/sort re-arrangement, downstream
                                             // of both the seed and the resolve's call
-                                            // loop above: this closure reads `query` and
-                                            // `sort_by` and no store signal, so a settle
-                                            // (which writes only per-row signals) never
-                                            // re-runs it and the list is never
-                                            // rebuilt for that reason (§Loading).
+                                            // loop above: this closure reads `query`,
+                                            // `group_packages_by` and `sort_by` and no
+                                            // store signal, so a settle (which writes
+                                            // only per-row signals) never re-runs it and
+                                            // the list is never rebuilt for that reason
+                                            // (§Loading).
+                                            //
+                                            // R4's order: filter, then group, then sort
+                                            // within each group. A heading and its rows
+                                            // are flat siblings here, never wrapped in a
+                                            // `div` per group — `Card`'s own
+                                            // `.body > * + *` rule
+                                            // (`kit/card.module.scss`) spaces any two
+                                            // direct children, and a wrapper would defeat
+                                            // that.
                                             {move || {
                                                 let text = query.get();
-                                                let mut filtered = grouping::filter_packages(
+                                                let filtered = grouping::filter_packages(
                                                     rows.clone(),
                                                     &text,
                                                 );
-                                                grouping::sort_within(&mut filtered, &sort_by.get());
                                                 if filtered.is_empty() && !text.trim().is_empty() {
                                                     view! {
                                                         <Blankslate
@@ -747,9 +757,33 @@ fn MainPageRegions(
                                                     }
                                                         .into_any()
                                                 } else {
-                                                    view! {
-                                                        <PackageList packages=filtered store=store />
+                                                    let mut groups = grouping::group_packages(
+                                                        filtered,
+                                                        &group_packages_by.get(),
+                                                    );
+                                                    for group in &mut groups {
+                                                        grouping::sort_within(&mut group.rows, &sort_by.get());
                                                     }
+                                                    groups
+                                                        .into_iter()
+                                                        .map(|group| {
+                                                            // R1: never written by hand — the
+                                                            // count is the length of the rows
+                                                            // that follow, always, including one.
+                                                            let heading = group.title.map(|title| {
+                                                                view! {
+                                                                    <GroupHeading
+                                                                        title=title
+                                                                        count=group.rows.len()
+                                                                    />
+                                                                }
+                                                            });
+                                                            view! {
+                                                                {heading}
+                                                                <PackageList packages=group.rows store=store />
+                                                            }
+                                                        })
+                                                        .collect_view()
                                                         .into_any()
                                                 }
                                             }}
@@ -1304,6 +1338,62 @@ mod tests {
         }
     }
 
+    /// Two packages sharing one bucket — §3.1's default axis, and the fixture
+    /// the derived-count test needs: the heading's count has to equal this
+    /// fixture's own length, not a number typed by hand.
+    fn two_packages_in_one_bucket() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: "user/plate-07".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/plate-08".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
+    /// Two packages in two different buckets — one namespace matches a search
+    /// for "alpha", the other does not, so a search can empty the second
+    /// bucket's group without touching the first.
+    fn two_packages_in_two_buckets() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: "user/alpha-plate".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("first-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/beta-plate".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("second-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
     /// The feed's empty answer — what the page gets before anyone has installed
     /// anything, and the default for every test whose subject is not the feed.
     fn no_files() -> MainPageRecentFilesData {
@@ -1394,6 +1484,26 @@ mod tests {
         select
             .dispatch_event(&web_sys::Event::new("change").unwrap())
             .unwrap();
+    }
+
+    /// A `GroupHeading`'s own text, found by its title.
+    ///
+    /// `stylance` emits `<class>-<hash>` with no module prefix, so nothing on
+    /// the page has `group` in a class name — `title` and `count` are shared
+    /// with `Card` and `Dialog`. But `GroupHeading` is the only component that
+    /// renders its title in a `<span>` (`kit/group_heading.rs:8`); `Card` and
+    /// `Dialog` both use `<h2>` (`card.rs:38`, `dialog.rs:73`). So
+    /// `span[class*=title]` can only match a group heading's title, and its
+    /// `parent_element()` is the heading root, whose full text (title,
+    /// annotation, count) this returns.
+    fn heading_text(el: &web_sys::Element, title: &str) -> Option<String> {
+        let spans = el.query_selector_all("span[class*=title]").unwrap();
+        (0..spans.length())
+            .filter_map(|i| spans.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .find(|span| span.text_content().as_deref() == Some(title))
+            .and_then(|span| span.parent_element())
+            .and_then(|heading| heading.text_content())
     }
 
     #[wasm_bindgen_test]
@@ -1538,6 +1648,61 @@ mod tests {
         let b = text.find("user/beta").expect("beta");
         let c = text.find("user/gamma").expect("gamma");
         assert!(a < b && b < c, "names ascending: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_packages_view_opens_grouped_by_bucket_with_a_derived_count() {
+        // §3.1's default axis, and R1's rule that no count is ever written by
+        // hand: the heading's count is the length of the rows under it.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            heading.contains("s3://team-bucket"),
+            "the bucket heading: {heading}"
+        );
+        assert!(heading.contains('2'), "the derived count: {heading}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_search_that_empties_a_group_removes_its_heading_too() {
+        // R4: filter, then group. A heading over zero rows would print a count
+        // the rows contradict, which is the one thing `GroupHeading` must never
+        // do.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_two_buckets();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+        assert!(
+            el.text_content().unwrap().contains("s3://second-bucket"),
+            "present before the search — the pair to the absence assertion below"
+        );
+
+        // Matches only the package in the first bucket.
+        type_search(&el, "alpha");
+        sleep_ms(20).await;
+
+        assert!(
+            !el.text_content().unwrap().contains("s3://second-bucket"),
+            "an emptied group takes its heading with it"
+        );
     }
 
     /// A slot for the store the page seeds, and the callback that fills it. An
