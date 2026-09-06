@@ -37,6 +37,7 @@ use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
 use grouping::ListRowData;
+use grouping::PackageGroup;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 
@@ -342,6 +343,41 @@ fn PackageList(packages: Vec<ListRowData>, store: PackageStore) -> impl IntoView
             })
         })
         .collect_view()
+}
+
+/// The one cause every row in this group shares, or `None`.
+///
+/// Only the bucket axis has one (§3.1): a prefix spans buckets, so no cause is
+/// a property of a prefix group. Reads the settled state rather than the light
+/// phase's guess, for the same reason the queue does — the access pre-filter
+/// over-reports, and an unconfirmed denial is not a fact about the bucket.
+///
+/// The words are `render`'s, at the site that states a shared cause once
+/// (`Site::QueueRow`, `kit/package_state.rs:143`). `GroupHeading` draws the
+/// dash.
+fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -> Option<String> {
+    if group_by != GROUP_BUCKET || group.rows.is_empty() {
+        return None;
+    }
+    let mut cause: Option<String> = None;
+    for row in &group.rows {
+        let signals = store.row(&row.namespace)?;
+        if signals.provisional.get() {
+            return None;
+        }
+        let state = signals.state.get();
+        if !matches!(state, PackageState::RoleDenied { .. }) {
+            return None;
+        }
+        let words = render(&state, Site::QueueRow).words;
+        match &cause {
+            None => cause = Some(words),
+            Some(existing) if *existing == words => {}
+            // Two denials naming different roles are not one shared cause.
+            Some(_) => return None,
+        }
+    }
+    cause
 }
 
 /// The list region's chrome: the toolbar, and the toggle that names which of the
@@ -757,9 +793,10 @@ fn MainPageRegions(
                                                     }
                                                         .into_any()
                                                 } else {
+                                                    let group_by = group_packages_by.get();
                                                     let mut groups = grouping::group_packages(
                                                         filtered,
-                                                        &group_packages_by.get(),
+                                                        &group_by,
                                                     );
                                                     for group in &mut groups {
                                                         grouping::sort_within(&mut group.rows, &sort_by.get());
@@ -770,12 +807,52 @@ fn MainPageRegions(
                                                             // R1: never written by hand — the
                                                             // count is the length of the rows
                                                             // that follow, always, including one.
-                                                            let heading = group.title.map(|title| {
+                                                            let count = group.rows.len();
+                                                            // The heading is its own reactive
+                                                            // node, unlike the rest of this
+                                                            // closure (which reads only
+                                                            // `query`/`group_packages_by`/
+                                                            // `sort_by`): `group_annotation` reads
+                                                            // `PackageStore`'s settled signals, and
+                                                            // isolating that read here — rather
+                                                            // than in the closure that builds
+                                                            // `groups` — is what keeps a settle
+                                                            // from rebuilding anything but this one
+                                                            // heading.
+                                                            let heading = group.title.clone().map(|title| {
+                                                                let for_annotation = PackageGroup {
+                                                                    title: Some(title.clone()),
+                                                                    rows: group.rows.clone(),
+                                                                };
+                                                                let group_by = group_by.clone();
                                                                 view! {
-                                                                    <GroupHeading
-                                                                        title=title
-                                                                        count=group.rows.len()
-                                                                    />
+                                                                    {move || {
+                                                                        match group_annotation(
+                                                                            &for_annotation,
+                                                                            store,
+                                                                            &group_by,
+                                                                        ) {
+                                                                            Some(note) => {
+                                                                                view! {
+                                                                                    <GroupHeading
+                                                                                        title=title.clone()
+                                                                                        count=count
+                                                                                        annotation=note
+                                                                                    />
+                                                                                }
+                                                                                    .into_any()
+                                                                            }
+                                                                            None => {
+                                                                                view! {
+                                                                                    <GroupHeading
+                                                                                        title=title.clone()
+                                                                                        count=count
+                                                                                    />
+                                                                                }
+                                                                                    .into_any()
+                                                                            }
+                                                                        }
+                                                                    }}
                                                                 }
                                                             });
                                                             view! {
@@ -1702,6 +1779,210 @@ mod tests {
         assert!(
             !el.text_content().unwrap().contains("s3://second-bucket"),
             "an emptied group takes its heading with it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_bucket_whose_packages_all_share_a_denial_says_so_once_on_its_heading() {
+        // §3.1: "A shared cause annotates its bucket group, so the list explains
+        // itself without repeating an action on every row."
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        for package in &payload.packages {
+            settle(
+                store,
+                &package.namespace,
+                PackageState::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+            );
+        }
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            heading.contains("No access as analyst"),
+            "the heading carries the shared cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_bucket_whose_packages_do_not_share_a_cause_gets_no_annotation() {
+        // One denied package among several is not a property of the group, and an
+        // annotation over it would tell the reader the whole bucket is unreachable.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        settle(
+            store,
+            &payload.packages[0].namespace,
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+        );
+        settle(store, &payload.packages[1].namespace, PackageState::Latest);
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            !heading.contains("No access"),
+            "one denial among two is not the group's cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_prefix_axis_never_annotates() {
+        // `GroupHeading`'s own doc: "Only the bucket axis has one: a prefix spans
+        // buckets, so no cause is a property of the group."
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        for package in &payload.packages {
+            settle(
+                store,
+                &package.namespace,
+                PackageState::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+            );
+        }
+        leptos::task::tick().await;
+
+        select_option(&group_select(&el), GROUP_PREFIX);
+        sleep_ms(20).await;
+
+        // Scoped to the heading itself, not `el`'s whole text: both fixture
+        // packages are denied in the same bucket, so the queue's own R2
+        // grouping (`queue.rs`'s `role_denied_groups`) states the identical
+        // words as its own cause row regardless of the list's own axis — a
+        // page-wide substring check would pass or fail on the queue's text,
+        // never on the list heading this test means to cover.
+        let heading = heading_text(&el, "user").expect("the prefix heading");
+        assert!(
+            !heading.contains("No access as analyst"),
+            "a prefix spans buckets, so it carries no shared cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn two_denials_naming_different_roles_are_not_one_shared_cause() {
+        // `group_annotation`'s equality check: an implementation that dropped
+        // it and just took the last row's words would pass every other test
+        // here. Neither role's words may appear once they disagree.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        settle(
+            store,
+            &payload.packages[0].namespace,
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+        );
+        settle(
+            store,
+            &payload.packages[1].namespace,
+            PackageState::RoleDenied {
+                role: Some("curator".to_string()),
+            },
+        );
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            !heading.contains("No access as analyst") && !heading.contains("No access as curator"),
+            "two denials naming different roles are not one shared cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_group_with_a_still_provisional_row_gets_no_annotation() {
+        // Plan 6's own reason: the light phase's access pre-filter over-reports,
+        // so a denial it guessed but the heavy phase has not yet confirmed is
+        // not a fact about the bucket. The second package's light-phase state
+        // is already `RoleDenied` — exactly what an over-reporting pre-filter
+        // would guess — and it is never settled, so `signals.provisional` stays
+        // `true`. Reusing `two_packages_in_one_bucket` (both `Latest`) would
+        // not exercise the guard at all: an unsettled `Latest` row already
+        // fails `group_annotation`'s `RoleDenied` match on its own, so the
+        // provisional check would never be reached either way.
+        let (slot, on_store) = store_slot();
+        let payload = MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: "user/plate-07".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/plate-08".to_string(),
+                    state: PackageState::RoleDenied {
+                        role: Some("analyst".to_string()),
+                    },
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: true,
+                    role_switch_host: None,
+                },
+            ],
+        };
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        settle(
+            store,
+            &payload.packages[0].namespace,
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+        );
+        // `payload.packages[1]` is left provisional: no `settle` call for it,
+        // even though its light-phase guess already names the same denial.
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            !heading.contains("No access"),
+            "a still-provisional row is a guess, not a fact about the bucket: {heading}"
         );
     }
 
