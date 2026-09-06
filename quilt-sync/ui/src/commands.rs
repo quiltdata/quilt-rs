@@ -503,9 +503,8 @@ pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
     tauri::invoke_unit("get_main_page_packages").await
 }
 
-/// v2's package list, heavy phase. One invocation per row — see
-/// `pages::main_page::PackageListRow`, which fires this and calls `RowSignals::apply`
-/// on the answer.
+/// v2's package list, heavy phase. One invocation per row, fired by the
+/// page's resolve; `pages::main_page::record_refresh` applies the answer.
 pub async fn refresh_main_page_package(
     namespace: String,
 ) -> Result<MainPagePackageRefreshData, String> {

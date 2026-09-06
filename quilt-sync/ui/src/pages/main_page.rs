@@ -184,8 +184,8 @@ impl PackageStore {
             .collect();
         Self {
             rows: StoredValue::new(rows),
-            // One call per package, because the list mounts one row per package
-            // and each row fires its own (R0).
+            // One call per package. The resolve fires them, so the count doesn't
+            // depend on which `Show` branch is mounted (R0).
             outstanding: RwSignal::new(packages.len()),
         }
     }
@@ -1182,7 +1182,7 @@ mod tests {
         slot.get_untracked().expect("the page seeded a store")
     }
 
-    /// The heavy phase's answer for one row, as [`PackageListRow`] would apply it
+    /// The heavy phase's answer for one row, as [`record_refresh`] would apply it
     /// if there were a Tauri host to answer the call.
     fn settle(store: PackageStore, namespace: &str, state: PackageState) {
         store
