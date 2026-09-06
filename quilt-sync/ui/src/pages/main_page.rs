@@ -24,9 +24,6 @@ mod queue;
 mod recent_files;
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
@@ -253,78 +250,46 @@ fn package_page_href(namespace: &str) -> String {
     format!("/installed-package?namespace={namespace}&filter=unmodified")
 }
 
-/// What a row does once its heavy-phase call has returned: the state write, and
-/// the answer the counter is waiting for.
+/// What one heavy-phase call does when it returns: the state write, and the
+/// answer the counter is waiting for.
 ///
-/// `cancelled` covers the **write only**. A row taken off screen mid-flight — by
-/// the view toggle, or by a refetch that replaced it — must not put a stale
-/// answer over a newer store. But the call has answered either way, and
-/// `outstanding` counts calls, not rows: skipping the decrement on the cancelled
-/// path is what left `in_flight` true for as long as the reader stayed on the
-/// files view, with the queue (which sits above both views) withholding its zero
-/// line the whole time.
+/// The counter is decremented on **every** path, success or failure: `outstanding`
+/// counts calls, and a call that failed has answered (R3).
 ///
-/// A free function, and not inlined into the `spawn_local` below, because that is
-/// the only way this branch can be tested: without a Tauri host the command fails
-/// before any unmount can be observed, so the race is unreachable through the DOM.
+/// A row whose owner has since been disposed — by a refetch, or by the view
+/// toggle — absorbs the write silently, because `reactive_graph` routes a signal
+/// write through `try_update` and drops the `None`. That is why nothing here
+/// guards against a stale answer.
 fn record_refresh(
     row: RowSignals,
     store: PackageStore,
-    cancelled: bool,
     result: Result<MainPagePackageRefreshData, String>,
 ) {
-    if !cancelled {
-        match result {
-            Ok(refreshed) => row.apply(refreshed),
-            Err(err) => {
-                // The row keeps the light phase's state and stays provisional,
-                // which is honest: nothing confirmed it. The error is logged, not
-                // rendered — the words a user reads come only from `kit::render`.
-                web_sys::console::error_1(
-                    &format!("refresh_main_page_package failed: {err}").into(),
-                );
-            }
+    match result {
+        Ok(refreshed) => row.apply(refreshed),
+        Err(err) => {
+            // The row keeps the light phase's state and stays provisional, which
+            // is honest: nothing confirmed it. The error is logged, not rendered —
+            // the words a user reads come only from `kit::render`.
+            web_sys::console::error_1(&format!("refresh_main_page_package failed: {err}").into());
         }
     }
-    // Every path, cancelled or not (R3).
     store.answered();
 }
 
-/// One row, with its own heavy-phase refresh. Firing one `refresh_main_page_package`
-/// call per row, rather than a single call for the whole page, is what makes a row
-/// settle where it stands instead of the page clearing all at once (Ruling R0).
+/// One row: a pure view over the signals the page holds for it. The heavy-phase
+/// call that fills those signals is fired by the resolve that seeded the store,
+/// not here — R0 is unaffected, because it is still one call per package and a row
+/// still settles where it stands by reading its own [`RowSignals`], but the number
+/// of calls is now a property of the payload rather than of which subtree happens
+/// to be mounted.
 #[component]
 fn PackageListRow(
     namespace: String,
     /// This package's live state, owned by the page's [`PackageStore`].
     row: RowSignals,
-    /// The page's store, for one thing only: telling it this row's heavy-phase
-    /// call has answered (R3). The queue may not claim an all-clear while a call
-    /// is outstanding, and a failed call must stop the waiting too.
-    ///
-    /// The store rather than a `Callback` deliberately. The row answers after the
-    /// view may already have moved on, and by then the subtree that built a
-    /// callback can be disposed — `Callback::run` panics on a disposed value,
-    /// while the store's counter is a signal whose write is simply a no-op once
-    /// its owner is gone. Both were checked against `reactive_graph` 0.2.14, not
-    /// assumed.
-    store: PackageStore,
     changed_at: Option<f64>,
 ) -> impl IntoView {
-    // One invocation per row, concurrently. The two shared resources behind it —
-    // credential vending and the `/me` role query — are already serialised inside
-    // the backend, and a serial walk would make the list as slow as its slowest
-    // package while clearing every row at once, which is the spinner §7 rejected.
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let cancelled_flag = cancelled.clone();
-    on_cleanup(move || cancelled.store(true, Ordering::Relaxed));
-
-    let ns = namespace.clone();
-    leptos::task::spawn_local(async move {
-        let result = commands::refresh_main_page_package(ns).await;
-        record_refresh(row, store, cancelled_flag.load(Ordering::Relaxed), result);
-    });
-
     let href = package_page_href(&namespace);
     let words = Signal::derive(move || render(&row.state.get(), Site::ListRow).words);
     let tone = Signal::derive(move || render(&row.state.get(), Site::ListRow).tone);
@@ -354,22 +319,10 @@ fn PackageList(packages: Vec<PackageRowData>, store: PackageStore) -> impl IntoV
         .filter_map(|(namespace, changed_at)| {
             // A namespace the store was not seeded with cannot happen from one
             // payload — the rows and the store are built from the same packages —
-            // and drawing nothing is not worth a panic.
-            let Some(row) = store.row(&namespace) else {
-                // But the counter still has to balance: no row means no call and
-                // so no answer, and an `outstanding` that never reaches zero
-                // leaves the queue silent for good (R3).
-                store.answered();
-                return None;
-            };
-            Some(view! {
-                <PackageListRow
-                    namespace=namespace
-                    row=row
-                    store=store
-                    changed_at=changed_at
-                />
-            })
+            // and drawing nothing is not worth a panic. The counter is unaffected
+            // either way: it counts the calls the resolve fired, not the rows.
+            let row = store.row(&namespace)?;
+            Some(view! { <PackageListRow namespace=namespace row=row changed_at=changed_at /> })
         })
         .collect_view()
 }
@@ -393,6 +346,37 @@ fn list_toolbar(view_selected: RwSignal<String>) -> AnyView {
                 selected=view_selected
             />
         </ListToolbar>
+    }
+    .into_any()
+}
+
+/// The Recent files view, and the inner boundary its own read needs.
+///
+/// A `Suspend` registers with the nearest suspense context, so without this
+/// `Transition` an unresolved feed puts the queue/list boundary back into pending
+/// — which re-renders its fallback and leaves two radio groups sharing one `name`
+/// on the page, silently clearing the reader's selection. An inner boundary for a
+/// third payload is not a split of the boundary the queue and the list share (R6).
+///
+/// Called from both arms of the packages read: the feed is an independent payload
+/// (§5's decision 3), so a failed packages read must not take it off the page.
+fn files_view(recent_files: LocalResource<Result<MainPageRecentFilesData, String>>) -> AnyView {
+    view! {
+        <Transition fallback=|| ()>
+            {move || Suspend::new(async move {
+                match recent_files.await {
+                    Ok(data) => {
+                        view! { <recent_files::RecentFilesRegion files=data.files /> }.into_any()
+                    }
+                    Err(err) => {
+                        web_sys::console::error_1(
+                            &format!("get_main_page_recent_files failed: {err}").into(),
+                        );
+                        view! { <Card>{render_files_fetch_error()}</Card> }.into_any()
+                    }
+                }
+            })}
+        </Transition>
     }
     .into_any()
 }
@@ -568,6 +552,36 @@ fn MainPageRegions(
                         if let Some(on_store) = on_store {
                             on_store.run(store);
                         }
+                        // One heavy-phase call per light-phase package, fired by
+                        // the resolve that seeded the store. `seed` sets
+                        // `outstanding` to the roster's size, so the number of
+                        // calls has to be a property of the payload and not of
+                        // whichever subtree happens to be mounted: a resolve taken
+                        // while the reader is on Recent files builds no rows at
+                        // all, and a row that fired its own call left every one of
+                        // them unmade.
+                        //
+                        // Concurrent, not serial. The two shared resources behind
+                        // the call — credential vending and the `/me` role query —
+                        // are already serialised in the backend, and a serial walk
+                        // would make the list as slow as its slowest package while
+                        // clearing every row at once, the spinner §7 rejected.
+                        for package in &light {
+                            let Some(row) = store.row(&package.namespace) else {
+                                // Unreachable from one payload, the store having
+                                // been seeded from this very list — but a package
+                                // with no row fires no call, so the count it was
+                                // seeded with still has to be given back (R3).
+                                store.answered();
+                                continue;
+                            };
+                            let namespace = package.namespace.clone();
+                            leptos::task::spawn_local(async move {
+                                let result =
+                                    commands::refresh_main_page_package(namespace).await;
+                                record_refresh(row, store, result);
+                            });
+                        }
                         let rows: Vec<PackageRowData> = light
                             .iter()
                             .map(|p| (p.namespace.clone(), p.changed_at))
@@ -584,9 +598,8 @@ fn MainPageRegions(
                         // tree, which is how a package with local edits ended up
                         // under an all-clear (qhq-8mgw.35). Reactive, so a row
                         // settling re-renders the queue and nothing else: the list
-                        // below keeps reading its own per-row signals, because
-                        // re-running `PackageList` would re-fire every row's
-                        // refresh.
+                        // below reads its own per-row signals, and a settle must
+                        // cost nothing list-wide.
                         let settled = Signal::derive(move || store.settled(&light));
                         let in_flight = Signal::derive(move || store.in_flight());
                         // The accounts read is awaited here too, for the queue's
@@ -620,16 +633,12 @@ fn MainPageRegions(
                             <Show
                                 when=move || view_selected.get() == FILES_VIEW
                                 fallback=move || {
-                                    // Cloned here, in the `Fn` body, and not
-                                    // inside the `view!` below: `Card`'s children
-                                    // are a `move` closure, so a `rows.clone()`
-                                    // written in there would move `rows` out of
-                                    // this closure and make it `FnOnce`. The
-                                    // fallback is rebuilt every time the reader
-                                    // comes back to this view, so it must be `Fn`.
-                                    // Re-deriving the rows from a signal instead
-                                    // would re-run `PackageList` on a settle,
-                                    // which is the loop this module's doc forbids.
+                                    // Cloned in the fallback's own body, not inside
+                                    // the `view!`: `Card`'s children are a `move`
+                                    // closure, so a clone written in there would
+                                    // take `rows` out of this one and leave it
+                                    // `FnOnce`, and this fallback is rebuilt every
+                                    // time the reader comes back to the view.
                                     let rows = rows.clone();
                                     view! {
                                         <Card>
@@ -638,41 +647,7 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                // The feed's own boundary, INSIDE the `Show`. A
-                                // `Suspend` registers with the nearest suspense
-                                // context, so without this the feed's unresolved
-                                // read puts the queue/list `Transition` back into
-                                // pending — which re-renders its fallback, and so
-                                // puts a second toolbar on the page. Two radio
-                                // groups sharing one `name` are one group, so the
-                                // second one silently cleared the reader's
-                                // selection. This adds an inner boundary for a
-                                // third payload; it does not split the boundary the
-                                // queue and the list must share (R6).
-                                <Transition fallback=|| ()>
-                                {move || Suspend::new(async move {
-                                    match recent_files.await {
-                                        Ok(data) => {
-                                            view! {
-                                                <recent_files::RecentFilesRegion
-                                                    files=data.files
-                                                />
-                                            }
-                                                .into_any()
-                                        }
-                                        Err(err) => {
-                                            web_sys::console::error_1(
-                                                &format!(
-                                                    "get_main_page_recent_files failed: {err}",
-                                                )
-                                                    .into(),
-                                            );
-                                            view! { <Card>{render_files_fetch_error()}</Card> }
-                                                .into_any()
-                                        }
-                                    }
-                                })}
-                                </Transition>
+                                {files_view(recent_files)}
                             </Show>
                         }
                             .into_any()
@@ -684,8 +659,21 @@ fn MainPageRegions(
                         // No queue at all, rather than a zero line: `Everything is
                         // Latest — 0 packages` over a read that never answered is a
                         // manufactured all-clear.
+                        //
+                        // The chrome and both views stand, though. The toolbar is
+                        // chrome (R2), and the feed is a payload of its own that
+                        // this failure says nothing about (§5's decision 3), so a
+                        // reader on Recent files keeps the view they were reading
+                        // and only the Packages arm carries the sentence. No title,
+                        // as in the arm above.
                         view! {
-                            <Card title="Packages">{render_fetch_error()}</Card>
+                            {list_toolbar(view_selected)}
+                            <Show
+                                when=move || view_selected.get() == FILES_VIEW
+                                fallback=|| view! { <Card>{render_fetch_error()}</Card> }
+                            >
+                                {files_view(recent_files)}
+                            </Show>
                         }
                             .into_any()
                     }
@@ -739,7 +727,9 @@ mod tests {
     use crate::commands::MainPageFileData;
     use crate::commands::MainPagePackageData;
     use crate::kit::StateTone;
+    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -866,9 +856,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_row_reads_the_store_and_settles_in_place() {
-        // The list must keep settling exactly as it does today, with the signals now
-        // owned a level up. `PackageList` is NOT re-rendered by a settle — that would
-        // re-fire every row's refresh (see the module's own comment).
+        // The list must keep settling exactly as it does today, with the signals
+        // now owned a level up. `PackageList` is NOT re-rendered by a settle: a
+        // row settles where it stands, through its own signals, and a settle costs
+        // nothing list-wide.
         let light = vec![pkg("user/plate-07", PackageState::Latest)];
         let store = PackageStore::seed(&light);
         let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
@@ -896,21 +887,59 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_refresh_ends_the_waiting_too() {
-        // R3 on the failure path. There is no Tauri host here, so the `catch`-bound
-        // invoke rejects and every mounted row drives the `Err` arm — which is what
-        // makes this a real test of that arm's decrement rather than of the `Ok`
-        // one's. A counter only the success path decrements would leave the queue
-        // waiting for an answer that is never coming.
-        let light = vec![pkg("user/plate-07", PackageState::Latest)];
-        let store = PackageStore::seed(&light);
-        assert!(store.in_flight(), "the row's call has not answered yet");
-
-        let _el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        // R3 on the failure path. There is no Tauri host here, so every call the
+        // resolve fires rejects and drives `record_refresh`'s `Err` arm — which is
+        // what makes this a real test of that arm's decrement rather than of the
+        // `Ok` one's. A counter only the success path decrements would leave the
+        // queue waiting for an answer that is never coming.
+        //
+        // Driven through the page, because the page is where the calls are fired:
+        // the store is seeded and its calls sent by one resolve. That the store
+        // starts out waiting for all of them is
+        // `the_store_holds_one_row_per_package_and_starts_them_all_provisional`.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let _el = mount_regions_reloading(
+            Ok(payload),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
         sleep_ms(50).await;
 
         assert!(
-            !store.in_flight(),
+            !seeded_store(slot).in_flight(),
             "R3: a failed refresh must end the waiting"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_list_asks_the_backend_for_nothing_of_its_own() {
+        // What re-entering the Packages view costs: nothing. `Show` rebuilds its
+        // branch on every flip, so while each row fired its own heavy-phase call
+        // every toggle back to Packages meant one network call per package —
+        // credential vending, a `/me` role query and a hash walk apiece, silently.
+        // The calls belong to the resolve now, so building the list is free.
+        let light = vec![
+            pkg("user/plate-07", PackageState::Latest),
+            pkg("user/plate-08", PackageState::Latest),
+        ];
+        let store = PackageStore::seed(&light);
+
+        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        sleep_ms(50).await;
+
+        assert_eq!(
+            el.query_selector_all("a[href*=installed-package]")
+                .unwrap()
+                .length(),
+            2,
+            "the rows really were built, so the count below is not vacuous"
+        );
+        assert_eq!(
+            store.outstanding.get_untracked(),
+            2,
+            "and the list asked the backend for nothing while building them"
         );
     }
 
@@ -1052,6 +1081,59 @@ mod tests {
                 </leptos_router::components::Router>
             }
         })
+    }
+
+    /// The page whose packages read answers only after `delay_ms`, so a test can
+    /// act on the chrome while the queue/list boundary is still on its fallback.
+    /// The toolbar is on screen there (R2), so the toggle is reachable before the
+    /// first resolve lands — which is the cold-load half of the case
+    /// [`a_refetch_taken_on_the_feed_still_answers_for_every_package`] covers on
+    /// the Refresh path.
+    fn mount_regions_slow_packages(
+        packages: MainPagePackagesData,
+        accounts: MainPageAccountsData,
+        on_store: Callback<PackageStore>,
+        delay_ms: i32,
+    ) -> web_sys::Element {
+        mount(move || {
+            let reload = Trigger::new();
+            let packages = LocalResource::new(move || {
+                let packages = packages.clone();
+                async move {
+                    sleep_ms(delay_ms).await;
+                    Ok(packages)
+                }
+            });
+            let accounts = LocalResource::new(move || {
+                let accounts = accounts.clone();
+                async move { Ok(accounts) }
+            });
+            let fetch_files = Callback::new(move |()| Ok(no_files()));
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        on_store=Some(on_store)
+                        fetch_files=Some(fetch_files)
+                    />
+                </leptos_router::components::Router>
+            }
+        })
+    }
+
+    /// Two packages the heavy phase will agree with, so the queue's only remaining
+    /// line is the zero line — and the zero line is the one thing it withholds
+    /// while a call is outstanding (R3). That is what makes an unfired call
+    /// visible on screen rather than only in the store.
+    fn two_packages_all_latest() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                pkg("user/plate-07", PackageState::Latest),
+                pkg("user/plate-08", PackageState::Latest),
+            ],
+        }
     }
 
     /// The feed's empty answer — what the page gets before anyone has installed
@@ -1638,13 +1720,8 @@ mod tests {
             "and the read really is still pending, so the claim above is not vacuous"
         );
         assert!(
-            !toggle_option(&el, PACKAGES_VIEW).checked()
-                || !toggle_option(&el, FILES_VIEW).checked(),
-            "the toolbar is a live control, not a skeleton of one"
-        );
-        assert!(
             toggle_option(&el, PACKAGES_VIEW).checked(),
-            "and it opens on Packages (R4)"
+            "a live control and not a skeleton of one, opened on Packages (R4)"
         );
     }
 
@@ -1788,6 +1865,123 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    async fn a_refetch_taken_on_the_feed_still_answers_for_every_package() {
+        // The heavy phase is fired by the resolve that seeded the store, not by
+        // the rows that draw it. `Show` builds exactly one branch, so a Refresh
+        // taken on Recent files builds no rows at all: while each row fired its own
+        // call, that resolve made none, `outstanding` stayed at the roster's size
+        // for as long as the reader stayed on the feed, and the queue — which sits
+        // above both views — went silent until they switched back.
+        //
+        // Read through the zero line, because that is the sentence R3 makes
+        // conditional on the count: with every row confirmed and nothing to
+        // report, an outstanding call is the only thing left that can withhold it.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let reload = Trigger::new();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            reload,
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+        assert!(
+            el.text_content().unwrap().contains("Everything is Latest"),
+            "the queue speaks before the switch: {}",
+            el.text_content().unwrap()
+        );
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        reload.notify();
+        // Long enough for the new resolve's calls to be fired and to fail: there
+        // is no Tauri host, so each one drives `record_refresh`'s `Err` arm.
+        sleep_ms(50).await;
+        // The heavy phase's part, which a test has to play for the new store the
+        // refetch seeded exactly as it does for the first one.
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Everything is Latest — 2 packages"),
+            "and it is still on the page after a Refresh taken on the feed: {text}"
+        );
+        assert!(
+            toggle_option(&el, FILES_VIEW).checked(),
+            "with the reader still on the feed, which is where they were"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn picking_the_feed_before_the_first_resolve_still_answers_for_every_package() {
+        // The same defect on the cold-load path. The toolbar is chrome and is on
+        // screen while the packages read is still pending (R2), so the reader can
+        // already be on Recent files by the time the resolve lands and seeds the
+        // store — and a store whose calls are fired by its rows is then seeded
+        // with a count nothing will ever give back.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_slow_packages(payload.clone(), one_signed_out_host(), on_store, 100);
+        leptos::task::tick().await;
+        assert!(
+            el.query_selector("[class*=skeleton]").unwrap().is_some(),
+            "the packages read really has not answered yet"
+        );
+
+        toggle_option(&el, FILES_VIEW).click();
+        // Past the read's own delay, and past its calls answering.
+        sleep_ms(250).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Everything is Latest — 2 packages"),
+            "the queue arrives even though the list never drew a row: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_packages_read_leaves_the_feed_reachable() {
+        // The two views are two payloads (§5's decision 3), so one read failing
+        // must not take the other view off the page. A reader on Recent files who
+        // presses Refresh into a failed packages read would otherwise lose both
+        // their feed and the toggle back to it, and be shown a sentence about
+        // packages they were not looking at.
+        let el = mount_regions_with_feed(
+            Err("connection reset by peer".to_string()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Ok(one_recent_file()),
+            None,
+        );
+        sleep_ms(50).await;
+        assert!(
+            el.text_content().unwrap().contains(FETCH_ERROR_WORDS),
+            "the packages arm carries the failure"
+        );
+
+        // Panics if the toolbar is not there, which is the other half of this.
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("plate-07.csv"),
+            "and the feed, whose own read answered, is still reachable: {text}"
+        );
+        assert!(
+            !text.contains(FETCH_ERROR_WORDS),
+            "without the packages sentence left standing over it: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
     async fn coming_back_to_packages_keeps_what_the_heavy_phase_confirmed() {
         // A view switch rebuilds the rows — `Show` reconstructs its children — but
         // it must not re-seed the store: `PackageStore::seed` runs in the `Suspend`
@@ -1900,28 +2094,25 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn a_row_taken_off_screen_mid_flight_still_answers_for_its_call() {
-        // The leak the view toggle opens. Every row fires one heavy-phase call and
-        // `outstanding` counts them; switching to the files view unmounts every row
-        // while those calls are still in flight, which sets each row's cancelled
-        // flag. If the cancelled path also skipped the decrement, `outstanding`
-        // would not reach zero, `in_flight` would stay true, and the queue — which
-        // sits above BOTH views — would withhold its answer for as long as the
-        // reader stayed on the feed.
-        //
-        // Driven through `record_refresh` rather than through a mounted list: the
-        // command has no Tauri host here and fails before the unmount is even
-        // scheduled, so this branch is not reachable through the DOM. Checked, not
-        // assumed — an instrumented run logged the row's answer ahead of its own
-        // `on_cleanup`.
-        let light = vec![pkg("user/a", PackageState::Latest)];
-        let store = PackageStore::seed(&light);
-        let row = store.row("user/a").expect("seeded");
+    fn an_answer_whose_row_is_gone_is_dropped_and_still_counts() {
+        // What replaced the cancellation flag the row used to carry. A refetch, or
+        // a view switch, disposes the owner the previous resolve's row signals
+        // belong to, and the call that resolve fired can still answer afterwards.
+        // Writing a disposed signal is a silent no-op, so the answer needs nothing
+        // to tell it to stay quiet — but the count still has to land, or the queue
+        // waits for an answer that already came (R3).
+        let store = PackageStore::seed(&[pkg("user/a", PackageState::Latest)]);
+        let owner = Owner::new();
+        let row = owner.with(|| RowSignals::new(PackageState::Latest, None));
+        owner.cleanup();
+        assert!(
+            row.state.try_get_untracked().is_none(),
+            "the row really is disposed, so what follows is not vacuous"
+        );
 
         record_refresh(
             row,
             store,
-            true,
             Ok(MainPagePackageRefreshData {
                 state: PackageState::Behind,
                 role_switch_host: None,
@@ -1931,31 +2122,20 @@ mod tests {
         assert_eq!(
             store.outstanding.get_untracked(),
             0,
-            "a call that has answered is answered whether or not its row is drawn"
-        );
-        assert_eq!(
-            row.state.get_untracked(),
-            PackageState::Latest,
-            "and the answer itself is dropped: the row it was for is gone"
-        );
-        assert!(
-            row.provisional.get_untracked(),
-            "so nothing confirmed this row"
+            "the call answered, whatever became of the row it was for"
         );
     }
 
     #[wasm_bindgen_test]
-    fn a_row_still_on_screen_takes_both_the_answer_and_the_count() {
-        // The other half, so the test above cannot pass by a `record_refresh` that
-        // ignores `cancelled` in both directions.
-        let light = vec![pkg("user/a", PackageState::Latest)];
-        let store = PackageStore::seed(&light);
+    fn an_answer_writes_its_row_and_ends_that_call_s_waiting() {
+        // The other half, so the test above cannot pass on a `record_refresh` that
+        // never writes anything at all.
+        let store = PackageStore::seed(&[pkg("user/a", PackageState::Latest)]);
         let row = store.row("user/a").expect("seeded");
 
         record_refresh(
             row,
             store,
-            false,
             Ok(MainPagePackageRefreshData {
                 state: PackageState::Behind,
                 role_switch_host: None,
@@ -2086,11 +2266,10 @@ mod tests {
         // bisection found tachys reconciles by structural type at a fixed
         // position, so several naive re-render patterns left `is_same_node`
         // true too. The real reason `state`/`tone` are `Signal`s rather than
-        // plain values is upstream: with plain values, settling a row would
-        // require re-running `PackageList`, which would re-construct
-        // `PackageListRow` and re-fire its `spawn_local` refresh — a loop.
-        // This test still matters as the direct check that the props this
-        // task added actually behave reactively.
+        // plain values is upstream: with plain values, settling one row would
+        // require re-running `PackageList` and rebuilding every row on the
+        // page. This test still matters as the direct check that the props
+        // behave reactively.
         let state = RwSignal::new("Latest".to_string());
         let el = mount(move || {
             view! {
