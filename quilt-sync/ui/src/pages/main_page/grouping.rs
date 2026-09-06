@@ -7,6 +7,10 @@
 //! Plain functions over plain data, deliberately: they carry the ordering rules
 //! §3.1 fixes, and those are worth testing without a DOM.
 
+#[cfg(test)]
+use super::SORT_CHANGED;
+use super::SORT_NAME;
+
 /// One list row's own data, as the list arranges it.
 ///
 /// A struct rather than the tuple this replaced: three fields, two of them
@@ -37,6 +41,24 @@ pub fn filter_packages(rows: Vec<ListRowData>, query: &str) -> Vec<ListRowData> 
     rows.into_iter()
         .filter(|row| row.namespace.to_lowercase().contains(&needle))
         .collect()
+}
+
+/// §3.1's two axes. Stable in both, so rows that tie keep the order the
+/// backend sent — which for `Changed` is already newest-first, and for a tie
+/// on `Name` cannot happen, namespaces being unique.
+pub fn sort_within(rows: &mut [ListRowData], sort_by: &str) {
+    match sort_by {
+        SORT_NAME => rows.sort_by_key(|a| a.namespace.to_lowercase()),
+        // Newest first. `None` is "nothing has ever been written here", which
+        // sorts last rather than as epoch zero — the difference is invisible in
+        // the ordering but not in what the code says it means.
+        _ => rows.sort_by(|a, b| match (b.changed_at, a.changed_at) {
+            (Some(b), Some(a)) => b.total_cmp(&a),
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -82,5 +104,69 @@ mod tests {
 
         assert_eq!(filter_packages(rows.clone(), "").len(), 2);
         assert_eq!(filter_packages(rows, "   ").len(), 2);
+    }
+
+    #[test]
+    fn sort_changed_is_newest_first() {
+        // §3.1's default. The fixture's given order is NON-MONOTONIC, so any
+        // re-ordering in either direction fails this — a fixture already in the
+        // asserted order would pass against an implementation that does nothing.
+        let mut rows = vec![
+            row("user/middle", Some(5_000.0), None),
+            row("user/newest", Some(9_000.0), None),
+            row("user/oldest", Some(1_000.0), None),
+        ];
+
+        sort_within(&mut rows, SORT_CHANGED);
+
+        let names: Vec<&str> = rows.iter().map(|r| r.namespace.as_str()).collect();
+        assert_eq!(names, vec!["user/newest", "user/middle", "user/oldest"]);
+    }
+
+    #[test]
+    fn a_package_that_has_never_changed_sorts_last_and_not_first() {
+        // `changed_at: None` means nothing has ever been written to the package.
+        // Treating it as 0 would work by accident; treating it as newest would put
+        // the least interesting rows at the top, so it is worth an assertion.
+        //
+        // A two-element slice makes exactly one `sort_by` comparator call,
+        // `cmp(v[1], v[0])`, so which of the two `None`-vs-`Some` match arms that
+        // call reaches depends on the input order: `[old, never]` reaches
+        // `(Some(_), None)`, and `[never, old]` reaches `(None, Some(_))`. Sorting
+        // both orders here — rather than only one — is what makes both arms load-
+        // bearing on this test instead of leaving one of them unexercised by an
+        // accident of which element started first.
+        let mut old_first = vec![
+            row("user/old", Some(1_000.0), None),
+            row("user/never", None, None),
+        ];
+        sort_within(&mut old_first, SORT_CHANGED);
+        assert_eq!(old_first[0].namespace, "user/old");
+        assert_eq!(old_first[1].namespace, "user/never");
+
+        let mut never_first = vec![
+            row("user/never", None, None),
+            row("user/old", Some(1_000.0), None),
+        ];
+        sort_within(&mut never_first, SORT_CHANGED);
+        assert_eq!(never_first[0].namespace, "user/old");
+        assert_eq!(never_first[1].namespace, "user/never");
+    }
+
+    #[test]
+    fn sort_name_is_case_insensitive_and_ascending() {
+        // Case-sensitive ordering would put every capitalised namespace above
+        // every lower-case one, which reads as a random shuffle to anyone who did
+        // not know the rule.
+        let mut rows = vec![
+            row("user/beta", None, None),
+            row("user/Alpha", None, None),
+            row("user/gamma", None, None),
+        ];
+
+        sort_within(&mut rows, SORT_NAME);
+
+        let names: Vec<&str> = rows.iter().map(|r| r.namespace.as_str()).collect();
+        assert_eq!(names, vec!["user/Alpha", "user/beta", "user/gamma"]);
     }
 }

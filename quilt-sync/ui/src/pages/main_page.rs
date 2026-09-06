@@ -722,19 +722,20 @@ fn MainPageRegions(
                                     let rows = rows.clone();
                                     view! {
                                         <Card>
-                                            // A search-only re-arrangement, downstream
+                                            // A search-and-sort re-arrangement, downstream
                                             // of both the seed and the resolve's call
-                                            // loop above: this closure reads `query`
-                                            // and nothing else, so a settle (which
-                                            // writes only per-row signals) never
+                                            // loop above: this closure reads `query` and
+                                            // `sort_by` and no store signal, so a settle
+                                            // (which writes only per-row signals) never
                                             // re-runs it and the list is never
                                             // rebuilt for that reason (§Loading).
                                             {move || {
                                                 let text = query.get();
-                                                let filtered = grouping::filter_packages(
+                                                let mut filtered = grouping::filter_packages(
                                                     rows.clone(),
                                                     &text,
                                                 );
+                                                grouping::sort_within(&mut filtered, &sort_by.get());
                                                 if filtered.is_empty() && !text.trim().is_empty() {
                                                     view! {
                                                         <Blankslate
@@ -1264,6 +1265,45 @@ mod tests {
         }
     }
 
+    /// Three packages whose payload order is neither alphabetical nor by
+    /// `changed_at`, so a test can drive either sort and tell it apart from a
+    /// no-op: the payload order below is beta, gamma, alpha, which is not the
+    /// ascending-by-name order (alpha, beta, gamma) and not the
+    /// newest-first order by `changed_at` (gamma, beta, alpha) either.
+    fn three_packages_out_of_order() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: "user/beta".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: Some(5_000.0),
+                    bucket: None,
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/gamma".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: Some(9_000.0),
+                    bucket: None,
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/alpha".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: Some(1_000.0),
+                    bucket: None,
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
     /// The feed's empty answer — what the page gets before anyone has installed
     /// anything, and the default for every test whose subject is not the feed.
     fn no_files() -> MainPageRecentFilesData {
@@ -1474,6 +1514,30 @@ mod tests {
         assert_eq!(search_field(&el).value(), "plate", "the query survived");
         assert_eq!(group_select(&el).value(), GROUP_PREFIX, "the axis survived");
         assert_eq!(sort_select(&el).value(), SORT_NAME, "the sort survived");
+    }
+
+    #[wasm_bindgen_test]
+    async fn choosing_sort_by_name_re_orders_the_rows_on_screen() {
+        let (slot, on_store) = store_slot();
+        let payload = three_packages_out_of_order();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        select_option(&sort_select(&el), SORT_NAME);
+        sleep_ms(20).await;
+
+        let text = el.text_content().unwrap();
+        let a = text.find("user/alpha").expect("alpha");
+        let b = text.find("user/beta").expect("beta");
+        let c = text.find("user/gamma").expect("gamma");
+        assert!(a < b && b < c, "names ascending: {text}");
     }
 
     /// A slot for the store the page seeds, and the callback that fills it. An
