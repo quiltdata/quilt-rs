@@ -463,6 +463,7 @@ fn list_toolbar(
 fn files_view(
     recent_files: LocalResource<Result<MainPageRecentFilesData, String>>,
     query: RwSignal<String>,
+    group_files_by: RwSignal<String>,
 ) -> AnyView {
     view! {
         <Transition fallback=|| ()>
@@ -470,7 +471,11 @@ fn files_view(
                 match recent_files.await {
                     Ok(data) => {
                         view! {
-                            <recent_files::RecentFilesRegion files=data.files query=query.into() />
+                            <recent_files::RecentFilesRegion
+                                files=data.files
+                                query=query.into()
+                                group_by=group_files_by.into()
+                            />
                         }
                             .into_any()
                     }
@@ -868,7 +873,7 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query)}
+                                {files_view(recent_files, query, group_files_by)}
                             </Show>
                         }
                             .into_any()
@@ -893,7 +898,7 @@ fn MainPageRegions(
                                 when=move || view_selected.get() == FILES_VIEW
                                 fallback=|| view! { <Card>{render_fetch_error()}</Card> }
                             >
-                                {files_view(recent_files, query)}
+                                {files_view(recent_files, query, group_files_by)}
                             </Show>
                         }
                             .into_any()
