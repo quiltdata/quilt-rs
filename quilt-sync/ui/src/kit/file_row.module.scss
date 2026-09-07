@@ -27,21 +27,22 @@
   background: var(--q-overlay-hover);
 }
 
-/* Truncates from the LEFT, so the filename survives. Deep paths differ only at
- * their end — `runs/…/A01_Specimen_001_A1_A01.fcs` — and right-truncation would
- * make every row in a directory read identically.
+/* Truncates from the right, and the path is drawn literally.
  *
- * `direction: rtl` is the only way to move the ellipsis without measuring text.
- * The cost is that a path *starting* with punctuation can reorder oddly; ours
- * start with a word, so it does not bite. */
+ * `direction: rtl` would put the ellipsis at the front without measuring text,
+ * keeping the filename visible on a deep path. It also hands the string to the
+ * bidi algorithm, which moves a leading run of digits to the other end, so
+ * `2026-08-06-run/notes.md` drew as `run/notes.md-2026-08-06`. A path that reads
+ * correctly is worth more than a better-placed ellipsis.
+ *
+ * The cost is real: paths sharing a long prefix now truncate alike. Moving the
+ * ellipsis back means measuring text or truncating in Rust, not a CSS trick. */
 .path {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
-  text-align: left;
   font-family: var(--q-font-mono);
 }
 

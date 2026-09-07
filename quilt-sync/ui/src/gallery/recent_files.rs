@@ -123,11 +123,10 @@ fn Rows() -> impl IntoView {
                     5.0 * HOUR,
                 )}
             </Cell>
-            // The expected phrase is spelled in words, not digits. An earlier version
-            // used "23 hours ago" as the path and it rendered as "hours ago 23" — the
-            // `direction: rtl` that moves the ellipsis to the left also reorders a
-            // leading number under the bidi algorithm. The next cell keeps a real
-            // case of that hazard on the page instead of hiding it.
+            // These fixtures spell the phrase in words rather than digits, which no
+            // longer matters: `FileRow` truncates from the right and draws the path
+            // literally, so a leading number is safe. The next cell is the standing
+            // check on that.
             <Cell full=true label="the 80px time column against its worst cases">
                 <div class="g-rows">
                     {[
@@ -141,7 +140,7 @@ fn Rows() -> impl IntoView {
                         .collect_view()}
                 </div>
             </Cell>
-            <Cell full=true label="paths that START with a number — the rtl truncation hazard">
+            <Cell full=true label="paths that START with a number — drawn literally, never reordered">
                 <div class="g-rows">
                     {["2026/08/04-summary.csv", "2026-08-04-run.log", "0001_plate.fcs"]
                         .into_iter()
