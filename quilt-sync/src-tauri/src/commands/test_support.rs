@@ -34,9 +34,7 @@ pub(crate) fn catalog_host(uri: Option<&quilt_uri::S3PackageUri>) -> Option<Stri
 pub(crate) fn make_installed_package(
     namespace: impl Into<quilt_uri::Namespace>,
 ) -> quilt::InstalledPackage {
-    quilt::LocalDomain::new(std::path::PathBuf::new())
-        .create_installed_package(namespace.into())
-        .expect("Failed to create installed package")
+    quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(namespace.into())
 }
 
 /// Helper: create a `ManifestUri` with origin for a given namespace.

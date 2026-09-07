@@ -50,7 +50,7 @@ async fn test_set_remote_on_local_package() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -111,7 +111,7 @@ async fn test_set_remote_empty_bucket_error() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -217,7 +217,7 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote: BadBucketRemote,
+        remote: std::sync::Arc::new(BadBucketRemote),
         storage,
         namespace,
     };
@@ -286,7 +286,7 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -349,7 +349,7 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -411,7 +411,7 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -480,7 +480,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
     };
@@ -581,7 +581,7 @@ async fn test_resolve_workflow_without_remote_is_none_for_every_intent() -> Res 
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -663,7 +663,7 @@ schemas:
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
     };
@@ -778,7 +778,7 @@ schemas:
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
     };
@@ -885,7 +885,7 @@ schemas:
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
     };
@@ -995,7 +995,7 @@ async fn package_with_config(
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };

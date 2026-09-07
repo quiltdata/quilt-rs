@@ -10,6 +10,8 @@ use crate::error::PackageOpError;
 use crate::flow;
 use crate::flow::PullOutcome;
 use crate::flow::UserMeta;
+use std::sync::Arc;
+
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -76,7 +78,7 @@ pub struct SetRemoteOutcome {
 pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     pub lineage: lineage::PackageLineageIo,
     pub paths: paths::DomainPaths,
-    pub remote: R,
+    pub remote: Arc<R>,
     pub storage: S,
     pub namespace: Namespace,
 }
@@ -130,7 +132,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(remote_uri) => {
                 log::info!("Attempting to recover from cache at {remote_uri}");
                 let cached_manifest =
-                    cache_remote_manifest(&self.paths, &self.storage, &self.remote, remote_uri)
+                    cache_remote_manifest(&self.paths, &self.storage, &*self.remote, remote_uri)
                         .await?;
                 copy_cached_to_installed(&self.paths, &self.storage, remote_uri).await?;
                 Ok(cached_manifest)
@@ -188,7 +190,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         // Only refresh latest hash if we have a remote
         let lineage = match lineage.remote_uri.as_ref() {
-            Some(_) => match flow::refresh_latest_hash(lineage.clone(), &self.remote).await {
+            Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
                 Ok(lineage) => lineage,
                 Err(Error::Login(LoginError::Required(_))) => {
                     return Err(Error::Login(LoginError::Required(
@@ -254,7 +256,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             package_home,
             self.namespace.clone(),
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
@@ -320,7 +322,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             package_home,
             status,
@@ -395,7 +397,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             status,
             self.namespace.clone(),
@@ -465,7 +467,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             Some(self.namespace.clone()),
             host_config,
         )
@@ -526,7 +528,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &package_home,
             host_config,
         )
@@ -536,7 +538,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             snapshot,
             self.namespace.clone(),
@@ -618,7 +620,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &base,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &package_home,
             host_config,
         )
@@ -662,7 +664,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         };
 
         let pushed_manifest_uri = lineage.remote()?.clone();
-        let lineage = flow::certify_latest(lineage, &self.remote, pushed_manifest_uri).await?;
+        let lineage = flow::certify_latest(lineage, &*self.remote, pushed_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
     }
@@ -681,7 +683,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             self.namespace.clone(),
         )
@@ -839,14 +841,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // gate would otherwise re-download the same config via the header's
         // pinned URI.
         let (config_uri, workflows_config) =
-            fetch_workflows_config(&self.remote, host.as_ref(), &workflows_config_uri).await?;
+            fetch_workflows_config(&*self.remote, host.as_ref(), &workflows_config_uri).await?;
         // Publish later pushes this pending recommit *without* re-resolving the
         // workflow, so recommit must stamp the caller's chosen workflow now.
         // With `WorkflowIntent::BucketDefault` (the no-gesture path) this picks
         // up the bucket's `default_workflow`, so a locally-created package's
         // first publish is governed even when the user expresses no choice.
         let workflow = resolve_workflow_from_config(
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             workflow,
             config_uri,
@@ -859,7 +861,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             self.namespace.clone(),
             host_config,
@@ -893,7 +895,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let Some((origin, config_uri)) = self.workflows_config_location().await? else {
             return Ok(None);
         };
-        resolve_workflow(&self.remote, origin.as_ref(), intent, &config_uri).await
+        resolve_workflow(&*self.remote, origin.as_ref(), intent, &config_uri).await
     }
 
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
@@ -908,7 +910,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(None);
         };
         let (_, config) =
-            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
+            fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await?;
         Ok(config)
     }
 
@@ -930,12 +932,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(None);
         };
         let (_, config) =
-            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
+            fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await?;
         let Some(config) = config else {
             return Ok(None);
         };
         Ok(Some(
-            fetch_workflow_rules(&self.remote, origin.as_ref(), &config, workflow_id).await?,
+            fetch_workflow_rules(&*self.remote, origin.as_ref(), &config, workflow_id).await?,
         ))
     }
 }

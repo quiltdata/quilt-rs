@@ -227,7 +227,7 @@ mod tests {
                 namespace.clone(),
             ),
             paths,
-            remote,
+            remote: std::sync::Arc::new(remote),
             storage,
             namespace: namespace.clone(),
         };
