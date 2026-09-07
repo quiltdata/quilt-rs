@@ -496,7 +496,10 @@ fn PackageItem(
         async move {
             if is_behind {
                 match commands::package_pull_outcome(ns).await {
-                    Ok(outcome) => PullCheck::Ready(outcome),
+                    // The preview's `added` — the incoming revision's own
+                    // files — is not read yet; naming them on screen is the
+                    // surface work, not this routing.
+                    Ok(preview) => PullCheck::Ready(preview.outcome),
                     Err(_) => PullCheck::Failed,
                 }
             } else {

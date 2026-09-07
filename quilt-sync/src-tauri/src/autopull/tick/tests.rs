@@ -15,6 +15,28 @@ use crate::model::MockQuiltModel;
 use crate::quilt::lineage::SyncScope;
 use crate::quilt::lineage::UpstreamState;
 
+/// A pull that advanced to `uri` and moved nothing — the tick only reads the
+/// success of the call, not the report it now carries.
+fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
+    quilt::flow::PullReport {
+        manifest_uri: uri,
+        added: Vec::new(),
+        added_not_fetched: Vec::new(),
+        updated: Vec::new(),
+        removed: Vec::new(),
+        message: None,
+    }
+}
+
+/// A dry-run preview carrying just the verdict — the incoming-paths half is not
+/// what the tick routes on.
+fn preview(outcome: PullOutcome) -> quilt::flow::PullPreview {
+    quilt::flow::PullPreview {
+        outcome,
+        added: Vec::new(),
+    }
+}
+
 mod publish;
 
 /// Hex of an ASCII string, matching the per-byte path encoding in the status
@@ -403,14 +425,14 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     model
         .expect_package_pull_outcome()
         .times(1)
-        .returning(|_| Ok(PullOutcome::CleanUpdate));
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
     model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
+        Ok(pulled(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
             namespace: ("acme", "demo").into(),
             hash: "h1".to_string(),
             origin: None,
-        })
+        }))
     });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -487,20 +509,20 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         });
     // Dry run: the surgical update reconciles cleanly, keeping the local add.
     model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
+        Ok(preview(PullOutcome::KeepsLocalChanges {
             added: vec![std::path::PathBuf::from("local.txt")],
             modified: Vec::new(),
             removed: Vec::new(),
-        })
+        }))
     });
     // The pull is actually performed.
     model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
+        Ok(pulled(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
             namespace: ("acme", "demo").into(),
             hash: "h1".to_string(),
             origin: None,
-        })
+        }))
     });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -584,19 +606,19 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     // Dry run: the pull reconciles every local change (e.g. identical edit) →
     // KeepsLocalChanges with all-empty lists = nothing kept.
     model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
+        Ok(preview(PullOutcome::KeepsLocalChanges {
             added: Vec::new(),
             modified: Vec::new(),
             removed: Vec::new(),
-        })
+        }))
     });
     model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
+        Ok(pulled(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
             namespace: ("acme", "demo").into(),
             hash: "h1".to_string(),
             origin: None,
-        })
+        }))
     });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -678,14 +700,14 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     model
         .expect_package_pull_outcome()
         .times(1)
-        .returning(|_| Ok(PullOutcome::CleanUpdate));
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
     model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
+        Ok(pulled(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
             namespace: ("acme", "demo").into(),
             hash: "h1".to_string(),
             origin: None,
-        })
+        }))
     });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -823,9 +845,9 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         });
     // Dry run: a tracked path changed on both sides → the whole pull blocks.
     model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::Blocked {
+        Ok(preview(PullOutcome::Blocked {
             conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        })
+        }))
     });
     // The pull itself must never run when the outcome is Blocked.
     model.expect_package_pull().times(0);
@@ -1041,9 +1063,9 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
             ))
         });
     model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::Blocked {
+        Ok(preview(PullOutcome::Blocked {
             conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        })
+        }))
     });
     model.expect_package_pull().times(0);
 

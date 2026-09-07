@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -11,6 +13,7 @@ use crate::flow;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
 use crate::flow::classify_pull;
+use crate::flow::pull_outcome::RemoteChange;
 use crate::flow::remote_delta;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
@@ -102,6 +105,81 @@ pub async fn snapshot_for_pull(
     ))
 }
 
+/// What a pull applied, grouped by what happened to *this copy* rather than by
+/// the shape of the remote's diff — under a sparse
+/// [`SyncScope`] those differ, and the difference is the part worth reporting.
+///
+/// Three dispositions deliberately appear in no group, because nothing moved:
+/// a path changed on both sides to the same result (trivially resolved), a
+/// tracked path the user had edited (their work is kept, the remote's version
+/// not applied), and a metadata-only revision (an empty touch set). A `Blocked`
+/// pull produces no report at all — it applies nothing.
+///
+/// It describes a **span**, not a revision: a pull advances `base` straight to
+/// `latest`, so one report can cover several revisions, and `message` is the
+/// newest one's only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullReport {
+    /// The revision the pull advanced to.
+    pub manifest_uri: ManifestUri,
+    /// Added by the remote and fetched — whole-package scope only, since an
+    /// added path is never already tracked.
+    pub added: Vec<PathBuf>,
+    /// Added by the remote and left on it — individual-file scope only.
+    pub added_not_fetched: Vec<PathBuf>,
+    /// A tracked path the remote changed, rewritten from `latest`.
+    pub updated: Vec<PathBuf>,
+    /// A tracked path the remote dropped, deleted from the working tree.
+    pub removed: Vec<PathBuf>,
+    /// The newest revision's own message, empty treated as absent.
+    pub message: Option<String>,
+}
+
+impl PullReport {
+    /// Whether anything at all moved or is newly listed. False for a
+    /// metadata-only revision, whose hashes advance and whose files do not.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty()
+            && self.added_not_fetched.is_empty()
+            && self.updated.is_empty()
+            && self.removed.is_empty()
+    }
+}
+
+/// Build the report from the delta the pull already computed and the touch set
+/// it derived — no extra I/O, both are in hand.
+fn report_of(
+    manifest_uri: ManifestUri,
+    delta: &BTreeMap<PathBuf, RemoteChange>,
+    touched: &[PathBuf],
+    message: Option<String>,
+) -> PullReport {
+    let landed: BTreeSet<&PathBuf> = touched.iter().collect();
+    let mut report = PullReport {
+        manifest_uri,
+        added: Vec::new(),
+        added_not_fetched: Vec::new(),
+        updated: Vec::new(),
+        removed: Vec::new(),
+        // An empty message is absent, which the desktop already assumes
+        // elsewhere: `ManifestHeader::default` writes `Some(String::new())`.
+        message: message.filter(|m| !m.is_empty()),
+    };
+    for (path, change) in delta {
+        let landed = landed.contains(path);
+        match (change, landed) {
+            (RemoteChange::Added(_), true) => report.added.push(path.clone()),
+            (RemoteChange::Added(_), false) => report.added_not_fetched.push(path.clone()),
+            (RemoteChange::Modified(_), true) => report.updated.push(path.clone()),
+            (RemoteChange::Removed, true) => report.removed.push(path.clone()),
+            // Kept local work, and the trivially-resolved cases. Nothing moved.
+            (RemoteChange::Modified(_) | RemoteChange::Removed, false) => {}
+        }
+    }
+    report
+}
+
 /// Which of the remote's changed paths this pull will actually apply.
 ///
 /// The **whole** of what a [`SyncScope`] does, in one place and free of I/O so
@@ -154,7 +232,7 @@ pub async fn pull_package(
     snapshot: PullSnapshot,
     namespace: Namespace,
     scope: SyncScope,
-) -> Res<PackageLineage> {
+) -> Res<(PackageLineage, PullReport)> {
     info!("⏳ Starting pull for package {namespace} (scope={scope:?})");
 
     if lineage.commit.is_some() {
@@ -211,11 +289,21 @@ pub async fn pull_package(
     // per-path disposition (or the delta) so the two derivations cannot
     // silently desynchronize.
     //
+    // Kept whole rather than reduced to its keys: the per-path disposition is
+    // what the report is made of, and discarding it here was why a caller could
+    // learn that a package advanced but never what changed inside it.
+    let delta = remote_delta(manifest, &snapshot.latest_manifest);
     let touched = touch_set(
-        remote_delta(manifest, &snapshot.latest_manifest).into_keys(),
+        delta.keys().cloned(),
         &lineage.paths,
         &snapshot.status.changes,
         scope,
+    );
+    let report = report_of(
+        snapshot.latest.clone(),
+        &delta,
+        &touched,
+        snapshot.latest_manifest.header.message.clone(),
     );
 
     // Verify-before-uninstall. For every touched path, confirm the working-tree
@@ -284,7 +372,7 @@ pub async fn pull_package(
     .await?;
 
     info!("✔️ Successfully pulled (surgical), outcome={outcome:?}");
-    Ok(lineage)
+    Ok((lineage, report))
 }
 
 #[cfg(test)]
@@ -787,7 +875,7 @@ mod tests {
         };
 
         let mut base = base;
-        let lineage = pull_package(
+        let (lineage, _report) = pull_package(
             lineage,
             &mut base,
             &paths,
@@ -881,7 +969,7 @@ mod tests {
         };
 
         let mut base = base;
-        let lineage = pull_package(
+        let (lineage, _report) = pull_package(
             lineage,
             &mut base,
             &paths,

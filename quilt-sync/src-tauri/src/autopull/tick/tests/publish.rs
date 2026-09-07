@@ -5,6 +5,28 @@ use super::*;
 
 use crate::experimental_settings::ExperimentalSettings;
 
+/// A pull that advanced to `uri` and moved nothing — the tick only reads the
+/// success of the call, not the report it now carries.
+fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
+    quilt::flow::PullReport {
+        manifest_uri: uri,
+        added: Vec::new(),
+        added_not_fetched: Vec::new(),
+        updated: Vec::new(),
+        removed: Vec::new(),
+        message: None,
+    }
+}
+
+/// A dry-run preview carrying just the verdict — the incoming-paths half is not
+/// what the tick routes on.
+fn preview(outcome: PullOutcome) -> quilt::flow::PullPreview {
+    quilt::flow::PullPreview {
+        outcome,
+        added: Vec::new(),
+    }
+}
+
 /// Shared boilerplate for the publish-branch tests: returns a
 /// `MockQuiltModel` wired with the package list, lineage, package, and
 /// status mocks, plus the namespace and lineage clones for tests that
@@ -264,7 +286,7 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
     model
         .expect_package_pull_outcome()
         .times(1)
-        .returning(|_| Ok(PullOutcome::UpToDate));
+        .returning(|_| Ok(preview(PullOutcome::UpToDate)));
     model.expect_package_pull().times(0);
     model.expect_package_publish().times(0);
 
@@ -876,19 +898,19 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::Behind, changes));
     // Non-conflicting local work: the pull reconciles cleanly and keeps it.
     model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
+        Ok(preview(PullOutcome::KeepsLocalChanges {
             added: vec![std::path::PathBuf::from("file.txt")],
             modified: Vec::new(),
             removed: Vec::new(),
-        })
+        }))
     });
     model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
+        Ok(pulled(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
             namespace: ("acme", "demo").into(),
             hash: "h1".to_string(),
             origin: None,
-        })
+        }))
     });
     let reporter = Arc::new(RecordingReporter::default());
     let (tx, rx) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());

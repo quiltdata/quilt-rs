@@ -870,7 +870,21 @@ impl PullCheck {
     }
 }
 
-pub async fn package_pull_outcome(namespace: String) -> Result<PullOutcome, String> {
+/// The dry-run verdict plus the paths the incoming revision adds. Mirrors the
+/// engine's `quilt_rs::flow::PullPreview`.
+///
+/// `added` is scope-independent — it names what the revision *holds* that this
+/// copy does not, and whether a pull would fetch it is the sync scope's
+/// business at apply time. It costs nothing: the manifest naming these paths
+/// was already fetched to reach the verdict.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PullPreview {
+    pub outcome: PullOutcome,
+    pub added: Vec<String>,
+}
+
+pub async fn package_pull_outcome(namespace: String) -> Result<PullPreview, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,

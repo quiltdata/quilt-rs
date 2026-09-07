@@ -92,6 +92,34 @@ pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathB
     delta
 }
 
+/// The dry run's verdict, plus **what the incoming revision adds** — the paths
+/// present in `latest` and absent from `base`.
+///
+/// A wrapper rather than a field on [`PullOutcome`], whose variants answer
+/// "would this pull be safe" and cross the wire to the desktop; what a revision
+/// brings is orthogonal to that verdict and true whatever it says.
+///
+/// Scope-independent on purpose: this reports what the revision *holds*, and
+/// whether a pull would fetch it is [`SyncScope`](crate::lineage::SyncScope)'s
+/// business at apply time. It costs nothing — the manifest naming these paths
+/// was already fetched to reach the verdict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PullPreview {
+    pub outcome: PullOutcome,
+    pub added: Vec<PathBuf>,
+}
+
+/// The paths `latest` holds that `base` does not.
+#[must_use]
+pub(crate) fn remote_additions(base: &Manifest, latest: &Manifest) -> Vec<PathBuf> {
+    latest
+        .rows
+        .iter()
+        .filter(|row| base.get_record(&row.logical_key).is_none())
+        .map(|row| row.logical_key.clone())
+        .collect()
+}
+
 /// Do the local and remote sides of a both-changed path reach the *same*
 /// result? Same content (or both removed) is not a conflict.
 fn same_resulting_content(local: &Change, remote: &RemoteChange) -> bool {
