@@ -456,8 +456,7 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model
@@ -524,8 +523,7 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model.expect_resolve_workflow().returning(|_, _| Ok(None));
@@ -566,8 +564,7 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model

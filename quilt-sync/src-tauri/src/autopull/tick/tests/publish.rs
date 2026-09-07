@@ -20,8 +20,7 @@ fn fixture_with_lineage_and_status(
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     let lineage_clone = lineage.clone();
@@ -31,8 +30,7 @@ fn fixture_with_lineage_and_status(
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     let status_mutex = std::sync::Mutex::new(Some(status));

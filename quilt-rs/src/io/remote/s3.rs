@@ -208,9 +208,13 @@ where
 pub struct RemoteS3 {
     auth: auth::Auth,
     http: crate::io::remote::client::ReqwestClient,
-    s3: Arc<RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>>,
-    client_locks: Arc<RwLock<HashMap<CredsRef, Arc<AsyncMutex<()>>>>>,
-    client_cache_generation: Arc<AtomicU64>,
+    s3: RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>,
+    /// One construction lock per credentials key, so concurrent misses build
+    /// one client instead of N. Held across the build, which awaits.
+    client_locks: RwLock<HashMap<CredsRef, Arc<AsyncMutex<()>>>>,
+    /// Bumped by every invalidation, so a builder that started before one
+    /// cannot write its pre-invalidation client back.
+    client_cache_generation: AtomicU64,
     regions: RwLock<HashMap<String, Region>>,
 }
 
@@ -219,27 +223,12 @@ impl RemoteS3 {
     pub fn new(paths: DomainPaths, storage: LocalStorage) -> Self {
         RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),
-            s3: Arc::new(RwLock::new(HashMap::new())),
-            client_locks: Arc::new(RwLock::new(HashMap::new())),
-            client_cache_generation: Arc::new(AtomicU64::new(0)),
+            s3: RwLock::new(HashMap::new()),
+            client_locks: RwLock::new(HashMap::new()),
+            client_cache_generation: AtomicU64::new(0),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, Arc::new(storage)),
         }
-    }
-
-    pub fn try_clone(&self) -> Res<Self> {
-        let regions = match self.regions.read() {
-            Ok(regions) => regions.clone(),
-            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
-        };
-        Ok(RemoteS3 {
-            http: self.http.clone(),
-            s3: Arc::clone(&self.s3),
-            client_locks: Arc::clone(&self.client_locks),
-            client_cache_generation: Arc::clone(&self.client_cache_generation),
-            regions: RwLock::new(regions),
-            auth: self.auth.clone(),
-        })
     }
 
     pub async fn login(&self, host: &Host, refresh_token: String) -> Res {
@@ -1282,55 +1271,66 @@ mod tests {
         assert!(remote.s3.read().unwrap().is_empty());
     }
 
+    /// Every `InstalledPackage` a domain hands out must reach *the* caches,
+    /// not a copy of them. A per-package copy starts empty, discards whatever
+    /// it builds, and — the part that matters beyond wasted work — puts the
+    /// clients holding vended STS credentials outside the reach of the
+    /// `clear_client_cache` that logout depends on.
+    ///
+    /// Asserted through the domain rather than on a clone helper, so it holds
+    /// for *every* cache on the remote and cannot pass while one is left
+    /// behind.
     #[test]
-    fn cloned_remotes_share_client_cache_and_single_flight_locks() {
-        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
-        let cloned = remote.try_clone().unwrap();
+    fn packages_share_the_domain_caches() {
+        use crate::local_domain::LocalDomain;
 
-        assert!(Arc::ptr_eq(&remote.s3, &cloned.s3));
-        assert!(Arc::ptr_eq(&remote.client_locks, &cloned.client_locks));
-        assert!(Arc::ptr_eq(
-            &remote.client_cache_generation,
-            &cloned.client_cache_generation
-        ));
+        let temp = tempfile::TempDir::new().unwrap();
+        let domain = LocalDomain::new(temp.path());
+        let first = domain.create_installed_package(("acme", "demo").into());
+        let second = domain.create_installed_package(("acme", "other").into());
 
         let key = CredsRef {
             region: Region::new("us-east-1"),
             host: None,
         };
-        remote
+        first
+            .remote
             .s3
             .write()
             .unwrap()
             .insert(key.clone(), dummy_client("us-east-1"));
-        remote
-            .client_locks
+        first
+            .remote
+            .regions
             .write()
             .unwrap()
-            .insert(key.clone(), Arc::new(AsyncMutex::new(())));
+            .insert("some-bucket".to_string(), Region::new("us-east-1"));
 
-        assert!(cloned.s3.read().unwrap().contains_key(&key));
-        assert!(cloned.client_locks.read().unwrap().contains_key(&key));
-
-        let construction_lock = remote
-            .client_locks
-            .read()
-            .unwrap()
-            .get(&key)
-            .unwrap()
-            .clone();
-
-        let generation = remote.client_cache_generation.load(Ordering::SeqCst);
-        cloned.clear_client_cache(None);
-        assert!(remote.s3.read().unwrap().is_empty());
-        assert_eq!(
-            remote.client_cache_generation.load(Ordering::SeqCst),
-            generation + 1
+        assert!(
+            second.remote.s3.read().unwrap().contains_key(&key),
+            "a client built by one package must be visible to the next"
         );
-        assert!(Arc::ptr_eq(
-            &construction_lock,
-            remote.client_locks.read().unwrap().get(&key).unwrap()
-        ));
+        assert!(
+            second
+                .remote
+                .regions
+                .read()
+                .unwrap()
+                .contains_key("some-bucket"),
+            "a region resolved by one package must be visible to the next"
+        );
+        assert!(
+            domain.get_remote().s3.read().unwrap().contains_key(&key),
+            "and to the domain the packages came from"
+        );
+
+        // The reason this matters on logout: the flush must reach what the
+        // packages built, not just what the domain built itself.
+        domain.get_remote().clear_client_cache(None);
+        assert!(
+            first.remote.s3.read().unwrap().is_empty(),
+            "clear_client_cache must reach clients cached through a package"
+        );
     }
 
     #[test]

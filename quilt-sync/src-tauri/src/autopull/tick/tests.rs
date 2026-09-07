@@ -379,8 +379,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         .returning(move || {
             Ok(vec![
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ])
         });
     model
@@ -389,8 +388,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     model
@@ -461,8 +459,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
@@ -471,8 +468,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Behind with a local addition present.
@@ -558,8 +554,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
@@ -568,8 +563,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Pre-pull: the tree is dirty (a local edit is present), so the stale-true
@@ -655,8 +649,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
@@ -665,8 +658,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Pre-pull walk reports a dirty tree (stale-true source).
@@ -743,8 +735,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Status refresh succeeds and reports Behind, so the pull dry-run runs.
@@ -805,8 +796,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
@@ -815,8 +805,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     let mut changes = BTreeMap::new();
@@ -887,8 +876,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
@@ -897,8 +885,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Status check itself fails with LoginRequired (mirrors what
@@ -966,8 +953,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     model
@@ -1029,8 +1015,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
@@ -1039,8 +1024,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     let mut changes = BTreeMap::new();
