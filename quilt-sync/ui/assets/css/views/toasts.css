@@ -1,0 +1,78 @@
+/* The toast stack: fixed bottom-right, newest last so the stack grows upward
+   away from the pointer rather than under it. */
+.qui-toasts {
+  position: fixed;
+  right: var(--q-ui-size-2);
+  bottom: var(--q-ui-size-2);
+  z-index: var(--q-ui-z-index-popover);
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-1);
+  align-items: flex-end;
+  /* Never cover the whole window: the stack is bounded and scrolls, and the
+     ground beneath it stays clickable. */
+  max-height: 60vh;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.qui-toast {
+  display: flex;
+  gap: var(--q-ui-size-1);
+  align-items: flex-start;
+  width: max-content;
+  max-width: 30rem;
+  padding: var(--q-ui-size-1-5);
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-small);
+  color: var(--q-ui-palette-text-primary);
+  pointer-events: auto;
+  background: var(--q-ui-palette-background-primary);
+  border-left: 4px solid var(--q-ui-palette-primary);
+  border-radius: 2px;
+  box-shadow: var(--q-ui-shadows-popup);
+}
+
+.qui-toast.success {
+  border-left-color: var(--q-ui-palette-success);
+}
+
+.qui-toast.warning {
+  border-left-color: var(--q-ui-palette-warning);
+}
+
+.qui-toast.error {
+  border-left-color: var(--q-ui-palette-error);
+}
+
+.qui-toast .content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-0-5);
+  min-width: 0;
+}
+
+.qui-toast .title {
+  font-weight: 500;
+}
+
+.qui-toast .body {
+  /* A report names paths, which are long and must not be clipped away. */
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.qui-toast .close {
+  padding: 0 var(--q-ui-size-0-5);
+  font-size: var(--q-ui-font-size-large);
+  line-height: 1;
+  color: var(--q-ui-palette-text-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.qui-toast .close:hover {
+  color: var(--q-ui-palette-text-primary);
+  background: var(--q-ui-palette-action-hover);
+}
