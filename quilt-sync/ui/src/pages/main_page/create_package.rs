@@ -242,7 +242,10 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn the_dialog_is_not_in_the_document_until_it_is_opened() {
+    fn a_closed_dialog_is_not_showing() {
+        // The dialog is mounted in the document permanently (see
+        // `CreatePackageDialog`'s own doc) — this asserts the element's `open`
+        // property, not its presence in the DOM.
         let open = RwSignal::new(false);
         let el = mount_dialog(open);
 

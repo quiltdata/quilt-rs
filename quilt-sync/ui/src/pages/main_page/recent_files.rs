@@ -70,7 +70,7 @@ pub fn RecentFilesRegion(
                 if visible.is_empty() {
                     view! {
                         <Blankslate
-                            heading=format!("No files match \u{201c}{text}\u{201d}")
+                            heading=format!("No files match \u{201c}{}\u{201d}", text.trim())
                             description="Search covers the paths of files you have locally. Files that exist \
                                   only in a bucket are not included."
                         />

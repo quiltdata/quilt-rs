@@ -154,6 +154,7 @@ pub fn group_packages(rows: Vec<ListRowData>, group_by: &str) -> Vec<PackageGrou
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasm_bindgen_test::*;
 
     fn row(namespace: &str, changed_at: Option<f64>, bucket: Option<&str>) -> ListRowData {
         ListRowData {
@@ -163,7 +164,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn search_matches_a_namespace_case_insensitively_anywhere_in_the_string() {
         // R5: case-insensitive substring. "Search covers the names of packages
         // installed on this machine" is the promise the empty state makes, so the
@@ -179,7 +180,7 @@ mod tests {
         assert_eq!(hit[0].namespace, "user/Plate-07");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn search_does_not_match_a_bucket_the_description_never_promised() {
         // The empty state tells the user search covers package names. Matching a
         // bucket too would be a second contract nothing on screen states.
@@ -188,7 +189,7 @@ mod tests {
         assert!(filter_packages(rows, "plate").is_empty());
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn a_blank_or_whitespace_query_filters_nothing() {
         let rows = vec![row("user/alpha", None, None), row("team/beta", None, None)];
 
@@ -196,7 +197,7 @@ mod tests {
         assert_eq!(filter_packages(rows, "   ").len(), 2);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn sort_changed_is_newest_first() {
         // §3.1's default. The fixture's given order is NON-MONOTONIC, so any
         // re-ordering in either direction fails this — a fixture already in the
@@ -213,7 +214,7 @@ mod tests {
         assert_eq!(names, vec!["user/newest", "user/middle", "user/oldest"]);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn a_package_that_has_never_changed_sorts_last_and_not_first() {
         // `changed_at: None` means nothing has ever been written to the package.
         // Treating it as 0 would work by accident; treating it as newest would put
@@ -243,7 +244,7 @@ mod tests {
         assert_eq!(never_first[1].namespace, "user/never");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn sort_name_is_case_insensitive_and_ascending() {
         // Case-sensitive ordering would put every capitalised namespace above
         // every lower-case one, which reads as a random shuffle to anyone who did
@@ -260,7 +261,7 @@ mod tests {
         assert_eq!(names, vec!["user/Alpha", "user/beta", "user/gamma"]);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn the_bucket_axis_puts_local_only_first_then_buckets_alphabetically() {
         // §3.1: "`Local only` sorts first — local packages are the ones missing a
         // bucket, so burying them hides what most needs setup — then `s3://`
@@ -286,7 +287,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn the_prefix_axis_groups_on_the_first_namespace_segment() {
         // §4.4: "The prefix axis needs no field: it is `namespace` up to the first
         // `/`." Two buckets under one prefix must land in ONE group — that is the
@@ -305,10 +306,12 @@ mod tests {
         assert_eq!(groups[0].rows.len(), 2, "both team packages in one group");
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn a_namespace_with_no_slash_is_its_own_prefix_rather_than_a_panic() {
-        // `split_once('/')` returns None here. Real rosters have had bare
-        // namespaces, and the axis must not care.
+        // `split_once('/')` returns None here. `quilt_uri::Namespace` rejects a
+        // missing `/` on construction, so this branch is unreachable from a
+        // validated namespace — kept defensively anyway, so the axis does not
+        // panic if that ever stops being true.
         let rows = vec![row("scratch", None, None)];
 
         let groups = group_packages(rows, GROUP_PREFIX);
@@ -316,7 +319,7 @@ mod tests {
         assert_eq!(groups[0].title.as_deref(), Some("scratch"));
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn the_none_axis_is_one_unnamed_group_holding_everything() {
         // Not "no groups": the renderer walks groups either way, and the single
         // untitled group is what tells it to draw no heading.

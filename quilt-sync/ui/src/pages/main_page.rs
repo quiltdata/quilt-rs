@@ -407,14 +407,22 @@ fn list_toolbar(
                 options=vec![PACKAGES_VIEW.to_string(), FILES_VIEW.to_string()]
                 selected=view_selected
             />
-            <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
             // Two selects, not one with reactive options: `Select`'s `options` is
             // built once, and a shared `selected` holding a value the other axis
-            // does not offer renders the control blank.
+            // does not offer renders the control blank. The `SearchInput` is split
+            // the same way, one instance per view guard, both bound to the same
+            // `query` signal: its `aria_label` is a plain `String` (kit, read-only),
+            // so it cannot say "packages" on one view and "files" on the other
+            // without two instances.
             {move || {
                 on_packages()
                     .then(|| {
                         view! {
+                            <SearchInput
+                                value=query
+                                aria_label="Search packages"
+                                placeholder="Search…"
+                            />
                             <Select
                                 naming=Naming::Prefix("Group".to_string())
                                 options=vec![
@@ -439,6 +447,7 @@ fn list_toolbar(
                 (!on_packages())
                     .then(|| {
                         view! {
+                            <SearchInput value=query aria_label="Search files" placeholder="Search…" />
                             <Select
                                 naming=Naming::Prefix("Group".to_string())
                                 options=vec![GROUP_NONE.to_string(), GROUP_PACKAGE.to_string()]
@@ -802,7 +811,8 @@ fn MainPageRegions(
                                                     view! {
                                                         <Blankslate
                                                             heading=format!(
-                                                                "No packages match \u{201c}{text}\u{201d}",
+                                                                "No packages match \u{201c}{}\u{201d}",
+                                                                text.trim(),
                                                             )
                                                             description="Search covers the names of packages installed on this machine."
                                                         />
@@ -1487,6 +1497,45 @@ mod tests {
         }
     }
 
+    /// Two packages in one bucket, a third alone in a second — the fixture the
+    /// derived-count test needs to prove `GroupHeading`'s count is never typed
+    /// by hand: a literal `2` passes against `two_packages_in_one_bucket`
+    /// alone, but only a real `rows.len()` gets both headings right at once,
+    /// including the count-of-one no other test in either region covers.
+    fn two_packages_in_one_bucket_and_one_in_another() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: "user/plate-07".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/plate-08".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: "user/solo-plate".to_string(),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("solo-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
     /// The feed's empty answer — what the page gets before anyone has installed
     /// anything, and the default for every test whose subject is not the feed.
     fn no_files() -> MainPageRecentFilesData {
@@ -1771,9 +1820,13 @@ mod tests {
     #[wasm_bindgen_test]
     async fn the_packages_view_opens_grouped_by_bucket_with_a_derived_count() {
         // §3.1's default axis, and R1's rule that no count is ever written by
-        // hand: the heading's count is the length of the rows under it.
+        // hand: the heading's count is the length of the rows under it, always
+        // — including one. A fixture with only a count of two would pass
+        // against a literal `2`; asserting both buckets here is what makes a
+        // constant fail, and it is the only coverage in either region for a
+        // group of one.
         let (slot, on_store) = store_slot();
-        let payload = two_packages_in_one_bucket();
+        let payload = two_packages_in_one_bucket_and_one_in_another();
         let el = mount_regions_reloading(
             Ok(payload.clone()),
             Ok(one_signed_out_host()),
@@ -1784,12 +1837,19 @@ mod tests {
         settle_all(seeded_store(slot), &payload);
         leptos::task::tick().await;
 
-        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        let team = heading_text(&el, "s3://team-bucket").expect("the team bucket heading");
         assert!(
-            heading.contains("s3://team-bucket"),
-            "the bucket heading: {heading}"
+            team.contains("s3://team-bucket"),
+            "the bucket heading: {team}"
         );
-        assert!(heading.contains('2'), "the derived count: {heading}");
+        assert!(team.contains('2'), "two rows under it: {team}");
+
+        let solo = heading_text(&el, "s3://solo-bucket").expect("the solo bucket heading");
+        assert!(
+            solo.contains("s3://solo-bucket"),
+            "the bucket heading: {solo}"
+        );
+        assert!(solo.contains('1'), "one row under it: {solo}");
     }
 
     #[wasm_bindgen_test]
@@ -2515,8 +2575,15 @@ mod tests {
         // really swaps the view rather than stacking a second one under it.
         let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
         sleep_ms(50).await;
+        // Scoped to the row's own link, not the page's whole text:
+        // `CreatePackageDialog` is mounted permanently (Task 7) and its first
+        // `FormControl` caption reads "…user/plate-07." unconditionally, so an
+        // unscoped `contains` here would pass even if the page opened on the
+        // feed.
         assert!(
-            el.text_content().unwrap().contains("user/plate-07"),
+            el.query_selector("a[href*='namespace=user/plate-07']")
+                .unwrap()
+                .is_some(),
             "the packages view is the default (R4)"
         );
 
@@ -3204,6 +3271,24 @@ mod tests {
         sleep_ms(50).await;
         settle_all(seeded_store(slot), &two_packages_all_latest());
         leptos::task::tick().await;
+
+        // The positive half: a query matching one of the two rows keeps that
+        // row and drops the other, rather than the assertion below being the
+        // test's only real claim.
+        type_search(&el, "plate-07");
+        sleep_ms(20).await;
+        assert!(
+            el.query_selector("a[href*='namespace=user/plate-07']")
+                .unwrap()
+                .is_some(),
+            "the matching row stays"
+        );
+        assert!(
+            el.query_selector("a[href*='namespace=user/plate-08']")
+                .unwrap()
+                .is_none(),
+            "the non-matching row is dropped"
+        );
 
         type_search(&el, "plate-99");
         sleep_ms(20).await;
