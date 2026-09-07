@@ -20,6 +20,7 @@
 
 mod accounts;
 mod autosync;
+mod create_package;
 mod grouping;
 mod queue;
 mod recent_files;
@@ -395,6 +396,7 @@ fn list_toolbar(
     group_packages_by: RwSignal<String>,
     group_files_by: RwSignal<String>,
     sort_by: RwSignal<String>,
+    create_open: RwSignal<bool>,
 ) -> AnyView {
     let on_packages = move || view_selected.get() == PACKAGES_VIEW;
     view! {
@@ -427,7 +429,7 @@ fn list_toolbar(
                                 options=vec![SORT_CHANGED.to_string(), SORT_NAME.to_string()]
                                 selected=sort_by
                             />
-                            <Button on_click=move |_| { /* Task 7 opens the dialog */ }>
+                            <Button on_click=move |_| create_open.set(true)>
                                 "Create package"
                             </Button>
                         }
@@ -581,6 +583,10 @@ fn MainPageRegions(
     let group_packages_by = RwSignal::new(GROUP_BUCKET.to_string());
     let group_files_by = RwSignal::new(GROUP_NONE.to_string());
     let sort_by = RwSignal::new(SORT_CHANGED.to_string());
+    // Same placement, same reason: `CreatePackageDialog` mounts outside the
+    // `Transition` below, and a signal created inside a refetch's resolved
+    // subtree would close a dialog the reader is mid-typing into.
+    let create_open = RwSignal::new(false);
     // A one-way latch, not `view_selected` itself. The resource's source closure
     // is reactive, so gating it on the view directly would refetch on *every*
     // toggle and resolve the feed back to nothing on the way to Packages —
@@ -634,6 +640,11 @@ fn MainPageRegions(
                 })}
             </Transition>
         </div>
+        // Outside every `Transition`, beside the strip: a refetch rebuilds the
+        // resolved subtree below, and a dialog rebuilt mid-typing would close
+        // itself. The `<dialog>` is in the browser's top layer regardless of
+        // where it sits in the tree, so its position here is not a layout claim.
+        <create_package::CreatePackageDialog open=create_open reload=reload />
         // The queue and the list, from one read of the package rows. This
         // `Suspend` must stay a `Suspend` — memoising it, or keeping its subtree
         // across a resolve with a `Show` or a `StoredValue`, would reuse the
@@ -645,7 +656,7 @@ fn MainPageRegions(
                 // on screen with the appbar and the strip, and is never itself a
                 // skeleton. The skeletons below it are the packages view's,
                 // because that is the view the page opens on (R4).
-                {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by)}
+                {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by, create_open)}
                 <Card>
                     <PackageRowSkeleton />
                     <PackageRowSkeleton />
@@ -747,7 +758,7 @@ fn MainPageRegions(
                                 in_flight=in_flight
                                 total=total
                             />
-                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by)}
+                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by, create_open)}
                             // Neither card carries a title: the toggle immediately
                             // above names the view, and a card titled `Packages`
                             // over a Packages / Recent files switch says it twice
@@ -893,7 +904,7 @@ fn MainPageRegions(
                         // and only the Packages arm carries the sentence. No title,
                         // as in the arm above.
                         view! {
-                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by)}
+                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by, create_open)}
                             <Show
                                 when=move || view_selected.get() == FILES_VIEW
                                 fallback=|| view! { <Card>{render_fetch_error()}</Card> }
@@ -1588,6 +1599,23 @@ mod tests {
             .and_then(|heading| heading.text_content())
     }
 
+    /// Whether a `<button>` reading this text exists anywhere in `el`.
+    ///
+    /// Narrower than `el.text_content().contains(label)`: `CreatePackageDialog`'s
+    /// own `<h2>` title reads "Create package" too, and — unlike the toolbar's
+    /// button — it is in the DOM regardless of which view is on screen, since
+    /// `kit::Dialog` keeps one persistent element and only toggles whether it is
+    /// showing (`dialog.rs`'s `show_modal`/`close`). A button is the toolbar's own
+    /// affordance, so this is what "the toolbar carries/drops Create package"
+    /// actually means.
+    fn has_button_labelled(el: &web_sys::Element, label: &str) -> bool {
+        let buttons = el.query_selector_all("button").unwrap();
+        (0..buttons.length())
+            .filter_map(|i| buttons.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .any(|b| b.text_content().unwrap_or_default().contains(label))
+    }
+
     #[wasm_bindgen_test]
     async fn the_packages_view_toolbar_carries_every_control() {
         // §2's region 4: "The toolbar carries the view toggle, search, a `Group:`
@@ -1608,9 +1636,17 @@ mod tests {
             "the search field"
         );
         let text = el.text_content().unwrap();
-        for control in ["Group:", "Sort:", "Create package"] {
+        for control in ["Group:", "Sort:"] {
             assert!(text.contains(control), "missing {control}: {text}");
         }
+        // Not a `text.contains` check: `CreatePackageDialog`'s own `<h2>` title
+        // also reads "Create package" and is in the DOM either way (see
+        // `has_button_labelled`'s doc), so that substring is always present and
+        // would not catch the toolbar's own button going missing.
+        assert!(
+            has_button_labelled(&el, "Create package"),
+            "missing the toolbar's Create package button: {text}"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1642,7 +1678,7 @@ mod tests {
             "sort is the packages view's: {text}"
         );
         assert!(
-            !text.contains("Create package"),
+            !has_button_labelled(&el, "Create package"),
             "create is the packages view's: {text}"
         );
         assert!(
