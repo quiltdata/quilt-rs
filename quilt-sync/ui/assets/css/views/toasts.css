@@ -1,21 +1,37 @@
-/* The toast stack: top-centre, below the appbar and toolbar so it covers list
-   content rather than any control — the row action buttons live on the right,
-   which is where the stack used to sit and collide with them. */
+/* The toast stack: top-centre, starting at the toolbar so the first card
+   overlaps it — the row action buttons live on the right, which is where the
+   stack used to sit and collide with them.
+
+   Two blocks in a column: the list, which grows and scrolls, and the
+   dismiss-all control pinned beneath it so it stays put as toasts arrive. */
 .qui-toasts {
   position: fixed;
-  top: calc(var(--q-ui-size-8) * 2 + var(--q-ui-size-2));
+  top: var(--q-ui-size-8);
   left: 50%;
   z-index: var(--q-ui-z-index-popover);
   display: flex;
   flex-direction: column;
-  gap: var(--q-ui-size-1);
-  /* One width for every card: ragged right edges read as debris rather than as
-     a layer. */
-  width: min(40rem, calc(100vw - var(--q-ui-size-4)));
-  max-height: calc(100vh - var(--q-ui-size-8) * 3);
-  overflow-y: auto;
+  align-items: center;
+  width: min(44rem, 100vw);
+  /* Leaves the window's foot clear: six toasts already fill the height, and a
+     stack running to the bottom edge reads as a takeover rather than a layer. */
+  max-height: calc(100vh - var(--q-ui-size-8) - var(--q-ui-size-6));
   pointer-events: none;
   transform: translateX(-50%);
+}
+
+/* The growing, scrolling half. Padded on every side because `overflow-y`
+   clips at the padding box: without it the cards' shadows are shaved off,
+   which is what made them read as flat against the list. */
+.qui-toasts .list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--q-ui-size-1-5);
+  align-self: stretch;
+  min-height: 0;
+  padding: var(--q-ui-size-2);
+  overflow-y: auto;
 }
 
 .qui-toast {
@@ -30,8 +46,10 @@
   background: var(--q-ui-palette-background-primary);
   border-left: 4px solid var(--q-ui-palette-primary);
   border-radius: 2px;
-  /* Heavier than a popup's: this has to read as a layer above a dense list. */
-  box-shadow: rgb(0 0 0 / 30%) 0 8px 24px -4px, rgb(0 0 0 / 20%) 0 2px 6px -1px;
+  /* Deliberately heavier than a popup's: this layer sits over a dense list and
+     has to separate from it without an overlay to do the work. */
+  box-shadow: rgb(0 0 0 / 32%) 0 10px 28px -6px, rgb(0 0 0 / 24%) 0 4px 10px -2px,
+    rgb(0 0 0 / 12%) 0 0 0 1px;
 }
 
 .qui-toast.success {
@@ -66,8 +84,8 @@
   white-space: pre-wrap;
 }
 
-/* A real target, not a glyph: 32px square, which is the smallest comfortable
-   hit area and matches the size scale's own step. */
+/* A real target, not a glyph: 32px square, the smallest comfortable hit area
+   and a step on the existing scale. */
 .qui-toast .close {
   display: flex;
   flex: none;
@@ -89,11 +107,11 @@
   background: var(--q-ui-palette-action-hover);
 }
 
-/* Shown only from the second toast onward — closing them one at a time is the
-   tedium this removes. */
+/* The second block. Shown only from the second toast onward — closing them one
+   at a time is the tedium this removes. */
 .qui-toasts .dismiss-all {
-  align-self: flex-end;
-  padding: var(--q-ui-size-0-5) var(--q-ui-size-1-5);
+  flex: none;
+  padding: var(--q-ui-size-1) var(--q-ui-size-2);
   font-family: var(--q-ui-font-family);
   font-size: var(--q-ui-font-size-small);
   color: var(--q-ui-palette-text-primary);

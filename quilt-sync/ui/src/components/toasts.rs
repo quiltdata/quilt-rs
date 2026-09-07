@@ -69,15 +69,19 @@ pub fn ToastStack() -> impl IntoView {
     };
 
     view! {
+        // Two blocks: the scrolling list, which grows, and the dismiss-all
+        // control pinned under it so it does not move as toasts arrive.
         <div class="qui-toasts">
+            <div class="list">
+                <For each=ordered key=|toast| toast.id let:toast>
+                    <ToastCard toast=toast toasts=toasts />
+                </For>
+            </div>
             <Show when=many>
                 <button class="dismiss-all" type="button" on:click=dismiss_all>
                     "Dismiss all"
                 </button>
             </Show>
-            <For each=ordered key=|toast| toast.id let:toast>
-                <ToastCard toast=toast toasts=toasts />
-            </For>
         </div>
     }
 }
