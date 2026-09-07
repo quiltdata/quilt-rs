@@ -50,6 +50,13 @@ pub fn ToastStack() -> impl IntoView {
     });
     on_cleanup(move || drop(listener));
 
+    view! { <ToastLayer toasts=toasts /> }
+}
+
+/// The markup, split from the bridge wiring above so it can be mounted in a
+/// test — `ToastStack` cannot, since it reaches for Tauri on mount.
+#[component]
+fn ToastLayer(toasts: RwSignal<Toasts>) -> impl IntoView {
     // Newest first: the stack hangs from the top of the window, so the newest
     // belongs nearest the eye rather than pushed furthest from it.
     //
@@ -57,6 +64,10 @@ pub fn ToastStack() -> impl IntoView {
     // (`::<Vec<_>>`) as markup, so the collect stays outside it.
     let ordered = move || -> Vec<Toast> { toasts.get().into_values().rev().collect() };
     let many = move || toasts.with(|map| map.len() > 1);
+    // Nothing at all when empty. The list captures pointer events so its gaps
+    // and its scrolling work, which means an always-rendered container would
+    // leave an invisible band across the page blocking the rows beneath it.
+    let any = move || !toasts.with(BTreeMap::is_empty);
 
     let dismiss_all = move |_| {
         let ids: Vec<u64> = toasts.with_untracked(|map| map.keys().copied().collect());
@@ -71,18 +82,20 @@ pub fn ToastStack() -> impl IntoView {
     view! {
         // Two blocks: the scrolling list, which grows, and the dismiss-all
         // control pinned under it so it does not move as toasts arrive.
-        <div class="qui-toasts">
-            <div class="list">
-                <For each=ordered key=|toast| toast.id let:toast>
-                    <ToastCard toast=toast toasts=toasts />
-                </For>
+        <Show when=any>
+            <div class="qui-toasts">
+                <div class="list">
+                    <For each=ordered key=|toast| toast.id let:toast>
+                        <ToastCard toast=toast toasts=toasts />
+                    </For>
+                </div>
+                <Show when=many>
+                    <button class="dismiss-all" type="button" on:click=dismiss_all>
+                        "Dismiss all"
+                    </button>
+                </Show>
             </div>
-            <Show when=many>
-                <button class="dismiss-all" type="button" on:click=dismiss_all>
-                    "Dismiss all"
-                </button>
-            </Show>
-        </div>
+        </Show>
     }
 }
 
@@ -207,6 +220,33 @@ mod tests {
         let el = mount(move || view! { <ToastCard toast=without toasts=signal /> });
         assert!(el.query_selector(".title").unwrap().is_none());
         assert!(el.text_content().unwrap().contains("body only"));
+    }
+
+    #[wasm_bindgen_test]
+    fn an_empty_stack_renders_nothing_at_all() {
+        // Not cosmetic: the list captures pointer events so its gaps and its
+        // scrolling work, so a container rendered with no toasts would leave an
+        // invisible band blocking the rows beneath it.
+        let signal: RwSignal<Toasts> = RwSignal::new(BTreeMap::new());
+        let el = mount(move || view! { <ToastLayer toasts=signal /> });
+        assert!(el.query_selector(".qui-toasts").unwrap().is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn dismiss_all_appears_only_from_the_second_toast() {
+        let one = BTreeMap::from([(1, toast(ToastKind::Info, None, "one"))]);
+        let signal = RwSignal::new(one);
+        let el = mount(move || view! { <ToastLayer toasts=signal /> });
+        assert!(el.query_selector(".qui-toasts").unwrap().is_some());
+        assert!(el.query_selector("button.dismiss-all").unwrap().is_none());
+
+        let two = BTreeMap::from([
+            (1, toast(ToastKind::Info, None, "one")),
+            (2, toast(ToastKind::Info, None, "two")),
+        ]);
+        let signal = RwSignal::new(two);
+        let el = mount(move || view! { <ToastLayer toasts=signal /> });
+        assert!(el.query_selector("button.dismiss-all").unwrap().is_some());
     }
 
     #[wasm_bindgen_test]
