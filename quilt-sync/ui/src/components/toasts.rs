@@ -50,12 +50,31 @@ pub fn ToastStack() -> impl IntoView {
     });
     on_cleanup(move || drop(listener));
 
+    // Newest first: the stack hangs from the top of the window, so the newest
+    // belongs nearest the eye rather than pushed furthest from it.
+    //
     // Hoisted out of `view!`: the macro's tag tokenizer reads a turbofish
     // (`::<Vec<_>>`) as markup, so the collect stays outside it.
-    let ordered = move || -> Vec<Toast> { toasts.get().into_values().collect() };
+    let ordered = move || -> Vec<Toast> { toasts.get().into_values().rev().collect() };
+    let many = move || toasts.with(|map| map.len() > 1);
+
+    let dismiss_all = move |_| {
+        let ids: Vec<u64> = toasts.with_untracked(|map| map.keys().copied().collect());
+        toasts.update(BTreeMap::clear);
+        spawn_local(async move {
+            for id in ids {
+                let _ = commands::dismiss_toast(id).await;
+            }
+        });
+    };
 
     view! {
         <div class="qui-toasts">
+            <Show when=many>
+                <button class="dismiss-all" type="button" on:click=dismiss_all>
+                    "Dismiss all"
+                </button>
+            </Show>
             <For each=ordered key=|toast| toast.id let:toast>
                 <ToastCard toast=toast toasts=toasts />
             </For>
@@ -121,7 +140,7 @@ fn ToastCard(toast: Toast, toasts: RwSignal<Toasts>) -> impl IntoView {
                     dismiss();
                 }
             >
-                "×"
+                "\u{2715}"
             </button>
         </div>
     }

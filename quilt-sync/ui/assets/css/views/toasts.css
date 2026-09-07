@@ -1,36 +1,37 @@
-/* The toast stack: fixed bottom-right, newest last so the stack grows upward
-   away from the pointer rather than under it. */
+/* The toast stack: top-centre, below the appbar and toolbar so it covers list
+   content rather than any control — the row action buttons live on the right,
+   which is where the stack used to sit and collide with them. */
 .qui-toasts {
   position: fixed;
-  right: var(--q-ui-size-2);
-  bottom: var(--q-ui-size-2);
+  top: calc(var(--q-ui-size-8) * 2 + var(--q-ui-size-2));
+  left: 50%;
   z-index: var(--q-ui-z-index-popover);
   display: flex;
   flex-direction: column;
   gap: var(--q-ui-size-1);
-  align-items: flex-end;
-  /* Never cover the whole window: the stack is bounded and scrolls, and the
-     ground beneath it stays clickable. */
-  max-height: 60vh;
+  /* One width for every card: ragged right edges read as debris rather than as
+     a layer. */
+  width: min(40rem, calc(100vw - var(--q-ui-size-4)));
+  max-height: calc(100vh - var(--q-ui-size-8) * 3);
   overflow-y: auto;
   pointer-events: none;
+  transform: translateX(-50%);
 }
 
 .qui-toast {
   display: flex;
-  gap: var(--q-ui-size-1);
+  gap: var(--q-ui-size-2);
   align-items: flex-start;
-  width: max-content;
-  max-width: 30rem;
-  padding: var(--q-ui-size-1-5);
+  padding: var(--q-ui-size-2);
   font-family: var(--q-ui-font-family);
-  font-size: var(--q-ui-font-size-small);
+  font-size: var(--q-ui-font-size-normal);
   color: var(--q-ui-palette-text-primary);
   pointer-events: auto;
   background: var(--q-ui-palette-background-primary);
   border-left: 4px solid var(--q-ui-palette-primary);
   border-radius: 2px;
-  box-shadow: var(--q-ui-shadows-popup);
+  /* Heavier than a popup's: this has to read as a layer above a dense list. */
+  box-shadow: rgb(0 0 0 / 30%) 0 8px 24px -4px, rgb(0 0 0 / 20%) 0 2px 6px -1px;
 }
 
 .qui-toast.success {
@@ -47,6 +48,7 @@
 
 .qui-toast .content {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: var(--q-ui-size-0-5);
   min-width: 0;
@@ -57,22 +59,52 @@
 }
 
 .qui-toast .body {
-  /* A report names paths, which are long and must not be clipped away. */
+  /* `pre-wrap`, not `pre-line`: the latter collapses runs of whitespace, which
+     silently flattens the indentation a grouped report uses to show which
+     paths belong to which group. */
   overflow-wrap: anywhere;
-  white-space: pre-line;
+  white-space: pre-wrap;
 }
 
+/* A real target, not a glyph: 32px square, which is the smallest comfortable
+   hit area and matches the size scale's own step. */
 .qui-toast .close {
-  padding: 0 var(--q-ui-size-0-5);
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--q-ui-size-4);
+  height: var(--q-ui-size-4);
   font-size: var(--q-ui-font-size-large);
   line-height: 1;
   color: var(--q-ui-palette-text-secondary);
   cursor: pointer;
   background: none;
   border: none;
+  border-radius: 2px;
 }
 
 .qui-toast .close:hover {
   color: var(--q-ui-palette-text-primary);
+  background: var(--q-ui-palette-action-hover);
+}
+
+/* Shown only from the second toast onward — closing them one at a time is the
+   tedium this removes. */
+.qui-toasts .dismiss-all {
+  align-self: flex-end;
+  padding: var(--q-ui-size-0-5) var(--q-ui-size-1-5);
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-small);
+  color: var(--q-ui-palette-text-primary);
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--q-ui-palette-background-primary);
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: 2px;
+  box-shadow: var(--q-ui-shadows-button);
+}
+
+.qui-toasts .dismiss-all:hover {
   background: var(--q-ui-palette-action-hover);
 }
