@@ -219,6 +219,14 @@ mod tests {
         assert!(!center.dismiss(id).await);
     }
 
+    /// The event name is the wire contract's other half, and the UI declares
+    /// its own copy — a rename on either side breaks live delivery silently,
+    /// because hydration keeps working and hides it.
+    #[test]
+    fn the_event_name_is_the_one_the_client_listens_for() {
+        assert_eq!(TOAST_EVENT, "toast");
+    }
+
     /// The client matches on these strings to pick a toast's colour, and it
     /// lives in another crate — so a rename here is a silent break there.
     #[test]

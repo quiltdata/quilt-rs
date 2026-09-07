@@ -1,4 +1,4 @@
-//! The toast stack: server-posted notifications, newest last, each dismissable.
+//! The toast stack: server-posted notifications, newest first, each dismissable.
 //!
 //! Mounted once in `App`, **outside** the router, so it survives navigation —
 //! a report about a background pull must not vanish because the user changed
@@ -64,9 +64,9 @@ fn ToastLayer(toasts: RwSignal<Toasts>) -> impl IntoView {
     // (`::<Vec<_>>`) as markup, so the collect stays outside it.
     let ordered = move || -> Vec<Toast> { toasts.get().into_values().rev().collect() };
     let many = move || toasts.with(|map| map.len() > 1);
-    // Nothing at all when empty. The list captures pointer events so its gaps
-    // and its scrolling work, which means an always-rendered container would
-    // leave an invisible band across the page blocking the rows beneath it.
+    // Nothing at all when empty. The layer captures pointer events, so an
+    // always-rendered container would leave an invisible band across the page
+    // blocking the rows beneath it.
     let any = move || !toasts.with(BTreeMap::is_empty);
 
     let dismiss_all = move |_| {
@@ -220,6 +220,14 @@ mod tests {
         let el = mount(move || view! { <ToastCard toast=without toasts=signal /> });
         assert!(el.query_selector(".title").unwrap().is_none());
         assert!(el.text_content().unwrap().contains("body only"));
+    }
+
+    /// The other half of the wire contract, pinned from this side. The backend
+    /// names the same event, and a rename on either side breaks live delivery
+    /// silently — hydration keeps working, which is what hides it.
+    #[wasm_bindgen_test]
+    fn the_event_name_is_the_one_the_backend_emits() {
+        assert_eq!(commands::TOAST_EVENT, "toast");
     }
 
     #[wasm_bindgen_test]
