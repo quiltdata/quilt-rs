@@ -8,12 +8,14 @@ use quilt_uri::Namespace;
 use tauri::{Emitter, Manager};
 
 use crate::autopull::PausedReason;
+use crate::autopull::pull_toast::ReportToast;
 use crate::quilt;
 use crate::telemetry::Telemetry;
 use crate::telemetry::event::{
     AutosyncAuthEvent, AutosyncEvent, AutosyncPausedEvent, MixpanelEvent, PausedKind,
 };
 use crate::telemetry::prelude::*;
+use crate::toast::ToastCenter;
 
 /// Whether a deployment's session has *just* become unusable, or was already.
 ///
@@ -231,6 +233,18 @@ pub trait StatusReporter: Send + Sync + 'static {
     fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
         info!("autosync: published namespace={namespace} host={host} message={message}");
     }
+
+    /// Surface what a pull brought — the counterpart of
+    /// [`Self::report_published`] for the other direction, and the one the
+    /// watcher had no way to make: a pull's only outward sign was a status
+    /// string.
+    ///
+    /// **Deliberately without a default.** [`TelemetryReporter`] decorates
+    /// another reporter and forwards each call explicitly, so a defaulted
+    /// method would be answered by the default there and never reach
+    /// [`TauriEventReporter`] — the toast would silently never appear.
+    /// Requiring an implementation makes that a compile error instead.
+    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast);
 }
 
 /// Stderr/log-only reporter. Used in tests where no Tauri runtime is
@@ -240,6 +254,13 @@ pub trait StatusReporter: Send + Sync + 'static {
 pub struct LogReporter;
 
 impl StatusReporter for LogReporter {
+    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
+        info!(
+            "autosync: pulled namespace={namespace} kind={:?} body={}",
+            toast.kind, toast.body
+        );
+    }
+
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
         // `debug`, not `info`: one line per package per tick. It is a progress
         // signal — the same reason it is not a countable event — and at info it
@@ -351,6 +372,13 @@ impl StatusReporter for TelemetryReporter {
         }));
         self.inner.report_published(namespace, host, message);
     }
+
+    /// Forwarded, not counted. What a pull brought is a report to the user, not
+    /// an analytics outcome — and the autopull tick already emits its own
+    /// events for what it did.
+    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
+        self.inner.report_pulled(namespace, toast);
+    }
 }
 
 pub struct TauriEventReporter {
@@ -447,6 +475,24 @@ impl StatusReporter for TauriEventReporter {
         if let Err(err) = self.handle.emit(SUBSCRIBER_ERROR_EVENT, &event) {
             warn!("fswatcher: failed to emit {SUBSCRIBER_ERROR_EVENT}: {err}");
         }
+    }
+
+    fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
+        info!(
+            "autosync: pulled namespace={namespace} kind={:?}",
+            toast.kind
+        );
+        // The centre is Tauri-managed state and posting is async, while every
+        // other method here is a synchronous fire-and-forget emit. Spawning
+        // keeps that shape rather than making the whole trait async for one
+        // method.
+        let handle = self.handle.clone();
+        tauri::async_runtime::spawn(async move {
+            handle
+                .state::<ToastCenter>()
+                .post(toast.kind, Some(toast.title), toast.body, None)
+                .await;
+        });
     }
 
     fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
@@ -721,9 +767,16 @@ pub(crate) mod test_support {
         /// engine attributed a report to the package's own deployment rather than
         /// merely compiling against a `&Host`.
         pub hosts: Mutex<Vec<Host>>,
+        /// What each pull was reported as bringing, so a test can assert the
+        /// wording rather than merely that something was posted.
+        pub pulled: Mutex<Vec<(Namespace, ReportToast)>>,
     }
 
     impl StatusReporter for RecordingReporter {
+        fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
+            self.pulled.lock().unwrap().push((namespace.clone(), toast));
+        }
+
         fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
             self.statuses
                 .lock()
