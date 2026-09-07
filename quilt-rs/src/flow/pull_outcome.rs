@@ -235,6 +235,32 @@ mod tests {
         }
     }
 
+    /// Only the latest-only paths, which is what lets a surface name what an
+    /// unpulled revision brings. A path both sides hold is not news, and a path
+    /// only `base` holds was removed rather than added.
+    #[test]
+    fn remote_additions_names_only_what_latest_gained() {
+        let base = manifest_of(vec![row("kept.csv", b"1"), row("dropped.csv", b"2")]);
+        let latest = manifest_of(vec![
+            row("kept.csv", b"1"),
+            row("added.csv", b"3"),
+            row("also-added.csv", b"4"),
+        ]);
+        assert_eq!(
+            remote_additions(&base, &latest),
+            vec![PathBuf::from("added.csv"), PathBuf::from("also-added.csv")]
+        );
+    }
+
+    /// A path whose *content* changed is a modification, not an addition — the
+    /// comparison is on presence, so a differing hash must not leak in.
+    #[test]
+    fn a_changed_path_is_not_an_addition() {
+        let base = manifest_of(vec![row("same-name.csv", b"before")]);
+        let latest = manifest_of(vec![row("same-name.csv", b"after")]);
+        assert!(remote_additions(&base, &latest).is_empty());
+    }
+
     fn behind(changes: ChangeSet) -> InstalledPackageStatus {
         InstalledPackageStatus::new(UpstreamState::Behind, changes)
     }

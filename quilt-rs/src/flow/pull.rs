@@ -415,6 +415,100 @@ mod tests {
         }
     }
 
+    fn hash_of(seed: &[u8]) -> crate::object_hash::ObjectHash {
+        Multihash::<256>::wrap(0x12, seed)
+            .unwrap()
+            .try_into()
+            .unwrap()
+    }
+
+    fn uri() -> ManifestUri {
+        ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h".to_string(),
+            origin: None,
+        }
+    }
+
+    fn paths(names: &[&str]) -> Vec<PathBuf> {
+        names.iter().map(PathBuf::from).collect()
+    }
+
+    /// The whole of the grouping: which disposition lands in which group, and
+    /// that the scope decides between the two "new files" groups rather than
+    /// anything about the path itself.
+    #[test]
+    fn report_groups_by_what_happened_to_this_copy() {
+        let delta = BTreeMap::from([
+            (
+                PathBuf::from("fetched.csv"),
+                RemoteChange::Added(hash_of(b"a")),
+            ),
+            (
+                PathBuf::from("listed.csv"),
+                RemoteChange::Added(hash_of(b"b")),
+            ),
+            (
+                PathBuf::from("changed.csv"),
+                RemoteChange::Modified(hash_of(b"c")),
+            ),
+            (PathBuf::from("dropped.csv"), RemoteChange::Removed),
+        ]);
+        let touched = paths(&["fetched.csv", "changed.csv", "dropped.csv"]);
+
+        let report = report_of(uri(), &delta, &touched, Some("a message".to_owned()));
+
+        assert_eq!(report.added, paths(&["fetched.csv"]));
+        assert_eq!(report.added_not_fetched, paths(&["listed.csv"]));
+        assert_eq!(report.updated, paths(&["changed.csv"]));
+        assert_eq!(report.removed, paths(&["dropped.csv"]));
+        assert_eq!(report.message.as_deref(), Some("a message"));
+        assert!(!report.is_empty());
+    }
+
+    /// The three dispositions that must produce **nothing**, because nothing
+    /// moved. Reporting any of them would tell the user a file changed when it
+    /// did not.
+    #[test]
+    fn nothing_moved_means_nothing_reported() {
+        // A tracked path the remote changed and the user had also edited: the
+        // touch set drops it, their work is kept, the remote's version is not
+        // applied — so it is neither "updated" nor a skip notice.
+        let kept = BTreeMap::from([(
+            PathBuf::from("mine.csv"),
+            RemoteChange::Modified(hash_of(b"x")),
+        )]);
+        let report = report_of(uri(), &kept, &[], None);
+        assert!(
+            report.is_empty(),
+            "kept local work was reported: {report:?}"
+        );
+
+        // A path removed on both sides — trivially resolved, never touched.
+        let both_removed = BTreeMap::from([(PathBuf::from("gone.csv"), RemoteChange::Removed)]);
+        let report = report_of(uri(), &both_removed, &[], None);
+        assert!(
+            report.is_empty(),
+            "a both-removed path was reported: {report:?}"
+        );
+
+        // A metadata-only revision: identical rows, so an empty delta and an
+        // empty touch set. The hashes advance and no file moved.
+        let report = report_of(uri(), &BTreeMap::new(), &[], Some("retagged".to_owned()));
+        assert!(report.is_empty(), "a metadata-only revision named files");
+        // Its message still travels — it is the only thing that changed.
+        assert_eq!(report.message.as_deref(), Some("retagged"));
+    }
+
+    /// `ManifestHeader::default` writes `Some(String::new())`, which the desktop
+    /// already treats as absent elsewhere.
+    #[test]
+    fn an_empty_message_is_absent() {
+        let report = report_of(uri(), &BTreeMap::new(), &[], Some(String::new()));
+        assert_eq!(report.message, None);
+    }
+
     fn manifest_of(rows: Vec<ManifestRow>) -> Manifest {
         Manifest {
             rows,
