@@ -40,28 +40,104 @@ fn apply_snapshot(toasts: RwSignal<Toasts>, snapshot: Vec<Toast>) {
     toasts.set(next);
 }
 
-/// Read the backend's list and adopt it.
-async fn reconcile(toasts: RwSignal<Toasts>) {
-    if let Ok(snapshot) = commands::get_toasts().await {
-        apply_snapshot(toasts, snapshot);
+/// The visible set, plus the stamp that stops a slow read from undoing a newer
+/// truth.
+///
+/// Every local write and every issued read takes a fresh stamp, and a snapshot
+/// is adopted only while its own stamp is still the newest. Ordering the reads
+/// by age would not be enough: a *single* read in flight, issued before a
+/// dismissal and landing after it, carries a snapshot the backend took before
+/// the dismissal — and would put the toast back. So a write invalidates reads,
+/// not just a newer read.
+#[derive(Clone, Copy)]
+struct Store {
+    toasts: RwSignal<Toasts>,
+    stamp: StoredValue<u64>,
+}
+
+impl Store {
+    fn new() -> Self {
+        Self {
+            toasts: RwSignal::new(BTreeMap::new()),
+            stamp: StoredValue::new(0),
+        }
+    }
+
+    /// Take the next stamp, invalidating everything in flight.
+    fn bump(self) -> u64 {
+        self.stamp
+            .try_update_value(|s| {
+                *s += 1;
+                *s
+            })
+            .unwrap_or_default()
+    }
+
+    /// Adopt a snapshot only if nothing has happened since it was asked for.
+    fn apply_if_current(self, stamp: u64, snapshot: Vec<Toast>) {
+        if self.stamp.try_get_value().unwrap_or_default() == stamp {
+            apply_snapshot(self.toasts, snapshot);
+        }
+    }
+
+    /// Read the backend's list and adopt it if it is still the newest word.
+    async fn reconcile(self) {
+        let stamp = self.bump();
+        if let Ok(snapshot) = commands::get_toasts().await {
+            self.apply_if_current(stamp, snapshot);
+        }
+    }
+
+    /// Show an arriving toast at once, without waiting for a round trip.
+    fn insert(self, toast: Toast) {
+        self.bump();
+        self.toasts.update(|map| {
+            map.insert(toast.id, toast);
+        });
+    }
+
+    /// Drop one toast here and at the backend, then re-read.
+    ///
+    /// The re-read is sequenced *after* the backend call so the snapshot it
+    /// adopts is one the dismissal is already in.
+    fn dismiss(self, id: u64) {
+        self.bump();
+        self.toasts.update(|map| {
+            map.remove(&id);
+        });
+        spawn_local(async move {
+            let _ = commands::dismiss_toast(id).await;
+            self.reconcile().await;
+        });
+    }
+
+    fn dismiss_all(self) {
+        self.bump();
+        let ids: Vec<u64> = self
+            .toasts
+            .with_untracked(|map| map.keys().copied().collect());
+        self.toasts.update(BTreeMap::clear);
+        spawn_local(async move {
+            for id in ids {
+                let _ = commands::dismiss_toast(id).await;
+            }
+            self.reconcile().await;
+        });
     }
 }
 
 #[component]
 pub fn ToastStack() -> impl IntoView {
-    let toasts: RwSignal<Toasts> = RwSignal::new(BTreeMap::new());
+    let store = Store::new();
 
     // Whatever was posted while nothing was listening.
-    spawn_local(reconcile(toasts));
+    spawn_local(store.reconcile());
 
     let listener = tauri_bridge::listen::<Toast>(commands::TOAST_EVENT, move |toast| {
-        // Insert first so the toast appears without waiting for a round trip,
-        // then reconcile, because the payload alone cannot say what the
-        // backend evicted to make room for it.
-        toasts.update(|map| {
-            map.insert(toast.id, toast);
-        });
-        spawn_local(reconcile(toasts));
+        // The payload alone cannot say what the backend evicted to make room,
+        // so show it and then re-read.
+        store.insert(toast);
+        spawn_local(store.reconcile());
     });
 
     // A second read, sequenced after the listener exists. This **narrows** the
@@ -70,16 +146,17 @@ pub fn ToastStack() -> impl IntoView {
     // the listener going live is still deliverable only by the reconcile above,
     // which the next toast triggers. Closing it properly needs the bridge to
     // hand back a registration future.
-    spawn_local(reconcile(toasts));
+    spawn_local(store.reconcile());
     on_cleanup(move || drop(listener));
 
-    view! { <ToastLayer toasts=toasts /> }
+    view! { <ToastLayer store=store /> }
 }
 
 /// The markup, split from the bridge wiring above so it can be mounted in a
 /// test — `ToastStack` cannot, since it reaches for Tauri on mount.
 #[component]
-fn ToastLayer(toasts: RwSignal<Toasts>) -> impl IntoView {
+fn ToastLayer(store: Store) -> impl IntoView {
+    let toasts = store.toasts;
     // Newest first: the stack hangs from the top of the window, so the newest
     // belongs nearest the eye rather than pushed furthest from it.
     //
@@ -92,15 +169,7 @@ fn ToastLayer(toasts: RwSignal<Toasts>) -> impl IntoView {
     // blocking the rows beneath it.
     let any = move || !toasts.with(BTreeMap::is_empty);
 
-    let dismiss_all = move |_| {
-        let ids: Vec<u64> = toasts.with_untracked(|map| map.keys().copied().collect());
-        toasts.update(BTreeMap::clear);
-        spawn_local(async move {
-            for id in ids {
-                let _ = commands::dismiss_toast(id).await;
-            }
-        });
-    };
+    let dismiss_all = move |_| store.dismiss_all();
 
     view! {
         // Two blocks: the scrolling list, which grows, and the dismiss-all
@@ -109,7 +178,7 @@ fn ToastLayer(toasts: RwSignal<Toasts>) -> impl IntoView {
             <div class="qui-toasts">
                 <div class="list">
                     <For each=ordered key=|toast| toast.id let:toast>
-                        <ToastCard toast=toast toasts=toasts />
+                        <ToastCard toast=toast store=store />
                     </For>
                 </div>
                 <Show when=many>
@@ -123,21 +192,14 @@ fn ToastLayer(toasts: RwSignal<Toasts>) -> impl IntoView {
 }
 
 #[component]
-fn ToastCard(toast: Toast, toasts: RwSignal<Toasts>) -> impl IntoView {
+fn ToastCard(toast: Toast, store: Store) -> impl IntoView {
     let id = toast.id;
 
     // One dismissal path for the button and the timer alike, so an
     // auto-dismissed toast is as gone from the backend as a clicked one — the
     // backend holds the list, and a toast that expired on screen but not there
     // would return on the next mount.
-    let dismiss = move || {
-        toasts.update(|map| {
-            map.remove(&id);
-        });
-        spawn_local(async move {
-            let _ = commands::dismiss_toast(id).await;
-        });
-    };
+    let dismiss = move || store.dismiss(id);
 
     // The optional timer. `None` stands until the user acts, which is the
     // right default for a report about something that happened while they were
@@ -202,6 +264,12 @@ mod tests {
         container.into()
     }
 
+    fn store_of(map: Toasts) -> Store {
+        let store = Store::new();
+        store.toasts.set(map);
+        store
+    }
+
     fn toast(kind: ToastKind, title: Option<&str>, body: &str) -> Toast {
         Toast {
             id: 7,
@@ -221,8 +289,8 @@ mod tests {
             (ToastKind::Error, "qui-toast error"),
         ] {
             let t = toast(kind, None, "body");
-            let signal = RwSignal::new(BTreeMap::new());
-            let el = mount(move || view! { <ToastCard toast=t toasts=signal /> });
+            let store = store_of(BTreeMap::new());
+            let el = mount(move || view! { <ToastCard toast=t store=store /> });
             let card = el.query_selector(".qui-toast").unwrap().unwrap();
             assert_eq!(card.get_attribute("class").unwrap(), expected);
         }
@@ -230,19 +298,50 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_title_renders_beside_the_body_and_is_optional() {
-        let signal = RwSignal::new(BTreeMap::new());
+        let store = store_of(BTreeMap::new());
         let with = toast(ToastKind::Info, Some("acme/rna-seq"), "2 new files");
-        let el = mount(move || view! { <ToastCard toast=with toasts=signal /> });
+        let el = mount(move || view! { <ToastCard toast=with store=store /> });
         assert!(el.query_selector(".title").unwrap().is_some());
         let text = el.text_content().unwrap();
         assert!(text.contains("acme/rna-seq"), "title missing: {text}");
         assert!(text.contains("2 new files"), "body missing: {text}");
 
-        let signal = RwSignal::new(BTreeMap::new());
+        let store = store_of(BTreeMap::new());
         let without = toast(ToastKind::Info, None, "body only");
-        let el = mount(move || view! { <ToastCard toast=without toasts=signal /> });
+        let el = mount(move || view! { <ToastCard toast=without store=store /> });
         assert!(el.query_selector(".title").unwrap().is_none());
         assert!(el.text_content().unwrap().contains("body only"));
+    }
+
+    /// A read issued before a local write must not undo it when it lands after.
+    /// The case that forces this is a dismissal: one read in flight is enough,
+    /// because its snapshot was taken by the backend before the dismissal ran,
+    /// so adopting it puts the toast back.
+    #[wasm_bindgen_test]
+    fn a_snapshot_older_than_a_local_write_is_dropped() {
+        let store = store_of(BTreeMap::from([(1, toast(ToastKind::Info, None, "one"))]));
+        let stamp = store.bump(); // a read is issued
+
+        // The user dismisses while it is in flight.
+        store.toasts.update(|map| {
+            map.remove(&1);
+        });
+        store.bump();
+
+        // The read lands, carrying the toast the backend had not yet dropped.
+        store.apply_if_current(stamp, vec![toast(ToastKind::Info, None, "one")]);
+        assert!(
+            store.toasts.with_untracked(BTreeMap::is_empty),
+            "a stale snapshot resurrected a dismissed toast"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_snapshot_that_is_still_the_newest_word_is_adopted() {
+        let store = store_of(BTreeMap::new());
+        let stamp = store.bump();
+        store.apply_if_current(stamp, vec![toast(ToastKind::Success, None, "arrived")]);
+        assert_eq!(store.toasts.with_untracked(BTreeMap::len), 1);
     }
 
     /// The backend evicts past its capacity bound and emits only the arrival,
@@ -250,12 +349,12 @@ mod tests {
     /// same bound. Replacing is what keeps the two in step.
     #[wasm_bindgen_test]
     fn a_snapshot_replaces_rather_than_merges() {
-        let signal: RwSignal<Toasts> = RwSignal::new(BTreeMap::from([
+        let store = store_of(BTreeMap::from([
             (1, toast(ToastKind::Info, None, "evicted")),
             (2, toast(ToastKind::Info, None, "kept")),
         ]));
         apply_snapshot(
-            signal,
+            store.toasts,
             vec![
                 Toast {
                     id: 2,
@@ -267,7 +366,9 @@ mod tests {
                 },
             ],
         );
-        let ids: Vec<u64> = signal.with_untracked(|map| map.keys().copied().collect());
+        let ids: Vec<u64> = store
+            .toasts
+            .with_untracked(|map| map.keys().copied().collect());
         assert_eq!(
             ids,
             vec![2, 3],
@@ -288,16 +389,16 @@ mod tests {
         // Not cosmetic: the list captures pointer events so its gaps and its
         // scrolling work, so a container rendered with no toasts would leave an
         // invisible band blocking the rows beneath it.
-        let signal: RwSignal<Toasts> = RwSignal::new(BTreeMap::new());
-        let el = mount(move || view! { <ToastLayer toasts=signal /> });
+        let store = store_of(BTreeMap::new());
+        let el = mount(move || view! { <ToastLayer store=store /> });
         assert!(el.query_selector(".qui-toasts").unwrap().is_none());
     }
 
     #[wasm_bindgen_test]
     fn dismiss_all_appears_only_from_the_second_toast() {
         let one = BTreeMap::from([(1, toast(ToastKind::Info, None, "one"))]);
-        let signal = RwSignal::new(one);
-        let el = mount(move || view! { <ToastLayer toasts=signal /> });
+        let store = store_of(one);
+        let el = mount(move || view! { <ToastLayer store=store /> });
         assert!(el.query_selector(".qui-toasts").unwrap().is_some());
         assert!(el.query_selector("button.dismiss-all").unwrap().is_none());
 
@@ -305,16 +406,16 @@ mod tests {
             (1, toast(ToastKind::Info, None, "one")),
             (2, toast(ToastKind::Info, None, "two")),
         ]);
-        let signal = RwSignal::new(two);
-        let el = mount(move || view! { <ToastLayer toasts=signal /> });
+        let store = store_of(two);
+        let el = mount(move || view! { <ToastLayer store=store /> });
         assert!(el.query_selector("button.dismiss-all").unwrap().is_some());
     }
 
     #[wasm_bindgen_test]
     fn every_toast_carries_a_labelled_close_control() {
-        let signal = RwSignal::new(BTreeMap::new());
+        let store = store_of(BTreeMap::new());
         let t = toast(ToastKind::Error, None, "went wrong");
-        let el = mount(move || view! { <ToastCard toast=t toasts=signal /> });
+        let el = mount(move || view! { <ToastCard toast=t store=store /> });
         let close = el.query_selector("button.close").unwrap().unwrap();
         assert_eq!(close.get_attribute("aria-label").unwrap(), "Dismiss");
     }
