@@ -8,7 +8,7 @@
   position: fixed;
   top: var(--q-ui-size-8);
   left: 50%;
-  z-index: var(--q-ui-z-index-popover);
+  z-index: var(--q-ui-z-index-toasts);
   display: flex;
   flex-direction: column;
   /* The two blocks need air between them: without it the control sits flush
@@ -21,7 +21,13 @@
      height, and a stack reaching the bottom edge reads as a takeover rather
      than a layer — and jams the control into the last row of the list. */
   max-height: calc(100vh - var(--q-ui-size-8) - var(--q-ui-size-9));
-  pointer-events: none;
+  /* The whole layer captures, not just the cards. With `none` here the gap
+     between the two blocks and the strip beside the control passed the cursor
+     through, so the row underneath took hover while the pointer was on its way
+     to — or sitting on — the dismiss control. The cost is that the layer's own
+     box blocks the app beneath it, which is why the component renders nothing
+     at all when there are no toasts. */
+  pointer-events: auto;
   transform: translateX(-50%);
 }
 
@@ -36,14 +42,6 @@
   align-self: stretch;
   min-height: 0;
   padding: var(--q-ui-size-2);
-  /* The list captures, the container does not. `pointer-events` is hit-testing
-     and z-index is paint order — a layer that paints above still lets every
-     event through unless it captures. With `none` here the gaps between cards
-     handed hover to the rows beneath, and the scrollbar was visible but dead
-     because the wheel never reached the scroll container. The cost is that the
-     list's own box blocks the app beneath it, which is why the component
-     renders nothing at all when there are no toasts. */
-  pointer-events: auto;
   overflow-y: auto;
 }
 
