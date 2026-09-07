@@ -28,26 +28,49 @@ use crate::tauri as tauri_bridge;
 /// overlap is expected rather than exceptional.
 type Toasts = BTreeMap<u64, Toast>;
 
+/// Replace the visible set with the backend's, which is authoritative.
+///
+/// **Replace, not merge.** The backend evicts its oldest past a capacity bound
+/// and emits only the toast that arrived, so a client that merely inserted
+/// would keep showing toasts the backend has dropped and grow past the same
+/// bound. Replacing mirrors evictions for free and needs no second copy of the
+/// capacity constant to drift.
+fn apply_snapshot(toasts: RwSignal<Toasts>, snapshot: Vec<Toast>) {
+    let next: Toasts = snapshot.into_iter().map(|t| (t.id, t)).collect();
+    toasts.set(next);
+}
+
+/// Read the backend's list and adopt it.
+async fn reconcile(toasts: RwSignal<Toasts>) {
+    if let Ok(snapshot) = commands::get_toasts().await {
+        apply_snapshot(toasts, snapshot);
+    }
+}
+
 #[component]
 pub fn ToastStack() -> impl IntoView {
     let toasts: RwSignal<Toasts> = RwSignal::new(BTreeMap::new());
 
-    // Hydrate: whatever was posted while nothing was listening.
-    spawn_local(async move {
-        if let Ok(existing) = commands::get_toasts().await {
-            toasts.update(|map| {
-                for toast in existing {
-                    map.insert(toast.id, toast);
-                }
-            });
-        }
-    });
+    // Whatever was posted while nothing was listening.
+    spawn_local(reconcile(toasts));
 
     let listener = tauri_bridge::listen::<Toast>(commands::TOAST_EVENT, move |toast| {
+        // Insert first so the toast appears without waiting for a round trip,
+        // then reconcile, because the payload alone cannot say what the
+        // backend evicted to make room for it.
         toasts.update(|map| {
             map.insert(toast.id, toast);
         });
+        spawn_local(reconcile(toasts));
     });
+
+    // A second read, sequenced after the listener exists. This **narrows** the
+    // startup race rather than closing it: registration completes on a promise
+    // the bridge does not expose, so a toast posted between the first read and
+    // the listener going live is still deliverable only by the reconcile above,
+    // which the next toast triggers. Closing it properly needs the bridge to
+    // hand back a registration future.
+    spawn_local(reconcile(toasts));
     on_cleanup(move || drop(listener));
 
     view! { <ToastLayer toasts=toasts /> }
@@ -220,6 +243,36 @@ mod tests {
         let el = mount(move || view! { <ToastCard toast=without toasts=signal /> });
         assert!(el.query_selector(".title").unwrap().is_none());
         assert!(el.text_content().unwrap().contains("body only"));
+    }
+
+    /// The backend evicts past its capacity bound and emits only the arrival,
+    /// so a merging client would keep what the backend dropped and outgrow the
+    /// same bound. Replacing is what keeps the two in step.
+    #[wasm_bindgen_test]
+    fn a_snapshot_replaces_rather_than_merges() {
+        let signal: RwSignal<Toasts> = RwSignal::new(BTreeMap::from([
+            (1, toast(ToastKind::Info, None, "evicted")),
+            (2, toast(ToastKind::Info, None, "kept")),
+        ]));
+        apply_snapshot(
+            signal,
+            vec![
+                Toast {
+                    id: 2,
+                    ..toast(ToastKind::Info, None, "kept")
+                },
+                Toast {
+                    id: 3,
+                    ..toast(ToastKind::Info, None, "new")
+                },
+            ],
+        );
+        let ids: Vec<u64> = signal.with_untracked(|map| map.keys().copied().collect());
+        assert_eq!(
+            ids,
+            vec![2, 3],
+            "id 1 was evicted by the backend and must go"
+        );
     }
 
     /// The other half of the wire contract, pinned from this side. The backend
