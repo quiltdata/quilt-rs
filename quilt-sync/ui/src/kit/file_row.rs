@@ -10,8 +10,10 @@
 //! the three are optional — see `on_open_catalog` and `on_copy_uri` — because a
 //! button with nothing behind it is chrome.
 
+use leptos::ev::KeyboardEvent;
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
+use wasm_bindgen::JsCast;
 
 use super::IconButton;
 use super::IconButtonVariant;
@@ -56,6 +58,27 @@ fn copy_icon() -> AnyView {
     .into_any()
 }
 
+/// True only when the row's own root has focus.
+///
+/// The package link and the action buttons bubble their key presses through the
+/// root's handler, and each already activates itself — a row that also opened the
+/// file on their Enter would do two things at once.
+fn targets_the_row(ev: &KeyboardEvent) -> bool {
+    match (ev.target(), ev.current_target()) {
+        (Some(target), Some(row)) => js_sys::Object::is(target.as_ref(), row.as_ref()),
+        _ => false,
+    }
+}
+
+/// Dispatch the row's own click, so the keyboard and the mouse cannot drift.
+fn activate(ev: &KeyboardEvent) {
+    if let Some(row) = ev.current_target()
+        && let Ok(row) = row.dyn_into::<web_sys::HtmlElement>()
+    {
+        row.click();
+    }
+}
+
 #[component]
 pub fn FileRow(
     /// Logical key, shown whole and truncated from the left when it will not fit.
@@ -79,7 +102,36 @@ pub fn FileRow(
     on_copy_uri: Option<Callback<MouseEvent>>,
 ) -> impl IntoView {
     view! {
-        <div class=style::root role="button" tabindex="0" on:click=on_open>
+        // `role="button"` and `tabindex="0"` announce this row as a button and put
+        // it in the tab order, so it owes what a native button gives for free.
+        // Enter activates on the way down; Space waits for the release, because a
+        // held key repeats its keydown and each repeat would open the file again.
+        <div
+            class=style::root
+            role="button"
+            tabindex="0"
+            on:click=on_open
+            on:keydown=move |ev: KeyboardEvent| {
+                if !targets_the_row(&ev) {
+                    return;
+                }
+                match ev.key().as_str() {
+                    "Enter" => {
+                        ev.prevent_default();
+                        activate(&ev);
+                    }
+                    // Held, not yet activated — but the page must not scroll.
+                    " " => ev.prevent_default(),
+                    _ => {}
+                }
+            }
+            on:keyup=move |ev: KeyboardEvent| {
+                if targets_the_row(&ev) && ev.key() == " " {
+                    ev.prevent_default();
+                    activate(&ev);
+                }
+            }
+        >
             <span class=style::path>{path}</span>
             // Stops propagation, or going to the package would also open the file.
             <a
@@ -216,6 +268,133 @@ mod tests {
             ],
             "order is the row's, not the caller's"
         );
+    }
+
+    /// A key press on the focused row, the way a keyboard user activates it.
+    /// `bubbles` matters: the handler is on the root and the event must reach it.
+    fn press(el: &web_sys::Element, event: &str, key: &str) {
+        let init = web_sys::KeyboardEventInit::new();
+        init.set_key(key);
+        init.set_bubbles(true);
+        let ev = web_sys::KeyboardEvent::new_with_keyboard_event_init_dict(event, &init).unwrap();
+        el.query_selector("[role=button]")
+            .unwrap()
+            .expect("the row root")
+            .dispatch_event(&ev)
+            .unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    fn enter_on_the_focused_row_opens_the_file() {
+        // `role="button"` and `tabindex="0"` put this row in the tab order and
+        // announce it as a button, so Enter has to do what a button does. A native
+        // `<button>` gets that free; a div does not, and taking the role without
+        // the key handling is worse than not being focusable at all — the row
+        // invites a press and then ignores it.
+        let opened = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/x"
+                    at=0.0
+                    on_open=move |_| opened.update(|n| *n += 1)
+                    on_reveal=move |_| {}
+                />
+            }
+        });
+
+        press(&el, "keydown", "Enter");
+
+        assert_eq!(opened.get_untracked(), 1, "Enter opens the file");
+    }
+
+    #[wasm_bindgen_test]
+    fn space_opens_on_release_and_not_while_held() {
+        // A native button activates on Enter's keydown but on Space's keyUP, and
+        // the difference is not pedantry: activating on Space's keydown fires
+        // again on every auto-repeat, so holding the key would open the file a
+        // dozen times.
+        let opened = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/x"
+                    at=0.0
+                    on_open=move |_| opened.update(|n| *n += 1)
+                    on_reveal=move |_| {}
+                />
+            }
+        });
+
+        press(&el, "keydown", " ");
+        assert_eq!(opened.get_untracked(), 0, "still held down, nothing yet");
+
+        press(&el, "keyup", " ");
+        assert_eq!(opened.get_untracked(), 1, "released, now it opens");
+    }
+
+    #[wasm_bindgen_test]
+    fn enter_on_the_package_link_does_not_also_open_the_file() {
+        // The link and the buttons bubble their key presses through the root's
+        // handler. Each already activates itself, so a row that also opened the
+        // file would do two things at once — navigate away AND launch an editor.
+        // The click path is guarded by `stop_propagation`; this is the same guard
+        // for the key path, and nothing else asserts it.
+        let opened = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/x"
+                    at=0.0
+                    on_open=move |_| opened.update(|n| *n += 1)
+                    on_reveal=move |_| {}
+                />
+            }
+        });
+
+        let init = web_sys::KeyboardEventInit::new();
+        init.set_key("Enter");
+        init.set_bubbles(true);
+        let ev =
+            web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap();
+        el.query_selector("a")
+            .unwrap()
+            .expect("the package link")
+            .dispatch_event(&ev)
+            .unwrap();
+
+        assert_eq!(opened.get_untracked(), 0, "the link's Enter is the link's");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_key_the_row_does_not_claim_is_left_alone() {
+        // Paired with the two above: without this, a handler that fired on every
+        // key would pass both of them and steal Tab out of the tab order.
+        let opened = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/x"
+                    at=0.0
+                    on_open=move |_| opened.update(|n| *n += 1)
+                    on_reveal=move |_| {}
+                />
+            }
+        });
+
+        press(&el, "keydown", "Tab");
+        press(&el, "keyup", "Tab");
+        press(&el, "keydown", "a");
+
+        assert_eq!(opened.get_untracked(), 0, "only Enter and Space activate");
     }
 
     #[wasm_bindgen_test]
