@@ -45,8 +45,15 @@
 .bar,
 .notice,
 .main {
+  /* `width: 100%` is load-bearing, not belt-and-braces. `.notice` and `.main` are
+   * flex items of `.root`, and auto margins on a flex item's cross axis suppress
+   * the `stretch` that would otherwise size it — leaving it shrink-to-fit around
+   * its widest child, so `max-width` never binds and the column ends up as narrow
+   * as its content instead of as wide as the container. A definite width restores
+   * it: the cap applies, and the auto margins centre what is left. */
+  width: 100%;
   max-width: var(--q-container);
-  margin: 0 auto;
+  margin-inline: auto;
   padding-inline: var(--q-space-4);
 }
 
