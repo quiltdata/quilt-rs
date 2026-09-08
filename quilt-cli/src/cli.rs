@@ -1167,6 +1167,122 @@ mod tests {
         Ok(())
     }
 
+    /// Local work the remote did not touch survives the pull, and appears in no
+    /// group — it is the user's change, not news from the remote.
+    ///
+    /// Installed from **r2** rather than r1 for a reason worth keeping: every
+    /// path r1 holds is touched by r3, so from r1 there is nothing for a local
+    /// edit to survive on without colliding. `add/one.txt` arrives in r2 and r3
+    /// leaves it alone.
+    #[test(tokio::test)]
+    async fn live_pull_keeps_local_work_the_remote_did_not_touch() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        let tracked = ["add/one.txt", "keep.txt"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R2_URI, Some(tracked)).await?;
+
+        let edited = temp_dir.path().join(pkg::NAMESPACE_STR).join("add/one.txt");
+        std::fs::write(&edited, "MY LOCAL EDIT\n").expect("the path was just checked out");
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+
+        assert_eq!(
+            output_str,
+            format!(
+                concat!(
+                    "Revision \"{}\" pulled\n",
+                    "1 file new, not downloaded:\n",
+                    "  add/six.txt\n",
+                    "1 file updated:\n",
+                    "  keep.txt\n",
+                    "Latest revision: {}\n",
+                ),
+                pkg::R3_TOP_HASH,
+                pkg::R3_MESSAGE,
+            )
+        );
+
+        // The half a report cannot show: the edit is still there. A pull that
+        // named nothing and quietly overwrote it would pass the assertion above.
+        assert_eq!(
+            std::fs::read_to_string(&edited).unwrap(),
+            "MY LOCAL EDIT\n",
+            "the pull overwrote local work the remote had not touched"
+        );
+        Ok(())
+    }
+
+    /// A path added on both sides with differing content blocks the whole pull,
+    /// so there is no partial arrival and no report at all.
+    ///
+    /// The reconcile is atomic: `base` advances only when every path applies. A
+    /// report here would describe files that did not move.
+    #[test(tokio::test)]
+    async fn live_pull_blocked_by_a_conflict_reports_nothing() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        let tracked = vec![std::path::PathBuf::from("keep.txt")];
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R1_URI, Some(tracked)).await?;
+
+        // Same logical key r2 adds, different bytes: the both-added arm.
+        let root = temp_dir.path().join(pkg::NAMESPACE_STR).join("add");
+        std::fs::create_dir_all(&root).expect("the package root exists");
+        std::fs::write(root.join("one.txt"), "DIFFERENT CONTENT THAN THE REMOTE\n")
+            .expect("just created the directory");
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        // The refusal travels as a `Std::Err`, not as an `Err` — the CLI's
+        // output contract sends it to stderr and exits non-zero rather than
+        // propagating. So the assertion is about what the user sees.
+        let mut out = Vec::new();
+        let mut errs = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut out, &mut errs).ok();
+        let out = String::from_utf8(out).unwrap();
+        let errs = String::from_utf8(errs).unwrap();
+
+        assert!(
+            errs.contains("add/one.txt"),
+            "the refusal must name the conflicting path: {errs}"
+        );
+        // The claim worth testing: nothing was applied, so nothing is reported.
+        // A report here would describe files that did not move.
+        assert!(
+            out.is_empty(),
+            "a blocked pull applies nothing and must report nothing, got: {out}"
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_pull_invalid() -> Result<(), Error> {
         // Create temporary directory for domain

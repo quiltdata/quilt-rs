@@ -83,6 +83,11 @@ pub mod packages {
         /// r1 — install this one to be behind.
         pub const R1_URI: &str = "quilt+s3://udp-spec#package=reference/revision-report@fcd8f7cb81bc700ff4c8294ea173e3c3aa0899bcc61a41f22fe2bf18485182ec";
 
+        /// r2 — install this one to reach r3 in a single revision, and to get a
+        /// path r3 leaves alone (`add/one.txt`) for a local edit to survive on.
+        /// Every path r1 holds is touched by r3, so kept local work needs r2.
+        pub const R2_URI: &str = "quilt+s3://udp-spec#package=reference/revision-report@63ddbb5c7ec58d229147db6482dbb5c95e7e4a672551ce55e6bce0d5ba4f7d93";
+
         /// r3, which a pull from r1 lands on.
         pub const R3_TOP_HASH: &str =
             "b27709e128d7cca3f6755dbec847628457ac86db5df5876c3bc88610eb234106";
