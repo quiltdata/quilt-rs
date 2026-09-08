@@ -852,15 +852,19 @@ pub enum PullCheck {
     Loading,
     /// The dry-run fetch errored; the button area offers a retry.
     Failed,
-    /// The dry-run resolved to a concrete outcome.
-    Ready(PullOutcome),
+    /// The dry-run resolved: the verdict, and what the incoming revision adds.
+    ///
+    /// The whole preview rather than the verdict alone, because the surfaces
+    /// name the incoming files from the same read that gates the Pull control —
+    /// the paths are already in hand and a second fetch would buy nothing.
+    Ready(PullPreview),
 }
 
 impl PullCheck {
     /// Whether Pull should be enabled: only a resolved, pullable outcome.
     #[must_use]
     pub fn pull_enabled(&self) -> bool {
-        matches!(self, PullCheck::Ready(o) if o.is_pullable())
+        matches!(self, PullCheck::Ready(p) if p.outcome.is_pullable())
     }
 
     /// Whether the dry-run failed, so a retry affordance should show.
@@ -870,7 +874,21 @@ impl PullCheck {
     }
 }
 
-pub async fn package_pull_outcome(namespace: String) -> Result<PullOutcome, String> {
+/// The dry-run verdict plus the paths the incoming revision adds. Mirrors the
+/// engine's `quilt_rs::flow::PullPreview`.
+///
+/// `added` is scope-independent — it names what the revision *holds* that this
+/// copy does not, and whether a pull would fetch it is the sync scope's
+/// business at apply time. It costs nothing: the manifest naming these paths
+/// was already fetched to reach the verdict.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PullPreview {
+    pub outcome: PullOutcome,
+    pub added: Vec<String>,
+}
+
+pub async fn package_pull_outcome(namespace: String) -> Result<PullPreview, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
@@ -1432,6 +1450,16 @@ pub enum ToastKind {
     Error,
 }
 
+/// A list under a heading. Mirrors the backend's `toast::ToastGroup`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToastGroup {
+    pub heading: String,
+    pub items: Vec<String>,
+    /// How many items the heading counts but `items` does not show.
+    pub more: usize,
+}
+
 /// One server-emitted notification. Mirrors the backend's `toast::Toast`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1439,7 +1467,11 @@ pub struct Toast {
     pub id: u64,
     pub kind: ToastKind,
     pub title: Option<String>,
+    /// The lead sentence: what happened.
     pub body: String,
+    /// The detail, as lists rather than as indented text in `body`.
+    #[serde(default)]
+    pub groups: Vec<ToastGroup>,
     /// `None` stands until dismissed.
     pub timeout_ms: Option<u32>,
 }

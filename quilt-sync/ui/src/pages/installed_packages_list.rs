@@ -6,7 +6,7 @@ use leptos::prelude::*;
 
 use crate::commands::{
     self, AUTOSYNC_PAUSED_EVENT, AUTOSYNC_PUBLISHED_EVENT, PACKAGE_STATUS_EVENT, PackageItemData,
-    PackageStatusEvent, PausedEvent, PublishedEvent, PullCheck, PullOutcome,
+    PackageStatusEvent, PausedEvent, PublishedEvent, PullCheck, PullOutcome, PullPreview,
 };
 use crate::components::buttons;
 use crate::components::layout::BreadcrumbItem;
@@ -127,7 +127,10 @@ fn paused_toast(reason: &str, namespace: &str, message: Option<&str>) -> Option<
 fn pull_popover(check: &PullCheck) -> Option<String> {
     match check {
         PullCheck::Failed => Some("Couldn't check for updates.".to_string()),
-        PullCheck::Ready(PullOutcome::Blocked { conflicts }) => Some(format!(
+        PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::Blocked { conflicts },
+            ..
+        }) => Some(format!(
             "Resolve conflicts in {} via commit \u{2192} merge",
             conflicts.join(", ")
         )),
@@ -496,7 +499,7 @@ fn PackageItem(
         async move {
             if is_behind {
                 match commands::package_pull_outcome(ns).await {
-                    Ok(outcome) => PullCheck::Ready(outcome),
+                    Ok(preview) => PullCheck::Ready(preview),
                     Err(_) => PullCheck::Failed,
                 }
             } else {
@@ -505,6 +508,13 @@ fn PackageItem(
         }
     });
     let pull_check = Signal::derive(move || pull_outcome_res.get().unwrap_or(PullCheck::Loading));
+    // What the incoming revision brings, from the dry run that already gates
+    // Pull on this row. Two names: the line shares its width with the
+    // namespace and the URI.
+    let incoming = Signal::derive(move || match pull_check.get() {
+        PullCheck::Ready(preview) => util::incoming_files(&preview.added, 2),
+        PullCheck::Loading | PullCheck::Failed => None,
+    });
 
     // Build menu buttons
     let menu = build_package_menu(
@@ -538,6 +548,11 @@ fn PackageItem(
                 {move || hint.get().into_iter().map(|line| view! {
                     <span class="item-error-hint">{line}</span>
                 }).collect::<Vec<_>>()}
+                // Neutral, not the error hint: a package with a newer revision
+                // is not a fault, and the hint slot reddens the whole row.
+                {move || incoming.get().map(|line| view! {
+                    <span class="item-note">{line}</span>
+                })}
             </a>
             <Show when=move || refreshing.get()>
                 <div class="q-spinner-inline" />
@@ -931,6 +946,17 @@ fn CreatePackagePopup(
 
 #[cfg(test)]
 mod tests {
+
+    /// A resolved dry run that adds nothing — for the cases under test, where
+    /// the verdict is the subject and the incoming files are not.
+    use crate::commands::PullPreview;
+
+    fn ready(outcome: PullOutcome) -> PullPreview {
+        PullPreview {
+            outcome,
+            added: Vec::new(),
+        }
+    }
     use leptos::prelude::*;
 
     use super::{
@@ -1010,9 +1036,9 @@ mod tests {
 
     #[test]
     fn blocked_popover_names_conflicts_and_resolution_path() {
-        let check = PullCheck::Ready(PullOutcome::Blocked {
+        let check = PullCheck::Ready(ready(PullOutcome::Blocked {
             conflicts: vec!["a.txt".to_string(), "b.txt".to_string()],
-        });
+        }));
         assert_eq!(
             pull_popover(&check),
             Some("Resolve conflicts in a.txt, b.txt via commit \u{2192} merge".to_string())
@@ -1033,15 +1059,15 @@ mod tests {
     fn non_blocking_checks_have_no_popover() {
         assert_eq!(pull_popover(&PullCheck::Loading), None);
         assert_eq!(
-            pull_popover(&PullCheck::Ready(PullOutcome::CleanUpdate)),
+            pull_popover(&PullCheck::Ready(ready(PullOutcome::CleanUpdate))),
             None
         );
         assert_eq!(
-            pull_popover(&PullCheck::Ready(PullOutcome::KeepsLocalChanges {
+            pull_popover(&PullCheck::Ready(ready(PullOutcome::KeepsLocalChanges {
                 added: vec!["a.txt".to_string()],
                 modified: vec![],
                 removed: vec![],
-            })),
+            }))),
             None
         );
     }

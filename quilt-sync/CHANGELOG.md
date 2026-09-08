@@ -9,6 +9,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.0-alpha1] - 2026-09-08
+
+### Added
+
+- When a new revision arrives, a notification names the files it brought — new, updated, removed — where a background pull used to change your folder in silence. Notifications stack, each closes on its own button, and one raised while the window was shut is waiting when you open it. Under individual-file sync a revision's new files are listed rather than downloaded, and the notification says so
+  - <https://github.com/quiltdata/quilt-rs/pull/897>
+  - <https://github.com/quiltdata/quilt-rs/pull/898>
+- Before you pull, the packages list and an outdated package's banner name the files the revision would bring (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Changed
+
+- A manual Pull is confirmed by that report instead of "Successfully pulled package …", which said the same thing twice over. A pull with nothing to report — a revision that moved no files — still shows the line (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
 ## [v0.21.3-alpha1] - 2026-09-04
 
 ### Fixed

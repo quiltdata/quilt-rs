@@ -274,7 +274,7 @@ pub async fn package_pull(
     namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
     experimental: &ExperimentalSettings,
-) -> Result<(), Error> {
+) -> Result<quilt_rs::flow::PullReport, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
@@ -286,8 +286,7 @@ pub async fn package_pull(
     let scope = resolve_sync_scope(stored, experimental);
     model
         .package_pull(&installed_package, host_config, scope)
-        .await?;
-    Ok(())
+        .await
 }
 
 /// Set the package's remote. Returns `Some(reason)` when the remote was set but

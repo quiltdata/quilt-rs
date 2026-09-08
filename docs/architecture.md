@@ -274,6 +274,16 @@ manifest, and takes the status walk last, so no network happens between
 classification and mutation. Paths absent from the new revision are removed from
 the working tree and from tracking — logged, not an error.
 
+Both halves report what they saw. `pull` returns a `flow::PullReport` — paths
+added and fetched, added and left on the remote, updated, removed, plus the
+newest revision's message — grouped by what happened to *this* copy rather than
+by the remote's diff, since under `SyncScope::IndividualFiles` an added path is
+listed and not written. A path in the delta can land in no group, each case
+meaning nothing moved: both sides reached the same result, the user's edit was
+kept, or this copy does not track the path at all. `pull_outcome` returns a
+`flow::PullPreview` — the verdict plus the paths the pending revision adds — so
+a caller can name incoming files before pulling.
+
 ### Refresh Latest
 
 `flow::refresh_latest_hash` is the only path that mutates `latest_hash`

@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.0-alpha1] - 2026-09-08
+
+### Added
+
+- `quilt pull` now names the files a revision brought — downloaded, updated, removed, and the ones left on the remote — where it printed the top-hash alone. See [`README.md`](README.md) (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
 ## [v0.30.0] - 2026-09-02
 
 ### Added

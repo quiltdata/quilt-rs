@@ -284,7 +284,16 @@ fn behind_description(check: &PullCheck) -> String {
     match check {
         PullCheck::Loading => "Checking for updates\u{2026}".to_string(),
         PullCheck::Failed => "Couldn't check for updates.".to_string(),
-        PullCheck::Ready(outcome) => outcome_description(outcome),
+        // The verdict, then what the revision brings. Two sentences rather
+        // than one: the verdict is about whether a pull is safe, the files are
+        // about whether it is worth your attention, and a reader wants both.
+        PullCheck::Ready(preview) => {
+            let verdict = outcome_description(&preview.outcome);
+            match crate::util::incoming_files(&preview.added, 3) {
+                Some(files) => format!("{verdict} {files}"),
+                None => verdict,
+            }
+        }
     }
 }
 
@@ -322,7 +331,42 @@ fn StatusBannerInner(description: &'static str, children: Children) -> impl Into
 
 #[cfg(test)]
 mod tests {
+
+    /// The verdict says whether a pull is safe; the files say whether it is
+    /// worth your attention. A banner that gave only the first is what the
+    /// originating complaint was about.
+    #[test]
+    fn the_behind_banner_names_what_the_revision_brings() {
+        let check = PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::CleanUpdate,
+            added: vec!["qc/summary.csv".to_owned(), "qc/flags.json".to_owned()],
+        });
+        let copy = behind_description(&check);
+        assert!(copy.contains("qc/summary.csv"), "no filename: {copy}");
+        assert!(
+            copy.contains("2 new files"),
+            "no count to frame the names: {copy}"
+        );
+    }
+
+    /// A revision that adds nothing must not gain an empty sentence — the
+    /// verdict stands alone, exactly as it did before.
+    #[test]
+    fn a_revision_that_adds_nothing_leaves_the_verdict_alone() {
+        let bare = behind_description(&PullCheck::Ready(ready(PullOutcome::CleanUpdate)));
+        assert!(!bare.contains("new file"), "invented a file line: {bare}");
+    }
+
+    /// A resolved dry run that adds nothing — for the cases under test, where
+    /// the verdict is the subject and the incoming files are not.
+    fn ready(outcome: PullOutcome) -> PullPreview {
+        PullPreview {
+            outcome,
+            added: Vec::new(),
+        }
+    }
     use super::{behind_description, paused_banner_copy, remote_state_banner};
+    use crate::commands::PullPreview;
     use crate::commands::{PullCheck, PullOutcome};
 
     const DENIED: &str = "Current role ReadOnly has no access to this bucket";
@@ -461,19 +505,19 @@ mod tests {
     #[test]
     fn clean_update_states_newer_revisions() {
         assert_eq!(
-            behind_description(&PullCheck::Ready(PullOutcome::CleanUpdate)),
+            behind_description(&PullCheck::Ready(ready(PullOutcome::CleanUpdate))),
             "The remote has newer revisions."
         );
-        assert!(PullCheck::Ready(PullOutcome::CleanUpdate).pull_enabled());
+        assert!(PullCheck::Ready(ready(PullOutcome::CleanUpdate)).pull_enabled());
     }
 
     #[test]
     fn keeps_local_changes_reassures_local_work_is_safe() {
-        let check = PullCheck::Ready(PullOutcome::KeepsLocalChanges {
+        let check = PullCheck::Ready(ready(PullOutcome::KeepsLocalChanges {
             added: vec!["a.txt".to_string()],
             modified: vec![],
             removed: vec![],
-        });
+        }));
         assert_eq!(
             behind_description(&check),
             "The remote has newer revisions. Your local changes are safe — pulling keeps them."
@@ -483,9 +527,9 @@ mod tests {
 
     #[test]
     fn blocked_names_conflicts_and_keeps_pull_disabled() {
-        let check = PullCheck::Ready(PullOutcome::Blocked {
+        let check = PullCheck::Ready(ready(PullOutcome::Blocked {
             conflicts: vec!["a.txt".to_string(), "b.txt".to_string()],
-        });
+        }));
         assert_eq!(
             behind_description(&check),
             "Conflicts in a.txt, b.txt. Commit your changes to resolve them on the merge page."
