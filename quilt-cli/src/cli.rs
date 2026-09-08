@@ -1006,9 +1006,18 @@ mod tests {
         let result = init(pull_args).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
+        // No file group: `install` ran with `paths: None`, so this copy tracks
+        // nothing and every path the revision changed falls outside the touch
+        // set — nothing moved on disk, and claiming otherwise would be false.
+        // The revision's own message is then the only thing the pull can report,
+        // which is exactly why it is worth reporting: without it the line says
+        // no more than it did before.
         assert_eq!(
             output_str,
-            format!("Revision \"{}\" pulled\n", pkg::LATEST_TOP_HASH)
+            format!(
+                "Revision \"{}\" pulled\nLatest revision: Today's Date: 2024-07-29 11:53:53\n",
+                pkg::LATEST_TOP_HASH
+            )
         );
 
         Ok(())

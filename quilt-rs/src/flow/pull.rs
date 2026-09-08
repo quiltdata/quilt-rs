@@ -173,7 +173,12 @@ fn report_of(
             (RemoteChange::Added(_), false) => report.added_not_fetched.push(path.clone()),
             (RemoteChange::Modified(_), true) => report.updated.push(path.clone()),
             (RemoteChange::Removed, true) => report.removed.push(path.clone()),
-            // Kept local work, and the trivially-resolved cases. Nothing moved.
+            // Nothing moved, for any of three reasons the report does not need
+            // to tell apart: the user's own edit was kept, both sides reached
+            // the same result, or **this copy does not track the path at all**
+            // — which is the ordinary state of a CLI install, since install
+            // brings the manifest and not the files. Naming any of them
+            // "updated" would claim a write that did not happen.
             (RemoteChange::Modified(_) | RemoteChange::Removed, false) => {}
         }
     }
