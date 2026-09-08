@@ -14,6 +14,7 @@ use super::accounts::sign_in_href;
 use crate::commands::AccountHostData;
 use crate::commands::MainPagePackageData;
 use crate::kit::Button;
+use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CauseRow;
 use crate::kit::PackageState;
@@ -238,14 +239,27 @@ fn action_href(label: &str, namespace: &str) -> String {
 /// A package row's `[Publish]` / `[Resolve]` / `[Get latest]` / `[Choose S3
 /// bucket]` — whichever `render`'s `Rendered.action` names. The click
 /// navigates; there is no mutation here.
+///
+/// Primary, and it is the one place on this page that is. A queue row exists
+/// BECAUSE the package needs this action, so the button and the row are the same
+/// fact — and the queue is bounded by definition, holding only what needs
+/// attention, so the accent stays scarce. A cause's `[Sign in]` stays default:
+/// that one is host-scoped and explains the rows rather than resolving one.
 fn package_action(
     label: &'static str,
     namespace: &str,
     navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
 ) -> AnyView {
     let target = action_href(label, namespace);
-    view! { <Button on_click=move |_| navigate(&target, NavigateOptions::default())>{label}</Button> }
-        .into_any()
+    view! {
+        <Button
+            variant=ButtonVariant::Primary
+            on_click=move |_| navigate(&target, NavigateOptions::default())
+        >
+            {label}
+        </Button>
+    }
+    .into_any()
 }
 
 /// A cause's trailing slot: `[Sign in]` for a signed-out host, or the pointer
@@ -1048,6 +1062,51 @@ mod tests {
         assert_eq!(
             sign_in_href("custom.registry.io"),
             "/login?host=custom.registry.io&back=/main"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_package_row_action_is_primary_and_a_cause_action_is_not() {
+        // The one accent on this page. A queue row exists because the package
+        // needs its action, so that button is the page's point; a cause's
+        // `[Sign in]` is host-scoped and explains rows rather than resolving one,
+        // so it stays default. The pair is the unit — either alone would pass
+        // against a variant applied to every button or to none.
+        let denied = mount_region(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            Signal::stored(false),
+        );
+        // `:not([aria-expanded])` skips the cause row's expander, which is also a
+        // button and is also default — selecting the first button here tests the
+        // expander instead and passes however the action is styled.
+        let sign_in = denied
+            .query_selector("button:not([aria-expanded])")
+            .unwrap()
+            .expect("the cause's own action");
+        assert!(
+            !sign_in
+                .get_attribute("class")
+                .unwrap_or_default()
+                .contains("primary"),
+            "a cause action is default"
+        );
+
+        let publishable = mount_region(
+            Signal::stored(one_behind()),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        let action = publishable
+            .query_selector("button")
+            .unwrap()
+            .expect("the package's own action");
+        assert!(
+            action
+                .get_attribute("class")
+                .unwrap_or_default()
+                .contains("primary"),
+            "a package action is primary"
         );
     }
 

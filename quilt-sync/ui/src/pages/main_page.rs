@@ -45,12 +45,19 @@ stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 /// Copied from the gallery's own helpers rather than shared: the gallery modules are
 /// not compiled into the app binary, and the kit deliberately owns no icons — a caller
 /// passes the glyph, so the appbar's owner draws it.
+/// A cog: a hub, a ring, and teeth that touch the ring.
+///
+/// The geometry is the whole icon. A small centre with long rays standing off it
+/// is a sun, not a gear — so the teeth start at the ring's edge and are shorter
+/// than it is wide.
 fn gear_icon() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4">
-            <circle cx="8" cy="8" r="2.1" />
-            <path d="M8 1.6v1.7M8 12.7v1.7M2.5 8H4.2M11.8 8h1.7M4.1 4.1l1.2 1.2M10.7 10.7l1.2 1.2M11.9 4.1l-1.2 1.2M5.3 10.7l-1.2 1.2" />
+            stroke-width="1.4" stroke-linecap="round">
+            <circle cx="8" cy="8" r="1.7" />
+            <circle cx="8" cy="8" r="4.3" />
+            <path d="M8 4.3V2.2M8 11.7v2.1M4.3 8H2.2M11.7 8h2.1" />
+            <path d="M5.38 5.38 3.9 3.9M10.62 10.62l1.48 1.48M10.62 5.38 12.1 3.9M5.38 10.62 3.9 12.1" />
         </svg>
     }
     .into_any()
