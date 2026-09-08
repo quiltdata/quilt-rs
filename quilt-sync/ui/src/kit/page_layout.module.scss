@@ -4,8 +4,17 @@
  * page, while what sits on it must line up with the regions below.
  */
 
+/* The page owns the viewport and scrolls its own content, rather than letting the
+ * document scroll. It has to: `body` carries `overflow: hidden` from v1's global
+ * layout (`assets/css/layout.css`), which `index.html` loads after this bundle, so
+ * a page taller than the window is clipped with no scrollbar anywhere. v1 never
+ * noticed because its own wrapper scrolls itself the same way.
+ *
+ * Self-sufficient rather than a workaround: a frame that owns the window height
+ * and scrolls inside it still behaves once that global rule goes with v1. */
 .root {
-  min-height: 100%;
+  height: 100vh;
+  overflow-y: auto;
   background: var(--q-bgColor-page);
 }
 

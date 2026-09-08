@@ -22,3 +22,16 @@
     min-width: 0;
   }
 }
+
+/* Region 4 is one region. Its toolbar names the view directly below it, so the
+ * pair is a single child of `PageLayout`'s column — `.main`'s gap separates
+ * REGIONS, and letting it fall between the toolbar and its own list drew them as
+ * two, spaced further apart than the toolbar was from the queue above it.
+ *
+ * No gap here: `ListToolbar`'s own `padding-bottom` is the internal spacing, and
+ * having it in one place is what keeps the toolbar sitting on its list in every
+ * arm of the read. */
+.list_region {
+  display: flex;
+  flex-direction: column;
+}

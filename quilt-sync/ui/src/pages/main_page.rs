@@ -665,12 +665,21 @@ fn MainPageRegions(
                 // on screen with the appbar and the strip, and is never itself a
                 // skeleton. The skeletons below it are the packages view's,
                 // because that is the view the page opens on (R4).
-                {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by, create_open)}
-                <Card>
-                    <PackageRowSkeleton />
-                    <PackageRowSkeleton />
-                    <PackageRowSkeleton />
-                </Card>
+                <div class=style::list_region>
+                    {list_toolbar(
+                        view_selected,
+                        query,
+                        group_packages_by,
+                        group_files_by,
+                        sort_by,
+                        create_open,
+                    )}
+                    <Card>
+                        <PackageRowSkeleton />
+                        <PackageRowSkeleton />
+                        <PackageRowSkeleton />
+                    </Card>
+                </div>
             }
         }>
             {move || Suspend::new(async move {
@@ -767,7 +776,15 @@ fn MainPageRegions(
                                 in_flight=in_flight
                                 total=total
                             />
-                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by, create_open)}
+                            <div class=style::list_region>
+                            {list_toolbar(
+                                view_selected,
+                                query,
+                                group_packages_by,
+                                group_files_by,
+                                sort_by,
+                                create_open,
+                            )}
                             // Neither card carries a title: the toggle immediately
                             // above names the view, and a card titled `Packages`
                             // over a Packages / Recent files switch says it twice
@@ -896,6 +913,7 @@ fn MainPageRegions(
                             >
                                 {files_view(recent_files, query, group_files_by)}
                             </Show>
+                            </div>
                         }
                             .into_any()
                     }
@@ -914,13 +932,22 @@ fn MainPageRegions(
                         // and only the Packages arm carries the sentence. No title,
                         // as in the arm above.
                         view! {
-                            {list_toolbar(view_selected, query, group_packages_by, group_files_by, sort_by, create_open)}
-                            <Show
-                                when=move || view_selected.get() == FILES_VIEW
-                                fallback=|| view! { <Card>{render_fetch_error()}</Card> }
-                            >
-                                {files_view(recent_files, query, group_files_by)}
-                            </Show>
+                            <div class=style::list_region>
+                                {list_toolbar(
+                                    view_selected,
+                                    query,
+                                    group_packages_by,
+                                    group_files_by,
+                                    sort_by,
+                                    create_open,
+                                )}
+                                <Show
+                                    when=move || view_selected.get() == FILES_VIEW
+                                    fallback=|| view! { <Card>{render_fetch_error()}</Card> }
+                                >
+                                    {files_view(recent_files, query, group_files_by)}
+                                </Show>
+                            </div>
                         }
                             .into_any()
                     }
@@ -2566,6 +2593,51 @@ mod tests {
             calls.get(),
             2,
             "one more fetch per reload, not one per Transition/Suspend that reads it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_toolbar_and_its_list_share_one_parent() {
+        // `PageLayout`'s column sets the gap BETWEEN regions, so the toolbar and
+        // the list it names have to be one child of that column. Left as siblings
+        // they each take a region's share of the gap, and the toolbar ends up
+        // further from its own list than it is from the queue above it — region 4
+        // drawn as two.
+        //
+        // This pins the NESTING and nothing more. No stylesheet is loaded in the
+        // test harness, so `getComputedStyle` here returns browser defaults and
+        // the spacing itself cannot be asserted: swapping the wrapper to
+        // `display: contents` keeps this test green while the gap comes back.
+        // Manual check 82 on `qhq-8mgw.21` is the other half.
+        let (slot, on_store) = store_slot();
+        let payload = a_package_needing_attention();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let region = el
+            .query_selector("[class*=list_region]")
+            .unwrap()
+            .expect("the list region wraps the pair");
+        assert!(
+            region
+                .query_selector("input[type=search]")
+                .unwrap()
+                .is_some(),
+            "the toolbar is inside it"
+        );
+        assert!(
+            region
+                .query_selector("a[href*=namespace]")
+                .unwrap()
+                .is_some(),
+            "and so is the list it names"
         );
     }
 
