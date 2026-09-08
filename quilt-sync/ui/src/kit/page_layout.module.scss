@@ -33,6 +33,23 @@
   flex: none;
 }
 
+/* The page container, declared once for everything that has to line up with it.
+ *
+ * The appbar is full-bleed and its CONTENTS are not: the rule under it has to
+ * reach both window edges or it reads as a box rather than as the top of the
+ * page, while the logo and the actions sitting on it must line up with the
+ * regions below. Same for a banner. Three rules repeating the same three
+ * declarations is how that alignment drifts, so they share one.
+ *
+ * Only the inline padding is here — each row's own vertical rhythm is its own. */
+.bar,
+.notice,
+.main {
+  max-width: var(--q-container);
+  margin: 0 auto;
+  padding-inline: var(--q-space-4);
+}
+
 /* Not `position: sticky`. It would be defensible — the refresh control is useful from
  * anywhere in a long list — but a sticky bar costs vertical space permanently in
  * exchange for two buttons, and this page is already spending its height on a queue.
@@ -41,9 +58,7 @@
   display: flex;
   align-items: center;
   gap: var(--q-space-3);
-  max-width: var(--q-container);
-  margin: 0 auto;
-  padding: var(--q-space-2) var(--q-space-4);
+  padding-block: var(--q-space-2);
   min-height: 44px;
 }
 
@@ -73,9 +88,7 @@
  * the row's — the bottom gap belongs to whatever follows, and `.main`'s padding already
  * provides it. */
 .notice {
-  max-width: var(--q-container);
-  margin: 0 auto;
-  padding: var(--q-space-4) var(--q-space-4) 0;
+  padding-block: var(--q-space-4) 0;
   flex: none;
 }
 
@@ -86,9 +99,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--q-space-6);
-  max-width: var(--q-container);
-  margin: 0 auto;
-  padding: var(--q-space-5) var(--q-space-4) var(--q-space-8);
+  padding-block: var(--q-space-5) var(--q-space-8);
   /* Takes the height the appbar leaves, and `min-height: 0` is what lets it be
    * shorter than its own content — without it a flex item refuses to shrink past
    * its intrinsic height and the child scroller never gets a chance to scroll. */
