@@ -34,4 +34,29 @@
 .list_region {
   display: flex;
   flex-direction: column;
+  /* Region 4 takes whatever height the regions above it leave, and its list
+   * scrolls inside — so the strip and the queue stay on screen with a long
+   * roster instead of being pushed off the top. */
+  flex: 1 1 auto;
+  min-height: 0;
+
+  /* A floor, so the list is still a list when the window is at its shortest.
+   * At the 560px window floor the regions above spend roughly 400px between
+   * them, which leaves about this much; below that `PageLayout`'s own
+   * `overflow-y` takes over and the whole page scrolls, which is worse than
+   * scrolling the list but much better than a list two rows tall. */
+  min-height: 160px;
+
+  /* The card is the scroller: the toolbar above it keeps its own height, and the
+   * rows move under it. Its flex behaviour belongs to this column rather than to
+   * `Card`, for the same reason `.strip`'s does — a card that sized itself would
+   * be the parent's layout living in the child.
+   *
+   * `:last-child` is safe because this region has exactly two element children in
+   * every arm of the read, toolbar then card, which
+   * `the_toolbar_and_its_list_share_one_parent` pins. */
+  > :last-child {
+    min-height: 0;
+    overflow-y: auto;
+  }
 }

@@ -2639,6 +2639,15 @@ mod tests {
                 .is_some(),
             "and so is the list it names"
         );
+        // The region's stylesheet makes its LAST child the scroller, so the count
+        // is load-bearing: a third child here would either take the overflow
+        // itself or leave the card unscrollable, and neither shows up in a test
+        // that only asks whether the two halves are present.
+        assert_eq!(
+            region.query_selector_all(":scope > *").unwrap().length(),
+            2,
+            "toolbar then card, and nothing else"
+        );
     }
 
     #[wasm_bindgen_test]

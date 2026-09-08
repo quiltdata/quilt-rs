@@ -4,16 +4,23 @@
  * page, while what sits on it must line up with the regions below.
  */
 
-/* The page owns the viewport and scrolls its own content, rather than letting the
- * document scroll. It has to: `body` carries `overflow: hidden` from v1's global
- * layout (`assets/css/layout.css`), which `index.html` loads after this bundle, so
- * a page taller than the window is clipped with no scrollbar anywhere. v1 never
- * noticed because its own wrapper scrolls itself the same way.
+/* The frame owns the window height, and the list inside it takes the leftover and
+ * scrolls itself — so the appbar, the strip, the queue and the toolbar stay on
+ * screen however long the roster is.
  *
- * Self-sufficient rather than a workaround: a frame that owns the window height
- * and scrolls inside it still behaves once that global rule goes with v1. */
+ * It has to own the height rather than let the document scroll: `body` carries
+ * `overflow: hidden` from v1's global layout (`assets/css/layout.css`), which
+ * `index.html` loads after this bundle, so a page taller than the window is
+ * clipped with no scrollbar anywhere. v1 never noticed because its own wrapper
+ * scrolls itself the same way.
+ *
+ * `overflow-y: auto` stays as the fallback: below the window floor the regions
+ * above the list cannot all fit, and then this scrolls rather than crushing the
+ * list to nothing. See `.list_region`'s own floor. */
 .root {
   height: 100vh;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   background: var(--q-bgColor-page);
 }
@@ -22,6 +29,8 @@
   /* Lighter than the page, like every other raised surface in the kit. */
   background: var(--q-bgColor-default);
   border-bottom: 1px solid var(--q-borderColor-muted);
+  /* Its own height, never a share of the leftover. */
+  flex: none;
 }
 
 /* Not `position: sticky`. It would be defensible — the refresh control is useful from
@@ -67,6 +76,7 @@
   max-width: var(--q-container);
   margin: 0 auto;
   padding: var(--q-space-4) var(--q-space-4) 0;
+  flex: none;
 }
 
 /* The page column, and the one place the gap between regions is set. Regions carry no
@@ -79,4 +89,9 @@
   max-width: var(--q-container);
   margin: 0 auto;
   padding: var(--q-space-5) var(--q-space-4) var(--q-space-8);
+  /* Takes the height the appbar leaves, and `min-height: 0` is what lets it be
+   * shorter than its own content — without it a flex item refuses to shrink past
+   * its intrinsic height and the child scroller never gets a chance to scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
