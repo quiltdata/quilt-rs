@@ -9,7 +9,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.0-alpha1] - 2026-09-08
+## [v0.22.0] - 2026-09-08
 
 ### Added
 
@@ -22,11 +22,13 @@
 
 - A manual Pull is confirmed by that report instead of "Successfully pulled package …", which said the same thing twice over. A pull with nothing to report — a revision that moved no files — still shows the line (<https://github.com/quiltdata/quilt-rs/pull/898>)
 
-## [v0.21.3-alpha1] - 2026-09-04
-
 ### Fixed
 
 - *Save diagnostics* now includes the end of the log. The last lines of a session were dropped when the app quit — the ones covering whatever you were doing when the problem started — so the archive you send support stopped just short of the part that explains it. A crash or a force-quit still loses them (<https://github.com/quiltdata/quilt-rs/pull/883>)
+
+### quilt-rs
+
+- Updated [from v0.36.0 to v0.37.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.36.0...quilt-rs/v0.37.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.21.2] - 2026-09-02
 
