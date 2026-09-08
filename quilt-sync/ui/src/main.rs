@@ -61,7 +61,7 @@ fn Home() -> impl IntoView {
     let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
 
     view! {
-        <Suspense fallback=|| view! { <div></div> }>
+        <Suspense fallback=loading>
             {move || Suspend::new(async move {
                 let settings = settings.await;
                 if wants_v2(settings.as_ref().map_err(String::as_str)) {
@@ -72,6 +72,21 @@ fn Home() -> impl IntoView {
             })}
         </Suspense>
     }
+}
+
+/// What `/` shows while it works out which page it is.
+///
+/// A spinner, which `kit::Spinner`'s own doc reserves for two jobs — this is the
+/// second, "filling a region that cannot be skeletonised because its contents are
+/// not a list of rows". A skeleton is the right loading state for a list, because
+/// it holds the shape the content will take; here not even the page is decided
+/// yet, so there is no shape to hold.
+///
+/// No appbar around it. Drawing one page's chrome and then swapping it for the
+/// other's is the flicker this route exists to avoid.
+fn loading() -> AnyView {
+    view! { <kit::Spinner variant=kit::SpinnerVariant::Region aria_label="Loading QuiltSync" /> }
+        .into_any()
 }
 
 /// Whether `/` renders v2, given the settings fetch's outcome.
@@ -89,6 +104,7 @@ mod tests {
         AutosyncSettingsData, ExperimentalSettingsData, FsWatcherSettingsData, PublishSettingsData,
         SettingsData,
     };
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     fn settings_stub(main_page_v2: bool) -> SettingsData {
@@ -110,6 +126,33 @@ mod tests {
                 main_page_v2,
             },
         }
+    }
+
+    #[wasm_bindgen_test]
+    fn the_loading_frame_announces_itself() {
+        // `/` cannot skeletonise — it does not know which page is coming — so it
+        // spins, and a spinner with nothing beside it has to say what it is
+        // waiting on. `kit::Spinner`'s own doc: a `Region` spinner "always passes
+        // something", rendered as off-screen text INSIDE the live region rather
+        // than as a label on it, or the announcement may never fire.
+        //
+        // This pins that the frame is not empty and that it speaks. It cannot
+        // pin what it looks like: no stylesheet is loaded here.
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&host).unwrap();
+        leptos::mount::mount_to(host.clone(), loading).forget();
+
+        let el: web_sys::Element = host.into();
+        let status = el
+            .query_selector("[role=status]")
+            .unwrap()
+            .expect("the loading frame is a live region");
+        assert_eq!(
+            status.text_content().unwrap().trim(),
+            "Loading QuiltSync",
+            "and it says what it is waiting on"
+        );
     }
 
     #[wasm_bindgen_test]
