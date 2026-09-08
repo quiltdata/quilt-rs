@@ -10,6 +10,7 @@ use crate::Res;
 use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::flow::Applied;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
 use crate::flow::classify_pull;
@@ -147,15 +148,23 @@ impl PullReport {
     }
 }
 
-/// Build the report from the delta the pull already computed and the touch set
-/// it derived — no extra I/O, both are in hand.
+/// Build the report from the delta and from what the apply actually did — no
+/// extra I/O, both are in hand.
+///
+/// **Not from the touch set.** The touch set is what the pull *proposed* to
+/// move, and the two diverge: a touched path this copy does not track is never
+/// uninstalled, so reading the touch set reported files as removed that were
+/// still there. [`Applied`](crate::flow::Applied) is the record of the writes
+/// and deletions themselves, which makes every group true by construction.
 fn report_of(
     manifest_uri: ManifestUri,
     delta: &BTreeMap<PathBuf, RemoteChange>,
-    touched: &[PathBuf],
+    applied: &Applied,
+    locally_changed: &ChangeSet,
     message: Option<String>,
 ) -> PullReport {
-    let landed: BTreeSet<&PathBuf> = touched.iter().collect();
+    let installed: BTreeSet<&PathBuf> = applied.installed.iter().collect();
+    let uninstalled: BTreeSet<&PathBuf> = applied.uninstalled.iter().collect();
     let mut report = PullReport {
         manifest_uri,
         added: Vec::new(),
@@ -166,20 +175,36 @@ fn report_of(
         // elsewhere: `ManifestHeader::default` writes `Some(String::new())`.
         message: message.filter(|m| !m.is_empty()),
     };
+    // Walked over the delta rather than over `applied`, so the report stays
+    // ordered by path and covers only what the remote changed.
     for (path, change) in delta {
-        let landed = landed.contains(path);
-        match (change, landed) {
-            (RemoteChange::Added(_), true) => report.added.push(path.clone()),
-            (RemoteChange::Added(_), false) => report.added_not_fetched.push(path.clone()),
-            (RemoteChange::Modified(_), true) => report.updated.push(path.clone()),
-            (RemoteChange::Removed, true) => report.removed.push(path.clone()),
-            // Nothing moved, for any of three reasons the report does not need
-            // to tell apart: the user's own edit was kept, both sides reached
-            // the same result, or **this copy does not track the path at all**
-            // — which is the ordinary state of a CLI install, since install
-            // brings the manifest and not the files. Naming any of them
-            // "updated" would claim a write that did not happen.
-            (RemoteChange::Modified(_) | RemoteChange::Removed, false) => {}
+        match (installed.contains(path), uninstalled.contains(path)) {
+            // Deleted and written again: a file that was here has new content.
+            (true, true) => report.updated.push(path.clone()),
+            // Written where there was nothing. The remote may have called this
+            // path Added or Modified — under whole-package scope a path the
+            // remote modified but this copy never checked out is fetched here
+            // too, and it is new to this copy either way. Nothing was
+            // overwritten, so "updated" would be the wrong word for it.
+            (true, false) => report.added.push(path.clone()),
+            // Deleted with no replacement: absent from `latest`.
+            (false, true) => report.removed.push(path.clone()),
+            (false, false) => {
+                // Nothing moved. Worth saying only when the revision added a
+                // path that is still outstanding — one the scope listed and
+                // left on the remote.
+                //
+                // Everything else is silent, and each silence is a case where
+                // the file on disk is already right: the user's own edit was
+                // kept, both sides reached the same result (including a path
+                // both added identically, which is here and needs no fetch),
+                // or this copy does not track the path at all — the ordinary
+                // state of a CLI install, since install brings the manifest
+                // and not the files.
+                if matches!(change, RemoteChange::Added(_)) && !locally_changed.contains_key(path) {
+                    report.added_not_fetched.push(path.clone());
+                }
+            }
         }
     }
     report
@@ -304,13 +329,6 @@ pub async fn pull_package(
         &snapshot.status.changes,
         scope,
     );
-    let report = report_of(
-        snapshot.latest.clone(),
-        &delta,
-        &touched,
-        snapshot.latest_manifest.header.message.clone(),
-    );
-
     // Verify-before-uninstall. For every touched path, confirm the working-tree
     // file still holds the BASE content the classifier assumed — the row in
     // `manifest` (the installed/base manifest), whose self-describing
@@ -363,7 +381,8 @@ pub async fn pull_package(
         return Err(PackageOpError::PullConflict(drifted).into());
     }
 
-    let lineage = apply_latest_update(
+    let latest = snapshot.latest.clone();
+    let (lineage, applied) = apply_latest_update(
         lineage,
         manifest,
         paths,
@@ -375,6 +394,16 @@ pub async fn pull_package(
         &touched,
     )
     .await?;
+
+    // Built after the apply, from what it did rather than from what the touch
+    // set proposed — see `report_of`.
+    let report = report_of(
+        latest,
+        &delta,
+        &applied,
+        &snapshot.status.changes,
+        snapshot.latest_manifest.header.message.clone(),
+    );
 
     info!("✔️ Successfully pulled (surgical), outcome={outcome:?}");
     Ok((lineage, report))
@@ -440,9 +469,15 @@ mod tests {
         names.iter().map(PathBuf::from).collect()
     }
 
-    /// The whole of the grouping: which disposition lands in which group, and
-    /// that the scope decides between the two "new files" groups rather than
-    /// anything about the path itself.
+    fn applied(installed: &[&str], uninstalled: &[&str]) -> Applied {
+        Applied {
+            installed: paths(installed),
+            uninstalled: paths(uninstalled),
+        }
+    }
+
+    /// The whole of the grouping: which write or deletion lands in which group.
+    /// Read from the apply, so each group states something that happened.
     #[test]
     fn report_groups_by_what_happened_to_this_copy() {
         let delta = BTreeMap::from([
@@ -460,9 +495,21 @@ mod tests {
             ),
             (PathBuf::from("dropped.csv"), RemoteChange::Removed),
         ]);
-        let touched = paths(&["fetched.csv", "changed.csv", "dropped.csv"]);
+        // `changed.csv` was tracked, so it was deleted and written again;
+        // `fetched.csv` was written where there was nothing; `dropped.csv` was
+        // deleted with no replacement; `listed.csv` was left on the remote.
+        let applied = applied(
+            &["fetched.csv", "changed.csv"],
+            &["changed.csv", "dropped.csv"],
+        );
 
-        let report = report_of(uri(), &delta, &touched, Some("a message".to_owned()));
+        let report = report_of(
+            uri(),
+            &delta,
+            &applied,
+            &ChangeSet::new(),
+            Some("a message".to_owned()),
+        );
 
         assert_eq!(report.added, paths(&["fetched.csv"]));
         assert_eq!(report.added_not_fetched, paths(&["listed.csv"]));
@@ -472,11 +519,45 @@ mod tests {
         assert!(!report.is_empty());
     }
 
-    /// The three dispositions that must produce **nothing**, because nothing
-    /// moved. Reporting any of them would tell the user a file changed when it
-    /// did not.
+    /// The touch set says what a pull *proposed* to move; only the apply knows
+    /// what it did. Under whole-package scope the touch set covers untracked
+    /// paths, and `apply_latest_update` then skips the ones with no file to
+    /// delete — so a report read from the touch set claimed a deletion that
+    /// never happened, and called a first fetch an update.
+    #[test]
+    fn untracked_paths_are_reported_by_what_the_apply_did() {
+        let delta = BTreeMap::from([
+            (PathBuf::from("never-had.csv"), RemoteChange::Removed),
+            (
+                PathBuf::from("first-fetch.csv"),
+                RemoteChange::Modified(hash_of(b"m")),
+            ),
+        ]);
+        // Both are in the touch set under whole-package scope. Neither was
+        // tracked, so neither is uninstalled; the one still in `latest` is
+        // written.
+        let applied = applied(&["first-fetch.csv"], &[]);
+
+        let report = report_of(uri(), &delta, &applied, &ChangeSet::new(), None);
+
+        assert!(
+            report.removed.is_empty(),
+            "a path with no local file was reported as removed: {report:?}"
+        );
+        assert_eq!(
+            report.added,
+            paths(&["first-fetch.csv"]),
+            "a first fetch is new to this copy, not an update"
+        );
+        assert!(report.updated.is_empty(), "nothing was overwritten");
+    }
+
+    /// The dispositions that must produce **nothing**, because nothing moved.
+    /// Reporting any of them would tell the user a file changed when it did not.
     #[test]
     fn nothing_moved_means_nothing_reported() {
+        let nothing = Applied::default();
+
         // A tracked path the remote changed and the user had also edited: the
         // touch set drops it, their work is kept, the remote's version is not
         // applied — so it is neither "updated" nor a skip notice.
@@ -484,7 +565,7 @@ mod tests {
             PathBuf::from("mine.csv"),
             RemoteChange::Modified(hash_of(b"x")),
         )]);
-        let report = report_of(uri(), &kept, &[], None);
+        let report = report_of(uri(), &kept, &nothing, &ChangeSet::new(), None);
         assert!(
             report.is_empty(),
             "kept local work was reported: {report:?}"
@@ -492,15 +573,38 @@ mod tests {
 
         // A path removed on both sides — trivially resolved, never touched.
         let both_removed = BTreeMap::from([(PathBuf::from("gone.csv"), RemoteChange::Removed)]);
-        let report = report_of(uri(), &both_removed, &[], None);
+        let report = report_of(uri(), &both_removed, &nothing, &ChangeSet::new(), None);
         assert!(
             report.is_empty(),
             "a both-removed path was reported: {report:?}"
         );
 
-        // A metadata-only revision: identical rows, so an empty delta and an
-        // empty touch set. The hashes advance and no file moved.
-        let report = report_of(uri(), &BTreeMap::new(), &[], Some("retagged".to_owned()));
+        // A path both sides added with the same content: the classifier lets
+        // the pull through, and the file is already on disk. Calling it "not
+        // downloaded" would send the user looking for something they have.
+        let both_added = BTreeMap::from([(
+            PathBuf::from("same.csv"),
+            RemoteChange::Added(hash_of(b"same")),
+        )]);
+        let locally = ChangeSet::from([(
+            PathBuf::from("same.csv"),
+            Change::Added(ManifestRow::default()),
+        )]);
+        let report = report_of(uri(), &both_added, &nothing, &locally, None);
+        assert!(
+            report.is_empty(),
+            "a path the user already has was reported as outstanding: {report:?}"
+        );
+
+        // A metadata-only revision: identical rows, so an empty delta and
+        // nothing applied. The hashes advance and no file moved.
+        let report = report_of(
+            uri(),
+            &BTreeMap::new(),
+            &nothing,
+            &ChangeSet::new(),
+            Some("retagged".to_owned()),
+        );
         assert!(report.is_empty(), "a metadata-only revision named files");
         // Its message still travels — it is the only thing that changed.
         assert_eq!(report.message.as_deref(), Some("retagged"));
@@ -510,7 +614,13 @@ mod tests {
     /// already treats as absent elsewhere.
     #[test]
     fn an_empty_message_is_absent() {
-        let report = report_of(uri(), &BTreeMap::new(), &[], Some(String::new()));
+        let report = report_of(
+            uri(),
+            &BTreeMap::new(),
+            &Applied::default(),
+            &ChangeSet::new(),
+            Some(String::new()),
+        );
         assert_eq!(report.message, None);
     }
 

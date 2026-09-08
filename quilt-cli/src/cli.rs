@@ -26,6 +26,7 @@ mod pull;
 mod push;
 mod role;
 mod status;
+mod text;
 mod undo_commit;
 mod uninstall;
 

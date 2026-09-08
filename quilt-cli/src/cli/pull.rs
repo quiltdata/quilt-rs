@@ -7,6 +7,7 @@ use quilt_uri::Namespace;
 use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
+use crate::cli::text::printable;
 
 #[derive(Debug)]
 pub struct Input {
@@ -33,7 +34,9 @@ fn group(f: &mut std::fmt::Formatter<'_>, heading: &str, paths: &[PathBuf]) -> s
     let plural = if paths.len() == 1 { "" } else { "s" };
     write!(f, "\n{} file{plural} {heading}:", paths.len())?;
     for path in paths {
-        write!(f, "\n  {}", path.display())?;
+        // Escaped: a path comes from the remote's manifest, and this is a
+        // terminal.
+        write!(f, "\n  {}", printable(&path.display().to_string()))?;
     }
     Ok(())
 }
@@ -51,7 +54,7 @@ impl std::fmt::Display for Output {
             // Labelled, because a pull advances to `latest` in one step and can
             // span several revisions: this is the newest one's message, not an
             // account of everything above it.
-            write!(f, "\nLatest revision: {message}")?;
+            write!(f, "\nLatest revision: {}", printable(message))?;
         }
         Ok(())
     }

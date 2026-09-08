@@ -22,6 +22,7 @@ mod undo_commit;
 mod uninstall_package;
 mod uninstall_paths;
 
+pub(crate) use apply_update::Applied;
 pub(crate) use apply_update::apply_latest_update;
 pub use browse::browse_remote_manifest as browse;
 pub use browse::cache_remote_manifest;

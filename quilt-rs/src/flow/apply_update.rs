@@ -13,6 +13,22 @@ use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
+/// What an apply actually did, as distinct from what the touch-set proposed.
+///
+/// The two differ, and a caller reporting the touch-set would state things that
+/// did not happen: a touched path this copy does not track is never uninstalled
+/// (there is no file to delete), and a touched path absent from `latest` is
+/// never installed. Both are ordinary under
+/// [`EntirePackage`](crate::lineage::SyncScope::EntirePackage), whose touch-set
+/// covers untracked paths.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct Applied {
+    /// Paths written from `latest` — whether or not a file was there before.
+    pub installed: Vec<PathBuf>,
+    /// Paths deleted from the working tree and dropped from tracking.
+    pub uninstalled: Vec<PathBuf>,
+}
+
 /// Apply a set of `latest`-manifest path updates to the working tree, object
 /// store, lineage, and installed-manifest base — the mechanic shared by
 /// gentle [`pull`](super::pull) and [`reset_to_latest`](super::reset_to_latest).
@@ -36,7 +52,7 @@ pub(crate) async fn apply_latest_update(
     namespace: Namespace,
     latest: ManifestUri,
     touched: &[PathBuf],
-) -> Res<PackageLineage> {
+) -> Res<(PackageLineage, Applied)> {
     // TODO: a failure between `uninstall_paths` and `install_paths` (e.g. a
     // network drop) leaves the touched files deleted but still tracked, so the
     // retry classifies the gap as local-Removed vs remote-Modified and refuses
@@ -91,14 +107,16 @@ pub(crate) async fn apply_latest_update(
         .paths
         .retain(|path, _| manifest.contains_record(path));
 
-    let to_install: Vec<&PathBuf> = touched
+    let to_install: Vec<PathBuf> = touched
         .iter()
         .filter(|p| manifest.contains_record(p))
+        .cloned()
         .collect();
     debug!(
         "⏳ Reinstalling {} touched paths present in latest",
         to_install.len()
     );
+    let install_refs: Vec<&PathBuf> = to_install.iter().collect();
     let lineage = flow::install_paths(
         lineage,
         manifest,
@@ -107,11 +125,17 @@ pub(crate) async fn apply_latest_update(
         namespace,
         storage,
         remote,
-        &to_install,
+        &install_refs,
     )
     .await?;
 
-    Ok(lineage)
+    Ok((
+        lineage,
+        Applied {
+            installed: to_install,
+            uninstalled: to_uninstall,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -179,9 +203,13 @@ mod tests {
         )
         .await?;
 
-        assert_eq!(result.base_hash, new_hash);
-        assert_eq!(result.latest_hash, new_hash);
-        assert_eq!(result.remote()?.hash, new_hash);
+        let (lineage, applied) = result;
+        assert_eq!(lineage.base_hash, new_hash);
+        assert_eq!(lineage.latest_hash, new_hash);
+        assert_eq!(lineage.remote()?.hash, new_hash);
+        // An empty touch-set moved nothing, and the record says so — what a
+        // caller reports comes from here, not from the touch-set.
+        assert_eq!(applied, Applied::default());
         Ok(())
     }
 
@@ -245,8 +273,12 @@ mod tests {
         .await?;
 
         assert!(
-            !result.paths.contains_key(&stale),
+            !result.0.paths.contains_key(&stale),
             "stale both-removed path must be pruned from lineage"
+        );
+        assert!(
+            result.1.uninstalled.is_empty(),
+            "pruning a stale row is not an uninstall, and must not be reported as one"
         );
         Ok(())
     }
