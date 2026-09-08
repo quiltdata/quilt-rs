@@ -57,6 +57,7 @@ mod gallery {
     pub mod state_label;
     pub mod state_strip;
     pub mod toggle_row;
+    pub mod unchecked;
 }
 
 use leptos::prelude::*;
@@ -85,6 +86,7 @@ use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
 use crate::gallery::state_strip::StateStripScene;
 use crate::gallery::toggle_row::ToggleRowStories;
+use crate::gallery::unchecked::UncheckedScene;
 use kit::Button;
 
 fn main() {
@@ -172,6 +174,10 @@ fn Gallery() -> impl IntoView {
             view! { <QueueScene /> }.into_any(),
         ),
         ("Scene · packages", view! { <PackagesScene /> }.into_any()),
+        (
+            "Scene · a check that failed",
+            view! { <UncheckedScene /> }.into_any(),
+        ),
         ("Scene · whole page", view! { <PageScene /> }.into_any()),
     ];
 
