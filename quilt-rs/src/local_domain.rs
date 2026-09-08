@@ -107,15 +107,20 @@ impl LocalDomain {
             .inspect_err(|e| warn!("Failed to browse manifest {}: {}", uri.hash, e))
     }
 
-    pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
+    /// Every package shares *this* domain's remote — the same client,
+    /// region and credential caches, not a snapshot. A per-package copy
+    /// would start empty and discard whatever it built, and logout could
+    /// not reach the clients it is required to drop.
+    #[must_use]
+    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
-        Ok(InstalledPackage {
+        InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace,
             paths: self.paths.clone(),
-            remote: self.remote.try_clone()?,
+            remote: Arc::clone(&self.remote),
             storage: self.storage.clone(),
-        })
+        }
     }
 
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
@@ -145,7 +150,7 @@ impl LocalDomain {
         self.lineage.write(&self.storage, lineage).await?;
 
         info!("Successfully installed package: {}", manifest_uri.namespace);
-        self.create_installed_package(manifest_uri.namespace.clone())
+        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
     }
 
     pub async fn create_package(
@@ -171,7 +176,7 @@ impl LocalDomain {
         self.lineage.write(&self.storage, lineage).await?;
 
         info!("Successfully created package: {}", namespace);
-        self.create_installed_package(namespace)
+        Ok(self.create_installed_package(namespace))
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
@@ -205,7 +210,7 @@ impl LocalDomain {
         trace!("Found {} installed packages", namespaces.len());
         let mut packages = Vec::with_capacity(namespaces.len());
         for namespace in namespaces {
-            packages.push(self.create_installed_package(namespace)?);
+            packages.push(self.create_installed_package(namespace));
         }
         Ok(packages)
     }
@@ -230,7 +235,7 @@ impl LocalDomain {
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
             trace!("Found installed package: {}", namespace);
-            Ok(Some(self.create_installed_package(namespace.to_owned())?))
+            Ok(Some(self.create_installed_package(namespace.to_owned())))
         } else {
             debug!("Package not found: {}", namespace);
             Ok(None)

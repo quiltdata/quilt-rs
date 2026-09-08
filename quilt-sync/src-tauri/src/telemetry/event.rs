@@ -304,10 +304,18 @@ impl From<&crate::quilt::Error> for Failure {
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same
             // answer, since an unclassifiable failure must stay visible.
+            // `Undo` sits here on the same reasoning, and with a caveat: every
+            // undo refusal is a precondition the user can act on (nothing to
+            // undo, a dirty tree, a chain already consumed by pushing), so none
+            // of them is really ours. It is unreachable from this surface today
+            // — undo is CLI-only, with no IPC behind it — and giving it a
+            // refusal kind means widening the telemetry vocabulary, which
+            // belongs with the surface that first drives it rather than here.
             E::PackageOp(
                 PackageOpError::Commit(_)
                 | PackageOpError::Push(_)
                 | PackageOpError::Publish(_)
+                | PackageOpError::Undo(_)
                 | PackageOpError::Package(_),
             )
             | E::Role(RoleError::GraphQl(_))

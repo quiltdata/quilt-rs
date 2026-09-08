@@ -9,14 +9,18 @@ the workspace is split this way, see
 One Cargo workspace, six `Cargo.toml` files (root + five members).
 QuiltSync contributes two of the five members.
 
-| `Cargo.toml` | Crate | Version | Released to |
-| --- | --- | --- | --- |
-| root | — | — | (workspace manifest) |
-| `quilt-rs/` | `quilt-rs` | 0.31.0 | crates.io + GitHub Release |
-| `quilt-uri/` | `quilt-uri` | 0.2.0 | crates.io + GitHub Release |
-| `quilt-cli/` | `quilt-cli` | 0.25.2 | crates.io + GitHub Release with prebuilt binaries |
-| `quilt-sync/src-tauri/` | `quilt-sync` | 0.17.1 | GitHub Release + HubSpot mirror |
-| `quilt-sync/ui/` | `quilt-sync-ui` | 0.1.0 | **not released** — built into QuiltSync |
+| `Cargo.toml` | Crate | Released to |
+| --- | --- | --- |
+| root | — | (workspace manifest) |
+| `quilt-rs/` | `quilt-rs` | crates.io + GitHub Release |
+| `quilt-uri/` | `quilt-uri` | crates.io + GitHub Release |
+| `quilt-cli/` | `quilt-cli` | crates.io + GitHub Release with prebuilt binaries |
+| `quilt-sync/src-tauri/` | `quilt-sync` | GitHub Release + HubSpot mirror |
+| `quilt-sync/ui/` | `quilt-sync-ui` | **not released** — built into QuiltSync |
+
+Current versions live in those `Cargo.toml` files, which is what the
+release workflows read through `cargo metadata`. They are deliberately
+not repeated here.
 
 Path-dep version specifiers are kept in sync manually:
 
@@ -126,7 +130,7 @@ Build pipeline:
 1. Setup Rust (release cache, with `wasm32-unknown-unknown` everywhere
    for the Leptos UI; macOS additionally adds both Apple targets).
 2. Setup Node 24 + Trunk (for `quilt-sync/ui`).
-3. `tauri-apps/tauri-action@v0` runs `trunk build --release` on the UI
+3. `tauri-apps/tauri-action` runs `trunk build --release` on the UI
    (via `beforeBuildCommand`), then bundles the targets listed in
    `tauri.conf.json` (`["app", "deb", "dmg", "msi"]`). With
    `createUpdaterArtifacts: true` it also produces `latest.json`,
@@ -135,8 +139,8 @@ Build pipeline:
    `quilt-sync/src-tauri/Cargo.toml`) — this is the final tag form,
    matching the input `upload-to-hubspot.yaml` expects. Release is
    created as a draft.
-4. (Windows only) `azure/login@v3` exchanges the GitHub OIDC token for
-   an Azure access token, then `azure/trusted-signing-action@v1` signs
+4. (Windows only) `azure/login` exchanges the GitHub OIDC token for
+   an Azure access token, then `azure/trusted-signing-action` signs
    every `.exe` and `.msi`. See
    [docs/windows-signing.md](windows-signing.md).
 

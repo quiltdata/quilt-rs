@@ -29,6 +29,7 @@ mod publish_settings;
 mod quilt;
 mod routes;
 mod telemetry;
+mod toast;
 mod tray;
 mod uri;
 
@@ -139,6 +140,9 @@ fn main() {
             app.manage(App::new(package_info, logging));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
+            app.manage(toast::ToastCenter::new(Box::new(
+                toast::TauriToastEmitter::new(app.handle().clone()),
+            )));
             // The watcher reads `Model` via `app_handle.state::<Model>()`
             // so it can spawn after `Model` is registered above.
             // Telemetry wraps the UI reporter rather than replacing it: the
@@ -243,6 +247,8 @@ fn main() {
             commands::update_autosync_settings,
             commands::set_autosync_direction,
             commands::get_autosync_snapshot,
+            commands::get_toasts,
+            commands::dismiss_toast,
             commands::update_fswatcher_settings,
             commands::update_experimental_settings,
             commands::get_main_page_packages,
@@ -266,6 +272,15 @@ fn main() {
             commands::download_and_install_update,
             commands::report_ui_panic,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Runs after every plugin's exit hook, so a plugin's own exit-time
+            // logging still reaches the file. A drop hosted in a plugin would not.
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(app) = app_handle.try_state::<App>()
+            {
+                app.logging.shutdown();
+            }
+        });
 }

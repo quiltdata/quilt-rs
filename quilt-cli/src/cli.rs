@@ -26,6 +26,7 @@ mod pull;
 mod push;
 mod role;
 mod status;
+mod undo_commit;
 mod uninstall;
 
 #[cfg(test)]
@@ -297,6 +298,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Undo the newest commit, restoring the revision before it
+    ///
+    /// Available while the package's commit chain still reaches back, which in
+    /// practice means before its first push. Refuses if any tracked file has
+    /// uncommitted changes.
+    UndoCommit {
+        #[command(flatten)]
+        pkg: PackageRef,
+    },
     /// Uninstall package from local domain
     Uninstall {
         #[command(flatten)]
@@ -462,6 +472,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::debug!("Status {args:?}");
             Ok(status::command(m, args, json).await)
+        }
+        Commands::UndoCommit { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = undo_commit::Input { namespace };
+
+            log::debug!("Undoing commit {args:?}");
+            Ok(undo_commit::command(m, args).await)
         }
         Commands::Uninstall { pkg } => {
             let namespace = pkg.resolve(&m).await?;

@@ -1,0 +1,142 @@
+/* The toast stack: top-centre, starting at the toolbar so the first card
+   overlaps it — the row action buttons live on the right, which is where the
+   stack used to sit and collide with them.
+
+   Two blocks in a column: the list, which grows and scrolls, and the
+   dismiss-all control pinned beneath it so it stays put as toasts arrive. */
+.qui-toasts {
+  position: fixed;
+  top: var(--q-ui-size-8);
+  left: 50%;
+  z-index: var(--q-ui-z-index-toasts);
+  display: flex;
+  flex-direction: column;
+  /* The two blocks need air between them: without it the control sits flush
+     against the last card, which the scroll box has usually clipped mid-content,
+     and the pair reads as one broken element. */
+  gap: var(--q-ui-size-1-5);
+  align-items: center;
+  width: min(44rem, 100vw);
+  /* Leaves the window's foot genuinely clear. Six toasts already fill the
+     height, and a stack reaching the bottom edge reads as a takeover rather
+     than a layer — and jams the control into the last row of the list. */
+  max-height: calc(100vh - var(--q-ui-size-8) - var(--q-ui-size-9));
+  /* The whole layer captures, not just the cards. With `none` here the gap
+     between the two blocks and the strip beside the control passed the cursor
+     through, so the row underneath took hover while the pointer was on its way
+     to — or sitting on — the dismiss control. The cost is that the layer's own
+     box blocks the app beneath it, which is why the component renders nothing
+     at all when there are no toasts. */
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+/* The growing, scrolling half. Padded on every side because `overflow-y`
+   clips at the padding box: without it the cards' shadows are shaved off,
+   which is what made them read as flat against the list. */
+.qui-toasts .list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--q-ui-size-1-5);
+  align-self: stretch;
+  min-height: 0;
+  padding: var(--q-ui-size-2);
+  overflow-y: auto;
+}
+
+.qui-toast {
+  display: flex;
+  gap: var(--q-ui-size-2);
+  align-items: flex-start;
+  padding: var(--q-ui-size-2);
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-normal);
+  color: var(--q-ui-palette-text-primary);
+  pointer-events: auto;
+  background: var(--q-ui-palette-background-primary);
+  border-left: 4px solid var(--q-ui-palette-primary);
+  border-radius: 2px;
+  /* Deliberately heavier than a popup's: this layer sits over a dense list and
+     has to separate from it without an overlay to do the work. */
+  box-shadow: rgb(0 0 0 / 32%) 0 10px 28px -6px, rgb(0 0 0 / 24%) 0 4px 10px -2px,
+    rgb(0 0 0 / 12%) 0 0 0 1px;
+}
+
+.qui-toast.success {
+  border-left-color: var(--q-ui-palette-success);
+}
+
+.qui-toast.warning {
+  border-left-color: var(--q-ui-palette-warning);
+}
+
+.qui-toast.error {
+  border-left-color: var(--q-ui-palette-error);
+}
+
+.qui-toast .content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--q-ui-size-0-5);
+  min-width: 0;
+}
+
+.qui-toast .title {
+  font-weight: 500;
+}
+
+.qui-toast .body {
+  /* `pre-wrap`, not `pre-line`: the latter collapses runs of whitespace, which
+     silently flattens the indentation a grouped report uses to show which
+     paths belong to which group. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* A real target, not a glyph: 32px square, the smallest comfortable hit area
+   and a step on the existing scale. */
+.qui-toast .close {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--q-ui-size-4);
+  height: var(--q-ui-size-4);
+  font-size: var(--q-ui-font-size-large);
+  line-height: 1;
+  color: var(--q-ui-palette-text-secondary);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 2px;
+}
+
+.qui-toast .close:hover {
+  color: var(--q-ui-palette-text-primary);
+  background: var(--q-ui-palette-action-hover);
+}
+
+/* The second block. Shown only from the second toast onward — closing them one
+   at a time is the tedium this removes. */
+.qui-toasts .dismiss-all {
+  flex: none;
+  padding: var(--q-ui-size-1) var(--q-ui-size-2);
+  font-family: var(--q-ui-font-family);
+  font-size: var(--q-ui-font-size-small);
+  color: var(--q-ui-palette-text-primary);
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--q-ui-palette-background-primary);
+  border: 1px solid var(--q-ui-palette-border);
+  border-radius: 2px;
+  /* Floats over list content like the cards do, so it carries their shadow
+     rather than a button's — a flat control here reads as part of the page
+     beneath it. */
+  box-shadow: rgb(0 0 0 / 24%) 0 4px 12px -2px, rgb(0 0 0 / 12%) 0 0 0 1px;
+}
+
+.qui-toasts .dismiss-all:hover {
+  background: var(--q-ui-palette-action-hover);
+}

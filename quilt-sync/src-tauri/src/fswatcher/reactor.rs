@@ -191,9 +191,7 @@ mod tests {
     }
 
     fn fresh_pkg() -> quilt::InstalledPackage {
-        quilt::LocalDomain::new(PathBuf::new())
-            .create_installed_package(("acme", "demo").into())
-            .unwrap()
+        quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("acme", "demo").into())
     }
 
     #[tokio::test]

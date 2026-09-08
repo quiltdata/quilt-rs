@@ -1883,3 +1883,46 @@ mod tests {
         assert!(!host.provisional);
     }
 }
+
+// ── Toasts (server-emitted notifications) ──
+
+/// Event name for a newly posted toast. Kept in lockstep with the backend's
+/// `toast::TOAST_EVENT`.
+pub const TOAST_EVENT: &str = "toast";
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToastKind {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+/// One server-emitted notification. Mirrors the backend's `toast::Toast`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Toast {
+    pub id: u64,
+    pub kind: ToastKind,
+    pub title: Option<String>,
+    pub body: String,
+    /// `None` stands until dismissed.
+    pub timeout_ms: Option<u32>,
+}
+
+/// Every undismissed toast, oldest first — the mount-time hydration read that
+/// catches whatever was posted while no window was open.
+pub async fn get_toasts() -> Result<Vec<Toast>, String> {
+    #[derive(Serialize)]
+    struct Args {}
+    tauri::invoke("get_toasts", &Args {}).await
+}
+
+pub async fn dismiss_toast(id: u64) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        id: u64,
+    }
+    tauri::invoke("dismiss_toast", &Args { id }).await
+}

@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use tempfile::TempDir;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -55,11 +56,27 @@ impl LogsDir {
 ///
 /// The guard is the load-bearing half: writes are handed to a background thread so
 /// a log line never blocks the thread that emitted it, and **dropping the guard
-/// stops that thread**. Held for the life of the process, or logging quietly ends
-/// after startup.
+/// stops that thread**. Held until [`Self::shutdown`], or logging ends wherever it
+/// was dropped.
 pub struct Logging {
     pub dir: LogsDir,
-    _writer: Option<WorkerGuard>,
+    writer: Mutex<Option<WorkerGuard>>,
+}
+
+impl Logging {
+    /// Stop the non-blocking writer and wait for its queue to drain.
+    ///
+    /// The `Mutex` is what lets a `&self` in shared state give the guard up. Take
+    /// it out before dropping: the drop blocks until the worker drains, so holding
+    /// the lock across it would stall a command handler behind a quit. Idempotent.
+    pub fn shutdown(&self) {
+        let writer = self
+            .writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(writer);
+    }
 }
 
 fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
@@ -120,7 +137,7 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
     let writer = init_tracing(&dir);
     Ok(Logging {
         dir,
-        _writer: writer,
+        writer: Mutex::new(writer),
     })
 }
 
@@ -198,6 +215,8 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     /// Both sinks' directives parse, and the app's own crates are held above the
@@ -308,5 +327,79 @@ mod tests {
         let dir = get_logs_dir(&base).expect("a logs dir either way");
 
         assert!(dir.path().exists(), "the chosen directory must exist");
+    }
+
+    /// A writer slow enough that the worker falls behind.
+    ///
+    /// Over the real file appender it never does — formatting an event costs the
+    /// emitting thread about what a small write costs the worker — so a drain test
+    /// written against that appender passes whether or not anything drained.
+    struct SlowWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SlowWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// [`Logging::shutdown`] returns only once the queue is empty. Delete the call
+    /// and this fails with the buffer all but empty.
+    ///
+    /// The subscriber is local, not global: the global slot is process-wide and
+    /// every other test in this file would contend for it.
+    #[test]
+    fn shutdown_waits_for_the_writer_to_drain() {
+        // Enough that the worker is certainly behind, few enough that draining
+        // stays inside the appender's own one-second cap on the shutdown wait.
+        const LINES: usize = 100;
+
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let (writer, guard) = tracing_appender::non_blocking(SlowWriter(Arc::clone(&written)));
+        let logging = Logging {
+            dir: LogsDir::Temporary(TempDir::new().expect("tempdir")),
+            writer: Mutex::new(Some(guard)),
+        };
+
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(writer),
+        );
+        ::tracing::subscriber::with_default(subscriber, || {
+            for line in 0..LINES {
+                error!("line {line}");
+            }
+        });
+
+        logging.shutdown();
+
+        let kept = |written: &Mutex<Vec<u8>>| {
+            String::from_utf8_lossy(
+                &written
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+            .lines()
+            .count()
+        };
+        assert_eq!(
+            kept(&written),
+            LINES,
+            "the tail was lost: {} of {LINES} lines reached the writer",
+            kept(&written)
+        );
+
+        // `take` leaves nothing for a second call to drop.
+        logging.shutdown();
+        assert_eq!(kept(&written), LINES, "a second shutdown lost lines");
     }
 }

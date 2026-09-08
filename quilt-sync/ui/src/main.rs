@@ -28,6 +28,7 @@ fn main() {
 fn App() -> impl IntoView {
     view! {
         <components::UpdateChecker />
+        <components::ToastStack />
         <Router>
             <Routes fallback=|| view! { <pages::NotFound /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />

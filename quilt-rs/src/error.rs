@@ -89,9 +89,6 @@ pub enum S3ErrorKind {
     #[error("S3 error: {0}")]
     Raw(String),
 
-    #[error("Failed to initialize S3 Remote")]
-    RemoteInit,
-
     #[error("Object key expected to be present")]
     ObjectKey,
 
@@ -275,6 +272,9 @@ pub enum PackageOpError {
 
     #[error("Publish error: {0}")]
     Publish(String),
+
+    #[error("Undo error: {0}")]
+    Undo(String),
 
     #[error("General error regarding package: {0}")]
     Package(String),

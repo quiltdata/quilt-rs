@@ -22,6 +22,7 @@ mod package_list;
 mod package_ops;
 mod settings;
 mod system;
+mod toast;
 
 pub use auth::*;
 pub use commit_data::*;
@@ -31,6 +32,7 @@ pub use package_list::*;
 pub use package_ops::*;
 pub use settings::*;
 pub use system::*;
+pub use toast::*;
 
 #[cfg(test)]
 mod role_switch_chain;
