@@ -852,15 +852,19 @@ pub enum PullCheck {
     Loading,
     /// The dry-run fetch errored; the button area offers a retry.
     Failed,
-    /// The dry-run resolved to a concrete outcome.
-    Ready(PullOutcome),
+    /// The dry-run resolved: the verdict, and what the incoming revision adds.
+    ///
+    /// The whole preview rather than the verdict alone, because the surfaces
+    /// name the incoming files from the same read that gates the Pull control —
+    /// the paths are already in hand and a second fetch would buy nothing.
+    Ready(PullPreview),
 }
 
 impl PullCheck {
     /// Whether Pull should be enabled: only a resolved, pullable outcome.
     #[must_use]
     pub fn pull_enabled(&self) -> bool {
-        matches!(self, PullCheck::Ready(o) if o.is_pullable())
+        matches!(self, PullCheck::Ready(p) if p.outcome.is_pullable())
     }
 
     /// Whether the dry-run failed, so a retry affordance should show.

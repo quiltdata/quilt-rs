@@ -219,10 +219,7 @@ pub(super) fn InstalledPackageContent(
         async move {
             if is_behind {
                 match commands::package_pull_outcome(ns).await {
-                    // The preview's `added` — the incoming revision's own
-                    // files — is not read yet; naming them on screen is the
-                    // surface work, not this routing.
-                    Ok(preview) => PullCheck::Ready(preview.outcome),
+                    Ok(preview) => PullCheck::Ready(preview),
                     Err(_) => PullCheck::Failed,
                 }
             } else {

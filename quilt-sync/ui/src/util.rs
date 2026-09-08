@@ -290,3 +290,70 @@ mod tests {
         assert_eq!(format_size(2_500_000), "2.50 MB");
     }
 }
+
+/// The sentence naming what an incoming revision brings, or `None` when it
+/// brings no new file.
+///
+/// One wording for both surfaces that say it — the package-list row and the
+/// package screen's behind banner — because a user who sees both should read
+/// the same sentence. They differ only in `max_named`, the row having less
+/// room.
+///
+/// Names some and counts the rest rather than truncating silently: the point is
+/// that the user can see *which* files, and a bare count is what they already
+/// had.
+#[must_use]
+pub fn incoming_files(added: &[String], max_named: usize) -> Option<String> {
+    if added.is_empty() {
+        return None;
+    }
+    let plural = if added.len() == 1 { "" } else { "s" };
+    let named = added
+        .iter()
+        .take(max_named)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rest = added.len().saturating_sub(max_named);
+    let tail = if rest > 0 {
+        format!(" and {rest} more")
+    } else {
+        String::new()
+    };
+    Some(format!("{} new file{plural}: {named}{tail}", added.len()))
+}
+
+#[cfg(test)]
+mod incoming_tests {
+    use super::incoming_files;
+
+    #[test]
+    fn a_revision_that_adds_nothing_says_nothing() {
+        assert_eq!(incoming_files(&[], 3), None);
+    }
+
+    #[test]
+    fn one_file_is_named_in_the_singular() {
+        assert_eq!(
+            incoming_files(&["qc/summary.csv".to_owned()], 3).unwrap(),
+            "1 new file: qc/summary.csv"
+        );
+    }
+
+    #[test]
+    fn a_long_list_names_some_and_counts_the_rest() {
+        let added: Vec<String> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+        assert_eq!(
+            incoming_files(&added, 2).unwrap(),
+            "4 new files: a, b and 2 more"
+        );
+        // The same list with room for all of them names all of them.
+        assert_eq!(
+            incoming_files(&added, 4).unwrap(),
+            "4 new files: a, b, c, d"
+        );
+    }
+}
