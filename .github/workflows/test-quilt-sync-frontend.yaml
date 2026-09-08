@@ -64,6 +64,20 @@ jobs:
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
 
+      # The crate's two test flavours run on two targets and neither harness sees
+      # the other's: `wasm-bindgen-test-runner` enumerates only `#[wasm_bindgen_test]`,
+      # and libtest's main runs only `#[test]`. The step above is the wasm half. This
+      # is the host half, and without it a `#[test]` in this crate gates nothing —
+      # which is how the whole filter/group/sort pipeline shipped with its ten tests
+      # green locally and unrun in CI (qhq-8mgw.27).
+      #
+      # DOM tests cannot move here: `mount_to` and friends are wasm-bindgen bindings
+      # into JS. Pure-logic tests could move the other way, and once v1 is deleted
+      # only about twenty host tests survive — at which point converting them and
+      # dropping this step is the cheaper end state.
+      - name: Test (host target)
+        run: cargo test -p quilt-sync-ui --bin quilt-sync-ui
+
       # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml: the
       # CLI generates the hashed class names the library resolves, so a skew
