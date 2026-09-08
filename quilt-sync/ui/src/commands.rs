@@ -548,13 +548,11 @@ pub struct MainPagePackageData {
     /// an `Unknown` package under its host's `Signed out from {host}` cause
     /// only when the accounts payload agrees that host is signed out.
     pub host: Option<String>,
-    /// The light phase's own statement that its answer is a guess. Every row
-    /// arrives provisional, so `pages::main_page::PackageStore::seed` marks every
-    /// row provisional by construction and never reads this field — the store,
-    /// not chance, is why it is unread. Deleting it would break
-    /// `main_page_packages_data_wire_form_is_verbatim`, which is the one place it
-    /// is read and the reason it stays on the wire.
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// Whether the state is a cached guess awaiting the heavy phase. Almost
+    /// always true — a `PullConflict` is the exception, coming from the watcher's
+    /// paused map rather than from cached lineage, and it arrives settled.
+    /// `pages::main_page::PackageStore::seed` reads this per row; assuming it
+    /// instead is what took conflicts out of the queue offline (qhq-8mgw.40).
     pub provisional: bool,
     /// The host whose role selector the row's switch affordance opens. The page
     /// carries it into `RowSignals` and settles it on refresh; the switch

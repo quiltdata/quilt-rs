@@ -150,10 +150,14 @@ struct RowSignals {
 }
 
 impl RowSignals {
-    fn new(state: PackageState, role_switch_host: Option<String>) -> Self {
+    /// `provisional` comes from the payload rather than being assumed: almost
+    /// every light-phase state is a cached guess, but a `PullConflict` is the
+    /// watcher's own reading of this disk and arrives already settled. Assuming
+    /// it here is what dropped conflicts out of the queue offline (qhq-8mgw.40).
+    fn new(state: PackageState, role_switch_host: Option<String>, provisional: bool) -> Self {
         Self {
             state: RwSignal::new(state),
-            provisional: RwSignal::new(true),
+            provisional: RwSignal::new(provisional),
             role_switch_host: RwSignal::new(role_switch_host),
         }
     }
@@ -198,7 +202,7 @@ impl PackageStore {
             .map(|p| {
                 (
                     p.namespace.clone(),
-                    RowSignals::new(p.state.clone(), p.role_switch_host.clone()),
+                    RowSignals::new(p.state.clone(), p.role_switch_host.clone(), p.provisional),
                 )
             })
             .collect();
@@ -1038,6 +1042,21 @@ mod tests {
         }
     }
 
+    /// A package the watcher has paused on a conflict. `provisional: false`
+    /// because the backend sends it that way — the paused map is its own
+    /// evidence, not a guess about a remote.
+    fn conflicted(namespace: &str) -> MainPagePackageData {
+        MainPagePackageData {
+            provisional: false,
+            ..pkg(
+                namespace,
+                PackageState::PullConflict {
+                    files: vec!["a.csv".to_string()],
+                },
+            )
+        }
+    }
+
     /// The list's own view of a light-phase payload — what `MainPageRegions`
     /// builds beside the store it seeds from the same packages.
     fn rows_of(packages: &[MainPagePackageData]) -> Vec<ListRowData> {
@@ -1082,6 +1101,36 @@ mod tests {
         assert!(store.in_flight(), "one call is still outstanding");
         store.answered();
         assert!(!store.in_flight());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_conflict_is_settled_on_arrival_and_reaches_the_queue_unconfirmed() {
+        // qhq-8mgw.40. `settled` drops provisional rows so the access
+        // pre-filter's guesses stay out of the queue, which is right — but a
+        // `PullConflict` is not a guess. Assuming every light-phase row was
+        // provisional meant that offline, when no heavy-phase call can answer,
+        // `settled` came back empty and an unresolved conflict left the queue at
+        // exactly the moment syncing could not fix it.
+        //
+        // This is the offline shape: nothing is settled by hand, so nothing has
+        // been confirmed.
+        let light = vec![
+            conflicted("a/paused"),
+            pkg("a/cached", PackageState::Behind),
+        ];
+        let store = PackageStore::seed(&light);
+
+        let settled = store.settled(&light);
+
+        assert_eq!(settled.len(), 1, "the conflict, and only the conflict");
+        assert_eq!(settled[0].namespace, "a/paused");
+        assert_eq!(
+            settled[0].state,
+            PackageState::PullConflict {
+                files: vec!["a.csv".to_string()]
+            },
+            "the watcher's own reading, carried through"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -3117,7 +3166,7 @@ mod tests {
         // waits for an answer that already came (R3).
         let store = PackageStore::seed(&[pkg("user/a", PackageState::Latest)]);
         let owner = Owner::new();
-        let row = owner.with(|| RowSignals::new(PackageState::Latest, None));
+        let row = owner.with(|| RowSignals::new(PackageState::Latest, None, true));
         owner.cleanup();
         assert!(
             row.state.try_get_untracked().is_none(),
@@ -3191,7 +3240,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn apply_replaces_the_guess_and_clears_provisional() {
-        let row = RowSignals::new(PackageState::Latest, None);
+        let row = RowSignals::new(PackageState::Latest, None, true);
         row.apply(MainPagePackageRefreshData {
             state: PackageState::PendingChanges { files: 3 },
             role_switch_host: None,
@@ -3219,6 +3268,7 @@ mod tests {
                 role: Some("ReadOnly".to_string()),
             },
             Some("test.quilt.dev".to_string()),
+            true,
         );
         row.apply(MainPagePackageRefreshData {
             state: PackageState::Latest,
@@ -3233,7 +3283,7 @@ mod tests {
     fn apply_marks_a_row_the_pre_filter_cleared() {
         // And the other direction: the pre-filter says nothing about writes and
         // over-reports for unmanaged roles, so it can miss a denial the real call finds.
-        let row = RowSignals::new(PackageState::Latest, None);
+        let row = RowSignals::new(PackageState::Latest, None, true);
         row.apply(MainPagePackageRefreshData {
             state: PackageState::RoleDenied {
                 role: Some("ReadOnly".to_string()),

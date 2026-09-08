@@ -566,6 +566,15 @@ async fn load_main_page_package(
         resolve_state(lineage.into(), has_local_commit, has_remote, None)
     };
 
+    // `provisional` means the state came from cached lineage and the remote has
+    // not confirmed it. A pull conflict is not that: it comes from the watcher's
+    // paused map above, so it is a fact about this disk and no network call can
+    // make it truer. Saying otherwise costs a real capability — the queue drops
+    // provisional rows to keep the access pre-filter's guesses out of it, so a
+    // conflict labelled a guess leaves the queue exactly when the remote is
+    // unreachable and syncing cannot fix it (qhq-8mgw.40).
+    let provisional = !matches!(state, PackageStateDto::PullConflict { .. });
+
     Ok(Row {
         package: MainPagePackage {
             namespace,
@@ -573,7 +582,7 @@ async fn load_main_page_package(
             changed_at,
             bucket,
             host,
-            provisional: true,
+            provisional,
             role_switch_host: None,
         },
         uri: typed_uri,
@@ -1830,6 +1839,57 @@ mod tests {
         .expect("list")
         .packages;
         row(&packages, "team/one").state.clone()
+    }
+
+    /// The light phase over [`mock_clean_roster`], returning the whole row.
+    async fn light_phase_row(
+        m: &impl model::QuiltModel,
+        paused: Option<PausedReason>,
+    ) -> MainPagePackage {
+        let paused_reasons = paused
+            .map(|paused| HashMap::from([("team/one".to_string(), paused)]))
+            .unwrap_or_default();
+        let packages = get_main_page_packages_from_model(
+            m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &paused_reasons,
+        )
+        .await
+        .expect("list")
+        .packages;
+        row(&packages, "team/one").clone()
+    }
+
+    #[tokio::test]
+    async fn a_pull_conflict_arrives_settled_and_every_other_light_state_provisional() {
+        // `provisional` means "from cached lineage, unconfirmed by the remote". A
+        // pull conflict is not that: it comes from the watcher's paused map, so it
+        // is a fact about this disk that no network call can confirm or deny.
+        //
+        // It matters because the queue drops provisional rows (plan 6's R2, to keep
+        // the access pre-filter's guesses out of it). Marked provisional, a conflict
+        // is treated as a guess about a remote and vanishes from the queue whenever
+        // that remote is unreachable — which is precisely when it cannot be fixed
+        // by syncing. qhq-8mgw.40.
+        //
+        // The pair is the unit: the second half is what stops this being satisfied
+        // by never marking anything provisional at all.
+        let conflicted = light_phase_row(
+            &mock_clean_roster(),
+            Some(PausedReason::PullConflict(vec!["a.csv".to_string()])),
+        )
+        .await;
+        assert!(
+            !conflicted.provisional,
+            "a conflict on disk owes the network nothing"
+        );
+
+        let clean = light_phase_row(&mock_clean_roster(), None).await;
+        assert!(
+            clean.provisional,
+            "a cached state is still a guess until the heavy phase answers"
+        );
     }
 
     #[tokio::test]
