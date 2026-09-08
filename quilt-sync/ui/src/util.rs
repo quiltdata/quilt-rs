@@ -48,6 +48,17 @@ pub fn bucket_str(uri: &S3PackageUri) -> Option<String> {
 /// `busy` is **not** reset on success — `on_done` is expected to trigger
 /// a re-render that destroys the component (and its signal). If `on_done`
 /// does not rebuild the component, the button will remain disabled.
+/// What the page's notification slot should hold after a command succeeded.
+///
+/// An empty message means the command had nothing to say — a pull whose
+/// [toast](crate::components::toasts) already named the package and what
+/// arrived. `None` rather than an empty box, because `Layout` raises a
+/// full-screen dismiss overlay for as long as the slot holds anything: a blank
+/// message would dim the whole app behind a notification that is not there.
+fn success_notification(msg: String) -> Option<Notification> {
+    (!msg.is_empty()).then_some(Notification::Success(msg))
+}
+
 pub fn make_action<F, Fut>(
     command: F,
     notification: RwSignal<Option<Notification>>,
@@ -79,7 +90,7 @@ where
                     if let Some(ui_locked) = ui_locked {
                         ui_locked.set(false);
                     }
-                    notification.set(Some(Notification::Success(msg)));
+                    notification.set(success_notification(msg));
                     on_done();
                 }
                 Err(e) => {
@@ -325,14 +336,20 @@ pub fn incoming_files(added: &[String], max_named: usize) -> Option<String> {
 
 #[cfg(test)]
 mod incoming_tests {
+    use super::Notification;
     use super::incoming_files;
+    use super::success_notification;
 
-    #[test]
+    // `#[wasm_bindgen_test]`, not `#[test]`: this crate's only runner is the
+    // wasm one, which executes nothing else. These need no DOM.
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
     fn a_revision_that_adds_nothing_says_nothing() {
         assert_eq!(incoming_files(&[], 3), None);
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn one_file_is_named_in_the_singular() {
         assert_eq!(
             incoming_files(&["qc/summary.csv".to_owned()], 3).unwrap(),
@@ -340,7 +357,7 @@ mod incoming_tests {
         );
     }
 
-    #[test]
+    #[wasm_bindgen_test]
     fn a_long_list_names_some_and_counts_the_rest() {
         let added: Vec<String> = ["a", "b", "c", "d"]
             .iter()
@@ -355,5 +372,23 @@ mod incoming_tests {
             incoming_files(&added, 4).unwrap(),
             "4 new files: a, b, c, d"
         );
+    }
+
+    /// A reported pull returns an empty success message, and the slot must hold
+    /// nothing at all: `Layout` raises a full-screen dismiss overlay whenever
+    /// the slot is occupied, so `Some("")` would dim the app behind a blank.
+    #[wasm_bindgen_test]
+    fn an_empty_success_message_leaves_the_slot_empty() {
+        assert!(success_notification(String::new()).is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_message_that_says_something_still_reaches_the_slot() {
+        match success_notification("Successfully pulled package acme/demo".to_owned()) {
+            Some(Notification::Success(msg)) => {
+                assert_eq!(msg, "Successfully pulled package acme/demo");
+            }
+            _ => panic!("a non-empty message must reach the slot as a success"),
+        }
     }
 }

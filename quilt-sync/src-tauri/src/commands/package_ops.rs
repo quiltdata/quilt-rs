@@ -401,17 +401,16 @@ pub async fn package_pull(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Pulling package {namespace}");
-    let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
     let experimental = experimental.read().await.clone();
     let result = package_pull_command(&m, &namespace, &experimental).await;
+    let mut reported = false;
     if let Ok((ns, report)) = &result {
         watcher.clear_paused(ns).await;
         // The same report the tick posts, from the same wording. A manual pull
         // brings files too, and "Successfully pulled" says nothing about which —
-        // which is the whole of what this feature adds. The legacy line stays:
-        // it confirms the action, the toast carries its content.
+        // which is the whole of what this feature adds.
         if let Some(toast) = pull_toast::report_toast(ns, report) {
             toasts
                 .post(crate::toast::ToastDraft {
@@ -422,6 +421,7 @@ pub async fn package_pull(
                     timeout_ms: None,
                 })
                 .await;
+            reported = true;
         }
     }
     Notify::new(msg_init)
@@ -429,7 +429,28 @@ pub async fn package_pull(
             &tracing,
             MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
         )
-        .map(result.map(|_| ()), msg_ok, msg_err)
+        .map(
+            result.map(|_| ()),
+            pull_success_message(&namespace, reported),
+            msg_err,
+        )
+}
+
+/// The page's own confirmation of a pull — or nothing, when the toast has
+/// already said it.
+///
+/// Two notifications for one click is one too many, and they overlap: the
+/// page slot sits 16px below the toast layer and behind it, so its white box
+/// reads as a backdrop rather than as a second message. The toast names the
+/// package and what arrived, which confirms the action more completely than
+/// this line does — so this line yields to it, and speaks only when there was
+/// no report to post.
+fn pull_success_message(namespace: &str, reported: bool) -> String {
+    if reported {
+        String::new()
+    } else {
+        format!("Successfully pulled package {namespace}")
+    }
 }
 
 async fn package_pull_outcome_command(
@@ -823,6 +844,22 @@ mod tests {
         Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
             quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
         )))
+    }
+
+    /// One click, one message. The toast names the package and what arrived,
+    /// so the page's own line would repeat it — from behind the toast layer,
+    /// where its white box reads as a backdrop rather than as a message.
+    #[test]
+    fn a_reported_pull_leaves_the_page_slot_to_the_toast() {
+        assert_eq!(super::pull_success_message("acme/rna-seq", true), "");
+    }
+
+    /// And when there was nothing to report — a metadata-only revision raises
+    /// no toast — the click still has to be answered.
+    #[test]
+    fn an_unreported_pull_still_confirms_the_click() {
+        let msg = super::pull_success_message("acme/rna-seq", false);
+        assert_eq!(msg, "Successfully pulled package acme/rna-seq");
     }
 
     /// A denied push must say the role cannot write here, not surface a raw
