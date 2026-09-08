@@ -13,6 +13,7 @@ use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
 use crate::autopull::Watcher;
+use crate::autopull::pull_toast;
 use crate::experimental_settings::ExperimentalSettings;
 use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
@@ -23,6 +24,7 @@ use crate::quilt;
 use crate::quilt::lineage::SyncScope;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{PackageEvent, RemotePackageEvent};
+use crate::toast::ToastCenter;
 
 async fn package_commit_command(
     m: &model::Model,
@@ -353,10 +355,10 @@ async fn package_pull_command(
     m: &model::Model,
     namespace: &str,
     experimental: &ExperimentalSettings,
-) -> Result<quilt_uri::Namespace, Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_pull(m, &namespace, None, experimental).await?;
-    Ok(namespace)
+    let report = model::package_pull(m, &namespace, None, experimental).await?;
+    Ok((namespace, report))
 }
 
 /// Record whether this package keeps its whole contents.
@@ -394,6 +396,7 @@ pub async fn package_pull(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
     experimental: tauri::State<'_, SharedExperimentalSettings>,
+    toasts: tauri::State<'_, ToastCenter>,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
@@ -403,8 +406,17 @@ pub async fn package_pull(
 
     let experimental = experimental.read().await.clone();
     let result = package_pull_command(&m, &namespace, &experimental).await;
-    if let Ok(ns) = &result {
+    if let Ok((ns, report)) = &result {
         watcher.clear_paused(ns).await;
+        // The same report the tick posts, from the same wording. A manual pull
+        // brings files too, and "Successfully pulled" says nothing about which —
+        // which is the whole of what this feature adds. The legacy line stays:
+        // it confirms the action, the toast carries its content.
+        if let Some(toast) = pull_toast::report_toast(ns, report) {
+            toasts
+                .post(toast.kind, Some(toast.title), toast.body, None)
+                .await;
+        }
     }
     Notify::new(msg_init)
         .on_success(
