@@ -138,6 +138,20 @@ impl From<&TempDir> for Model {
 pub async fn install_package_into_temp_dir(
     uri_str: &str,
 ) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
+    install_paths_into_temp_dir(uri_str, None).await
+}
+
+/// The same, checking out `paths` as well as the manifest.
+///
+/// The distinction decides what a later pull can report: install registers the
+/// manifest and not the files, so a path this copy does not track falls outside
+/// the touch set and a remote change to it moves nothing — correctly silent, and
+/// invisible to a test that installed no paths.
+#[cfg(test)]
+pub async fn install_paths_into_temp_dir(
+    uri_str: &str,
+    paths: Option<Vec<std::path::PathBuf>>,
+) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
 
     model.set_home(temp_dir.path()).await?;
@@ -145,7 +159,7 @@ pub async fn install_package_into_temp_dir(
     let output = model
         .install(install::Input {
             namespace: None,
-            paths: None,
+            paths,
             uri: uri_str.to_string(),
         })
         .await?;

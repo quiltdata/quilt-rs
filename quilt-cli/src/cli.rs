@@ -1099,6 +1099,74 @@ mod tests {
         Ok(())
     }
 
+    /// The same fixture with its files actually checked out, which is what makes
+    /// three of the four groups reachable: a tracked path the remote modified is
+    /// rewritten (`updated`), a tracked path it dropped is deleted (`removed`),
+    /// and its additions stay listed under the CLI's sparse scope.
+    ///
+    /// The pair with the test above is the point. Same revisions, same remote
+    /// changes, and the report differs entirely — because what a pull *reports*
+    /// follows what this copy tracks, not what the remote did. That is the claim
+    /// the grouping rests on, and no unit test can make it against real
+    /// manifests.
+    ///
+    /// The fourth group, `added` proper, is unreachable here by design: it needs
+    /// whole-package scope, and the CLI always asks for the narrow one so that
+    /// state a desktop wrote cannot change what a script does.
+    #[test(tokio::test)]
+    async fn live_pull_reports_updates_and_removals_for_tracked_paths() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        let tracked = ["keep.txt", "modify.txt", "remove.txt"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R1_URI, Some(tracked)).await?;
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+
+        assert_eq!(
+            output_str,
+            format!(
+                concat!(
+                    "Revision \"{}\" pulled\n",
+                    "7 files new, not downloaded:\n",
+                    "  add/deeply/nested/directory/with/a/very-long-name/summary-of-everything.parquet\n",
+                    "  add/five.txt\n",
+                    "  add/four.txt\n",
+                    "  add/one.txt\n",
+                    "  add/six.txt\n",
+                    "  add/three.txt\n",
+                    "  add/two.txt\n",
+                    "2 files updated:\n",
+                    "  keep.txt\n",
+                    "  modify.txt\n",
+                    "1 file removed:\n",
+                    "  remove.txt\n",
+                    "Latest revision: {}\n",
+                ),
+                pkg::R3_TOP_HASH,
+                pkg::R3_MESSAGE,
+            )
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_pull_invalid() -> Result<(), Error> {
         // Create temporary directory for domain
