@@ -54,6 +54,41 @@ pub mod packages {
             "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630";
     }
 
+    /// Three revisions in `udp-spec`, built to exercise the revision report's
+    /// groups and pinned by hash so they never move.
+    ///
+    /// | revision | top-hash | shape |
+    /// |---|---|---|
+    /// | r1 | `fcd8f7cb…5182ec` | `keep.txt`, `modify.txt`, `remove.txt` |
+    /// | r2 | `63ddbb5c…4f7d93` | +6 added, `modify.txt` modified, `remove.txt` gone |
+    /// | r3 | `b27709e1…234106` | +`add/six.txt`, `keep.txt` modified — currently `latest` |
+    ///
+    /// Deliberate properties, each one a row of the manual test:
+    ///
+    /// - **`keep.txt` is untouched by r2**, so it is the file to edit locally for
+    ///   kept local work, or to create with differing content for a both-added
+    ///   conflict.
+    /// - **Six adds in r2** exceeds the three-name cap the toast and the row use,
+    ///   so the overflow wording has a fixture.
+    /// - **One deeply-nested path**, so a surface with limited room has something
+    ///   to wrap or truncate.
+    /// - **r3 exists**, so installing r1 makes a pull span two revisions — and
+    ///   only r3's message is in hand, there being no parent pointer to walk.
+    ///
+    /// Reachable with ambient `~/.aws` credentials, like the other live
+    /// fixtures: the URI carries no `&catalog=`, so no stack login is needed.
+    pub mod revision_report {
+        pub const NAMESPACE_STR: &str = "reference/revision-report";
+
+        /// r1 — install this one to be behind.
+        pub const R1_URI: &str = "quilt+s3://udp-spec#package=reference/revision-report@fcd8f7cb81bc700ff4c8294ea173e3c3aa0899bcc61a41f22fe2bf18485182ec";
+
+        /// r3, which a pull from r1 lands on.
+        pub const R3_TOP_HASH: &str =
+            "b27709e128d7cca3f6755dbec847628457ac86db5df5876c3bc88610eb234106";
+        pub const R3_MESSAGE: &str = "r3: adds add/six.txt, modifies keep.txt";
+    }
+
     pub mod invalid {
         pub const URI: &str = "quilt+s3://some-nonsense";
     }

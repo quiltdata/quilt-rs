@@ -1023,6 +1023,82 @@ mod tests {
         Ok(())
     }
 
+    /// The report, end to end against a real package. This is the only test
+    /// that proves the whole path — engine grouping, the CLI's wording, and a
+    /// manifest pair that actually differs — rather than a hand-built delta.
+    ///
+    /// It is also the span case: `latest` is r3, so installing r1 and pulling
+    /// crosses two revisions in one operation, and only r3's message is in hand.
+    /// There is no parent pointer to walk, so nothing can report r2's.
+    ///
+    /// The silences are the load-bearing half. `install` takes no paths, so this
+    /// copy tracks nothing: `modify.txt` and `keep.txt` were modified and
+    /// `remove.txt` removed, and none may appear — nothing moved on disk, and
+    /// naming them would report writes that did not happen.
+    #[test(tokio::test)]
+    async fn live_pull_reports_what_the_revision_brought() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::R1_URI).await?;
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+
+        assert_eq!(
+            output_str,
+            format!(
+                concat!(
+                    "Revision \"{}\" pulled\n",
+                    "7 files new, not downloaded:\n",
+                    "  add/deeply/nested/directory/with/a/very-long-name/summary-of-everything.parquet\n",
+                    "  add/five.txt\n",
+                    "  add/four.txt\n",
+                    "  add/one.txt\n",
+                    "  add/six.txt\n",
+                    "  add/three.txt\n",
+                    "  add/two.txt\n",
+                    "Latest revision: {}\n",
+                ),
+                pkg::R3_TOP_HASH,
+                pkg::R3_MESSAGE,
+            )
+        );
+
+        // Stated as its own assertion rather than left implicit in the string
+        // above: these three changed on the remote and must appear in no group,
+        // because this copy does not track them.
+        //
+        // Checked against the group lines only, not the whole output: the
+        // author's message is prose and legitimately names files — r3's says
+        // "modifies keep.txt" — so a substring search over everything would
+        // fail on the message rather than on a group, which is what happened
+        // when this was written the naive way.
+        let groups = output_str
+            .split("Latest revision:")
+            .next()
+            .expect("split always yields one part");
+        for silent in ["modify.txt", "keep.txt", "remove.txt"] {
+            assert!(
+                !groups.contains(silent),
+                "{silent} changed on the remote but nothing moved here, so no group may name it"
+            );
+        }
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_pull_invalid() -> Result<(), Error> {
         // Create temporary directory for domain
