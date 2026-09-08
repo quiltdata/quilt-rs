@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.36.1-alpha1] - 2026-09-08
+
+### Added
+
+- `flow::PullReport` records what a pull applied: the paths a revision added and this copy fetched, the paths it added and left on the remote, the paths it updated, the paths it removed, and the newest revision's message. Grouped by what happened to *this* copy rather than by the remote's diff, because under `SyncScope::IndividualFiles` those differ — an added path is listed, not written. A path in the delta can be in no group at all, each case meaning nothing moved: both sides reached the same result, the user's own edit was kept, or this copy does not track the path (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- `flow::PullPreview` pairs the dry run's `PullOutcome` with the paths the pending revision adds, so a caller can name incoming files before pulling. Scope-independent: it describes the remote's addition, not what a pull would fetch (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Changed
+
+- **Breaking:** `flow::pull_package` returns `(PackageLineage, PullReport)` and `InstalledPackage::pull` returns `PullReport`, where both returned the lineage alone. `InstalledPackage::pull_outcome` returns `flow::PullPreview` instead of `flow::PullOutcome`; the verdict is its `outcome` field (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
 ## [v0.36.0] - 2026-09-02
 
 ### Added
