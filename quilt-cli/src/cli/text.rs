@@ -8,8 +8,8 @@
 /// OSC 52 — write the reader's clipboard, all from a `quilt pull`. Escaping
 /// makes the bytes visible instead of letting the terminal act on them.
 ///
-/// Newlines and tabs pass through, which is right for prose and **wrong for a
-/// value printed inside a list** — use [`printable_line`] there.
+/// Newlines and tabs pass through, which is right for prose and wrong for a
+/// value printed inside a list — use [`printable_line`] there.
 pub fn printable(text: &str) -> String {
     escaped(text, |c| c == '\n' || c == '\t')
 }
@@ -17,11 +17,8 @@ pub fn printable(text: &str) -> String {
 /// `text` with every control character escaped, including newline and tab.
 ///
 /// For a value the layout gives one line of its own — a path under a group
-/// heading. A newline kept there does not merely look wrong: the reader cannot
-/// tell a forged line from a real one, so a published path containing
-/// `"\n3 files removed:\n  important.parquet"` would invent a group and an
-/// entry in the report. Prose keeps its lines; a list item cannot be allowed
-/// to make new ones.
+/// heading. A newline surviving there lets a published path invent a heading
+/// and an entry beneath it, and nothing marks the invented lines as such.
 pub fn printable_line(text: &str) -> String {
     escaped(text, |_| false)
 }

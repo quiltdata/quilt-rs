@@ -11,11 +11,8 @@ use std::path::PathBuf;
 use crate::toast::ToastGroup;
 use crate::toast::ToastKind;
 
-/// How many paths a group names before it counts the rest.
-///
-/// A toast has room for a short list, and the point is that the user can see
-/// *which* files rather than only how many — so it names some and is honest
-/// about the remainder instead of truncating silently.
+/// How many paths a group names before it counts the rest — a card has room
+/// for a short list, and the remainder is stated rather than dropped.
 const NAMED: usize = 3;
 
 /// A toast's parts, ready for [`ToastCenter::post`](crate::toast::ToastCenter::post).
@@ -23,8 +20,7 @@ const NAMED: usize = 3;
 pub(crate) struct ReportToast {
     pub kind: ToastKind,
     pub title: String,
-    /// The lead sentence — what happened. Without it the toast opens with a
-    /// package name and a file count and never says why it is on screen.
+    /// The lead sentence: what happened. The groups carry the detail.
     pub body: String,
     pub groups: Vec<ToastGroup>,
 }
@@ -83,8 +79,8 @@ pub(crate) fn report_toast(namespace: &Namespace, report: &PullReport) -> Option
     Some(ReportToast {
         kind,
         title: namespace.to_string(),
-        // States the event, not the mechanism: whether it arrived by this pull,
-        // the tick, or a resumed namespace is the status banner's business.
+        // The event, not the mechanism: which pull brought it is the status
+        // banner's business.
         body: "Updated to a newer revision.".to_owned(),
         groups,
     })

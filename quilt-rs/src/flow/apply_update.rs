@@ -13,14 +13,12 @@ use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
-/// What an apply actually did, as distinct from what the touch-set proposed.
-///
-/// The two differ, and a caller reporting the touch-set would state things that
-/// did not happen: a touched path this copy does not track is never uninstalled
-/// (there is no file to delete), and a touched path absent from `latest` is
-/// never installed. Both are ordinary under
-/// [`EntirePackage`](crate::lineage::SyncScope::EntirePackage), whose touch-set
-/// covers untracked paths.
+/// What an apply did, which is narrower than the touch-set it was given: a
+/// touched path this copy does not track is never uninstalled (no file to
+/// delete), and one absent from `latest` is never installed. Both are ordinary
+/// under [`EntirePackage`](crate::lineage::SyncScope::EntirePackage), whose
+/// touch-set covers untracked paths — so a caller reporting the touch-set
+/// states things that did not happen.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Applied {
     /// Paths written from `latest` — whether or not a file was there before.

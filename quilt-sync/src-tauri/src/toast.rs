@@ -3,19 +3,16 @@
 //! Distinct from [`notify`](crate::notify), which is the log-and-telemetry
 //! helper around a command's result — this is a user-facing surface.
 //!
-//! **Additive by construction.** The existing per-page notification slot
-//! (`Layout`'s single `Option<Notification>`) is untouched; nothing that
-//! reports through it changes. This is where *new* notifications go, and the
-//! difference that earns a second mechanism is the direction: a page toast is
-//! raised by something the user just did and dies with the page, while these
-//! are raised by the backend — including the autosync tick, which runs when no
-//! page is mounted at all.
+//! The split from the per-page slot (`Layout`'s single `Option<Notification>`)
+//! is by direction: that slot belongs to the screen that raised it and dies
+//! with the page, while these come from the backend — including the autosync
+//! tick, which runs with no page mounted. A command whose report lands here
+//! leaves that slot empty rather than saying the same thing twice.
 //!
 //! Which is why the centre **retains** what it emits. An event alone reaches
-//! only a mounted window, so a toast raised while the app was in the tray
-//! would be lost; the client hydrates from [`ToastCenter::live`] on mount and
-//! then follows [`TOAST_EVENT`]. Retention is in memory only: a restart is a
-//! clean slate.
+//! only a mounted window, so the client hydrates from [`ToastCenter::live`] on
+//! mount and then follows [`TOAST_EVENT`]. Retention is in memory only: a
+//! restart is a clean slate.
 
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicU64;
@@ -40,11 +37,9 @@ pub const TOAST_EVENT: &str = "toast";
 const CAPACITY: usize = 50;
 
 /// A list under a heading — a group of paths, say — carried as data so the
-/// client can render a real list.
-///
-/// Not folded into `body` as indented text: whitespace loses its meaning the
-/// moment a line wraps, and a long path wrapping to the left margin reads as a
-/// separate item rather than a continuation.
+/// client can render a real list. Indentation in `body` would not survive a
+/// wrap: a long path's second half lands at the left margin, reading as an
+/// item of its own.
 #[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]

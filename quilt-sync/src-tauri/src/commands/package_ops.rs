@@ -436,15 +436,12 @@ pub async fn package_pull(
         )
 }
 
-/// The page's own confirmation of a pull — or nothing, when the toast has
-/// already said it.
+/// The page's own confirmation of a pull — empty when the toast has already
+/// said it.
 ///
-/// Two notifications for one click is one too many, and they overlap: the
-/// page slot sits 16px below the toast layer and behind it, so its white box
-/// reads as a backdrop rather than as a second message. The toast names the
-/// package and what arrived, which confirms the action more completely than
-/// this line does — so this line yields to it, and speaks only when there was
-/// no report to post.
+/// The toast names the package and what arrived, so this line would repeat it
+/// from behind the toast layer, where it reads as a backdrop rather than a
+/// message. It speaks only when there was no report to post.
 fn pull_success_message(namespace: &str, reported: bool) -> String {
     if reported {
         String::new()

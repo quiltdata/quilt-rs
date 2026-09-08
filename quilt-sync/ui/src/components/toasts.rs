@@ -192,11 +192,9 @@ fn ToastLayer(store: Store) -> impl IntoView {
     }
 }
 
-/// A heading and its items, as a real list.
-///
-/// The heading counts every path; `items` names only the first few, so the
-/// remainder is stated rather than dropped — a list that silently stops short
-/// reads as the whole set.
+/// A heading and its items, as a real list. The heading counts every path,
+/// `items` names the first few, and `more` states the remainder — a list that
+/// stops short silently reads as the whole set.
 fn group_view(group: ToastGroup) -> impl IntoView {
     let items = group
         .items
@@ -252,11 +250,9 @@ fn ToastCard(toast: Toast, store: Store) -> impl IntoView {
     };
     let title = toast.title.clone();
     let body = toast.body.clone();
-    // A card's groups are fixed once posted, so they render as plain markup —
-    // no keyed `For`, which would need an id the group does not have.
-    //
-    // Hoisted out of `view!`: the macro's tag tokenizer reads a turbofish as
-    // markup, and `collect_view` is the same shape.
+    // Fixed once posted, so plain markup: a keyed `For` would need an id the
+    // group does not have. Hoisted out of `view!`, whose tag tokenizer reads
+    // `collect_view`'s shape as markup.
     let groups = toast
         .groups
         .clone()

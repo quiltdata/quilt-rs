@@ -9,12 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.36.1-alpha1] - 2026-09-08
+## [v0.37.0-alpha1] - 2026-09-08
 
 ### Added
 
-- `flow::PullReport` records what a pull applied: the paths it wrote where there was nothing, the paths a revision added and left on the remote, the paths it rewrote, the paths it deleted, and the newest revision's message. Read from the writes and deletions themselves rather than from the remote's diff, so each group states something that happened: under `SyncScope::EntirePackage` a path the remote merely *modified* can be written here for the first time, which is new to this copy however the diff labelled it. A path in the delta can be in no group at all, each case meaning the file on disk is already right: both sides reached the same result, the user's own edit was kept, or this copy does not track the path and the scope does not cover it (<https://github.com/quiltdata/quilt-rs/pull/898>)
-- `flow::PullPreview` pairs the dry run's `PullOutcome` with the paths the pending revision adds, so a caller can name incoming files before pulling. Scope-independent: it describes the remote's addition, not what a pull would fetch (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- `flow::PullReport` names what a pull applied: the files it wrote, rewrote and deleted, the ones the revision added and left on the remote, and the newest revision's message. Grouping contract in [`docs/architecture.md`](../docs/architecture.md) (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- `flow::PullPreview` pairs a dry run's `PullOutcome` with the paths the pending revision adds, so a caller can name incoming files before pulling (<https://github.com/quiltdata/quilt-rs/pull/898>)
 
 ### Changed
 

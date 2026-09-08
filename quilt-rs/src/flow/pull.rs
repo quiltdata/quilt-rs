@@ -148,14 +148,12 @@ impl PullReport {
     }
 }
 
-/// Build the report from the delta and from what the apply actually did — no
-/// extra I/O, both are in hand.
+/// Build the report from the delta and from [`Applied`](crate::flow::Applied) —
+/// no extra I/O, both are in hand.
 ///
-/// **Not from the touch set.** The touch set is what the pull *proposed* to
-/// move, and the two diverge: a touched path this copy does not track is never
-/// uninstalled, so reading the touch set reported files as removed that were
-/// still there. [`Applied`](crate::flow::Applied) is the record of the writes
-/// and deletions themselves, which makes every group true by construction.
+/// The touch set is not a substitute: it is what a pull *proposes* to move, and
+/// a touched path this copy does not track is never uninstalled. Reading the
+/// writes and deletions themselves is what makes every group true.
 fn report_of(
     manifest_uri: ManifestUri,
     delta: &BTreeMap<PathBuf, RemoteChange>,
@@ -175,32 +173,24 @@ fn report_of(
         // elsewhere: `ManifestHeader::default` writes `Some(String::new())`.
         message: message.filter(|m| !m.is_empty()),
     };
-    // Walked over the delta rather than over `applied`, so the report stays
-    // ordered by path and covers only what the remote changed.
+    // Over the delta, so the report is ordered by path and names only what the
+    // remote changed.
     for (path, change) in delta {
         match (installed.contains(path), uninstalled.contains(path)) {
             // Deleted and written again: a file that was here has new content.
             (true, true) => report.updated.push(path.clone()),
-            // Written where there was nothing. The remote may have called this
-            // path Added or Modified — under whole-package scope a path the
-            // remote modified but this copy never checked out is fetched here
-            // too, and it is new to this copy either way. Nothing was
-            // overwritten, so "updated" would be the wrong word for it.
+            // Written where there was nothing, whether the remote called the
+            // path added or modified: under whole-package scope a modified
+            // path this copy never checked out is fetched here too, and
+            // nothing was overwritten either way.
             (true, false) => report.added.push(path.clone()),
             // Deleted with no replacement: absent from `latest`.
             (false, true) => report.removed.push(path.clone()),
+            // Nothing moved, so the file on disk is already right — the
+            // user's edit was kept, both sides agree, or this copy does not
+            // track the path. Only an addition still on the remote is worth
+            // saying, and a path the user added identically is not one.
             (false, false) => {
-                // Nothing moved. Worth saying only when the revision added a
-                // path that is still outstanding — one the scope listed and
-                // left on the remote.
-                //
-                // Everything else is silent, and each silence is a case where
-                // the file on disk is already right: the user's own edit was
-                // kept, both sides reached the same result (including a path
-                // both added identically, which is here and needs no fetch),
-                // or this copy does not track the path at all — the ordinary
-                // state of a CLI install, since install brings the manifest
-                // and not the files.
                 if matches!(change, RemoteChange::Added(_)) && !locally_changed.contains_key(path) {
                     report.added_not_fetched.push(path.clone());
                 }
@@ -395,8 +385,6 @@ pub async fn pull_package(
     )
     .await?;
 
-    // Built after the apply, from what it did rather than from what the touch
-    // set proposed — see `report_of`.
     let report = report_of(
         latest,
         &delta,

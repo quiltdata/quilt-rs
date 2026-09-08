@@ -50,11 +50,9 @@ pub fn bucket_str(uri: &S3PackageUri) -> Option<String> {
 /// does not rebuild the component, the button will remain disabled.
 /// What the page's notification slot should hold after a command succeeded.
 ///
-/// An empty message means the command had nothing to say — a pull whose
-/// [toast](crate::components::toasts) already named the package and what
-/// arrived. `None` rather than an empty box, because `Layout` raises a
-/// full-screen dismiss overlay for as long as the slot holds anything: a blank
-/// message would dim the whole app behind a notification that is not there.
+/// An empty message means the command had nothing to say. `None`, not
+/// `Some("")`: `Layout` raises a full-screen dismiss overlay for as long as the
+/// slot holds anything, which would dim the app behind a blank.
 fn success_notification(msg: String) -> Option<Notification> {
     (!msg.is_empty()).then_some(Notification::Success(msg))
 }

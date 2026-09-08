@@ -9,18 +9,18 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.21.3-alpha2] - 2026-09-08
+## [v0.22.0-alpha1] - 2026-09-08
 
 ### Added
 
-- When a new revision arrives, a notification says what it brought — which files are new, which were updated, which were removed — naming the first three of each group and counting the rest. A background pull used to happen in silence, so files that changed the meaning of a folder could land unremarked. The notifications stack, each closes on its own button, and one raised while the window was shut is still waiting when you open it. A revision that moved no files raises none. Under individual-file sync a revision's new files are listed rather than downloaded, and the notification says so instead of reporting them as arrived
+- When a new revision arrives, a notification names the files it brought — new, updated, removed — where a background pull used to change your folder in silence. Notifications stack, each closes on its own button, and one raised while the window was shut is waiting when you open it. Under individual-file sync a revision's new files are listed rather than downloaded, and the notification says so
   - <https://github.com/quiltdata/quilt-rs/pull/897>
   - <https://github.com/quiltdata/quilt-rs/pull/898>
-- Before you pull, the packages list and an outdated package's banner name the files the revision would bring, so the decision to pull is not blind (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- Before you pull, the packages list and an outdated package's banner name the files the revision would bring (<https://github.com/quiltdata/quilt-rs/pull/898>)
 
 ### Changed
 
-- A manual Pull is now confirmed by that report rather than by "Successfully pulled package …". The two said the same thing at once, and the older line came with a full-screen dim that sat behind the report it was duplicating. A pull with nothing to report still shows the line (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- A manual Pull is confirmed by that report instead of "Successfully pulled package …", which said the same thing twice over. A pull with nothing to report — a revision that moved no files — still shows the line (<https://github.com/quiltdata/quilt-rs/pull/898>)
 
 ## [v0.21.3-alpha1] - 2026-09-04
 

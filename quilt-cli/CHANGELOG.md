@@ -9,11 +9,11 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.30.1-alpha1] - 2026-09-08
+## [v0.31.0-alpha1] - 2026-09-08
 
 ### Added
 
-- `quilt pull` prints what the revision brought, one path per line under a heading per group — new, new but not downloaded, updated, removed — followed by the newest revision's message. Previously it printed the top-hash alone, which said that something had changed but never what. Paths this copy does not track are absent from the list because nothing was written for them: a bare `quilt install` registers the manifest and no files, so a pull that moves nothing prints the message alone. The message is labelled as the latest revision's — a pull advances to `latest` in one step and can span several revisions. Both the message and the paths are escaped before printing: a package's publisher writes them, and a terminal would otherwise act on an escape sequence in either, or read a forged report line out of a path containing a line break (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- `quilt pull` now names the files a revision brought — downloaded, updated, removed, and the ones left on the remote — where it printed the top-hash alone. See [`README.md`](README.md) (<https://github.com/quiltdata/quilt-rs/pull/898>)
 
 ## [v0.30.0] - 2026-09-02
 
