@@ -4,43 +4,46 @@
 //! own: the stack renders what it is given, so the copy lives beside the tick
 //! that posts it and nothing in the UI needs to know a revision exists.
 
-use std::fmt::Write as _;
-
 use quilt_rs::flow::PullReport;
 use quilt_uri::Namespace;
 use std::path::PathBuf;
 
+use crate::toast::ToastGroup;
 use crate::toast::ToastKind;
 
 /// How many paths a group names before it counts the rest.
 ///
-/// A toast has one line's worth of room and the point is that the user can see
-/// *which* files, not merely how many — so it names some and is honest about
-/// the remainder rather than truncating silently.
+/// A toast has room for a short list, and the point is that the user can see
+/// *which* files rather than only how many — so it names some and is honest
+/// about the remainder instead of truncating silently.
 const NAMED: usize = 3;
 
-/// A toast's three parts, ready for [`ToastCenter::post`](crate::toast::ToastCenter::post).
+/// A toast's parts, ready for [`ToastCenter::post`](crate::toast::ToastCenter::post).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReportToast {
     pub kind: ToastKind,
     pub title: String,
+    /// The lead sentence — what happened. Without it the toast opens with a
+    /// package name and a file count and never says why it is on screen.
     pub body: String,
+    pub groups: Vec<ToastGroup>,
 }
 
-/// One group: a count, then up to [`NAMED`] paths, then the remainder.
-fn group(heading: &str, paths: &[PathBuf]) -> Option<String> {
+/// One group: a heading that counts, and up to [`NAMED`] paths as data.
+fn group(heading: &str, paths: &[PathBuf]) -> Option<ToastGroup> {
     if paths.is_empty() {
         return None;
     }
     let plural = if paths.len() == 1 { "" } else { "s" };
-    let mut lines = format!("{} file{plural} {heading}", paths.len());
-    for path in paths.iter().take(NAMED) {
-        let _ = write!(lines, "\n  {}", path.display());
-    }
-    if let Some(rest) = paths.len().checked_sub(NAMED).filter(|rest| *rest > 0) {
-        let _ = write!(lines, "\n  and {rest} more");
-    }
-    Some(lines)
+    Some(ToastGroup {
+        heading: format!("{} file{plural} {heading}", paths.len()),
+        items: paths
+            .iter()
+            .take(NAMED)
+            .map(|p| p.display().to_string())
+            .collect(),
+        more: paths.len().saturating_sub(NAMED),
+    })
 }
 
 /// The toast for a pull, or `None` when there is nothing to say.
@@ -58,7 +61,7 @@ pub(crate) fn report_toast(namespace: &Namespace, report: &PullReport) -> Option
         return None;
     }
 
-    let body = [
+    let groups = [
         group("new", &report.added),
         group("new, not downloaded", &report.added_not_fetched),
         group("updated", &report.updated),
@@ -66,8 +69,7 @@ pub(crate) fn report_toast(namespace: &Namespace, report: &PullReport) -> Option
     ]
     .into_iter()
     .flatten()
-    .collect::<Vec<_>>()
-    .join("\n");
+    .collect();
 
     // `Success` only when the revision left nothing behind. Anything the scope
     // listed and did not fetch is still outstanding, and reporting that as a
@@ -81,7 +83,10 @@ pub(crate) fn report_toast(namespace: &Namespace, report: &PullReport) -> Option
     Some(ReportToast {
         kind,
         title: namespace.to_string(),
-        body,
+        // States the event, not the mechanism: whether it arrived by this pull,
+        // the tick, or a resumed namespace is the status banner's business.
+        body: "Updated to a newer revision.".to_owned(),
+        groups,
     })
 }
 
@@ -120,22 +125,37 @@ mod tests {
         assert_eq!(report_toast(&namespace(), &report()), None);
     }
 
+    /// A toast that opened with a package name and a file count never said why
+    /// it was on screen. The lead sentence is that.
     #[test]
-    fn each_group_names_its_files_under_a_count() {
+    fn the_toast_states_the_event_not_only_its_detail() {
+        let r = PullReport {
+            added: paths(&["qc/summary.csv"]),
+            ..report()
+        };
+        let toast = report_toast(&namespace(), &r).unwrap();
+        assert_eq!(toast.title, "acme/rna-seq");
+        assert_eq!(toast.body, "Updated to a newer revision.");
+    }
+
+    /// Paths travel as data, not as indented text: whitespace stops meaning
+    /// anything the moment a long path wraps.
+    #[test]
+    fn each_group_carries_its_paths_as_items() {
         let r = PullReport {
             added: paths(&["qc/summary.csv", "qc/flags.json"]),
             updated: paths(&["reads/day2.fastq"]),
             removed: paths(&["old/notes.md"]),
             ..report()
         };
-        let toast = report_toast(&namespace(), &r).expect("something moved");
-        assert_eq!(toast.title, "acme/rna-seq");
+        let toast = report_toast(&namespace(), &r).unwrap();
+        let headings: Vec<&str> = toast.groups.iter().map(|g| g.heading.as_str()).collect();
         assert_eq!(
-            toast.body,
-            "2 files new\n  qc/summary.csv\n  qc/flags.json\n\
-             1 file updated\n  reads/day2.fastq\n\
-             1 file removed\n  old/notes.md"
+            headings,
+            vec!["2 files new", "1 file updated", "1 file removed"]
         );
+        assert_eq!(toast.groups[0].items, ["qc/summary.csv", "qc/flags.json"]);
+        assert!(toast.groups.iter().all(|g| g.more == 0));
     }
 
     #[test]
@@ -150,11 +170,14 @@ mod tests {
             added_not_fetched: paths(&["qc/summary.csv"]),
             ..report()
         };
-        let fetched = report_toast(&namespace(), &fetched).unwrap();
-        let listed = report_toast(&namespace(), &listed).unwrap();
-        assert_eq!(fetched.body, "1 file new\n  qc/summary.csv");
-        assert_eq!(listed.body, "1 file new, not downloaded\n  qc/summary.csv");
-        assert_ne!(fetched.body, listed.body);
+        assert_eq!(
+            report_toast(&namespace(), &fetched).unwrap().groups[0].heading,
+            "1 file new"
+        );
+        assert_eq!(
+            report_toast(&namespace(), &listed).unwrap().groups[0].heading,
+            "1 file new, not downloaded"
+        );
     }
 
     #[test]
@@ -184,10 +207,9 @@ mod tests {
             added_not_fetched: paths(&["a", "b", "c", "d", "e"]),
             ..report()
         };
-        let toast = report_toast(&namespace(), &r).unwrap();
-        assert_eq!(
-            toast.body,
-            "5 files new, not downloaded\n  a\n  b\n  c\n  and 2 more"
-        );
+        let group = &report_toast(&namespace(), &r).unwrap().groups[0];
+        assert_eq!(group.heading, "5 files new, not downloaded");
+        assert_eq!(group.items, ["a", "b", "c"]);
+        assert_eq!(group.more, 2, "the remainder must be counted, not dropped");
     }
 }

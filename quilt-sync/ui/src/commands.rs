@@ -1450,6 +1450,16 @@ pub enum ToastKind {
     Error,
 }
 
+/// A list under a heading. Mirrors the backend's `toast::ToastGroup`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToastGroup {
+    pub heading: String,
+    pub items: Vec<String>,
+    /// How many items the heading counts but `items` does not show.
+    pub more: usize,
+}
+
 /// One server-emitted notification. Mirrors the backend's `toast::Toast`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1457,7 +1467,11 @@ pub struct Toast {
     pub id: u64,
     pub kind: ToastKind,
     pub title: Option<String>,
+    /// The lead sentence: what happened.
     pub body: String,
+    /// The detail, as lists rather than as indented text in `body`.
+    #[serde(default)]
+    pub groups: Vec<ToastGroup>,
     /// `None` stands until dismissed.
     pub timeout_ms: Option<u32>,
 }

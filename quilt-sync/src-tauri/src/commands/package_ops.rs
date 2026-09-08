@@ -414,7 +414,13 @@ pub async fn package_pull(
         // it confirms the action, the toast carries its content.
         if let Some(toast) = pull_toast::report_toast(ns, report) {
             toasts
-                .post(toast.kind, Some(toast.title), toast.body, None)
+                .post(crate::toast::ToastDraft {
+                    kind: toast.kind,
+                    title: Some(toast.title),
+                    body: toast.body,
+                    groups: toast.groups,
+                    timeout_ms: None,
+                })
                 .await;
         }
     }

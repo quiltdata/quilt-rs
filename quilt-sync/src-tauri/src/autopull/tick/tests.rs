@@ -546,10 +546,15 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
     let pulled = reporter.pulled.lock().unwrap();
     assert_eq!(pulled.len(), 1, "the pull reported nothing");
     assert_eq!(pulled[0].0, ns);
-    assert_eq!(
-        pulled[0].1.body,
-        "1 file new, not downloaded\n  qc/summary.csv\n1 file updated\n  reads/day2.fastq"
-    );
+    // The lead sentence states the event; without it the toast opens with a
+    // package name and a file count and never says why it is on screen.
+    assert_eq!(pulled[0].1.body, "Updated to a newer revision.");
+    let groups = &pulled[0].1.groups;
+    assert_eq!(groups.len(), 2, "one group per kind of change");
+    assert_eq!(groups[0].heading, "1 file new, not downloaded");
+    assert_eq!(groups[0].items, ["qc/summary.csv"]);
+    assert_eq!(groups[1].heading, "1 file updated");
+    assert_eq!(groups[1].items, ["reads/day2.fastq"]);
     Ok(())
 }
 

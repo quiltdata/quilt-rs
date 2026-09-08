@@ -490,7 +490,13 @@ impl StatusReporter for TauriEventReporter {
         tauri::async_runtime::spawn(async move {
             handle
                 .state::<ToastCenter>()
-                .post(toast.kind, Some(toast.title), toast.body, None)
+                .post(crate::toast::ToastDraft {
+                    kind: toast.kind,
+                    title: Some(toast.title),
+                    body: toast.body,
+                    groups: toast.groups,
+                    timeout_ms: None,
+                })
                 .await;
         });
     }

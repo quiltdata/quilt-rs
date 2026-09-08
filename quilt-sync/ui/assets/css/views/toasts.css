@@ -88,11 +88,44 @@
 }
 
 .qui-toast .body {
-  /* `pre-wrap`, not `pre-line`: the latter collapses runs of whitespace, which
-     silently flattens the indentation a grouped report uses to show which
-     paths belong to which group. */
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+}
+
+/* A group's heading and its paths. Structure carries what indentation used to:
+   a path long enough to wrap kept its second half at the left margin, where it
+   read as an item of its own. */
+.qui-toast .group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-0-5);
+  margin-top: var(--q-ui-size-1);
+}
+
+.qui-toast .group .heading {
+  font-size: var(--q-ui-font-size-small);
+  color: var(--q-ui-palette-text-secondary);
+}
+
+.qui-toast .items {
+  /* Room for the marker, since the browser draws it outside the content box. */
+  margin: 0;
+  padding-left: var(--q-ui-size-2-5);
+  font-size: var(--q-ui-font-size-small);
+  list-style: disc outside;
+}
+
+.qui-toast .items li {
+  /* Paths have no spaces to break at, so the long ones break mid-segment
+     rather than widening the card past the layer. */
+  overflow-wrap: anywhere;
+}
+
+/* The remainder the list does not name. Not an item, so it carries no marker:
+   it counts the items above it. */
+.qui-toast .items li.more {
+  margin-left: calc(var(--q-ui-size-2-5) * -1);
+  color: var(--q-ui-palette-text-secondary);
+  list-style: none;
 }
 
 /* A real target, not a glyph: 32px square, the smallest comfortable hit area
