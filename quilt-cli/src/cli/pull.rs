@@ -8,6 +8,7 @@ use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
 use crate::cli::text::printable;
+use crate::cli::text::printable_line;
 
 #[derive(Debug)]
 pub struct Input {
@@ -34,9 +35,9 @@ fn group(f: &mut std::fmt::Formatter<'_>, heading: &str, paths: &[PathBuf]) -> s
     let plural = if paths.len() == 1 { "" } else { "s" };
     write!(f, "\n{} file{plural} {heading}:", paths.len())?;
     for path in paths {
-        // Escaped: a path comes from the remote's manifest, and this is a
-        // terminal.
-        write!(f, "\n  {}", printable(&path.display().to_string()))?;
+        // One path per line, so a path may not carry a line break of its own:
+        // a forged heading in this list is indistinguishable from a real one.
+        write!(f, "\n  {}", printable_line(&path.display().to_string()))?;
     }
     Ok(())
 }
