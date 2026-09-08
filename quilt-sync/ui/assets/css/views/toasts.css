@@ -21,13 +21,11 @@
      height, and a stack reaching the bottom edge reads as a takeover rather
      than a layer — and jams the control into the last row of the list. */
   max-height: calc(100vh - var(--q-ui-size-8) - var(--q-ui-size-9));
-  /* The whole layer captures, not just the cards. With `none` here the gap
-     between the two blocks and the strip beside the control passed the cursor
-     through, so the row underneath took hover while the pointer was on its way
-     to — or sitting on — the dismiss control. The cost is that the layer's own
-     box blocks the app beneath it, which is why the component renders nothing
-     at all when there are no toasts. */
-  pointer-events: auto;
+  /* The layer does **not** take the pointer: an invisible box over the app that
+     swallows clicks and dismisses nothing is an overlay in all but appearance.
+     Capture is pushed down to the parts that need it — the scrolling list and
+     the control — each of which hugs what it draws. */
+  pointer-events: none;
   transform: translateX(-50%);
 }
 
@@ -35,6 +33,11 @@
    clips at the padding box: without it the cards' shadows are shaved off,
    which is what made them read as flat against the list. */
 .qui-toasts .list {
+  /* Captures, because a scroll box that does not take the wheel does not
+     scroll — and its gaps belong to the cards they separate, so the row
+     underneath must not take hover as the cursor crosses between them. It is
+     sized by the cards, so it covers no more of the app than they do. */
+  pointer-events: auto;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
