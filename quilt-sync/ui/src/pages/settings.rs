@@ -34,7 +34,7 @@ pub fn Settings() -> impl IntoView {
 
     let breadcrumbs = vec![
         BreadcrumbItem::Link(BreadcrumbLink {
-            href: "/installed-packages-list".to_string(),
+            href: "/".to_string(),
             title: String::new(),
         }),
         BreadcrumbItem::Current("Settings".to_string()),

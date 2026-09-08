@@ -1,5 +1,5 @@
 use leptos::prelude::*;
-use leptos_router::components::{Redirect, Route, Router, Routes};
+use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 
 #[cfg(test)]
@@ -30,7 +30,7 @@ fn App() -> impl IntoView {
         <components::UpdateChecker />
         <Router>
             <Routes fallback=|| view! { <pages::NotFound /> }>
-                <Route path=path!("/") view=|| view! { <Landing /> } />
+                <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=pages::Commit />
                 <Route path=path!("/installed-package") view=pages::InstalledPackage />
                 <Route path=path!("/installed-packages-list") view=pages::InstalledPackagesList />
@@ -46,37 +46,40 @@ fn App() -> impl IntoView {
     }
 }
 
-/// Sends `/` to whichever main page is switched on.
+/// `/` is the main page, and the flag decides which one it is.
+///
+/// Rendered here rather than redirected to: one route means every way home —
+/// the logo, a breadcrumb, a Cancel — arrives at the page the reader has switched
+/// on, instead of at whichever page the link was written against. `/main` and
+/// `/installed-packages-list` stay reachable on purpose, for looking at one
+/// specific page while both exist.
 ///
 /// A fetch, so there is one frame with nothing on it. That is deliberate over
-/// guessing: landing on v1 and then jumping to v2 is worse than a blank frame,
-/// and any failure lands on v1, which is the page that has always worked.
+/// guessing: showing v1 and then swapping it for v2 is worse than a blank frame.
 #[component]
-fn Landing() -> impl IntoView {
+fn Home() -> impl IntoView {
     let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
 
     view! {
         <Suspense fallback=|| view! { <div></div> }>
             {move || Suspend::new(async move {
                 let settings = settings.await;
-                let target = landing_target(settings.as_ref().map_err(String::as_str));
-                view! { <Redirect path=target /> }
+                if wants_v2(settings.as_ref().map_err(String::as_str)) {
+                    view! { <pages::MainPage /> }.into_any()
+                } else {
+                    view! { <pages::InstalledPackagesList /> }.into_any()
+                }
             })}
         </Suspense>
     }
 }
 
-/// Which page `/` sends the user to, given the settings fetch's outcome.
+/// Whether `/` renders v2, given the settings fetch's outcome.
 ///
 /// `Err` — the fetch failed — falls back to v1, same as the flag being off:
 /// v1 is the page that has always worked.
-fn landing_target(settings: Result<&commands::SettingsData, &str>) -> &'static str {
-    let to_v2 = settings.is_ok_and(|data| data.experimental.main_page_v2);
-    if to_v2 {
-        "/main"
-    } else {
-        "/installed-packages-list"
-    }
+fn wants_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
+    settings.is_ok_and(|data| data.experimental.main_page_v2)
 }
 
 #[cfg(test)]
@@ -110,19 +113,21 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn flag_on_goes_to_v2() {
+    fn flag_on_renders_v2() {
         let settings = settings_stub(true);
-        assert_eq!(landing_target(Ok(&settings)), "/main");
+        assert!(wants_v2(Ok(&settings)));
     }
 
     #[wasm_bindgen_test]
-    fn flag_off_goes_to_v1() {
+    fn flag_off_renders_v1() {
         let settings = settings_stub(false);
-        assert_eq!(landing_target(Ok(&settings)), "/installed-packages-list");
+        assert!(!wants_v2(Ok(&settings)));
     }
 
     #[wasm_bindgen_test]
     fn fetch_error_falls_back_to_v1() {
-        assert_eq!(landing_target(Err("boom")), "/installed-packages-list");
+        // The flag is unknowable, so the answer is the page that has always
+        // worked — not a guess at what the reader chose.
+        assert!(!wants_v2(Err("boom")));
     }
 }
