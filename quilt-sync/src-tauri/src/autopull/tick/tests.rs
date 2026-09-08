@@ -491,8 +491,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         .returning(move || {
             Ok(vec![
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ])
         });
     model
@@ -501,8 +500,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     model
