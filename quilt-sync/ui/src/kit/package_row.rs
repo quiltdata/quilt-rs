@@ -65,8 +65,20 @@ pub fn PackageRow(
     #[prop(optional, into)]
     provisional: MaybeProp<bool>,
 ) -> impl IntoView {
+    // One computed string: Leptos rejects two `class` attributes on an element, and
+    // the row dims as a whole rather than the label dimming alone — see the
+    // stylesheet for the measurement behind the value.
+    let class = move || {
+        let mut out = String::from(style::root);
+        if provisional.get().unwrap_or(false) {
+            out.push(' ');
+            out.push_str(style::provisional);
+        }
+        out
+    };
+
     view! {
-        <a class=style::root href=href>
+        <a class=class href=href>
             <span class=style::namespace>{namespace}</span>
             <span class=style::time>
                 {move || changed_at
@@ -119,6 +131,65 @@ pub fn PackageRow(
 ///
 /// `.skeleton` switches off the affordance: no pointer cursor and no hover tint, because
 /// nothing here responds to a click.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// `file_row.rs`'s pattern: mount into a fresh attached `div` and query it.
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// The row's own root, not a descendant — which is the point of these two.
+    fn root_class(el: &web_sys::Element) -> String {
+        el.query_selector("a")
+            .unwrap()
+            .expect("the row is an anchor")
+            .get_attribute("class")
+            .unwrap_or_default()
+    }
+
+    fn row(provisional: bool) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <PackageRow
+                    namespace="user/alpha"
+                    href="/x"
+                    state=Signal::stored("Latest".to_string())
+                    tone=Signal::stored(StateTone::Success)
+                    provisional=provisional
+                />
+            }
+        })
+    }
+
+    #[wasm_bindgen_test]
+    fn a_provisional_row_dims_itself_and_not_only_its_label() {
+        // `StateLabel` already dashes its own edge, and every existing assertion
+        // on `[class*=provisional]` is satisfied by that label alone — so nothing
+        // pinned the ROW's dim, which is the channel a reader actually notices.
+        // These two look at the root element specifically.
+        //
+        // The pair is the unit: either alone would pass against a class applied
+        // unconditionally or never.
+        assert!(
+            root_class(&row(true)).contains("provisional"),
+            "the row carries the dim"
+        );
+        assert!(
+            !root_class(&row(false)).contains("provisional"),
+            "a settled row carries nothing"
+        );
+    }
+}
+
 #[component]
 pub fn PackageRowSkeleton() -> impl IntoView {
     view! {

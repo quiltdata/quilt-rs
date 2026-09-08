@@ -78,3 +78,22 @@
 .skeleton:hover {
   background: none;
 }
+
+/* The light phase's guess, dimmed as a whole row.
+ *
+ * The row and not just its `StateLabel`: a border-style change on a 20px chip is
+ * findable only if you already know to look for it, and a row uniformly lighter
+ * than its neighbours reads at a glance. The label keeps its dashed edge too —
+ * two channels, and the dash is the one that survives greyscale.
+ *
+ * 0.75 is measured, not chosen. Ancestor opacity composites the whole subtree, so
+ * the label's fill dims alongside its text and the binding pair is the tone with
+ * the least contrast to spare: amber-12 on amber-a3 over the card, 10.48:1 at full
+ * strength. AA (4.5:1) is reached at 0.71, and 0.75 leaves it at 5.04:1. Dark is
+ * looser — its floor is 0.57 — so one value covers both themes.
+ *
+ * Below 0.71 in light the text stops meeting AA, and the honest next move is a
+ * different treatment rather than more opacity. */
+.provisional {
+  opacity: 0.75;
+}

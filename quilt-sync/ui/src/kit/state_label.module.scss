@@ -44,13 +44,17 @@
   color: var(--tone-mark);
 }
 
-/* The light phase's guess. A dashed edge and nothing else — no opacity, no animation.
+/* The light phase's guess. A dashed edge, and the row around it carries a dim —
+ * see `package_row.module.scss`'s `.provisional`.
  *
- * Dimming was the other option the design record offered, and it is the wrong one: the
- * text was measured to 9.2:1 at worst against its own fill, and any opacity low enough to
- * read as provisional takes it under AA. A dashed border costs no contrast at all. And the
- * value here is still information — the light phase is right most of the time — so making
- * it harder to read in order to say "not final" trades away the wrong thing.
+ * The dash alone was the earlier call, on the grounds that dimming could not stay
+ * above AA. Re-measured: the worst pairing is amber-12 on amber-a3 over the card at
+ * 10.48:1, and AA (4.5:1) is not reached until opacity 0.71 — so a quarter of the
+ * strength is available and the row spends it. Two channels, not one, because a
+ * dashed edge on a 20px chip is findable only by someone already looking for it.
+ *
+ * The dash stays as the channel that survives greyscale and colour-blindness, the
+ * same argument the tone glyphs above make.
  *
  * Static, not animated: 43 rows settling one by one is already the activity signal, and
  * WCAG 2.2.2 rules out blinking text regardless. */
