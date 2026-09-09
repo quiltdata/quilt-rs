@@ -7,6 +7,8 @@
 use leptos::prelude::*;
 
 use crate::commands;
+use crate::kit::Banner;
+use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Dialog;
@@ -20,6 +22,10 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
     let namespace = RwSignal::new(String::new());
     let source = RwSignal::new(String::new());
     let submitting = RwSignal::new(false);
+    // The backend's words about the last attempt, shown in the dialog rather than in
+    // `PageLayout`'s banner slot: `Dialog` uses `show_modal()`, so anything in the page's
+    // own flow sits behind the backdrop in a lower layer, dimmed and out of tab order.
+    let failure = RwSignal::new(None::<String>);
     // Trimmed, as v1 does: a name of spaces is not a name, and the backend
     // would refuse it after a round trip.
     let can_create =
@@ -42,20 +48,10 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
             namespace.set(String::new());
             source.set(String::new());
             submitting.set(false);
+            failure.set(None);
         }
         was_open.set_value(now);
     });
-
-    // v1's directory picker, unchanged: the chosen path becomes the (disabled)
-    // field's text. A cancelled picker returns `Err`, and the field is left as
-    // it was.
-    let on_browse = move |_| {
-        leptos::task::spawn_local(async move {
-            if let Ok(path) = commands::open_directory_picker().await {
-                source.set(path);
-            }
-        });
-    };
 
     let on_create = move |_| {
         let ns = namespace.get_untracked().trim().to_string();
@@ -75,11 +71,10 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
                     open.set(false);
                 }
                 Err(err) => {
-                    // qhq-8mgw.47: this page has nowhere to show the backend's
-                    // words, so the dialog stays open — which is itself the
-                    // statement that nothing was created — and the Create
-                    // button re-enables so the user can retry or cancel.
-                    web_sys::console::error_1(&format!("package_create failed: {err}").into());
+                    // The dialog stays open on a failure and closes only on a
+                    // success or on the user's Cancel/Escape, so what they typed
+                    // survives to be fixed and resubmitted.
+                    failure.set(Some(err));
                     submitting.set(false);
                 }
             }
@@ -105,43 +100,82 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
             }
                 .into_any()
         >
-            <FormControl
-                label="Package name"
-                caption="Two parts, separated by a slash — user/plate-07."
-                required=true
-                control=move |id| {
-                    view! {
+            // Above the fields, not beside one: `package_create` returns an opaque
+            // `String`, so nothing here can say which field is at fault, and
+            // `FormControl`'s `error` would set `aria-invalid` on a guess.
+            {move || {
+                failure
+                    .get()
+                    .map(|message| {
+                        view! {
+                            <Banner
+                                variant=BannerVariant::Critical
+                                on_dismiss=move |_| failure.set(None)
+                            >
+                                {message}
+                            </Banner>
+                        }
+                    })
+            }}
+            <PackageFields namespace=namespace source=source />
+        </Dialog>
+    }
+}
+
+/// What the form asks for, and the picker that fills one of the two.
+///
+/// Split from the dialog around them: these own the fields, while the dialog owns
+/// what happens on submit and what it says when that fails.
+#[component]
+fn PackageFields(namespace: RwSignal<String>, source: RwSignal<String>) -> impl IntoView {
+    // v1's directory picker, unchanged: the chosen path becomes the (disabled)
+    // field's text. A cancelled picker returns `Err`, and the field is left as
+    // it was.
+    let on_browse = move |_| {
+        leptos::task::spawn_local(async move {
+            if let Ok(path) = commands::open_directory_picker().await {
+                source.set(path);
+            }
+        });
+    };
+
+    view! {
+        <FormControl
+            label="Package name"
+            caption="Two parts, separated by a slash — user/plate-07."
+            required=true
+            control=move |id| {
+                view! {
+                    <TextInput
+                        id=id
+                        value=namespace
+                        placeholder="owner/package-name"
+                        autofocus=true
+                    />
+                }
+                    .into_any()
+            }
+        />
+        // A path the user picks with the OS dialog rather than types, so the
+        // text field is disabled and the Browse button is the control.
+        <FormControl
+            label="Folder to add"
+            caption="Optional. You can add files later."
+            control=move |id| {
+                view! {
+                    <div class=style::folder_row>
                         <TextInput
                             id=id
-                            value=namespace
-                            placeholder="owner/package-name"
-                            autofocus=true
+                            value=source
+                            placeholder="No folder chosen"
+                            disabled=true
                         />
-                    }
-                        .into_any()
+                        <Button on_click=on_browse>"Browse…"</Button>
+                    </div>
                 }
-            />
-            // A path the user picks with the OS dialog rather than types, so the
-            // text field is disabled and the Browse button is the control.
-            <FormControl
-                label="Folder to add"
-                caption="Optional. You can add files later."
-                control=move |id| {
-                    view! {
-                        <div class=style::folder_row>
-                            <TextInput
-                                id=id
-                                value=source
-                                placeholder="No folder chosen"
-                                disabled=true
-                            />
-                            <Button on_click=on_browse>"Browse…"</Button>
-                        </div>
-                    }
-                        .into_any()
-                }
-            />
-        </Dialog>
+                    .into_any()
+            }
+        />
     }
 }
 
@@ -305,8 +339,9 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_failed_create_leaves_the_dialog_open_and_the_button_usable() {
         // There is no Tauri host here, so the invoke rejects — which is exactly the
-        // failure path. The dialog staying open IS the statement that nothing was
-        // created, since this page has nowhere to print the backend's words.
+        // failure path. The dialog stays open because the operation did not succeed
+        // and the user did not dismiss it; what it says is asserted separately, in
+        // `a_failed_create_says_why_inside_the_dialog`.
         let open = RwSignal::new(true);
         let el = mount_dialog(open);
         leptos::task::tick().await;
@@ -356,6 +391,117 @@ mod tests {
             namespace_field(&el).value(),
             "",
             "a fresh open must not carry over the last package's name"
+        );
+    }
+
+    /// The failure message, which only exists once a create has failed.
+    fn failure(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("dialog [role='alert']").unwrap()
+    }
+
+    /// The banner's own close control, found by its label — its face is an SVG,
+    /// so `button_labelled` cannot see it.
+    fn dismiss_failure(el: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        el.query_selector("dialog button[aria-label='Dismiss']")
+            .unwrap()
+            .expect("the failure's dismiss control")
+            .dyn_into()
+            .unwrap()
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_create_says_why_inside_the_dialog() {
+        // qhq-8mgw.47. The message goes in the dialog and not in `PageLayout`'s
+        // banner slot because `Dialog` uses `show_modal()`: the page sits behind
+        // a 45% backdrop in a lower layer, where a notice is dimmed and its
+        // dismiss unreachable by pointer or by tab.
+        //
+        // The same failure is asked for directly first, so this asserts that the
+        // BACKEND'S OWN WORDS arrive — not merely that some message appeared.
+        // There is no Tauri host here, so both calls reject with the same message.
+        //
+        // Its first line only: with no host the rejection is a thrown `TypeError`
+        // whose text carries a JS stack, and the stack names the frame that called,
+        // so the two differ past the message itself. A real host returns a plain
+        // string and the whole of it lands in the banner.
+        let err = commands::package_create("user/new-package".to_string(), None, None)
+            .await
+            .expect_err("no Tauri host, so the invoke rejects");
+        let expected = err.lines().next().expect("a message to compare");
+
+        let open = RwSignal::new(true);
+        let el = mount_dialog(open);
+        leptos::task::tick().await;
+        type_into(&namespace_field(&el), "user/new-package");
+        leptos::task::tick().await;
+
+        click(&create_button(&el));
+        sleep_ms(50).await;
+
+        let shown = failure(&el)
+            .expect("a failed create must say why, and inside the dialog")
+            .text_content()
+            .unwrap_or_default();
+        assert!(
+            shown.contains(expected),
+            "the message must carry the backend's words; got {shown:?}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn dismissing_the_failure_clears_it_and_nothing_else() {
+        // The banner's dismiss is about the message, not the dialog: the dialog
+        // closes on a success or on the user's Cancel/Escape, never on its own.
+        // Clearing the message must also leave the typed name to resubmit.
+        let open = RwSignal::new(true);
+        let el = mount_dialog(open);
+        leptos::task::tick().await;
+        type_into(&namespace_field(&el), "user/new-package");
+        leptos::task::tick().await;
+        click(&create_button(&el));
+        sleep_ms(50).await;
+        assert!(failure(&el).is_some(), "precondition: the failure is shown");
+
+        click(&dismiss_failure(&el));
+        leptos::task::tick().await;
+
+        assert!(failure(&el).is_none(), "dismissing clears the message");
+        assert!(
+            open.get_untracked(),
+            "and only the message — the dialog is the user's to close"
+        );
+        assert_eq!(
+            namespace_field(&el).value(),
+            "user/new-package",
+            "dismissing a message must not discard what the user typed"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn reopening_the_dialog_clears_a_previous_failure() {
+        // The same open-transition reset that clears the fields, for the same
+        // reason: this dialog is mounted once, so without it the last attempt's
+        // error would greet the next one, describing a create that is not this one.
+        let open = RwSignal::new(true);
+        let el = mount_dialog(open);
+        leptos::task::tick().await;
+        type_into(&namespace_field(&el), "user/new-package");
+        leptos::task::tick().await;
+        click(&create_button(&el));
+        sleep_ms(50).await;
+        assert!(failure(&el).is_some(), "precondition: the failure is shown");
+
+        click(&cancel_button(&el));
+        leptos::task::tick().await;
+        open.set(true);
+        // Two ticks, as `reopening_the_dialog_clears_what_was_typed_before`: the
+        // reset writes from inside the effect that reacts to `open`.
+        leptos::task::tick().await;
+        leptos::task::tick().await;
+
+        assert!(
+            failure(&el).is_none(),
+            "a fresh open must not carry the last attempt's failure"
         );
     }
 }
