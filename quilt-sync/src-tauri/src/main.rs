@@ -161,7 +161,13 @@ fn main() {
                 experimental_settings.clone(),
                 reporter.clone(),
             );
-            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
+            fswatcher::spawn(
+                app.handle(),
+                fswatcher_settings.clone(),
+                autosync_settings.clone(),
+                window_mode.clone(),
+                &reporter,
+            );
             app.manage(publish_settings);
             app.manage(autosync_settings);
             app.manage(fswatcher_settings);
