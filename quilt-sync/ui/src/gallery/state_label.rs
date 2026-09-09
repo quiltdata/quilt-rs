@@ -12,9 +12,19 @@ use crate::kit::StateTone;
 /// Reviewing this list *is* reviewing the vocabulary: words that read badly here
 /// read badly on the page.
 ///
-/// Ten labels, nine states: `Not the latest` and `Newer revision available` are the
-/// same state, `behind`, worded for a list row and for a queue row. Both appear here
-/// because `StateLabel` renders both; only the first can appear on a `PackageRow`.
+/// Twelve labels, eleven states: `Not the latest` and `Newer revision available` are
+/// the same state, `behind`, worded for a list row and for a queue row. Both appear
+/// here because `StateLabel` renders both; only the first can appear on a
+/// `PackageRow`.
+///
+/// The last two are the pair worth reading together, because they are one word apart
+/// and claim different things: `Sync paused` says the syncing stopped for this
+/// package, `Sync stopped` that its upstream state could not be read at all. Neither
+/// offers an action, and neither can — there is no resume.
+///
+/// This list is hand-maintained, so a state can be added to `kit::render` without
+/// reaching it: `Sync stopped` was missing here until 2026-09-09, having shipped in
+/// the vocabulary from the start. See qhq-8mgw.53.
 const STATES: &[(&str, StateTone)] = &[
     ("Latest", StateTone::Success),
     ("Not the latest", StateTone::Attention),
@@ -26,6 +36,8 @@ const STATES: &[(&str, StateTone)] = &[
     ("No S3 bucket yet", StateTone::Attention),
     ("Not published yet", StateTone::Attention),
     ("Revision not published", StateTone::Attention),
+    ("Sync paused", StateTone::Danger),
+    ("Sync stopped", StateTone::Danger),
 ];
 
 fn tone_name(tone: StateTone) -> &'static str {

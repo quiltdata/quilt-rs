@@ -247,13 +247,17 @@ fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> S
 fn precedence(state: &PackageState) -> u8 {
     match state {
         PackageState::PullConflict { .. } => 0,
-        PackageState::Unknown => 1,
-        PackageState::Diverged => 2,
-        PackageState::Behind => 3,
-        PackageState::PendingChanges { .. } | PackageState::PendingCommit => 4,
-        PackageState::NoRemote => 5,
-        PackageState::Unpublished => 6,
-        PackageState::RoleDenied { .. } => 7,
+        // §5's row 3: below a conflict, above the unread state at its row 4. A
+        // conflict names its files and is the more specific fact about the same
+        // disk; a stopped sync is a fact, where `Unknown` is the absence of one.
+        PackageState::Paused => 1,
+        PackageState::Unknown => 2,
+        PackageState::Diverged => 3,
+        PackageState::Behind => 4,
+        PackageState::PendingChanges { .. } | PackageState::PendingCommit => 5,
+        PackageState::NoRemote => 6,
+        PackageState::Unpublished => 7,
+        PackageState::RoleDenied { .. } => 8,
         PackageState::Latest => unreachable!("Latest never enters either collection"),
     }
 }
@@ -1655,6 +1659,47 @@ mod tests {
             asked.get_untracked(),
             vec![vec!["a/one".to_string(), "a/two".to_string()]],
             "exactly the cause's own members, once"
+        );
+    }
+    #[wasm_bindgen_test]
+    fn an_unexplained_pause_gets_its_own_row_below_a_conflict() {
+        // qhq-8mgw.36, and §5's row 3 rendered for the first time. Nothing groups
+        // a pause — it is not shared by a host or a bucket — so it falls to a
+        // per-package row, and its precedence puts it under a conflict (which
+        // names its files, and is the more specific fact about the same disk) and
+        // over an unread state.
+        //
+        // The fixture is in the reverse of the expected order, so a `precedence`
+        // that ignored these states entirely would not pass by luck.
+        let items = derive_queue(
+            &[
+                pkg("a/unread", PackageState::Unknown, Some("h.io")),
+                pkg("a/paused", PackageState::Paused, Some("h.io")),
+                pkg(
+                    "a/conflict",
+                    PackageState::PullConflict {
+                        files: vec!["x.csv".to_string()],
+                    },
+                    Some("h.io"),
+                ),
+            ],
+            // Signed IN, or the unread one joins a signed-out cause instead of
+            // being the row this test compares against.
+            &[host("h.io", true)],
+            &[],
+        );
+
+        let order: Vec<&str> = items
+            .iter()
+            .filter_map(|item| match item {
+                QueueItem::Package { namespace, .. } => Some(namespace.as_str()),
+                QueueItem::Cause { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            order,
+            vec!["a/conflict", "a/paused", "a/unread"],
+            "a pause must be named, and named in its lattice position"
         );
     }
 }

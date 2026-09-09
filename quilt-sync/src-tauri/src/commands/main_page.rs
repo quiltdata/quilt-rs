@@ -54,6 +54,15 @@ pub enum PackageStateDto {
     },
     NoRemote,
     Unpublished,
+    /// Autosync stopped for this package for a reason no other state covers —
+    /// §5's row 3, which nothing rendered until this existed. The reasons that DO
+    /// have a state resolve into it instead: `PendingChanges`, `PendingCommit` and
+    /// `Diverged` into what the tree already reports, `PullConflict` and
+    /// `RoleDenied` into their own. This is the residue (qhq-8mgw.36).
+    ///
+    /// Deliberately NOT folded into `Unknown`, which asserts something different
+    /// and stronger — that the upstream state could not be read at all.
+    Paused,
     /// `UpstreamState::Error`. The UI's `PackageState` catches this with
     /// `#[serde(other)]`, the same arm that catches a kind added after this build.
     Unknown,
@@ -299,6 +308,17 @@ fn misconfigured_remote(lineage: &quilt::lineage::PackageLineage) -> bool {
 /// `latest` by hash and paused by a workflow rejection. It travels as a pause on
 /// the watcher payload instead. The other three reasons are absent because the
 /// tree's own state already says what they say.
+/// Whether this pause has no state of its own to resolve into.
+///
+/// Only `Other`. Every other reason either resolves into the state the working
+/// tree already reports (`PendingChanges`, `PendingCommit`, `Diverged`) or has a
+/// state of its own (`PullConflict`, `RoleDenied`). `Other` is the catch-all —
+/// a workflow rejection, a hash mismatch — and it is non-transient, so a package
+/// left in it stays stopped until something outside this app changes.
+fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
+    matches!(paused, Some(PausedReason::Other(_)))
+}
+
 fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
     match paused {
         Some(PausedReason::PullConflict(files)) => Some(files.clone()),
@@ -560,6 +580,10 @@ async fn load_main_page_package(
         // Rank 2, below the arm above: a remote with no catalog host is a package
         // the tick never touched, so a conflict pause cannot be describing it.
         PackageStateDto::PullConflict { files }
+    } else if unexplained_pause(paused_reasons.get(&namespace)) {
+        // §5's row 3, below the conflict above, which names its files and is the
+        // more specific fact about the same disk.
+        PackageStateDto::Paused
     } else {
         // `None`, not `Some(0)`: this phase has not looked at the working tree.
         // The heavy phase (`refresh_main_page_package`) measures it.
@@ -573,7 +597,13 @@ async fn load_main_page_package(
     // provisional rows to keep the access pre-filter's guesses out of it, so a
     // conflict labelled a guess leaves the queue exactly when the remote is
     // unreachable and syncing cannot fix it (qhq-8mgw.40).
-    let provisional = !matches!(state, PackageStateDto::PullConflict { .. });
+    // An unexplained pause joins the conflict here, and it MATTERS: the queue
+    // drops provisional rows (R2), so a pause marked as a guess would be dropped
+    // again and stay exactly as invisible as it was before it had a state.
+    let provisional = !matches!(
+        state,
+        PackageStateDto::PullConflict { .. } | PackageStateDto::Paused
+    );
 
     Ok(Row {
         package: MainPagePackage {
@@ -1753,13 +1783,13 @@ mod tests {
             .expect_readable_buckets()
             .returning(|_| Err(Error::General("no bucket list in this test".to_string())));
 
-        let mut paused_reasons = HashMap::new();
-        // A pause that does NOT fold (§R5), so the row's own `latest` stands and
-        // the payload below is the no-fold shape.
-        paused_reasons.insert(
-            "team/latest".to_string(),
-            PausedReason::Other("blocked by workflow rule".to_string()),
-        );
+        // No pause at all, so the row keeps its own `latest` and stays
+        // provisional — which is what makes the payload below the ORDINARY shape,
+        // the one nearly every row has. This fixture used to reach that state via
+        // an `Other` pause, chosen precisely because it did not fold; it folds now
+        // (qhq-8mgw.36), and the no-fold rule it stood in for is asserted directly
+        // by `the_three_duplicate_pauses_do_not_fold_into_a_state`.
+        let paused_reasons = HashMap::new();
 
         let result = get_main_page_packages_from_model(
             &model,
@@ -1862,7 +1892,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_pull_conflict_arrives_settled_and_every_other_light_state_provisional() {
+    async fn a_pull_conflict_arrives_settled_and_a_cached_state_provisional() {
         // `provisional` means "from cached lineage, unconfirmed by the remote". A
         // pull conflict is not that: it comes from the watcher's paused map, so it
         // is a fact about this disk that no network call can confirm or deny.
@@ -1908,16 +1938,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn other_and_the_three_duplicates_do_not_fold_into_a_state() {
-        // `Other` has no state in the vocabulary and folding it to `Unknown` would
-        // destroy the case the queue exists to surface: a package latest by hash and
-        // paused by a workflow rejection, which would otherwise render as stopped
-        // with no queue row, permanently, because `Other` is non-transient.
-        // `PendingChanges` / `PendingCommit` / `Diverged` do not fold either — the
-        // tree's own state already says what they say, and two fields carrying one
-        // fact is §1's rule at payload scale.
+    async fn the_three_duplicate_pauses_do_not_fold_into_a_state() {
+        // The tree's own state already says what these say, and two fields carrying
+        // one fact is §1's rule at payload scale. `Other` is the exception and now
+        // folds — see the test below.
         for reason in [
-            PausedReason::Other("workflow rejected metadata".to_string()),
             PausedReason::PendingChanges,
             PausedReason::PendingCommit,
             PausedReason::Diverged,
@@ -1929,6 +1954,56 @@ mod tests {
                 "{reason:?} must leave the row's own state alone"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn an_unexplained_pause_folds_into_a_state_of_its_own() {
+        // qhq-8mgw.36. The case §5's row 3 names and nothing rendered: a package
+        // latest by hash and paused by a workflow rejection resolved to `Latest`,
+        // which `derive_queue` excludes by rule — so the region whose job is to
+        // name every package needing a decision said nothing at all, permanently,
+        // because `Other` is non-transient.
+        //
+        // Still NOT `Unknown`, which the previous form of this test forbade for a
+        // reason that stands: `Unknown` claims the upstream state could not be read,
+        // where here it was read fine and the sync is what stopped.
+        let m = mock_clean_roster();
+        let state = light_phase_state(
+            &m,
+            PausedReason::Other("workflow rejected metadata".to_string()),
+        )
+        .await;
+
+        assert_eq!(state, PackageStateDto::Paused);
+        assert_ne!(
+            state,
+            PackageStateDto::Unknown,
+            "an unread state and a stopped sync are different claims"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unexplained_pause_arrives_settled_like_a_conflict() {
+        // Both come from the watcher's paused map rather than from cached lineage,
+        // so neither owes the network anything. It matters because the queue drops
+        // provisional rows (R2): marked a guess, a pause would be dropped again and
+        // stay as invisible as it was before it had a state at all.
+        let row = light_phase_row(
+            &mock_clean_roster(),
+            Some(PausedReason::Other(
+                "workflow rejected metadata".to_string(),
+            )),
+        )
+        .await;
+
+        assert_eq!(row.state, PackageStateDto::Paused);
+        assert!(!row.provisional, "a pause on disk owes the network nothing");
+    }
+
+    #[test]
+    fn an_unexplained_pause_crosses_the_wire_as_a_discriminator() {
+        let json = serde_json::to_string(&PackageStateDto::Paused).unwrap();
+        assert_eq!(json, r#"{"kind":"paused"}"#);
     }
 
     #[tokio::test]

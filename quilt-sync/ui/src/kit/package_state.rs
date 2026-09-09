@@ -48,6 +48,14 @@ pub enum PackageState {
     },
     NoRemote,
     Unpublished,
+    /// Autosync stopped for this package for a reason no other state covers —
+    /// §5's row 3, which nothing rendered until this existed (qhq-8mgw.36). The
+    /// pauses that DO have a state resolve into it instead, in the light phase.
+    ///
+    /// Declared above `Unknown` on purpose: `#[serde(other)]` swallows any kind
+    /// this build does not name, so a missing arm here would not fail — it would
+    /// silently render "Sync stopped", which is a different and stronger claim.
+    Paused,
     #[serde(other)]
     Unknown,
 }
@@ -161,6 +169,17 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
         // stays UI-owned, and the message renders as detail beside this. No action
         // — the fix is a workflow rule or a misconfiguration, not an operation the
         // app exposes.
+        // Danger, not Attention: `StateTone`'s own split is "waiting on you"
+        // versus "wrong and the row cannot fix it", and there is no resume — see
+        // `commands/main_page.rs`. No action for the same reason; §5's lattice
+        // gives this row `[Dismiss]`, which names an operation the product does
+        // not have, exactly as its `[Merge]` did at row 5.
+        //
+        // Distinct words from `Unknown`'s "Sync stopped" because the claims
+        // differ: there, the upstream state could not be read at all; here it was
+        // read and the syncing is what stopped.
+        (PackageState::Paused, _) => ("Sync paused".to_string(), StateTone::Danger, None),
+
         (PackageState::Unknown, _) => ("Sync stopped".to_string(), StateTone::Danger, None),
     };
 
@@ -257,6 +276,20 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn a_pause_deserialises_to_itself_and_not_to_unknown() {
+        // The one failure mode a missing arm here would NOT produce: an error.
+        // `#[serde(other)]` catches every unnamed kind, so a state the backend
+        // sends and this enum forgets renders "Sync stopped" — a claim about
+        // being unable to read the upstream state, over a package whose state
+        // was read fine. The backend's own wire test pins the other end.
+        let parsed: PackageState = serde_json::from_str(r#"{"kind":"paused"}"#).unwrap();
+        assert!(
+            matches!(parsed, PackageState::Paused),
+            "got {parsed:?}, which is what a missing arm looks like"
+        );
+    }
+
+    #[wasm_bindgen_test]
     fn an_unrecognised_kind_deserialises_to_unknown_rather_than_failing() {
         let parsed: PackageState =
             serde_json::from_str(r#"{"kind":"something_added_next_year"}"#).unwrap();
@@ -280,6 +313,7 @@ mod tests {
             },
             PackageState::NoRemote,
             PackageState::Unpublished,
+            PackageState::Paused,
             PackageState::Unknown,
         ];
         for state in &all {
