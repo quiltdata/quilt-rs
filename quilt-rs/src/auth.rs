@@ -298,7 +298,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let client = auth_io
             .read_client()
             .await?
-            .ok_or(LoginError::Required(Some(host.to_owned())))?;
+            .ok_or(LoginError::NoSession(Some(host.to_owned())))?;
 
         let new_tokens =
             refresh_oauth_tokens(http_client, host, &tokens.refresh_token, &client.client_id)
@@ -317,7 +317,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// be a brief server-side token-validation hiccup (deploy, replica with
     /// stale state, JWKS rotation). Only when two consecutive attempts return
     /// a 4xx do we conclude the refresh token is actually bad and map to
-    /// `LoginError::Required`.
+    /// `LoginError::NoSession`.
     async fn refresh_tokens_with_retry<T: HttpClient>(
         &self,
         http_client: &T,
@@ -333,8 +333,8 @@ impl<S: Storage + Send + Sync> Auth<S> {
             Err(e) => e,
         };
 
-        if matches!(first_err, Error::Login(LoginError::Required(_))) {
-            warn!("❌ No OAuth client registered for {}, login required", host);
+        if matches!(first_err, Error::Login(LoginError::NoSession(_))) {
+            warn!("❌ No OAuth client registered for {}, no session", host);
             return Err(first_err);
         }
         if !is_token_auth_error(&first_err) {
@@ -425,7 +425,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let tokens = auth_io
             .read_tokens()
             .await?
-            .ok_or_else(|| LoginError::Required(Some(host.to_owned())))?;
+            .ok_or_else(|| LoginError::NoSession(Some(host.to_owned())))?;
         let new_tokens = self
             .refresh_tokens_with_retry(http_client, auth_io, host, &tokens)
             .await?;
@@ -564,7 +564,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let tokens = auth_io
             .read_tokens()
             .await?
-            .ok_or_else(|| LoginError::Required(Some(host.to_owned())))?;
+            .ok_or_else(|| LoginError::NoSession(Some(host.to_owned())))?;
 
         if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
             info!("⏳ Access token expired for {}, refreshing", host);
@@ -837,8 +837,8 @@ impl<S: Storage + Send + Sync> Auth<S> {
         match auth_io.read_tokens().await {
             Ok(Some(_)) => {}
             Ok(None) => {
-                warn!("❌ No tokens found for {}, login required", host);
-                return Err(LoginError::Required(Some(host.to_owned())).into());
+                warn!("❌ No tokens found for {}, no session", host);
+                return Err(LoginError::NoSession(Some(host.to_owned())).into());
             }
             Err(e) => {
                 error!("❌ Failed to read tokens for {}: {}", host, e);

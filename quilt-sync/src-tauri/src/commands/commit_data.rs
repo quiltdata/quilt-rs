@@ -103,6 +103,15 @@ pub struct CommitData {
     /// so on a denial the commit affordances cannot succeed and the page
     /// disables them, quoting this as the reason.
     pub no_access_reason: Option<String>,
+    /// There is no session to commit with. Disables the commit affordances
+    /// like a denial does, but the remedy is a sign-in rather than a role
+    /// switch — a separate field, not a second meaning for
+    /// `no_access_reason`.
+    pub no_session: bool,
+    /// The deployment to sign in to, when there is one. `None` for a bare
+    /// bucket on ambient AWS credentials, whose remedy is the file — so it
+    /// cannot carry the blocked state on its own.
+    pub no_session_host: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -307,6 +316,8 @@ async fn get_commit_data_from_model(
     // the commit affordances can be disabled and explained rather than
     // failing on click.
     let mut no_access_reason = None;
+    let mut no_session = false;
+    let mut no_session_host = None;
     let status = match m
         .get_installed_package_status(&installed_package, None)
         .await
@@ -318,6 +329,18 @@ async fn get_commit_data_from_model(
                 installed_package.namespace,
             );
             no_access_reason = denied_mark(m, roles, origin_host).await.reason;
+            m.recompute_local_status(&installed_package, None).await?
+        }
+        // Everything this page shows is local and was not refused.
+        // Propagating routes the frontend to `/login`, taking the unsaved work
+        // with it; the commit action is what refuses.
+        Err(err) if err.is_session_absent() => {
+            tracing::info!(
+                "No session for the remote of {}; opening the commit page on cached lineage",
+                installed_package.namespace,
+            );
+            no_session = true;
+            no_session_host = origin_host.map(ToString::to_string);
             m.recompute_local_status(&installed_package, None).await?
         }
         Err(err) => return Err(err),
@@ -459,6 +482,8 @@ async fn get_commit_data_from_model(
         workflow,
         workflows,
         no_access_reason,
+        no_session,
+        no_session_host,
         entries: entries_list,
         ignored_count,
         unmodified_count,
@@ -851,6 +876,63 @@ mod tests {
             .returning(|_| Ok(std::collections::BTreeMap::new()));
         model.expect_get_workflows_config().returning(|_| Ok(None));
         model
+    }
+
+    /// The page opens on a dead session, by either route; the commit action is
+    /// what refuses.
+    #[tokio::test]
+    async fn commit_data_opens_when_there_is_no_session() -> Result<(), String> {
+        for err in [
+            Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+                "demo.quiltdata.com".parse().unwrap(),
+            )))),
+            Error::from(quilt::Error::S3(quilt::S3Error {
+                host: Some("demo.quiltdata.com".parse().unwrap()),
+                kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+            })),
+        ] {
+            let described = err.to_string();
+            let mut model = denial_contrast_model();
+            model
+                .expect_get_installed_package_status()
+                .return_once(move |_, _| Err(err));
+            model.expect_recompute_local_status().returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    one_local_change(),
+                ))
+            });
+
+            let tracing = crate::telemetry::Telemetry::default();
+            let namespace = ("foo", "bar").into();
+
+            let data =
+                get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
+                    .await
+                    .map_err(|e| format!("page must open without a session ({described}): {e}"))?;
+
+            assert_eq!(
+                data.namespace, "foo/bar",
+                "the page opened on cached lineage ({described})"
+            );
+            // The package's own origin, not whatever host the error carried:
+            // the page states a fact about the package in front of the user.
+            assert_eq!(
+                data.no_session_host.as_deref(),
+                Some("test.quilt.dev"),
+                "the page must name its own deployment so the commit action can \
+                 explain itself, instead of looking ready ({described})"
+            );
+            assert!(
+                data.no_session,
+                "blocked-ness must not depend on there being a host to name ({described})"
+            );
+            assert_eq!(
+                data.no_access_reason, None,
+                "an absent session is not a role denial ({described})"
+            );
+        }
+        Ok(())
     }
 
     /// Opening the page is local work: a role that cannot read the remote

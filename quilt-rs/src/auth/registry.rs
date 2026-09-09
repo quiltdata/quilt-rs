@@ -100,7 +100,7 @@ pub(super) async fn get_registry_url(http_client: &impl HttpClient, host: &Host)
     Ok(url::Host::Domain(
         registry_url
             .domain()
-            .ok_or(LoginError::RequiredRegistryUrl(host.to_owned()))?
+            .ok_or(LoginError::NoRegistryUrl(host.to_owned()))?
             .to_string(),
     ))
 }

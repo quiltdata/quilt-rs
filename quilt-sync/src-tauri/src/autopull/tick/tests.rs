@@ -126,7 +126,7 @@ fn classify_sync_already_up_to_date_is_ok() {
 #[test]
 fn classify_sync_login_required() {
     let host: Host = "catalog.dev".parse().unwrap();
-    let err = Error::from(quilt::Error::Login(quilt::LoginError::Required(Some(
+    let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
         host.clone(),
     ))));
     match classify_sync_err(err) {
@@ -873,7 +873,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         .times(1)
         .returning(move |_| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_dry_run.clone())),
+                quilt::LoginError::NoSession(Some(host_for_dry_run.clone())),
             )))
         });
 
@@ -1015,7 +1015,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         .expect_get_installed_package_status()
         .returning(move |_, _| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_status.clone())),
+                quilt::LoginError::NoSession(Some(host_for_status.clone())),
             )))
         });
 

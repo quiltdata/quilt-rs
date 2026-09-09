@@ -113,7 +113,7 @@ async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
 }
 
 /// `get_credentials_or_refresh` classifies an absent token file as
-/// "login required" rather than letting it surface as a storage error.
+/// "no session" rather than letting it surface as a storage error.
 /// Guards the token-read arm, which the shared `valid_access_token`
 /// helper must not be allowed to short-circuit.
 #[test(tokio::test)]
@@ -128,7 +128,7 @@ async fn test_get_credentials_or_refresh_without_tokens_requires_login() -> Res 
         .await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(Some(ref h)))) if *h == host),
+        matches!(result, Err(Error::Login(LoginError::NoSession(Some(ref h)))) if *h == host),
         "expected LoginRequired naming the host, got: {result:?}"
     );
     Ok(())
@@ -321,7 +321,7 @@ async fn test_credentials_persistent_401_maps_to_login_required() -> Res {
     let result = auth.get_credentials_or_refresh(&client, &host).await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after persistent 4xx, got: {result:?}"
     );
     assert_eq!(
@@ -982,7 +982,7 @@ async fn refresh_roles_maps_a_persistent_401_to_login_required() -> Res {
     let result = auth.refresh_roles(&client, &host).await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after a persistent 401, got: {result:?}"
     );
     assert_eq!(
@@ -1000,7 +1000,7 @@ async fn refresh_roles_maps_a_persistent_401_to_login_required() -> Res {
 /// A registry answers a refused session on the role surface in the body —
 /// `200 {"data":{"me":null}}` — not with a status code. That is the same
 /// "log in again" answer a 401 carries, so it must take the same route:
-/// force-refresh, retry once, then report login required. Left unclassified
+/// force-refresh, retry once, then report the session as absent. Left unclassified
 /// it is a permanent failure nothing routes anywhere, and the role switcher
 /// silently renders nothing.
 #[test(tokio::test)]
@@ -1014,7 +1014,7 @@ async fn refresh_roles_maps_a_persistently_null_me_to_login_required() -> Res {
     let result = auth.refresh_roles(&client, &host).await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after a persistently null `me`, got: {result:?}"
     );
     assert_eq!(
@@ -1035,7 +1035,7 @@ async fn refresh_roles_maps_a_persistently_null_me_to_login_required() -> Res {
 }
 
 /// Same contract on the mutation: a switch attempted against a dead session
-/// reports "login required", not a raw HTTP failure.
+/// reports "no session", not a raw HTTP failure.
 #[test(tokio::test)]
 async fn switch_role_maps_a_persistent_401_to_login_required() -> Res {
     let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
@@ -1047,7 +1047,7 @@ async fn switch_role_maps_a_persistent_401_to_login_required() -> Res {
     let result = auth.switch_role(&client, &host, "ReadOnly").await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after a persistent 401, got: {result:?}"
     );
     Ok(())

@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.38.0-alpha1] - 2026-09-09
+
+### Changed
+
+- **Breaking:** `LoginError::RequiredRegistryUrl` is now `LoginError::NoRegistryUrl`, and renders as `<host> does not advertise a registry URL in its config.json`. It describes a *deployment* that is misconfigured, not a caller who is signed out — signing in cannot change it (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- **Breaking:** `LoginError::Required` is now `LoginError::NoSession`, and renders as `No session for <host>` rather than `Login required`. The variant named a remedy, so every consumer inherited a decision it never made — the desktop navigated away from a half-typed commit because the *name* said an action was needed. Errors describe the state; the surface picks the response. New `Error::is_session_absent()` covers both routes to that state — a credential refused before it was issued, and one issued and then rejected — because a caller choosing what to show does not care which it got (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+### Fixed
+
+- A vend that never happens is now reported as a dead session too. `InvalidCredentials` (v0.36.0) covers a credential S3 *rejects*, which names a code in its response; a provider that refuses to vend at all fails before any request is signed, so it comes back as a code-less dispatch failure that no caller could tell from a transport fault. Recovered at every vending call site — existence checks, object reads, URL resolution, and the four upload legs (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
 ## [v0.37.0] - 2026-09-08
 
 ### Added

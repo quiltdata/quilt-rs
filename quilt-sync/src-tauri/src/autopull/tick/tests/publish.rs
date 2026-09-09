@@ -688,7 +688,7 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_publish.clone())),
+                quilt::LoginError::NoSession(Some(host_for_publish.clone())),
             )))
         });
 

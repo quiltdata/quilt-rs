@@ -253,7 +253,7 @@ impl From<&crate::quilt::Error> for Failure {
         match err {
             // Credentials or tokens that cannot be read or renewed all resolve the
             // same way, whatever broke: log in again.
-            E::Auth(_, _) | E::Login(LoginError::Required(_)) => {
+            E::Auth(_, _) | E::Login(LoginError::NoSession(_)) => {
                 Self::Refusal(RefusalKind::LoginRequired)
             }
             E::Role(RoleError::NotAuthenticated(_)) => Self::Refusal(RefusalKind::LoginRequired),
@@ -276,7 +276,7 @@ impl From<&crate::quilt::Error> for Failure {
                 | WorkflowValidationError::UnsupportedMetaSchema { .. }
                 | WorkflowValidationError::InvalidHandlePattern { .. },
             )
-            | E::Login(LoginError::RequiredRegistryUrl(_))
+            | E::Login(LoginError::NoRegistryUrl(_))
             | E::RemoteCatalog(
                 RemoteCatalogError::Workflow(_)
                 | RemoteCatalogError::InvalidWorkflowsConfig(_)

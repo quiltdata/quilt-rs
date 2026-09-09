@@ -200,8 +200,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
                 Ok(lineage) => lineage,
-                Err(Error::Login(LoginError::Required(_))) => {
-                    return Err(Error::Login(LoginError::Required(
+                Err(Error::Login(LoginError::NoSession(_))) => {
+                    return Err(Error::Login(LoginError::NoSession(
                         lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
                     )));
                 }
@@ -214,6 +214,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 // to tell the user why. Callers distinguish it with
                 // [`Error::is_access_denied`].
                 Err(err) if err.is_access_denied() => return Err(err),
+                // Nor is a rejected credential: the session is dead, and
+                // stale lineage would report the package as fine.
+                Err(err) if err.is_session_absent() => return Err(err),
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
                     lineage

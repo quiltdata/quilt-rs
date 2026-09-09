@@ -14,7 +14,9 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::Object;
 use tokio_stream::Stream;
 
+use crate::Error;
 use crate::Res;
+use crate::error::LoginError;
 use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
 use quilt_uri::S3Uri;
@@ -76,6 +78,26 @@ where
     }
 
     DisplayErrorContext(err).to_string()
+}
+
+/// Recover a `NoSession` the SDK wrapped as a dispatch failure.
+///
+/// Credentials vend lazily inside the provider, so an unauthenticated call
+/// carries no service code and is indistinguishable from a transport fault.
+///
+/// Walks `source()` (a `std` contract) rather than the SDK's own error types.
+/// That the SDK keeps our boxed error reachable there is pinned behaviourally
+/// by `an_absent_session_survives_the_sdk_wrap`; the host comes from the
+/// provider's error, which knows what it was vending for.
+pub(super) fn recover_absent_session(err: &(dyn std::error::Error + 'static)) -> Option<Error> {
+    let mut current = Some(err);
+    while let Some(e) = current {
+        if let Some(Error::Login(LoginError::NoSession(host))) = e.downcast_ref::<Error>() {
+            return Some(Error::Login(LoginError::NoSession(host.clone())));
+        }
+        current = e.source();
+    }
+    None
 }
 
 pub use crate::workflow::{
