@@ -9,8 +9,17 @@ use wasm_bindgen_futures::JsFuture;
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen)]
-    fn tauri_listen_raw(event: &str, handler: &js_sys::Function) -> js_sys::Promise;
+    /// `listen`, bound so a throw comes back as a value. Same hazard as
+    /// [`tauri_invoke_catching`] and a wider blast radius: a component that
+    /// registers a listener on mount cannot be mounted in a test at all while a
+    /// missing `window.__TAURI__` traps the module, which is why the pages that
+    /// listen have historically had to keep their markup in a separate component
+    /// to be testable.
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen, catch)]
+    fn tauri_listen_raw(
+        event: &str,
+        handler: &js_sys::Function,
+    ) -> Result<js_sys::Promise, JsValue>;
 
     /// `invoke`, bound so a throw comes back as a value rather than an uncaught JS
     /// exception. Without `catch`, a missing `window.__TAURI__` (a browser test
@@ -115,7 +124,20 @@ pub fn listen<T: DeserializeOwned + 'static>(
             ),
         }
     });
-    let promise = tauri_listen_raw(&event_name, closure.as_ref().unchecked_ref());
+    let promise = match tauri_listen_raw(&event_name, closure.as_ref().unchecked_ref()) {
+        Ok(promise) => promise,
+        // No bridge: a page loaded outside Tauri, or a test harness. Nothing was
+        // registered, so the handle has nothing to detach.
+        Err(err) => {
+            web_sys::console::error_1(
+                &format!("listen: no Tauri bridge for {event_name}: {err:?}").into(),
+            );
+            closure.forget();
+            return EventListener {
+                state: SendWrapper::new(Rc::new(RefCell::new(ListenerState::Done))),
+            };
+        }
+    };
     closure.forget();
 
     // `SendWrapper` lets the !Send JS handle satisfy `on_cleanup`'s
@@ -191,5 +213,17 @@ mod tests {
     #[wasm_bindgen_test]
     fn invoking_without_a_tauri_bridge_does_not_throw() {
         super::invoke_and_forget("report_ui_panic", &serde_json::json!({"message": "x"}));
+    }
+
+    /// Registering a listener where no bridge exists must be silent for the same
+    /// reason, and it is a wider one: a page that registers a listener cannot be
+    /// mounted in a test at all while this throws, because the trap takes the
+    /// module down rather than arriving as an error the caller can log.
+    #[wasm_bindgen_test]
+    fn listening_without_a_tauri_bridge_does_not_throw() {
+        drop(super::listen::<serde_json::Value>(
+            "package-status-changed",
+            |_| (),
+        ));
     }
 }

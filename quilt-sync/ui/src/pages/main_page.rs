@@ -1000,9 +1000,93 @@ pub fn MainPage() -> impl IntoView {
             />
         }
             .into_any()>
+            <PackageStatusListener reload=reload />
             <MainPageRegions packages=packages accounts=accounts reload=reload />
         </PageLayout>
     }
+}
+
+/// How long news is allowed to gather before the page asks the backend again.
+///
+/// A watcher tick reports every package, so news about several arrives as several
+/// events a few milliseconds apart. Without a window, each would restart the read
+/// the last one began.
+const STATUS_BURST: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Refetch decisions for the watcher's package-status events.
+///
+/// **Decisions only, never rendering** — so nothing drawn can go stale from what
+/// is remembered here. v1 makes the same split for the same reason
+/// (`installed_packages_list.rs:170-175`).
+#[derive(Clone, Copy)]
+struct StatusWatch {
+    /// The last fingerprint acted on, per namespace.
+    seen: StoredValue<HashMap<String, String>>,
+    timer: StoredValue<Option<TimeoutHandle>>,
+    reload: Trigger,
+}
+
+impl StatusWatch {
+    fn new(reload: Trigger) -> Self {
+        let watch = Self {
+            seen: StoredValue::new(HashMap::new()),
+            timer: StoredValue::new(None),
+            reload,
+        };
+        // The pending window must not outlive the page —
+        // `components/set_remote_popup.rs`'s shape for the same hazard.
+        on_cleanup(move || {
+            if let Some(Some(handle)) = watch.timer.try_get_value() {
+                handle.clear();
+            }
+        });
+        watch
+    }
+
+    /// Act on one event, if it reports anything the last one for its namespace
+    /// did not.
+    ///
+    /// A namespace never seen counts as news. There is nothing to seed from — the
+    /// package payload carries no fingerprint — and a swallowed first sighting
+    /// would be exactly the pull that completed while the page was open.
+    fn observe(self, event: &commands::PackageStatusEvent) {
+        let known = self
+            .seen
+            .with_value(|seen| seen.get(&event.namespace) == Some(&event.fingerprint));
+        if known {
+            return;
+        }
+        self.seen.update_value(|seen| {
+            seen.insert(event.namespace.clone(), event.fingerprint.clone());
+        });
+        if let Some(handle) = self.timer.get_value() {
+            handle.clear();
+        }
+        let reload = self.reload;
+        if let Ok(handle) = set_timeout_with_handle(move || reload.notify(), STATUS_BURST) {
+            self.timer.set_value(Some(handle));
+        }
+    }
+}
+
+/// Ask the backend again when the watcher reports a package's upstream state has
+/// changed.
+///
+/// Renders nothing; it exists for the subscription, which is dropped with it. Its
+/// own component for [`AutosyncListener`](autosync)'s reason: registered once,
+/// rather than rebuilt with a payload.
+///
+/// The page read this drives is the one the list rows AND the attention queue are
+/// derived from, so a row cannot be patched in place the way v1 patches its own
+/// (`installed_packages_list.rs:427-442`) — the queue would keep the old cause.
+#[component]
+fn PackageStatusListener(reload: Trigger) -> impl IntoView {
+    let watch = StatusWatch::new(reload);
+    let listener = crate::tauri::listen::<commands::PackageStatusEvent>(
+        commands::PACKAGE_STATUS_EVENT,
+        move |event| watch.observe(&event),
+    );
+    on_cleanup(move || drop(listener));
 }
 
 #[cfg(test)]
@@ -3494,6 +3578,137 @@ mod tests {
         assert!(
             text.contains("Files that exist only in a bucket are not included."),
             "got: {text}"
+        );
+    }
+
+    /// One status event, carrying the two fields a refetch decision reads.
+    fn status_event(namespace: &str, fingerprint: &str) -> commands::PackageStatusEvent {
+        commands::PackageStatusEvent {
+            namespace: namespace.to_string(),
+            status: "behind".to_string(),
+            has_changes: false,
+            fingerprint: fingerprint.to_string(),
+        }
+    }
+
+    /// The page's exact wiring: a `StatusWatch` over the trigger a counting read
+    /// tracks. `autosync`'s `the_pages_refresh_asks_the_backend_again` pattern, for
+    /// its stated reason — a refetch's only observable is the fetch.
+    ///
+    /// The watch is built inside the mount because its `StoredValue`s need an
+    /// owner, and handed back out because it is `Copy`.
+    fn mount_status_watch() -> (StatusWatch, RwSignal<i32>) {
+        let calls = RwSignal::new(0);
+        let out: std::rc::Rc<std::cell::Cell<Option<StatusWatch>>> =
+            std::rc::Rc::new(std::cell::Cell::new(None));
+        let sink = std::rc::Rc::clone(&out);
+        mount(move || {
+            let reload = Trigger::new();
+            let packages = LocalResource::new(move || {
+                reload.track();
+                calls.update(|n| *n += 1);
+                async move {
+                    Ok::<MainPagePackagesData, String>(MainPagePackagesData { packages: vec![] })
+                }
+            });
+            sink.set(Some(StatusWatch::new(reload)));
+            view! {
+                <Transition fallback=|| ()>
+                    {move || {
+                        Suspend::new(async move {
+                            let _ = packages.await;
+                        })
+                    }}
+                </Transition>
+            }
+        });
+        (out.get().expect("the watch, built during the mount"), calls)
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_first_sighting_asks_the_backend_again() {
+        // The package payload carries no fingerprint, so there is nothing to seed
+        // the watch from: a namespace it has never seen must count as news, or the
+        // pull that completes while the page is open — the case this exists for —
+        // is exactly the one it would swallow.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+        assert_eq!(before, 1, "the first read, before any event");
+
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "a first sighting must ask the backend again"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_changed_fingerprint_asks_the_backend_again() {
+        // The bug this exists for: autopull brings a package up to date while the
+        // page is open, and the rows and the queue derived from them keep the
+        // values read at mount until something asks again.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        let before = calls.get_untracked();
+
+        watch.observe(&status_event("user/pkg", "fp-2"));
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "a changed tree must ask the backend again"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_repeated_fingerprint_leaves_the_page_alone() {
+        // `report_status` fires per package per TICK, not per change, and carries
+        // the fingerprint precisely so a consumer can discard repeats. Acting on
+        // every event would re-run the two-phase package read — heavy phase,
+        // network and hashing — at tick rate.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        let before = calls.get_untracked();
+
+        for _ in 0..3 {
+            watch.observe(&status_event("user/pkg", "fp-1"));
+        }
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked(),
+            before,
+            "an unchanged tree must not rebuild the page"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn one_ticks_burst_costs_one_refetch() {
+        // A tick reports every package, so news about three of them arrives as
+        // three events a few milliseconds apart. Each restarting the read would
+        // leave the page fetching its own payload three times over.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+
+        watch.observe(&status_event("user/a", "fp-a"));
+        watch.observe(&status_event("user/b", "fp-b"));
+        watch.observe(&status_event("user/c", "fp-c"));
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "one tick's news costs one refetch, not one per package"
         );
     }
 }
