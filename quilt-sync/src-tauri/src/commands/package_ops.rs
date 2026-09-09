@@ -59,11 +59,8 @@ pub async fn package_commit(
 ) -> Result<String, String> {
     let msg_init = format!("Committing package {namespace}");
     let msg_ok = format!("Successfully committed {namespace}");
-    // Committing is not offline — the workflow gate reads the bucket's config
-    // before any manifest is written — so a dead session lands here, on the
-    // screen where the user has just typed a message and metadata. Carry the
-    // remedy; a role denial keeps its own message from the commit affordances
-    // rather than borrowing the push path's "can't write here".
+    // Committing is not offline (the workflow gate reads the bucket's config),
+    // so a dead session lands here, where the user's typed work is.
     let msg_err = |err: &Error| {
         auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
     };
@@ -162,21 +159,11 @@ fn write_failure_message(action: &str, err: &Error) -> String {
     }
 }
 
-/// The remedy sentence for a failure that means "there is no session to act
-/// with", or `None` when the error is something else.
+/// Remedy sentence for "there is no session to act with", or `None` otherwise.
 ///
-/// This is a *toast* path, not the error page `to_frontend_string` feeds. It
-/// cannot navigate — the user is standing on a screen holding work they have
-/// typed — so the message carries the remedy and names the deployment itself.
-/// That is the surface deciding, which is why the decision lives here and not
-/// in the error.
-///
-/// One sentence covers both routes to the state, keyed on whether there is a
-/// **deployment** rather than on how the failure was noticed. A named
-/// deployment can be signed back into; ambient AWS credentials can only be
-/// fixed in the file. Whether the credential was refused before being issued
-/// or issued and then rejected is our plumbing, and the user signs in either
-/// way.
+/// A toast cannot navigate, so the message carries the remedy itself. Keyed on
+/// whether there is a deployment: one can be signed into, ambient credentials
+/// can only be fixed in the file.
 fn auth_failure_message(err: &Error) -> Option<String> {
     if !err.is_session_absent() {
         return None;

@@ -101,20 +101,12 @@ pub(super) fn classify_s3_error(
     }
 }
 
-/// Turn a failed AWS call into our error — asking first whether it is actually
-/// an auth failure in disguise.
+/// Our error for a failed AWS call: a refused vend re-raised as `NoSession`
+/// (see [`recover_absent_session`]), anything else classified as S3 trouble.
+/// The wrap chain goes to the log, not the message.
 ///
-/// Credentials are vended lazily inside the SDK provider, so a signed-out
-/// session surfaces as a dispatch failure rather than as anything auth-shaped
-/// (see [`recover_absent_session`]). Classifying it as S3 trouble is what makes
-/// a dead session read as a storage error and retry silently in the watcher, so
-/// every path that vends checks for it before classifying — and keeps the full
-/// wrap chain in the log, where it is useful, instead of in the message, where
-/// it is noise.
-///
-/// A login failure means the same thing on every path, unlike a denial (which
-/// is a *read* fact on one path and a *write* fact on another), so no path opts
-/// out.
+/// Every vending path uses this — unlike a denial, a missing session means the
+/// same thing on all of them.
 pub(super) fn s3_error_or_session_loss<E>(
     err: SdkError<E>,
     host: Option<&Host>,
@@ -1567,17 +1559,9 @@ mod tests {
         Ok(())
     }
 
-    /// Builds an S3 client whose credential provider will refuse, makes a real
-    /// call through it, and asserts the refusal is still recognizable on the
-    /// way out.
-    ///
-    /// This is the pin for the whole fix, and it is deliberately behavioural.
-    /// The recovery walks `source()` — a `std` contract — but what it *depends*
-    /// on is that the AWS SDK keeps our boxed error reachable through that
-    /// chain rather than rendering it to a string somewhere in the wrap. No
-    /// assertion about error shapes can pin that; only making the call can. If
-    /// a dependency bump ever severs the chain, this test fails while a
-    /// shape-asserting one would keep passing over a fix that no longer works.
+    /// Behavioural on purpose: what the recovery depends on is the SDK keeping
+    /// our boxed error reachable through `source()`, which only a real call can
+    /// show. A shape assertion would pass over a severed chain.
     #[test(tokio::test)]
     async fn an_absent_session_survives_the_sdk_wrap() -> Res<()> {
         use std::str::FromStr;

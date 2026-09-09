@@ -320,13 +320,9 @@ async fn get_commit_data_from_model(
             no_access_reason = denied_mark(m, roles, origin_host).await.reason;
             m.recompute_local_status(&installed_package, None).await?
         }
-        // A dead session is the same shape as a denial for this page's
-        // purposes: the remote answer is unavailable, everything the page
-        // actually shows — the working-tree changes, the message, the
-        // metadata — is local and was not refused. Propagating it would send
-        // the frontend to `/login` and take the page away, which is the one
-        // thing this page must not do: it is where the user's unsaved work
-        // lives. The commit *action* still refuses, and says why.
+        // Everything this page shows is local and was not refused.
+        // Propagating routes the frontend to `/login`, taking the unsaved work
+        // with it; the commit action is what refuses.
         Err(err) if err.is_session_absent() => {
             tracing::info!(
                 "No session for the remote of {}; opening the commit page on cached lineage",
@@ -867,16 +863,8 @@ mod tests {
         model
     }
 
-    /// The same rule for a dead session, and the reason this change exists.
-    ///
-    /// Everything the Commit page shows is local — the working-tree changes,
-    /// the message, the metadata the user has been typing. Propagating a
-    /// session error instead of recomputing would hand the frontend a state it
-    /// reports by navigating to `/login`, taking the page and the unsaved work
-    /// with it. The page opens; the commit *action* is what refuses.
-    ///
-    /// Pinned for **both** routes to the state, since the whole point of the
-    /// predicate is that a caller does not care which one it got.
+    /// The page opens on a dead session, by either route; the commit action is
+    /// what refuses.
     #[tokio::test]
     async fn commit_data_opens_when_there_is_no_session() -> Result<(), String> {
         for err in [

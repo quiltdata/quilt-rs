@@ -80,29 +80,15 @@ where
     DisplayErrorContext(err).to_string()
 }
 
-/// Recover a `LoginError::NoSession` that the AWS SDK wrapped on its way out.
+/// Recover a `NoSession` the SDK wrapped as a dispatch failure.
 ///
-/// Credentials are vended *lazily*, inside the SDK's credential provider, so
-/// "you are signed out" does not reach a call site as an auth error — the SDK
-/// boxes it as a `CredentialsError`, wraps that in a `ConnectorError`, and
-/// hands back an `SdkError::DispatchFailure` that is indistinguishable at the
-/// boundary from a transport fault. Left alone it flattens through
-/// [`describe_sdk_error`]'s transport tier into a diagnostic string, and every
-/// consumer that branches on error kind sees generic storage trouble: the
-/// desktop watcher retries it silently as a transient, and the UI has nothing
-/// to offer the user but the wrap chain.
+/// Credentials vend lazily inside the provider, so an unauthenticated call
+/// carries no service code and is indistinguishable from a transport fault.
 ///
-/// So each call path that can hit an unauthenticated vend asks this first, and
-/// re-raises the typed error instead of classifying it as S3 trouble.
-///
-/// **This walks `source()`, not the SDK's error types.** Downcasting the
-/// intermediate `ConnectorError` / `CredentialsError` would pin us to shapes
-/// that are internal to the SDK; the source chain is a `std` contract. What we
-/// still depend on — and what no shape assertion could pin either — is that the
-/// SDK *preserves* our boxed error as a source rather than stringifying it. A
-/// dependency bump can sever that silently, so the pin for this is behavioural:
-/// [`an_absent_session_survives_the_sdk_wrap`](#tests) builds the real wrap and
-/// asserts recovery, and fails if the chain is ever broken.
+/// Walks `source()` (a `std` contract) rather than the SDK's own error types.
+/// That the SDK keeps our boxed error reachable there is pinned behaviourally
+/// by `an_absent_session_survives_the_sdk_wrap`; the host comes from the
+/// provider's error, which knows what it was vending for.
 pub(super) fn recover_absent_session(err: &(dyn std::error::Error + 'static)) -> Option<Error> {
     let mut current = Some(err);
     while let Some(e) = current {

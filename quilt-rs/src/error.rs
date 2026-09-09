@@ -218,25 +218,15 @@ pub enum RemoteCatalogError {
 
 #[derive(Error, Debug, PartialEq)]
 pub enum LoginError {
-    /// No usable session for this deployment: either nothing is stored for it,
-    /// or what was stored could not be renewed. `None` when the call carried no
-    /// deployment — a bare bucket reached with ambient AWS credentials.
+    /// No usable session for this deployment; `None` when the call carried no
+    /// deployment — a bare bucket on ambient AWS credentials.
     ///
-    /// **Describes a state, and deliberately does not name a remedy.** The
-    /// remedy is not the library's to pick: a page with nothing local to show
-    /// sends the user to sign in, a page holding their work says so in place,
-    /// the background watcher records it and stays quiet, and the CLI prints
-    /// the command to run. A variant called `Required` had made that choice for
-    /// all four — the desktop navigated away from a half-typed commit because
-    /// the *name* said an action was needed, not because that surface decided
-    /// one was.
+    /// Names the state, not a remedy: each surface answers it differently.
     #[error("No session{}", .0.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
     NoSession(Option<Host>),
 
-    /// The deployment answered, but its `config.json` names no registry URL —
-    /// so there is nothing to ask for credentials. A *misconfiguration of the
-    /// deployment*, not a fact about the caller's session: signing in cannot
-    /// change it, which is why it must not be reported as a missing session.
+    /// The deployment answered but its `config.json` names no registry. A
+    /// misconfiguration, not a missing session: signing in cannot change it.
     #[error("{0} does not advertise a registry URL in its config.json")]
     NoRegistryUrl(Host),
 }
@@ -437,15 +427,10 @@ impl Error {
         matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
     }
 
-    /// Returns `true` when there is no usable session, by **either** route:
-    /// the credential was refused before it was ever issued
-    /// ([`LoginError::NoSession`]), or it was issued and then rejected by S3
-    /// ([`S3ErrorKind::InvalidCredentials`]).
-    ///
-    /// One predicate because it is one state. The two routes differ in where
-    /// the failure was noticed, which is an implementation fact: a caller
-    /// deciding what to show a user needs the state, and a caller that wanted
-    /// to tell the routes apart would be reporting our plumbing.
+    /// No usable session, by either route — refused before issue
+    /// ([`LoginError::NoSession`]) or issued and rejected
+    /// ([`S3ErrorKind::InvalidCredentials`]). One predicate because callers act
+    /// on the state; which route it took is where the failure was noticed.
     #[must_use]
     pub fn is_session_absent(&self) -> bool {
         self.is_invalid_credentials() || matches!(self, Error::Login(LoginError::NoSession(_)))

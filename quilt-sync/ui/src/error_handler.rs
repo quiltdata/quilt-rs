@@ -6,25 +6,16 @@ use crate::commands;
 use crate::components::buttons;
 use crate::components::{Layout, Notification};
 
-/// Handle a command error that left a surface with **nothing to render**, by
-/// navigating somewhere the user can act or by showing an inline error page.
+/// Handle a command error that left the surface with nothing to render.
 ///
-/// - `session_absent` → navigates to `/login`, carrying the host and a `back`
-///   target
-/// - `setup_required` → navigates to `/setup`
-/// - anything else → renders an error page inline (preserves the original URL
-///   so a browser reload retries the failed page). This is the right answer for
-///   any state a sign-in cannot fix — `registry_url_missing`, say, where the
-///   deployment names no registry and only its administrator can help — so
-///   such kinds are deliberately left unmatched rather than given a route.
+/// - `session_absent` → `/login`, carrying the host and a `back` target
+/// - `setup_required` → `/setup`
+/// - anything else → inline error page (keeps the URL, so reload retries)
 ///
-/// **Navigating is this function's policy, not the error's instruction.** The
-/// backend reports a *state* (`session_absent`); routing away from it is only
-/// right because every caller here has already failed to load and has nothing
-/// of its own left on screen. A surface that can still render — from a cached
-/// manifest, or a form the user has been typing into — must not reach this
-/// with a session error at all; it handles the state where its local fallback
-/// lives, as the commit page and the packages list do.
+/// Navigating is this function's policy, not the error's instruction: every
+/// caller here has already failed to load. A surface with a local fallback
+/// handles the state there and never arrives. Kinds a sign-in cannot fix —
+/// `registry_url_missing` — are left unmatched on purpose.
 pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification>>) -> AnyView {
     if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(error) {
         match parsed.kind.as_str() {

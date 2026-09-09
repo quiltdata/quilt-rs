@@ -459,11 +459,8 @@ mod tests {
     use crate::workflow::WorkflowInfo;
     use test_log::test;
 
-    /// A `Remote` whose very first call — the gate's existence check — reports a
-    /// signed-out session, and whose every other method panics.
-    ///
-    /// The panics are the point: if the gate ever reaches past `exists` on a
-    /// absent session, this stub says so loudly instead of quietly passing.
+    /// Reports no session on `exists` and panics on everything else — the gate
+    /// reaching past `exists` is itself the failure.
     struct SignedOutRemote {
         host: Host,
     }
@@ -517,15 +514,8 @@ mod tests {
         }
     }
 
-    /// The seam above the recovery, not the recovery itself.
-    ///
-    /// Typing an absent session at the S3 boundary buys nothing if a frame in
-    /// between re-wraps it — the failure mode that made the role-switcher
-    /// change a no-op through four layers, every test green. The workflow gate
-    /// is the caller that matters here: it makes the commit path's first S3
-    /// call, so a signed-out commit arrives through it. Assert the error the
-    /// watcher and the UI will actually branch on, at the point they receive
-    /// it.
+    /// The seam above the recovery: the gate makes the commit path's first S3
+    /// call, so it must hand the typed error on unchanged.
     #[test(tokio::test)]
     async fn the_gate_propagates_an_absent_session_untouched() -> Res<()> {
         use std::str::FromStr;

@@ -227,21 +227,13 @@ impl Error {
         }
     }
 
-    /// Serialize a *recognized state* as JSON so the frontend can decide what to
-    /// do about it. Falls back to `Display` for everything else.
+    /// Serialize a recognized state as JSON for the frontend; `Display`
+    /// otherwise.
     ///
-    /// The kinds name **what happened**, never what to do — `session_absent`,
-    /// not `login_required`. Which response a state deserves depends on the
-    /// surface receiving it, and only the surface knows: one with nothing local
-    /// to render can send the user to sign in, one holding their unsaved work
-    /// must not. Naming the action here made that choice for every caller at
-    /// once, and the caller that suffered for it was the commit page.
+    /// Kinds name the state, never the action — which response it deserves is
+    /// the receiving surface's call.
     pub fn to_frontend_string(&self) -> String {
         match self {
-            // Both routes to a dead session report the same state. They differ
-            // only in where it was noticed — the credential was refused before
-            // it was issued, or issued and then rejected — which is our
-            // plumbing, not a difference the user can act on.
             Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
                 let mut json = serde_json::json!({
                     "kind": "session_absent",
@@ -252,13 +244,9 @@ impl Error {
                 }
                 json.to_string()
             }
-            // Its own kind, and deliberately not `session_absent`: the
-            // deployment answered and named no registry, so there is no
-            // session to be missing and nothing a sign-in would change.
-            // Reported as an absent session it would send the user to `/login`
-            // over a broken `config.json` — a page that cannot help, for a
-            // problem only whoever runs the deployment can fix. Unrecognized
-            // by the router on purpose, which renders it in place.
+            // Not `session_absent`: the deployment answered, so no session is
+            // missing and a sign-in cannot help. Unmatched by the router,
+            // which renders it in place.
             Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host))) => {
                 serde_json::json!({
                     "kind": "registry_url_missing",
@@ -290,11 +278,8 @@ fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
             "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
                 .to_string(),
         ),
-        // A stale session on a Quilt deployment is the same dead end as a
-        // refused vend, so both report the one `session_absent` state rather
-        // than a kind each. What the receiving surface does about it is its
-        // own call. Only user-initiated commands reach this — autosync reports
-        // a login episode on its own event channel.
+        // Same state as a refused vend, so the same kind. Only user-initiated
+        // commands reach this; autosync reports on its own event channel.
         quilt::S3ErrorKind::InvalidCredentials(_) => (
             "session_absent",
             format!(
