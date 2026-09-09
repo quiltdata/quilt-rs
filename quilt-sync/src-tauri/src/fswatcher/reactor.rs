@@ -1,13 +1,18 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use quilt_uri::Namespace;
 use tauri::Manager;
 use tokio::sync::mpsc;
 
 use crate::autopull::PackageStatusEvent;
+use crate::autopull::SharedAutosyncSettings;
+use crate::autopull::SharedWindowMode;
 use crate::autopull::StatusReporter;
+use crate::autopull::cadence_for_mode;
 use crate::autopull::reporter::SubscriberErrorEvent;
 use crate::fswatcher::settings::SharedFsWatcherSettings;
 use crate::fswatcher::subscriber::MappingSignal;
@@ -25,15 +30,52 @@ const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 
 pub(crate) struct ReactorState {
     pub settings: SharedFsWatcherSettings,
+    /// Read for the pull cadence only: the signal bound is the tick's own
+    /// cadence, not a second knob nobody would keep in step with it.
+    pub autosync: SharedAutosyncSettings,
+    pub window_mode: SharedWindowMode,
     pub reporter: Arc<dyn StatusReporter>,
     pub signal_rx: mpsc::Receiver<MappingSignal>,
     pub subscription: Subscription,
+    /// When each namespace was last recomputed *on a signal*. Pruned by
+    /// reconcile, so an uninstalled package does not linger here.
+    pub last_signalled: BTreeMap<Namespace, Instant>,
     /// Kind of the last `Err` returned by `reconcile`. A failed `add()`
     /// doesn't insert into the subscription's watched set, so the next
     /// reconcile retries the same namespaces and fails the same way; this
     /// marker keeps us from emitting a fresh `inotify_limit` toast every
     /// 5 s. Cleared whenever a reconcile returns `Ok`.
     pub last_reconcile_error_kind: Option<&'static str>,
+}
+
+impl ReactorState {
+    /// Whether this signal may spend a status walk, and record it if so.
+    ///
+    /// One walk per namespace per cadence window, the *first* signal in the
+    /// window taking it — so a signal advances the next walk rather than adding
+    /// one, and the walk count never scales with reported filesystem activity.
+    ///
+    /// Bounds only the walks the *watcher* causes: it does not coordinate with
+    /// the tick's own walk, so a signal just after a tick still takes one — at
+    /// most one extra per window, never one per event.
+    async fn claim_signal(&mut self, namespace: &Namespace, now: Instant) -> bool {
+        let cadence = {
+            let settings = self.autosync.read().await;
+            let mode = *self.window_mode.read().await;
+            cadence_for_mode(&settings.pull, mode)
+        };
+        if let Some(last) = self.last_signalled.get(namespace)
+            && now.duration_since(*last) < cadence
+        {
+            trace!(
+                "fswatcher: coalescing signal for {namespace} (within {}s cadence)",
+                cadence.as_secs(),
+            );
+            return false;
+        }
+        self.last_signalled.insert(namespace.clone(), now);
+        true
+    }
 }
 
 pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
@@ -64,6 +106,9 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
             }
             Some(signal) = state.signal_rx.recv() => {
                 if !state.settings.read().await.enabled {
+                    continue;
+                }
+                if !state.claim_signal(&signal.namespace, Instant::now()).await {
                     continue;
                 }
                 let model = app_handle.state::<Model>();
@@ -145,6 +190,12 @@ async fn reconcile_from_model(state: &mut ReactorState, app_handle: &tauri::AppH
     let Some(mappings) = snapshot_mappings(&*model).await else {
         return;
     };
+    // Reconcile is the one place that learns a package is gone, so it is where
+    // the per-namespace signal clock is pruned. Left alone, the map would keep
+    // an entry per package ever watched in the session.
+    let live: std::collections::BTreeSet<Namespace> =
+        mappings.iter().map(|(ns, _)| ns.clone()).collect();
+    state.last_signalled.retain(|ns, _| live.contains(ns));
     match state.subscription.reconcile(mappings) {
         Ok(()) => {
             state.last_reconcile_error_kind = None;
@@ -177,6 +228,79 @@ mod tests {
     use crate::autopull::reporter::test_support::RecordingReporter;
     use crate::model::MockQuiltModel;
     use crate::quilt;
+
+    /// A `ReactorState` whose only interesting parts are the cadence inputs and
+    /// the signal clock.
+    fn state_with_cadence(secs: u64) -> ReactorState {
+        let reporter: Arc<dyn StatusReporter> = Arc::new(RecordingReporter::default());
+        let (tx, rx) = mpsc::channel::<MappingSignal>(8);
+        let subscription = Subscription::new(Duration::from_millis(50), tx, &reporter)
+            .expect("debouncer should build");
+        let mut autosync = crate::autopull::AutosyncSettings::default();
+        autosync.pull.focused_secs = secs;
+        ReactorState {
+            settings: Arc::new(tokio::sync::RwLock::new(
+                crate::fswatcher::FsWatcherSettings::default(),
+            )),
+            autosync: Arc::new(tokio::sync::RwLock::new(autosync)),
+            window_mode: Arc::new(tokio::sync::RwLock::new(
+                crate::autopull::WindowMode::Focused,
+            )),
+            reporter,
+            signal_rx: rx,
+            subscription,
+            last_signalled: BTreeMap::new(),
+            last_reconcile_error_kind: None,
+        }
+    }
+
+    /// The rate bound: a signal buys at most one walk per namespace per cadence
+    /// window, and the *first* one is served — so a signal advances the next
+    /// walk rather than delaying this one.
+    #[tokio::test]
+    async fn a_signal_buys_one_walk_per_cadence_window() {
+        let mut state = state_with_cadence(30);
+        let ns: Namespace = ("acme", "demo").into();
+        let t0 = Instant::now();
+
+        assert!(
+            state.claim_signal(&ns, t0).await,
+            "the first signal in a window must be served immediately",
+        );
+        assert!(
+            !state
+                .claim_signal(&ns, t0 + Duration::from_millis(120))
+                .await,
+            "a second signal 120ms later must not buy a second walk — this is the \
+             debouncer's flush interval, and answering each one is the defect",
+        );
+        assert!(
+            !state.claim_signal(&ns, t0 + Duration::from_secs(29)).await,
+            "still inside the window",
+        );
+        assert!(
+            state.claim_signal(&ns, t0 + Duration::from_secs(30)).await,
+            "a full cadence later the namespace is eligible again",
+        );
+    }
+
+    /// The bound is per namespace: one busy package must not starve another.
+    #[tokio::test]
+    async fn the_bound_is_per_namespace() {
+        let mut state = state_with_cadence(30);
+        let busy: Namespace = ("acme", "busy").into();
+        let other: Namespace = ("acme", "other").into();
+        let t0 = Instant::now();
+
+        assert!(state.claim_signal(&busy, t0).await);
+        assert!(!state.claim_signal(&busy, t0 + Duration::from_secs(1)).await);
+        assert!(
+            state
+                .claim_signal(&other, t0 + Duration::from_secs(1))
+                .await,
+            "a different package's first signal must not be charged to the busy one",
+        );
+    }
 
     fn changes_with_one_file(kind: &'static str) -> BTreeMap<PathBuf, quilt::lineage::Change> {
         let mut changes = BTreeMap::new();
