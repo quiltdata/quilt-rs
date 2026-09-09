@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.1-alpha1] - 2026-09-09
+
+### Fixed
+
+- QuiltSync no longer works continuously while you are not using it. Checking a package reads every file in it, and that reading looked to the folder watcher like you had changed something, so each check scheduled another one. Left idle with eleven installed packages, the watcher asked to re-read a package about 240 times a minute where the sync interval calls for 14 — constant CPU and disk, and 21 times the log volume, for an app that sits in the background all day (<https://github.com/quiltdata/quilt-rs/pull/886>)
+- Files you have excluded in `.quiltignore` no longer cause a package to be re-read. A tool churning a cache directory inside a package cost a full read of that package, which then skipped the very directory it had been woken for (<https://github.com/quiltdata/quilt-rs/pull/886>)
+
+### Changed
+
+- While you are actively saving files, the packages list can now be up to one sync interval behind. A save brings the next check forward rather than adding one, so a burst of edits no longer means a burst of re-reads. Opening or moving to a page still reads fresh, and nothing is published until the folder has been quiet for the configured window either way (<https://github.com/quiltdata/quilt-rs/pull/886>)
+
 ## [v0.22.0] - 2026-09-08
 
 ### Added
