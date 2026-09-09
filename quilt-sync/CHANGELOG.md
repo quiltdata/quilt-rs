@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It lists your packages with each one's state and when it last changed, on a page built to hold everything that needs you in one place. It also shows you whether background syncing is running and when it will next run, and lets you turn either direction on or off from the page. The rest of that page — the attention queue, the Accounts card, recent files, and filtering — arrives in later releases, so it is sparse for now. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
+
 ## [v0.22.0] - 2026-09-08
 
 ### Added
@@ -21,10 +27,6 @@
 ### Changed
 
 - A manual Pull is confirmed by that report instead of "Successfully pulled package …", which said the same thing twice over. A pull with nothing to report — a revision that moved no files — still shows the line (<https://github.com/quiltdata/quilt-rs/pull/898>)
-
-### Added
-
-- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It lists your packages with each one's state and when it last changed, on a page built to hold everything that needs you in one place. It also shows you whether background syncing is running and when it will next run, and lets you turn either direction on or off from the page. The rest of that page — the attention queue, the Accounts card, recent files, and filtering — arrives in later releases, so it is sparse for now. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
 
 ### Fixed
 
