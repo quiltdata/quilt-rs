@@ -6,8 +6,14 @@ license.workspace = true
 homepage.workspace = true
 publish = false
 
+# The shared modules live here, so `dead_code` stops firing per binary — see
+# `src/lib.rs` for why that was the only way to retire the annotations.
+[lib]
+name = "quilt_sync_ui"
+path = "src/lib.rs"
+
 # Both declared, because adding one `[[bin]]` disables auto-discovery of the
-# other. `gallery` sits in `src/`, not `src/bin/`, so `mod kit;` resolves.
+# other. `gallery` sits in `src/`, not `src/bin/`.
 [[bin]]
 name = "quilt-sync-ui"
 path = "src/main.rs"

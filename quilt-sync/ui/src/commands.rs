@@ -622,11 +622,9 @@ pub enum PausedReasonData {
 /// autosync pause that resolves to no state of its own is filed as
 /// qhq-8mgw.36.
 ///
-/// `expect` rather than `allow`, and only outside `cfg(test)`: the wire-form
-/// test does read these fields, so the attribute has to be absent there to stay
-/// fulfilled. In the shipped build it hard-errors the moment a real caller
-/// appears, so the suppression cannot outlive its reason.
-#[cfg_attr(not(test), expect(dead_code))]
+/// No suppression any more: this is a library module, and `dead_code` does not
+/// flag an unused `pub` item in one, because its callers are outside it
+/// (qhq-8mgw.20). It carried a `cfg_attr`-guarded `expect` until then.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedPackageData {
@@ -641,13 +639,14 @@ pub struct MainPageWatcherData {
     pub pull: ToggleStateData,
     pub publish: ToggleStateData,
     /// The queue reads the resolved package state, never this pause map — R4
-    /// retired that reader before it was ever written. Carried and pinned
-    /// here regardless; no reader in this build — hence the field-level
-    /// suppression, `expect`-shaped so it reports itself the moment one
-    /// arrives. Absent under `cfg(test)`, where the wire-form test reads the
-    /// field. Surfacing an autosync pause that resolves to no state of its
-    /// own (§5 lattice row 3, "Paused — other") is filed as qhq-8mgw.36.
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// retired that reader before it was ever written. Carried and pinned here
+    /// regardless, and still read by nothing but the wire-form test.
+    ///
+    /// §5's lattice row 3, "Paused — other", was the case this list looked like
+    /// the answer to. It was settled instead by the LIGHT PHASE folding an
+    /// unexplained pause into `PackageState::Paused` (qhq-8mgw.36), so the queue
+    /// still derives from one resolved state and this list still has no reader —
+    /// which is the outcome R4 argued for, reached the other way round.
     pub paused: Vec<PausedPackageData>,
 }
 

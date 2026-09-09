@@ -9,11 +9,6 @@
 //! The words are a property of the state AND where it draws. `Behind` and
 //! `RoleDenied` are the two that differ by site; every other state says the same
 //! thing wherever it draws.
-//!
-//! Every `#[allow(dead_code)]` below stays: the gallery binary's `mod kit;`
-//! never wires up [`render`], so this module is genuinely unused there, and
-//! `#[expect(dead_code)]` fails on the app binary, where it IS used —
-//! confirmed against the compiler, not carried over from habit.
 
 use serde::Deserialize;
 
@@ -26,7 +21,6 @@ use super::StateTone;
 /// from failing the whole payload — and it carries no data because
 /// `#[serde(other)]` accepts only unit variants, and does not need to: the message
 /// for an unexplained pause travels on the watcher payload's `paused` list, not in here.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PackageState {
@@ -62,7 +56,6 @@ pub enum PackageState {
 
 /// Where a label is being drawn. Not decoration: two states word themselves
 /// differently here, so a mapping keyed on state alone is wrong.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Site {
     /// A row in the package list, which is quiet and pairs against `Latest`.
@@ -72,7 +65,6 @@ pub enum Site {
 }
 
 /// What to draw for one state at one site.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rendered {
     pub words: String,
@@ -87,7 +79,6 @@ pub struct Rendered {
 /// Counts are interpolated from the data here rather than sent as their own number
 /// (§1): `PullConflict` counts the paths it was given, so the label cannot disagree
 /// with the list it describes.
-#[allow(dead_code)]
 #[must_use]
 pub fn render(state: &PackageState, site: Site) -> Rendered {
     let (words, tone, action) = match (state, site) {

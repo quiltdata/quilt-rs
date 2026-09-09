@@ -34,7 +34,10 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 // precisely so that works: a `#[path]`-included module resolves its *children*
 // relative to itself, so `kit.rs`'s `pub mod button;` would have looked for
 // `src/button.rs` and failed. Declared as a second `[[bin]]` in Cargo.toml.
-mod kit;
+// From the library beside this file, not a second compilation of the same tree —
+// see `src/lib.rs`. `pub(crate)` so the story modules keep reaching it as
+// `crate::kit`, which is what they were written against.
+pub(crate) use quilt_sync_ui::kit;
 
 // One module per component. Adding a story means adding a file here and one line
 // in `Gallery` below — there is no registry to keep in step.

@@ -75,8 +75,13 @@ jobs:
       # into JS. Pure-logic tests could move the other way, and once v1 is deleted
       # only about twenty host tests survive — at which point converting them and
       # dropping this step is the cheaper end state.
+      #
+      # `--lib --bins`, not `--bin quilt-sync-ui`: the shared modules moved to a
+      # library target (qhq-8mgw.20) and took their tests with them, so naming the
+      # binary alone now runs FOUR tests where it used to run 124, and says nothing
+      # about the missing 120.
       - name: Test (host target)
-        run: cargo test -p quilt-sync-ui --bin quilt-sync-ui
+        run: cargo test -p quilt-sync-ui --lib --bins
 
       # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml: the

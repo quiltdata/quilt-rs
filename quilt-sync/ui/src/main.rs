@@ -5,17 +5,14 @@ use leptos_router::path;
 #[cfg(test)]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-mod commands;
-mod components;
-mod error_handler;
-// `kit` ships components ahead of the pages that use them; later tasks in this
-// plan wire in the rest, so most are dead here until then.
-#[allow(dead_code, unused_imports)]
-mod kit;
-mod pages;
-mod panic_report;
-mod tauri;
-mod util;
+// The modules themselves live in the library beside this file — see `src/lib.rs`
+// for why. Imported rather than declared, so this binary and the gallery share
+// one compilation of them and neither can call an item dead that the other uses.
+use quilt_sync_ui::commands;
+use quilt_sync_ui::components;
+use quilt_sync_ui::kit;
+use quilt_sync_ui::pages;
+use quilt_sync_ui::panic_report;
 
 fn main() {
     console_error_panic_hook::set_once();
