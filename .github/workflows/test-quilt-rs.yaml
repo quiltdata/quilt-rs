@@ -15,6 +15,11 @@ on:
     paths-ignore:
       - "**/*.md"
       - "quilt-sync/**"
+  pull_request:
+    # Same filter as `push`: see the note above.
+    paths-ignore:
+      - "**/*.md"
+      - "quilt-sync/**"
 
 concurrency:
   # `event_name` so a scheduled run and a push to main cannot cancel each other.
@@ -25,6 +30,11 @@ jobs:
   workspace:
     name: workspace
     runs-on: ubuntu-24.04
+    env:
+      # This runner has no Tauri system libraries, so it cannot build
+      # `quilt-sync`; `quilt-sync-ui` is wasm-only. Both have their own
+      # workflow. Named once here because two steps below select on it.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -49,8 +59,24 @@ jobs:
       - name: Check WASM build (quilt-uri, all features)
         run: cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features
 
+      # Split in two so a fork pull request is not a different, quieter run of
+      # the same step. Everything that needs no credentials runs everywhere;
+      # the fixture tests are their own step, skipped where GitHub withholds
+      # secrets. The two selections partition the suite — neither overlaps.
       - name: Test
-        run: cargo nextest run --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+        run: cargo nextest run --profile no-aws $SCOPE
+        env:
+          RUST_BACKTRACE: 1
+          # No credentials here by design. Skip the IMDS probe so a test that
+          # reaches for AWS fails with a credentials error in a moment, rather
+          # than timing out against an endpoint the runner does not have.
+          AWS_EC2_METADATA_DISABLED: true
+
+      - name: Test (live AWS fixtures)
+        # Secrets reach a pull request only from a branch in this repository —
+        # a platform rule, so this is a skip, not a failure.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: cargo nextest run $SCOPE -E 'test(/::live_/)'
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}

@@ -5,6 +5,10 @@ on:
     paths:
       - '**/*.md'
       - '.github/workflows/lint-markdown.yaml'
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '.github/workflows/lint-markdown.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

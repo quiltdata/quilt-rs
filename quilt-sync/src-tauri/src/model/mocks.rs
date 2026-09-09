@@ -33,9 +33,7 @@ pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
     };
     model.expect_get_installed_package().returning(move |_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new())
-                .create_installed_package(("foo", "bar").into())
-                .expect("Failed to create installed package"),
+            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
         ))
     });
     model
@@ -75,9 +73,7 @@ pub fn mock_remote_package_different_version(model: &mut MockQuiltModel) -> &Moc
     // These are needed for ViewInstalledPackage::create after the error is caught
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new())
-                .create_installed_package(("foo", "bar").into())
-                .expect("Failed to create installed package"),
+            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
         ))
     });
 
@@ -122,9 +118,7 @@ pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltM
         .returning(|_| Ok(InstallCheck::LocalOnly));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new())
-                .create_installed_package(("foo", "bar").into())
-                .expect("Failed to create installed package"),
+            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
         ))
     });
 
@@ -153,7 +147,7 @@ pub fn mock_installed_packages_list(model: &mut MockQuiltModel) -> &MockQuiltMod
 }
 
 #[tokio::test]
-async fn test_install_package_only_with_timestamp_tag() -> Result {
+async fn live_install_package_only_with_timestamp_tag() -> Result {
     crate::env::init();
 
     let temp_dir = TempDir::new()?;
@@ -188,7 +182,7 @@ async fn test_install_package_only_with_timestamp_tag() -> Result {
 }
 
 #[tokio::test]
-async fn test_install_package_only_with_hash() -> Result {
+async fn live_install_package_only_with_hash() -> Result {
     crate::env::init();
 
     let temp_dir = TempDir::new()?;

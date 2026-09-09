@@ -9,7 +9,9 @@ Thin wrapper around [`quilt-rs`](../quilt-rs/) — see
 [`docs/architecture.md`](../docs/architecture.md) for what each command does
 under the hood, and the
 [repository README](https://github.com/quiltdata/quilt-rs#readme) for
-positioning and known limitations.
+positioning, and the
+[Roadmap](https://github.com/quiltdata/quilt-rs/issues/889) for what is missing
+and roughly when.
 
 The binary is named `quilt`.
 
@@ -38,16 +40,30 @@ cargo install quilt-cli
 | `install`   | Install a remote package locally                 |
 | `status`    | Show working-directory changes                   |
 | `commit`    | Commit a new package revision                    |
+| `undo-commit` | Undo the newest commit, before the first push  |
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
-| `list`      | List installed packages                          |
+| `list`      | List installed packages and their commit status  |
+| `log`       | List the revisions this copy has, newest first    |
 | `uninstall` | Remove a package from local tracking             |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
 
+`list`'s status compares commits: your last commit against the last-known
+remote tip, read from local records so listing stays offline. It is not the
+package's overall state — uncommitted edits are invisible to it, so a package
+with local changes still shows `up_to_date`. `quilt status` reads the working
+copy.
+
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
 `&path=` parameter in the URI.
+
+`pull` reports the files it moved, in four groups: downloaded, left on the
+remote, updated, removed. A path you do not track is absent from all four — a
+pull writes nothing for it, so a copy that installed no paths reports no files
+at all. The message that follows is the newest revision's only: a pull advances
+to `latest` in one step and may span several revisions.
 
 Run `quilt <command> --help` for arguments.
 
@@ -59,27 +75,29 @@ Run `quilt <command> --help` for arguments.
   (`~/.local/share/com.quiltdata.quilt-sync/` on Linux,
   `~/Library/Application Support/com.quiltdata.quilt-sync/` on macOS).
 - `--home <path>` — directory where packages keep their working files.
-  Required on the first invocation against a domain (every command
-  validates that a home is set); afterward it is persisted in the
-  domain lineage and may be omitted. See
-  [#838](https://github.com/quiltdata/quilt-rs/issues/838).
+  Defaults to `~/QuiltSync` on first use and is persisted in the domain
+  lineage. Pass `--home` only to store packages somewhere else.
 
-Commands log at `INFO` on stdout by default; `RUST_LOG=warn` leaves only
-command output. See
-[#837](https://github.com/quiltdata/quilt-rs/issues/837).
+`list` and `status` accept `--json` for a machine-readable form, so
+`quilt list --json | jq` works. Field names are stable; the human tables are
+not, so parse the JSON rather than the tables.
+
+Commands keep stdout reserved for command output by default. Add `-v` or
+`--verbose` to show INFO-level logs on stderr; set `RUST_LOG` for target-specific
+filtering.
 
 ## Example
 
 ```sh
-quilt --home ~/QuiltHome login --host open.quiltdata.com
+quilt login --host open.quiltdata.com
 quilt install \
     "quilt+s3://quilt-example#package=akarve/cord19&catalog=open.quiltdata.com"
 quilt status --namespace akarve/cord19
 ```
 
-`--home` is needed once to initialize the domain; the later commands pick
-it up from the saved lineage. The namespace defaults to the one in the
-URI, so `install` needs no `--namespace` here.
+Package files are stored under `~/QuiltSync` by default. Pass `--home` only
+when you want a different package directory. The namespace defaults to the one
+in the URI, so `install` needs no `--namespace` here.
 
 URIs follow the [Quilt+ URI format](https://docs.quilt.bio/quilt-platform-catalog-user/uri).
 With `&catalog=<host>`, S3 requests use the stack credentials from
@@ -92,16 +110,14 @@ No login or remote is required to create, edit, and version a package
 entirely on disk:
 
 ```sh
-# --home is only needed on the first invocation against a domain
-quilt --home ~/QuiltHome create --namespace me/local-pkg \
-    --message "Initial revision"
+quilt create --namespace me/local-pkg --message "Initial revision"
 
-# Package files live under <home>/<namespace>; add/edit them directly
-mkdir -p ~/QuiltHome/me/local-pkg
-echo "a,b,c" > ~/QuiltHome/me/local-pkg/data.csv
+# Package files live under ~/QuiltSync/<namespace> by default; add/edit them directly
+cd ~/QuiltSync/me/local-pkg
+echo "a,b,c" > data.csv
 
-quilt status --namespace me/local-pkg
-quilt commit --namespace me/local-pkg --message "Add data.csv"
+quilt status
+quilt commit --message "Add data.csv"
 
 quilt list
 ```

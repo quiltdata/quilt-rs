@@ -1,0 +1,4 @@
+# Tests that touch the shared S3 fixtures are named `live_*`. A pull request
+# from a fork gets no secrets from GitHub, so CI selects this profile there.
+[profile.no-aws]
+default-filter = 'not test(/::live_/)'

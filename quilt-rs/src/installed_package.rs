@@ -8,8 +8,9 @@ use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
 use crate::flow;
-use crate::flow::PullOutcome;
 use crate::flow::UserMeta;
+use std::sync::Arc;
+
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -54,6 +55,15 @@ pub struct PushOutcome {
 /// [`PushOutcome`], so external callers see a non-generic type name.
 pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
 
+/// Every early return from the dry run means the same thing — nothing for a
+/// pull to do, and so no incoming paths to name.
+fn nothing_to_pull() -> flow::PullPreview {
+    flow::PullPreview {
+        outcome: flow::PullOutcome::UpToDate,
+        added: Vec::new(),
+    }
+}
+
 /// Result of [`InstalledPackage::set_remote`].
 ///
 /// The remote was set (and, on the first-push recommit path, a workflow may
@@ -76,7 +86,7 @@ pub struct SetRemoteOutcome {
 pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     pub lineage: lineage::PackageLineageIo,
     pub paths: paths::DomainPaths,
-    pub remote: R,
+    pub remote: Arc<R>,
     pub storage: S,
     pub namespace: Namespace,
 }
@@ -97,6 +107,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn scaffold_paths_for_caching(&self, bucket: &str) -> Res {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
+    }
+
+    /// The revisions this copy has, newest first.
+    ///
+    /// See [`flow::list_revisions`] for what "newest" means — it is acquisition
+    /// order, not the order the revisions were made in.
+    pub async fn revisions(&self) -> Res<Vec<flow::Revision>> {
+        flow::list_revisions(&self.paths, &self.storage, &self.namespace).await
     }
 
     pub async fn manifest(&self) -> Res<Manifest> {
@@ -122,7 +140,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(remote_uri) => {
                 log::info!("Attempting to recover from cache at {remote_uri}");
                 let cached_manifest =
-                    cache_remote_manifest(&self.paths, &self.storage, &self.remote, remote_uri)
+                    cache_remote_manifest(&self.paths, &self.storage, &*self.remote, remote_uri)
                         .await?;
                 copy_cached_to_installed(&self.paths, &self.storage, remote_uri).await?;
                 Ok(cached_manifest)
@@ -180,7 +198,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         // Only refresh latest hash if we have a remote
         let lineage = match lineage.remote_uri.as_ref() {
-            Some(_) => match flow::refresh_latest_hash(lineage.clone(), &self.remote).await {
+            Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
                 Ok(lineage) => lineage,
                 Err(Error::Login(LoginError::Required(_))) => {
                     return Err(Error::Login(LoginError::Required(
@@ -246,7 +264,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             package_home,
             self.namespace.clone(),
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
@@ -312,7 +330,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             package_home,
             status,
@@ -387,7 +405,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             status,
             self.namespace.clone(),
@@ -457,7 +475,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             Some(self.namespace.clone()),
             host_config,
         )
@@ -498,7 +516,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Res<ManifestUri> {
+    ) -> Res<flow::PullReport> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -518,25 +536,25 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &package_home,
             host_config,
         )
         .await?;
-        let lineage = flow::pull(
+        let (lineage, report) = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             snapshot,
             self.namespace.clone(),
             scope,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote()?.clone())
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(report)
     }
 
     /// Dry-run: what would `pull` do right now, without mutating anything?
@@ -565,7 +583,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// For a package with a real remote, propagates tag-resolution, manifest
     /// read, and remote fetch errors. The Local early return never touches the
     /// network, so those shapes cannot produce those errors.
-    pub async fn pull_outcome(&self, host_config_opt: Option<HostConfig>) -> Res<PullOutcome> {
+    pub async fn pull_outcome(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullPreview> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         // A local-only package has no `latest` tag to resolve: `snapshot_for_pull`
@@ -575,7 +596,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // contract. A remote whose local hash is empty but whose `latest` tag has
         // moved classifies as `Diverged` (not `Local`), so it still fetches below.
         if UpstreamState::from(lineage.clone()) == UpstreamState::Local {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
 
         // Divergence-by-hash is a purely lineage-local fact: `UpstreamState::from`
@@ -593,7 +614,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // read refreshes `latest_hash`, so it correctly falls through to the
         // post-walk `!= Behind` check below rather than being caught here.
         if UpstreamState::from(lineage.clone()) == UpstreamState::Diverged {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
 
         let remote_uri = lineage.remote()?.clone();
@@ -610,7 +631,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &base,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &package_home,
             host_config,
         )
@@ -618,7 +639,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         {
             Ok((_, snapshot)) => snapshot,
             Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
-                return Ok(PullOutcome::UpToDate);
+                return Ok(nothing_to_pull());
             }
             Err(err) => return Err(err),
         };
@@ -627,13 +648,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // `Diverged`/`Ahead` still report `UpToDate` (nothing to pull), matching
         // the previous contract.
         if snapshot.status.upstream_state != UpstreamState::Behind {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
-        Ok(flow::classify_pull(
-            &snapshot.status,
-            &base,
-            &snapshot.latest_manifest,
-        ))
+        Ok(flow::PullPreview {
+            added: flow::remote_additions(&base, &snapshot.latest_manifest),
+            outcome: flow::classify_pull(&snapshot.status, &base, &snapshot.latest_manifest),
+        })
     }
 
     /// Pushes any pending local commit, then promotes the resulting remote
@@ -654,7 +674,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         };
 
         let pushed_manifest_uri = lineage.remote()?.clone();
-        let lineage = flow::certify_latest(lineage, &self.remote, pushed_manifest_uri).await?;
+        let lineage = flow::certify_latest(lineage, &*self.remote, pushed_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
     }
@@ -673,13 +693,43 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             self.namespace.clone(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
+    }
+
+    /// Discard this package's newest local commit and restore the revision
+    /// before it. See [`flow::undo_commit`].
+    ///
+    /// The remote check below is narrower than the chain rule: a remote-backed
+    /// package with unpushed commits still has a chain, but undoing there would
+    /// leave a pending commit equal to its own base.
+    pub async fn undo_commit(&self) -> Res<CommitState> {
+        self.scaffold_paths().await?;
+
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        if lineage.remote_uri.is_some() {
+            return Err(Error::PackageOp(crate::PackageOpError::Undo(
+                "this package has a remote, so its commit chain has been consumed by pushing; \
+                 undo is only available before the first push"
+                    .to_string(),
+            )));
+        }
+
+        let (lineage, commit) = flow::undo_commit(
+            lineage,
+            &self.paths,
+            &self.storage,
+            package_home,
+            self.namespace.clone(),
+        )
+        .await?;
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(commit)
     }
 
     pub async fn set_remote(
@@ -801,14 +851,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // gate would otherwise re-download the same config via the header's
         // pinned URI.
         let (config_uri, workflows_config) =
-            fetch_workflows_config(&self.remote, host.as_ref(), &workflows_config_uri).await?;
+            fetch_workflows_config(&*self.remote, host.as_ref(), &workflows_config_uri).await?;
         // Publish later pushes this pending recommit *without* re-resolving the
         // workflow, so recommit must stamp the caller's chosen workflow now.
         // With `WorkflowIntent::BucketDefault` (the no-gesture path) this picks
         // up the bucket's `default_workflow`, so a locally-created package's
         // first publish is governed even when the user expresses no choice.
         let workflow = resolve_workflow_from_config(
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             workflow,
             config_uri,
@@ -821,7 +871,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             self.namespace.clone(),
             host_config,
@@ -855,7 +905,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let Some((origin, config_uri)) = self.workflows_config_location().await? else {
             return Ok(None);
         };
-        resolve_workflow(&self.remote, origin.as_ref(), intent, &config_uri).await
+        resolve_workflow(&*self.remote, origin.as_ref(), intent, &config_uri).await
     }
 
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
@@ -870,7 +920,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(None);
         };
         let (_, config) =
-            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
+            fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await?;
         Ok(config)
     }
 
@@ -892,12 +942,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(None);
         };
         let (_, config) =
-            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
+            fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await?;
         let Some(config) = config else {
             return Ok(None);
         };
         Ok(Some(
-            fetch_workflow_rules(&self.remote, origin.as_ref(), &config, workflow_id).await?,
+            fetch_workflow_rules(&*self.remote, origin.as_ref(), &config, workflow_id).await?,
         ))
     }
 }

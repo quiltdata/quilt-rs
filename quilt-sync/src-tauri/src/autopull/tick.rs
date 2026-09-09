@@ -10,6 +10,7 @@ use quilt_uri::Namespace;
 use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
+use crate::autopull::pull_toast;
 use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
 use crate::autopull::reporter::clean_uptodate_fingerprint;
@@ -32,6 +33,11 @@ pub(crate) struct RefreshOutcome {
     /// pull success, on quiet-window deferral, and on any no-action
     /// tick. `run_once` reads this to call `report_published`.
     pub published: Option<String>,
+    /// What a successful pull brought — `None` on every other path, exactly
+    /// as `published` is `None` on every path but a publish. The pull side of
+    /// the pair `published`'s own comment implied and the tick could not give:
+    /// a pull's only outward sign was a status string.
+    pub pulled: Option<quilt::flow::PullReport>,
     /// Fingerprint of the observation this outcome reports, put on the
     /// emitted `PackageStatusEvent` so a repeated no-action tick — the same
     /// observation re-reported — collides with the last and is skipped by the
@@ -51,6 +57,7 @@ impl RefreshOutcome {
             upstream,
             has_changes,
             published: None,
+            pulled: None,
             fingerprint,
         }
     }
@@ -167,6 +174,11 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         _ if err.is_access_denied() => Err(WatchError::Conflict(PausedReason::RoleDenied {
             role: String::new(),
         })),
+        // Must precede the `S3(_)` arm, which would take it: a rejected
+        // credential is an `Error::S3`, and retrying one never succeeds. It is
+        // the fact the `Login` arm below carries, reached when S3 answers 403
+        // with a credential code rather than the provider refusing to vend.
+        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(err.s3_host().cloned())),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
@@ -194,6 +206,11 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         _ if err.is_access_denied() => WatchError::Conflict(PausedReason::RoleDenied {
             role: String::new(),
         }),
+        // Must precede the `Transient` default, which would take it: retrying a
+        // rejected credential never succeeds. It is the fact the `Login` arm
+        // above carries, reached when S3 answers 403 with a credential code
+        // rather than the provider refusing to vend.
+        _ if err.is_invalid_credentials() => WatchError::LoginRequired(err.s3_host().cloned()),
         _ => WatchError::Transient(err),
     }
 }
@@ -309,10 +326,13 @@ pub(crate) async fn refresh_then_maybe_sync(
         // per Behind tick with a race window between them. Have `flow::pull`
         // return the `PullOutcome` it already computes and route on the pull
         // result alone — same outcome-based routing, half the work.
+        // The preview also names what the revision adds; the tick routes on the
+        // verdict alone and leaves those to the surfaces that report them.
         let outcome = model
             .package_pull_outcome(&installed)
             .await
-            .map_err(classify_transient_or_login)?;
+            .map_err(classify_transient_or_login)?
+            .outcome;
         // Post-pull `has_changes`, read from the dry-run outcome we just
         // classified — the truth about kept local work, unlike the pre-pull
         // `has_changes` which is stale-true when the pull trivially resolves
@@ -336,17 +356,20 @@ pub(crate) async fn refresh_then_maybe_sync(
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
                 return match model.package_pull(&installed, None, scope).await {
-                    Ok(_) => {
+                    Ok(report) => {
                         info!("autosync: pulled namespace={namespace}");
                         // Kept work leaves a dirty tree: `UpToDate` +
                         // `kept_changes` is the intended post-pull state.
                         // `kept_changes` comes from the outcome (post-pull
                         // truth), not the pre-pull `has_changes`.
-                        Ok(RefreshOutcome::observed(
-                            quilt::lineage::UpstreamState::UpToDate,
-                            kept_changes,
-                            clean_uptodate_fingerprint(),
-                        ))
+                        Ok(RefreshOutcome {
+                            pulled: Some(report),
+                            ..RefreshOutcome::observed(
+                                quilt::lineage::UpstreamState::UpToDate,
+                                kept_changes,
+                                clean_uptodate_fingerprint(),
+                            )
+                        })
                     }
                     // Nothing was applied on the error path, so the pre-pull
                     // `has_changes` still describes the tree.
@@ -385,6 +408,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                     upstream: quilt::lineage::UpstreamState::UpToDate,
                     has_changes: false,
                     published: Some(message),
+                    pulled: None,
                     fingerprint: clean_uptodate_fingerprint(),
                 })
             }
@@ -533,6 +557,15 @@ pub(crate) async fn run_once(
                 inner.login_blocked.write().await.remove(&namespace);
                 if let Some(message) = outcome.published.as_deref() {
                     inner.reporter.report_published(&namespace, origin, message);
+                }
+                // What the pull brought, if it brought anything. `None` from
+                // `report_toast` is the metadata-only revision: hashes advanced
+                // and no file moved, and an entry that stands until dismissed
+                // must not say nothing.
+                if let Some(report) = outcome.pulled.as_ref()
+                    && let Some(toast) = pull_toast::report_toast(&namespace, report)
+                {
+                    inner.reporter.report_pulled(&namespace, toast);
                 }
                 inner.reporter.report_status(
                     &namespace,

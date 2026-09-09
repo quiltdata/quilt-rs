@@ -1,6 +1,7 @@
 //! Not a part of the library and meant to be an independent project.
 //! This is a CLI frontend for `quilt_rs`.
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -15,6 +16,7 @@ use quilt_uri::Namespace;
 mod browse;
 mod commit;
 mod create;
+mod history;
 mod install;
 mod list;
 mod login;
@@ -24,6 +26,8 @@ mod pull;
 mod push;
 mod role;
 mod status;
+mod text;
+mod undo_commit;
 mod uninstall;
 
 #[cfg(test)]
@@ -75,6 +79,62 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
     }
 }
 
+fn get_default_home_dir() -> Result<PathBuf, Error> {
+    dirs::home_dir()
+        .map(|user_home| user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME))
+        .ok_or(Error::Home)
+}
+
+async fn initialize_home(model: &Model, home: Option<PathBuf>) -> Result<(), Error> {
+    if let Some(dir) = home {
+        model.set_home(dir).await?;
+    } else {
+        match model.get_home().await {
+            Ok(_) => {}
+            Err(Error::Quilt(quilt_rs::Error::Lineage(
+                quilt_rs::LineageError::Missing | quilt_rs::LineageError::MissingHome,
+            ))) => {
+                model.set_home(get_default_home_dir()?).await?;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    model.get_home().await?;
+    Ok(())
+}
+
+fn namespace_from_working_dir(home: &Path, current_dir: &Path) -> Result<Namespace, Error> {
+    let home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    let current_dir =
+        std::fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
+    let mut components = current_dir
+        .strip_prefix(&home)
+        .map_err(|_| Error::NamespaceRequired)?
+        .components();
+
+    let prefix = components
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .ok_or(Error::NamespaceRequired)?;
+    let name = components
+        .next()
+        .and_then(|component| component.as_os_str().to_str())
+        .ok_or(Error::NamespaceRequired)?;
+
+    Namespace::try_from(format!("{prefix}/{name}")).map_err(Error::from)
+}
+
+async fn resolve_namespace(model: &Model, namespace: Option<String>) -> Result<Namespace, Error> {
+    if let Some(namespace) = namespace {
+        return Ok(namespace.try_into()?);
+    }
+
+    let home = model.get_home().await?;
+    let current_dir = std::env::current_dir()?;
+    namespace_from_working_dir(home.as_ref(), &current_dir)
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
@@ -82,13 +142,36 @@ pub struct Args {
     command: Commands,
 
     /// Absolute path for the directory, where all packages will store their mutable files.
-    /// Ex. /home/user/QuiltSync
+    /// Defaults to `~/QuiltSync` on first use. Ex. /home/user/QuiltSync
     #[arg(long)]
     home: Option<PathBuf>,
 
     /// Path to local domain
     #[arg(short, long)]
     domain: Option<PathBuf>,
+
+    /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
+    #[arg(short, long, global = true)]
+    pub(crate) verbose: bool,
+}
+
+/// The package a command acts on.
+///
+/// An omitted `--namespace` is inferred from the current working directory.
+/// `install` keeps its own `namespace`: there, omitting it means "take it from
+/// the URI", which is a different question.
+#[derive(clap::Args, Debug)]
+struct PackageRef {
+    /// Namespace of the package. If omitted, infer it from the current
+    /// working directory under the configured home.
+    #[arg(short, long)]
+    namespace: Option<String>,
+}
+
+impl PackageRef {
+    async fn resolve(self, model: &Model) -> Result<Namespace, Error> {
+        resolve_namespace(model, self.namespace).await
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -118,10 +201,8 @@ enum Commands {
         /// JSON string for user meta
         #[arg(short, long)]
         user_meta: Option<String>,
-        /// Namespace of the package to commit new revision
-        /// Ex. foo/bar
-        #[arg(short, long)]
-        namespace: String,
+        #[command(flatten)]
+        pkg: PackageRef,
         /// Workflow ID
         /// Ex. `"my_workflow"`
         /// Omit to use the bucket's default workflow.
@@ -154,20 +235,30 @@ enum Commands {
         host: Host,
     },
     /// List installed packages
-    List,
+    List {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the revisions of a package this copy has, newest first.
+    ///
+    /// Ordered by when this copy obtained each revision, which is all that is
+    /// recorded locally — a manifest carries no timestamp of its own, so for a
+    /// revision fetched from a remote this is the fetch time, not the commit
+    /// time.
+    Log {
+        #[command(flatten)]
+        pkg: PackageRef,
+    },
     /// Pull
     Pull {
-        /// Namespace of the package to pull
-        /// Ex. foo/bar
-        #[arg(short, long)]
-        namespace: String,
+        #[command(flatten)]
+        pkg: PackageRef,
     },
     /// Push
     Push {
-        /// Namespace of the package to push
-        /// Ex. foo/bar
-        #[arg(short, long)]
-        namespace: String,
+        #[command(flatten)]
+        pkg: PackageRef,
         /// S3 bucket (required for first push of local-only packages)
         #[arg(short, long, requires = "origin")]
         bucket: Option<String>,
@@ -202,16 +293,25 @@ enum Commands {
     },
     /// Status of the package: modified, up-to-date, outdated
     Status {
-        /// Namespace of the package. Ex. foo/bar
-        #[arg(short, long)]
-        namespace: String,
+        #[command(flatten)]
+        pkg: PackageRef,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Undo the newest commit, restoring the revision before it
+    ///
+    /// Available while the package's commit chain still reaches back, which in
+    /// practice means before its first push. Refuses if any tracked file has
+    /// uncommitted changes.
+    UndoCommit {
+        #[command(flatten)]
+        pkg: PackageRef,
     },
     /// Uninstall package from local domain
     Uninstall {
-        /// Namespace of the package to uninstall.
-        /// Ex. foo/bar
-        #[arg(short, long)]
-        namespace: String,
+        #[command(flatten)]
+        pkg: PackageRef,
     },
 }
 
@@ -229,28 +329,15 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
 
-    // NOTE: Lineage must have home
-    //       It should come either from the lineage file itself,
-    //       or provided by user (when installing first time)
-
-    if let Some(dir) = args.home
-        && let Err(err) = m.set_home(dir).await
-    {
-        log::error!("Failed to set home directory: {err}");
-        return Ok(Std::Err(err));
-    }
-
-    // Validate the lineage
-    if let Err(err) = m.get_home().await {
-        log::error!("Failed to get home directory: {err}");
-        return Ok(Std::Err(err));
-    }
+    // Preserve an existing home, honor an explicit --home override, and set
+    // the default for a new domain on first use.
+    initialize_home(&m, args.home).await?;
 
     match args.command {
         Commands::Browse { uri } => {
             let args = browse::Input { uri };
 
-            log::info!("Browsing {args:?}");
+            log::debug!("Browsing {args:?}");
             Ok(browse::command(m, args).await)
         }
         Commands::Create {
@@ -264,16 +351,17 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 message,
             };
 
-            log::info!("Creating {args:?}");
+            log::debug!("Creating {args:?}");
             Ok(create::command(m, args).await)
         }
         Commands::Commit {
-            namespace,
+            pkg,
             message,
             user_meta,
             workflow,
             no_workflow,
         } => {
+            let namespace = pkg.resolve(&m).await?;
             let user_meta = match &user_meta {
                 Some(object) => match serde_json::from_str(object)? {
                     serde_json::Value::Object(object) => {
@@ -288,13 +376,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = commit::Input {
                 message,
-                namespace: namespace.try_into()?,
+                namespace,
                 user_meta,
                 workflow,
                 host_config: None,
             };
 
-            log::info!("Committing {args:?}");
+            log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
         }
         Commands::Install {
@@ -308,40 +396,49 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 uri,
             };
 
-            log::info!("Installing {args:?}");
+            log::debug!("Installing {args:?}");
             Ok(install::command(m, args).await)
         }
         Commands::Login { code, host } => {
             if let Some(code) = code {
                 let args = login::Input { code, host };
 
-                log::info!("Logging in {args:?}");
+                log::debug!("Logging in {args:?}");
                 Ok(login::command(m, args).await)
             } else {
                 // TODO: Check the lineage, if there are some `package.remote.catalog`
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List => {
+        Commands::List { json } => {
             log::info!("Listing installed packages");
-            Ok(list::command(m).await)
+            Ok(list::command(m, json).await)
         }
-        Commands::Pull { namespace } => {
+        Commands::Log { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = history::Input { namespace };
+
+            log::debug!("Logging {args:?}");
+            Ok(history::command(m, args).await)
+        }
+        Commands::Pull { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
             let args = pull::Input {
-                namespace: namespace.try_into()?,
+                namespace,
                 host_config: None,
             };
 
-            log::info!("Pull {args:?}");
+            log::debug!("Pull {args:?}");
             Ok(pull::command(m, args).await)
         }
         Commands::Push {
-            namespace,
+            pkg,
             bucket,
             origin,
             workflow,
             no_workflow,
         } => {
+            let namespace = pkg.resolve(&m).await?;
             // The workflow flags only take effect on a first push, where
             // set_remote→recommit resolves them. On a subsequent push the
             // workflow was already decided at commit time, so reject the flags
@@ -351,37 +448,44 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             }
             let workflow = commit_workflow_intent(workflow.as_deref(), no_workflow)?;
             let args = push::Input {
-                namespace: namespace.try_into()?,
+                namespace,
                 host_config: None,
                 bucket,
                 origin,
                 workflow,
             };
 
-            log::info!("Pushing {args:?}");
+            log::debug!("Pushing {args:?}");
             Ok(push::command(m, args).await)
         }
         Commands::Role { host, set } => {
             let args = role::Input { host, set };
 
-            log::info!("Role {args:?}");
+            log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
-        Commands::Status { namespace } => {
+        Commands::Status { pkg, json } => {
+            let namespace = pkg.resolve(&m).await?;
             let args = status::Input {
-                namespace: namespace.try_into()?,
+                namespace,
                 host_config: None,
             };
 
-            log::info!("Status {args:?}");
-            Ok(status::command(m, args).await)
+            log::debug!("Status {args:?}");
+            Ok(status::command(m, args, json).await)
         }
-        Commands::Uninstall { namespace } => {
-            let args = uninstall::Input {
-                namespace: namespace.try_into()?,
-            };
+        Commands::UndoCommit { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = undo_commit::Input { namespace };
 
-            log::info!("Uninstalling {args:?}");
+            log::debug!("Undoing commit {args:?}");
+            Ok(undo_commit::command(m, args).await)
+        }
+        Commands::Uninstall { pkg } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = uninstall::Input { namespace };
+
+            log::debug!("Uninstalling {args:?}");
             Ok(uninstall::command(m, args).await)
         }
     }
@@ -391,6 +495,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 pub enum Error {
     #[error("Domain directory is required. We store files and credentials there")]
     Domain,
+
+    #[error("Could not determine the home directory. Pass --home to specify one")]
+    Home,
 
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
@@ -405,6 +512,11 @@ Then run:
 
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
+
+    #[error(
+        "Could not infer a namespace from the current directory. Pass --namespace or run inside <home>/<prefix>/<name>"
+    )]
+    NamespaceRequired,
 
     #[error("Invalid JSON for user_meta object. Object is required")]
     CommitMetaInvalid(String),
@@ -509,6 +621,82 @@ mod tests {
     }
 
     #[test]
+    fn verbose_flag_is_global() {
+        let before_subcommand = Args::try_parse_from(["quilt", "--verbose", "list"]).unwrap();
+        assert!(before_subcommand.verbose);
+
+        let after_subcommand = Args::try_parse_from(["quilt", "list", "--verbose"]).unwrap();
+        assert!(after_subcommand.verbose);
+
+        let default = Args::try_parse_from(["quilt", "list"]).unwrap();
+        assert!(!default.verbose);
+    }
+
+    #[test]
+    fn json_flag_is_available_on_read_commands() {
+        let list = Args::try_parse_from(["quilt", "list", "--json"]).unwrap();
+        assert!(matches!(list.command, Commands::List { json: true }));
+
+        let status =
+            Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"]).unwrap();
+        assert!(matches!(
+            status.command,
+            Commands::Status { json: true, .. }
+        ));
+
+        let default = Args::try_parse_from(["quilt", "list"]).unwrap();
+        assert!(matches!(default.command, Commands::List { json: false }));
+    }
+
+    #[test]
+    fn package_namespace_flag_is_optional() {
+        let inferred = Args::try_parse_from(["quilt", "status"]).unwrap();
+        assert!(matches!(
+            inferred.command,
+            Commands::Status {
+                pkg: PackageRef { namespace: None },
+                json: false
+            }
+        ));
+
+        let explicit =
+            Args::try_parse_from(["quilt", "status", "--namespace", "demo/sales"]).unwrap();
+        assert!(matches!(
+            explicit.command,
+            Commands::Status {
+                pkg: PackageRef { namespace: Some(namespace) },
+                json: false
+            } if namespace == "demo/sales"
+        ));
+    }
+
+    #[test]
+    fn namespace_from_working_dir_uses_package_components() -> Result<(), Error> {
+        let home = Path::new("/home/user/QuiltSync");
+        let current_dir = Path::new("/home/user/QuiltSync/demo/sales/src");
+
+        assert_eq!(
+            namespace_from_working_dir(home, current_dir)?,
+            Namespace::from(("demo", "sales"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn namespace_from_working_dir_requires_a_package_path() {
+        let home = Path::new("/home/user/QuiltSync");
+
+        assert!(matches!(
+            namespace_from_working_dir(home, Path::new("/home/user/QuiltSync")),
+            Err(Error::NamespaceRequired)
+        ));
+        assert!(matches!(
+            namespace_from_working_dir(home, Path::new("/home/user/other/demo/sales")),
+            Err(Error::NamespaceRequired)
+        ));
+    }
+
+    #[test]
     fn test_parse_optional_namespace() -> Result<(), Error> {
         // Test None case
         assert!(parse_optional_namespace(None)?.is_none());
@@ -542,8 +730,72 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_get_default_home_dir() -> Result<(), Error> {
+        let user_home = dirs::home_dir().ok_or(Error::Home)?;
+        assert_eq!(
+            get_default_home_dir()?,
+            user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME)
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
-    async fn test_install() -> Result<(), Error> {
+    async fn test_list_uses_default_home_without_flag() -> Result<(), Error> {
+        let domain_temp_dir = tempfile::tempdir()?;
+        let list_args = Args {
+            home: None,
+            domain: Some(domain_temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::List { json: false },
+        };
+
+        let mut output = Vec::new();
+        let result = init(list_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "No installed packages\n"
+        );
+
+        let stored_home = quilt_rs::LocalDomain::new(domain_temp_dir.path())
+            .get_home()
+            .await?;
+        assert_eq!(stored_home.as_ref(), &get_default_home_dir()?);
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_missing_home_lineage_is_repaired_without_flag() -> Result<(), Error> {
+        let (model, domain_temp_dir) = Model::from_temp_dir()?;
+        let paths = quilt_rs::paths::DomainPaths::new(domain_temp_dir.path().to_path_buf());
+        std::fs::create_dir_all(paths.dot_quilt_dir())?;
+        std::fs::write(paths.lineage(), br#"{"packages":{},"home":""}"#)?;
+
+        initialize_home(&model, None).await?;
+
+        assert_eq!(model.get_home().await?.as_ref(), &get_default_home_dir()?);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_existing_home_is_preserved_without_flag() -> Result<(), Error> {
+        let (model, _domain_temp_dir) = Model::from_temp_dir()?;
+        let home_temp_dir = tempfile::tempdir()?;
+        model.set_home(home_temp_dir.path()).await?;
+
+        initialize_home(&model, None).await?;
+
+        assert_eq!(
+            model.get_home().await?.as_ref(),
+            &home_temp_dir.path().to_path_buf()
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn live_install() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         // Create temporary directory for domain
@@ -557,6 +809,7 @@ mod tests {
         let install_args = Args {
             home,
             domain,
+            verbose: false,
             command: Commands::Install {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
@@ -579,7 +832,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_commit_valid() -> Result<(), Error> {
+    async fn live_commit_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -587,9 +840,12 @@ mod tests {
         let commit_args = Args {
             home: Some(temp_dir.path().to_path_buf()),
             domain: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Commit {
                 message: pkg::MESSAGE.to_string(),
-                namespace: pkg::NAMESPACE_STR.to_string(),
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -610,7 +866,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_commit_invalid() -> Result<(), Error> {
+    async fn live_commit_invalid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -618,9 +874,12 @@ mod tests {
         let commit_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Commit {
                 message: "Any message".to_string(),
-                namespace: "in/valid".to_string(),
+                pkg: PackageRef {
+                    namespace: Some("in/valid".to_string()),
+                },
                 user_meta: None,
                 workflow: None,
                 no_workflow: true,
@@ -646,8 +905,11 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
-                namespace: "foo/bar".to_string(),
+                pkg: PackageRef {
+                    namespace: Some("foo/bar".to_string()),
+                },
                 bucket: None,
                 origin: None,
                 workflow: Some("x".to_string()),
@@ -671,8 +933,11 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
-                namespace: "foo/bar".to_string(),
+                pkg: PackageRef {
+                    namespace: Some("foo/bar".to_string()),
+                },
                 bucket: None,
                 origin: None,
                 workflow: None,
@@ -699,8 +964,11 @@ mod tests {
         let push_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Push {
-                namespace: "foo/bar".to_string(),
+                pkg: PackageRef {
+                    namespace: Some("foo/bar".to_string()),
+                },
                 bucket: Some("some-bucket".to_string()),
                 origin: Some(Host::from_str("open.quiltdata.com").unwrap()),
                 workflow: Some("x".to_string()),
@@ -718,7 +986,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_pull_valid() -> Result<(), Error> {
+    async fn live_pull_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::outdated as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -726,8 +994,11 @@ mod tests {
         let pull_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Pull {
-                namespace: pkg::NAMESPACE_STR.to_string(),
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
             },
         };
 
@@ -736,11 +1007,280 @@ mod tests {
         let result = init(pull_args).await?;
         print(result, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
+        // No file group: `install` ran with `paths: None`, so this copy tracks
+        // nothing and every path the revision changed falls outside the touch
+        // set — nothing moved on disk, and claiming otherwise would be false.
+        // The revision's own message is then the only thing the pull can report,
+        // which is exactly why it is worth reporting: without it the line says
+        // no more than it did before.
         assert_eq!(
             output_str,
-            format!("Revision \"{}\" pulled\n", pkg::LATEST_TOP_HASH)
+            format!(
+                "Revision \"{}\" pulled\nLatest revision: Today's Date: 2024-07-29 11:53:53\n",
+                pkg::LATEST_TOP_HASH
+            )
         );
 
+        Ok(())
+    }
+
+    /// The report, end to end against a real package. This is the only test
+    /// that proves the whole path — engine grouping, the CLI's wording, and a
+    /// manifest pair that actually differs — rather than a hand-built delta.
+    ///
+    /// It is also the span case: `latest` is r3, so installing r1 and pulling
+    /// crosses two revisions in one operation, and only r3's message is in hand.
+    /// There is no parent pointer to walk, so nothing can report r2's.
+    ///
+    /// The silences are the load-bearing half. `install` takes no paths, so this
+    /// copy tracks nothing: `modify.txt` and `keep.txt` were modified and
+    /// `remove.txt` removed, and none may appear — nothing moved on disk, and
+    /// naming them would report writes that did not happen.
+    #[test(tokio::test)]
+    async fn live_pull_reports_what_the_revision_brought() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::R1_URI).await?;
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+
+        assert_eq!(
+            output_str,
+            format!(
+                concat!(
+                    "Revision \"{}\" pulled\n",
+                    "7 files new, not downloaded:\n",
+                    "  add/deeply/nested/directory/with/a/very-long-name/summary-of-everything.parquet\n",
+                    "  add/five.txt\n",
+                    "  add/four.txt\n",
+                    "  add/one.txt\n",
+                    "  add/six.txt\n",
+                    "  add/three.txt\n",
+                    "  add/two.txt\n",
+                    "Latest revision: {}\n",
+                ),
+                pkg::R3_TOP_HASH,
+                pkg::R3_MESSAGE,
+            )
+        );
+
+        // Stated as its own assertion rather than left implicit in the string
+        // above: these three changed on the remote and must appear in no group,
+        // because this copy does not track them.
+        //
+        // Checked against the group lines only, not the whole output: the
+        // author's message is prose and legitimately names files — r3's says
+        // "modifies keep.txt" — so a substring search over everything would
+        // fail on the message rather than on a group, which is what happened
+        // when this was written the naive way.
+        let groups = output_str
+            .split("Latest revision:")
+            .next()
+            .expect("split always yields one part");
+        for silent in ["modify.txt", "keep.txt", "remove.txt"] {
+            assert!(
+                !groups.contains(silent),
+                "{silent} changed on the remote but nothing moved here, so no group may name it"
+            );
+        }
+        Ok(())
+    }
+
+    /// The same fixture with its files actually checked out, which is what makes
+    /// three of the four groups reachable: a tracked path the remote modified is
+    /// rewritten (`updated`), a tracked path it dropped is deleted (`removed`),
+    /// and its additions stay listed under the CLI's sparse scope.
+    ///
+    /// The pair with the test above is the point. Same revisions, same remote
+    /// changes, and the report differs entirely — because what a pull *reports*
+    /// follows what this copy tracks, not what the remote did. That is the claim
+    /// the grouping rests on, and no unit test can make it against real
+    /// manifests.
+    ///
+    /// The fourth group, `added` proper, is unreachable here by design: it needs
+    /// whole-package scope, and the CLI always asks for the narrow one so that
+    /// state a desktop wrote cannot change what a script does.
+    #[test(tokio::test)]
+    async fn live_pull_reports_updates_and_removals_for_tracked_paths() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        let tracked = ["keep.txt", "modify.txt", "remove.txt"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R1_URI, Some(tracked)).await?;
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+
+        assert_eq!(
+            output_str,
+            format!(
+                concat!(
+                    "Revision \"{}\" pulled\n",
+                    "7 files new, not downloaded:\n",
+                    "  add/deeply/nested/directory/with/a/very-long-name/summary-of-everything.parquet\n",
+                    "  add/five.txt\n",
+                    "  add/four.txt\n",
+                    "  add/one.txt\n",
+                    "  add/six.txt\n",
+                    "  add/three.txt\n",
+                    "  add/two.txt\n",
+                    "2 files updated:\n",
+                    "  keep.txt\n",
+                    "  modify.txt\n",
+                    "1 file removed:\n",
+                    "  remove.txt\n",
+                    "Latest revision: {}\n",
+                ),
+                pkg::R3_TOP_HASH,
+                pkg::R3_MESSAGE,
+            )
+        );
+        Ok(())
+    }
+
+    /// Local work the remote did not touch survives the pull, and appears in no
+    /// group — it is the user's change, not news from the remote.
+    ///
+    /// Installed from **r2** rather than r1 for a reason worth keeping: every
+    /// path r1 holds is touched by r3, so from r1 there is nothing for a local
+    /// edit to survive on without colliding. `add/one.txt` arrives in r2 and r3
+    /// leaves it alone.
+    #[test(tokio::test)]
+    async fn live_pull_keeps_local_work_the_remote_did_not_touch() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        let tracked = ["add/one.txt", "keep.txt"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R2_URI, Some(tracked)).await?;
+
+        let edited = temp_dir.path().join(pkg::NAMESPACE_STR).join("add/one.txt");
+        std::fs::write(&edited, "MY LOCAL EDIT\n").expect("the path was just checked out");
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut output = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let output_str = String::from_utf8(output).unwrap();
+
+        assert_eq!(
+            output_str,
+            format!(
+                concat!(
+                    "Revision \"{}\" pulled\n",
+                    "1 file new, not downloaded:\n",
+                    "  add/six.txt\n",
+                    "1 file updated:\n",
+                    "  keep.txt\n",
+                    "Latest revision: {}\n",
+                ),
+                pkg::R3_TOP_HASH,
+                pkg::R3_MESSAGE,
+            )
+        );
+
+        // The half a report cannot show: the edit is still there. A pull that
+        // named nothing and quietly overwrote it would pass the assertion above.
+        assert_eq!(
+            std::fs::read_to_string(&edited).unwrap(),
+            "MY LOCAL EDIT\n",
+            "the pull overwrote local work the remote had not touched"
+        );
+        Ok(())
+    }
+
+    /// A path added on both sides with differing content blocks the whole pull,
+    /// so there is no partial arrival and no report at all.
+    ///
+    /// The reconcile is atomic: `base` advances only when every path applies. A
+    /// report here would describe files that did not move.
+    #[test(tokio::test)]
+    async fn live_pull_blocked_by_a_conflict_reports_nothing() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        let tracked = vec![std::path::PathBuf::from("keep.txt")];
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R1_URI, Some(tracked)).await?;
+
+        // Same logical key r2 adds, different bytes: the both-added arm.
+        let root = temp_dir.path().join(pkg::NAMESPACE_STR).join("add");
+        std::fs::create_dir_all(&root).expect("the package root exists");
+        std::fs::write(root.join("one.txt"), "DIFFERENT CONTENT THAN THE REMOTE\n")
+            .expect("just created the directory");
+
+        let pull_args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        // The refusal travels as a `Std::Err`, not as an `Err` — the CLI's
+        // output contract sends it to stderr and exits non-zero rather than
+        // propagating. So the assertion is about what the user sees.
+        let mut out = Vec::new();
+        let mut errs = Vec::new();
+        let result = init(pull_args).await?;
+        print(result, &mut out, &mut errs).ok();
+        let out = String::from_utf8(out).unwrap();
+        let errs = String::from_utf8(errs).unwrap();
+
+        assert!(
+            errs.contains("add/one.txt"),
+            "the refusal must name the conflicting path: {errs}"
+        );
+        // The claim worth testing: nothing was applied, so nothing is reported.
+        // A report here would describe files that did not move.
+        assert!(
+            out.is_empty(),
+            "a blocked pull applies nothing and must report nothing, got: {out}"
+        );
         Ok(())
     }
 
@@ -752,8 +1292,11 @@ mod tests {
         let pull_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Pull {
-                namespace: "in/valid".to_string(),
+                pkg: PackageRef {
+                    namespace: Some("in/valid".to_string()),
+                },
             },
         };
 
@@ -768,7 +1311,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_uninstall_valid() -> Result<(), Error> {
+    async fn live_uninstall_valid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::default as pkg;
 
         let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
@@ -776,8 +1319,11 @@ mod tests {
         let uninstall_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Uninstall {
-                namespace: pkg::NAMESPACE_STR.to_string(),
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
             },
         };
 
@@ -802,8 +1348,11 @@ mod tests {
         let uninstall_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Uninstall {
-                namespace: "in/valid".to_string(),
+                pkg: PackageRef {
+                    namespace: Some("in/valid".to_string()),
+                },
             },
         };
 
@@ -830,15 +1379,14 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
-            command: Commands::List,
+            verbose: false,
+            command: Commands::List { json: false },
         };
 
-        // Test init with invalid permissions
-        let mut output = Vec::new();
-        let result = init(list_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
-        let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("Permission denied"));
+        // Default home initialization now reaches the same write-protected
+        // lineage before the list command can render a command-level error.
+        let err = init(list_args).await.unwrap_err();
+        assert!(err.to_string().contains("Permission denied"));
 
         Ok(())
     }
@@ -851,7 +1399,8 @@ mod tests {
         let list_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
-            command: Commands::List {},
+            verbose: false,
+            command: Commands::List { json: false },
         };
 
         // Test init with empty domain
@@ -876,6 +1425,7 @@ mod tests {
         let install_args = Args {
             domain,
             home,
+            verbose: false,
             command: Commands::Install {
                 namespace: None,
                 uri: pkg::URI.to_string(),
@@ -900,7 +1450,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_browse_valid() -> Result<(), Error> {
+    async fn live_browse_valid() -> Result<(), Error> {
         use crate::cli::fixtures::get_browse_output;
         use crate::cli::fixtures::packages::default as pkg;
 
@@ -911,6 +1461,7 @@ mod tests {
         let browse_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Browse { uri },
         };
 
@@ -934,6 +1485,7 @@ mod tests {
         let browse_args = Args {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
             command: Commands::Browse {
                 uri: pkg::URI.to_string(),
             },

@@ -10,6 +10,7 @@ use crate::cli::Error;
 use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::create;
+use crate::cli::history;
 use crate::cli::install;
 use crate::cli::list;
 use crate::cli::login;
@@ -17,6 +18,7 @@ use crate::cli::pull;
 use crate::cli::push;
 use crate::cli::role;
 use crate::cli::status;
+use crate::cli::undo_commit;
 use crate::cli::uninstall;
 
 pub struct Model {
@@ -51,6 +53,11 @@ pub trait Commands {
         list::model(local_domain).await
     }
 
+    async fn log(&self, args: history::Input) -> Result<history::Output, Error> {
+        let local_domain = self.get_local_domain();
+        history::model(local_domain, args).await
+    }
+
     async fn login(&self, args: login::Input) -> Result<login::Output, Error> {
         let local_domain = self.get_local_domain();
         login::model(local_domain, args).await
@@ -64,6 +71,11 @@ pub trait Commands {
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
         let local_domain = self.get_local_domain();
         push::model(local_domain, args).await
+    }
+
+    async fn undo_commit(&self, args: undo_commit::Input) -> Result<undo_commit::Output, Error> {
+        let local_domain = self.get_local_domain();
+        undo_commit::model(local_domain, args).await
     }
 
     async fn role(&self, args: role::Input) -> Result<role::Output, Error> {
@@ -126,6 +138,20 @@ impl From<&TempDir> for Model {
 pub async fn install_package_into_temp_dir(
     uri_str: &str,
 ) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
+    install_paths_into_temp_dir(uri_str, None).await
+}
+
+/// The same, checking out `paths` as well as the manifest.
+///
+/// The distinction decides what a later pull can report: install registers the
+/// manifest and not the files, so a path this copy does not track falls outside
+/// the touch set and a remote change to it moves nothing — correctly silent, and
+/// invisible to a test that installed no paths.
+#[cfg(test)]
+pub async fn install_paths_into_temp_dir(
+    uri_str: &str,
+    paths: Option<Vec<std::path::PathBuf>>,
+) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
 
     model.set_home(temp_dir.path()).await?;
@@ -133,7 +159,7 @@ pub async fn install_package_into_temp_dir(
     let output = model
         .install(install::Input {
             namespace: None,
-            paths: None,
+            paths,
             uri: uri_str.to_string(),
         })
         .await?;

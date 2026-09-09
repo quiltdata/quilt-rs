@@ -9,10 +9,10 @@ publish = false
 [dependencies]
 leptos = { version = "0.8.20", features = ["csr"] }
 leptos_router = "0.8.15"
-wasm-bindgen = "0.2.126"
-wasm-bindgen-futures = "0.4.76"
-js-sys = "0.3.103"
-web-sys = { version = "0.3.103", features = ["Document", "HtmlElement", "HtmlFormElement", "HtmlTextAreaElement", "Storage", "Window", "Location"] }
+wasm-bindgen = "0.2.128"
+wasm-bindgen-futures = "0.4.78"
+js-sys = "0.3.105"
+web-sys = { version = "0.3.105", features = ["Document", "HtmlElement", "HtmlFormElement", "HtmlTextAreaElement", "Storage", "Window", "Location"] }
 serde.workspace = true
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = "0.1.7"
@@ -22,8 +22,8 @@ quilt-uri = { path = "../../quilt-uri" }
 send_wrapper = "0.6.0"
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.76"
-web-sys = { version = "0.3.103", features = ["DomTokenList", "Element", "HtmlButtonElement", "Node"] }
+wasm-bindgen-test = "0.3.78"
+web-sys = { version = "0.3.105", features = ["DomTokenList", "Element", "HtmlButtonElement", "Node", "NodeList"] }
 
 [lints]
 workspace = true

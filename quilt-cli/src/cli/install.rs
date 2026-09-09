@@ -135,7 +135,7 @@ mod tests {
         reason = "large integration test; allowed per-test so new large tests stay flagged"
     )]
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         let uri = format!("{}&path={}", pkg::URI, pkg::README_LK_ESCAPED);
 
         let readme_logical_key = PathBuf::from(pkg::README_LK);

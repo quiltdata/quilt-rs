@@ -8,6 +8,7 @@ use test_log::test;
 
 use aws_sdk_s3::primitives::ByteStream;
 
+use crate::flow::PullOutcome;
 use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::StorageExt;
 use crate::lineage::DomainLineageIo;
@@ -69,7 +70,7 @@ async fn test_spamming_commit_writes() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -202,7 +203,7 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -291,7 +292,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -395,7 +396,7 @@ async fn test_manifest_recovery_from_corruption() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage: storage.clone(),
         namespace,
     };
@@ -579,7 +580,7 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote: DeniedRemote,
+        remote: std::sync::Arc::new(DeniedRemote),
         storage,
         namespace,
     };
@@ -635,7 +636,7 @@ async fn test_status_propagates_login_required() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote: LoggedOutRemote,
+        remote: std::sync::Arc::new(LoggedOutRemote),
         storage,
         namespace,
     };
@@ -726,7 +727,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
@@ -838,12 +839,12 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
 
-    let outcome = package.pull_outcome(None).await?;
+    let outcome = package.pull_outcome(None).await?.outcome;
     assert!(
         matches!(
             outcome,
@@ -893,13 +894,13 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
 
     assert!(matches!(
-        package.pull_outcome(None).await?,
+        package.pull_outcome(None).await?.outcome,
         PullOutcome::UpToDate
     ));
 
@@ -967,13 +968,13 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
 
     assert!(matches!(
-        package.pull_outcome(None).await?,
+        package.pull_outcome(None).await?.outcome,
         PullOutcome::UpToDate
     ));
 
@@ -1033,13 +1034,13 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
     };
 
     assert!(matches!(
-        package.pull_outcome(None).await?,
+        package.pull_outcome(None).await?.outcome,
         PullOutcome::UpToDate
     ));
 

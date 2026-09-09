@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -8,9 +10,11 @@ use crate::Res;
 use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::flow::Applied;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
 use crate::flow::classify_pull;
+use crate::flow::pull_outcome::RemoteChange;
 use crate::flow::remote_delta;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
@@ -102,6 +106,100 @@ pub async fn snapshot_for_pull(
     ))
 }
 
+/// What a pull applied, grouped by what happened to *this copy* rather than by
+/// the shape of the remote's diff — under a sparse
+/// [`SyncScope`] those differ, and the difference is the part worth reporting.
+///
+/// Three dispositions deliberately appear in no group, because nothing moved:
+/// a path changed on both sides to the same result (trivially resolved), a
+/// tracked path the user had edited (their work is kept, the remote's version
+/// not applied), and a metadata-only revision (an empty touch set). A `Blocked`
+/// pull produces no report at all — it applies nothing.
+///
+/// It describes a **span**, not a revision: a pull advances `base` straight to
+/// `latest`, so one report can cover several revisions, and `message` is the
+/// newest one's only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullReport {
+    /// The revision the pull advanced to.
+    pub manifest_uri: ManifestUri,
+    /// Added by the remote and fetched — whole-package scope only, since an
+    /// added path is never already tracked.
+    pub added: Vec<PathBuf>,
+    /// Added by the remote and left on it — individual-file scope only.
+    pub added_not_fetched: Vec<PathBuf>,
+    /// A tracked path the remote changed, rewritten from `latest`.
+    pub updated: Vec<PathBuf>,
+    /// A tracked path the remote dropped, deleted from the working tree.
+    pub removed: Vec<PathBuf>,
+    /// The newest revision's own message, empty treated as absent.
+    pub message: Option<String>,
+}
+
+impl PullReport {
+    /// Whether anything at all moved or is newly listed. False for a
+    /// metadata-only revision, whose hashes advance and whose files do not.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty()
+            && self.added_not_fetched.is_empty()
+            && self.updated.is_empty()
+            && self.removed.is_empty()
+    }
+}
+
+/// Build the report from the delta and from [`Applied`](crate::flow::Applied) —
+/// no extra I/O, both are in hand.
+///
+/// The touch set is not a substitute: it is what a pull *proposes* to move, and
+/// a touched path this copy does not track is never uninstalled. Reading the
+/// writes and deletions themselves is what makes every group true.
+fn report_of(
+    manifest_uri: ManifestUri,
+    delta: &BTreeMap<PathBuf, RemoteChange>,
+    applied: &Applied,
+    locally_changed: &ChangeSet,
+    message: Option<String>,
+) -> PullReport {
+    let installed: BTreeSet<&PathBuf> = applied.installed.iter().collect();
+    let uninstalled: BTreeSet<&PathBuf> = applied.uninstalled.iter().collect();
+    let mut report = PullReport {
+        manifest_uri,
+        added: Vec::new(),
+        added_not_fetched: Vec::new(),
+        updated: Vec::new(),
+        removed: Vec::new(),
+        // An empty message is absent, which the desktop already assumes
+        // elsewhere: `ManifestHeader::default` writes `Some(String::new())`.
+        message: message.filter(|m| !m.is_empty()),
+    };
+    // Over the delta, so the report is ordered by path and names only what the
+    // remote changed.
+    for (path, change) in delta {
+        match (installed.contains(path), uninstalled.contains(path)) {
+            // Deleted and written again: a file that was here has new content.
+            (true, true) => report.updated.push(path.clone()),
+            // Written where there was nothing, whether the remote called the
+            // path added or modified: under whole-package scope a modified
+            // path this copy never checked out is fetched here too, and
+            // nothing was overwritten either way.
+            (true, false) => report.added.push(path.clone()),
+            // Deleted with no replacement: absent from `latest`.
+            (false, true) => report.removed.push(path.clone()),
+            // Nothing moved, so the file on disk is already right — the
+            // user's edit was kept, both sides agree, or this copy does not
+            // track the path. Only an addition still on the remote is worth
+            // saying, and a path the user added identically is not one.
+            (false, false) => {
+                if matches!(change, RemoteChange::Added(_)) && !locally_changed.contains_key(path) {
+                    report.added_not_fetched.push(path.clone());
+                }
+            }
+        }
+    }
+    report
+}
+
 /// Which of the remote's changed paths this pull will actually apply.
 ///
 /// The **whole** of what a [`SyncScope`] does, in one place and free of I/O so
@@ -154,7 +252,7 @@ pub async fn pull_package(
     snapshot: PullSnapshot,
     namespace: Namespace,
     scope: SyncScope,
-) -> Res<PackageLineage> {
+) -> Res<(PackageLineage, PullReport)> {
     info!("⏳ Starting pull for package {namespace} (scope={scope:?})");
 
     if lineage.commit.is_some() {
@@ -211,13 +309,16 @@ pub async fn pull_package(
     // per-path disposition (or the delta) so the two derivations cannot
     // silently desynchronize.
     //
+    // Kept whole rather than reduced to its keys: the per-path disposition is
+    // what the report is made of, and discarding it here was why a caller could
+    // learn that a package advanced but never what changed inside it.
+    let delta = remote_delta(manifest, &snapshot.latest_manifest);
     let touched = touch_set(
-        remote_delta(manifest, &snapshot.latest_manifest).into_keys(),
+        delta.keys().cloned(),
         &lineage.paths,
         &snapshot.status.changes,
         scope,
     );
-
     // Verify-before-uninstall. For every touched path, confirm the working-tree
     // file still holds the BASE content the classifier assumed — the row in
     // `manifest` (the installed/base manifest), whose self-describing
@@ -270,7 +371,8 @@ pub async fn pull_package(
         return Err(PackageOpError::PullConflict(drifted).into());
     }
 
-    let lineage = apply_latest_update(
+    let latest = snapshot.latest.clone();
+    let (lineage, applied) = apply_latest_update(
         lineage,
         manifest,
         paths,
@@ -283,8 +385,16 @@ pub async fn pull_package(
     )
     .await?;
 
+    let report = report_of(
+        latest,
+        &delta,
+        &applied,
+        &snapshot.status.changes,
+        snapshot.latest_manifest.header.message.clone(),
+    );
+
     info!("✔️ Successfully pulled (surgical), outcome={outcome:?}");
-    Ok(lineage)
+    Ok((lineage, report))
 }
 
 #[cfg(test)]
@@ -325,6 +435,181 @@ mod tests {
             size: hash_seed.len() as u64,
             meta: None,
         }
+    }
+
+    fn hash_of(seed: &[u8]) -> crate::object_hash::ObjectHash {
+        Multihash::<256>::wrap(0x12, seed)
+            .unwrap()
+            .try_into()
+            .unwrap()
+    }
+
+    fn uri() -> ManifestUri {
+        ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h".to_string(),
+            origin: None,
+        }
+    }
+
+    fn paths(names: &[&str]) -> Vec<PathBuf> {
+        names.iter().map(PathBuf::from).collect()
+    }
+
+    fn applied(installed: &[&str], uninstalled: &[&str]) -> Applied {
+        Applied {
+            installed: paths(installed),
+            uninstalled: paths(uninstalled),
+        }
+    }
+
+    /// The whole of the grouping: which write or deletion lands in which group.
+    /// Read from the apply, so each group states something that happened.
+    #[test]
+    fn report_groups_by_what_happened_to_this_copy() {
+        let delta = BTreeMap::from([
+            (
+                PathBuf::from("fetched.csv"),
+                RemoteChange::Added(hash_of(b"a")),
+            ),
+            (
+                PathBuf::from("listed.csv"),
+                RemoteChange::Added(hash_of(b"b")),
+            ),
+            (
+                PathBuf::from("changed.csv"),
+                RemoteChange::Modified(hash_of(b"c")),
+            ),
+            (PathBuf::from("dropped.csv"), RemoteChange::Removed),
+        ]);
+        // `changed.csv` was tracked, so it was deleted and written again;
+        // `fetched.csv` was written where there was nothing; `dropped.csv` was
+        // deleted with no replacement; `listed.csv` was left on the remote.
+        let applied = applied(
+            &["fetched.csv", "changed.csv"],
+            &["changed.csv", "dropped.csv"],
+        );
+
+        let report = report_of(
+            uri(),
+            &delta,
+            &applied,
+            &ChangeSet::new(),
+            Some("a message".to_owned()),
+        );
+
+        assert_eq!(report.added, paths(&["fetched.csv"]));
+        assert_eq!(report.added_not_fetched, paths(&["listed.csv"]));
+        assert_eq!(report.updated, paths(&["changed.csv"]));
+        assert_eq!(report.removed, paths(&["dropped.csv"]));
+        assert_eq!(report.message.as_deref(), Some("a message"));
+        assert!(!report.is_empty());
+    }
+
+    /// The touch set says what a pull *proposed* to move; only the apply knows
+    /// what it did. Under whole-package scope the touch set covers untracked
+    /// paths, and `apply_latest_update` then skips the ones with no file to
+    /// delete — so a report read from the touch set claimed a deletion that
+    /// never happened, and called a first fetch an update.
+    #[test]
+    fn untracked_paths_are_reported_by_what_the_apply_did() {
+        let delta = BTreeMap::from([
+            (PathBuf::from("never-had.csv"), RemoteChange::Removed),
+            (
+                PathBuf::from("first-fetch.csv"),
+                RemoteChange::Modified(hash_of(b"m")),
+            ),
+        ]);
+        // Both are in the touch set under whole-package scope. Neither was
+        // tracked, so neither is uninstalled; the one still in `latest` is
+        // written.
+        let applied = applied(&["first-fetch.csv"], &[]);
+
+        let report = report_of(uri(), &delta, &applied, &ChangeSet::new(), None);
+
+        assert!(
+            report.removed.is_empty(),
+            "a path with no local file was reported as removed: {report:?}"
+        );
+        assert_eq!(
+            report.added,
+            paths(&["first-fetch.csv"]),
+            "a first fetch is new to this copy, not an update"
+        );
+        assert!(report.updated.is_empty(), "nothing was overwritten");
+    }
+
+    /// The dispositions that must produce **nothing**, because nothing moved.
+    /// Reporting any of them would tell the user a file changed when it did not.
+    #[test]
+    fn nothing_moved_means_nothing_reported() {
+        let nothing = Applied::default();
+
+        // A tracked path the remote changed and the user had also edited: the
+        // touch set drops it, their work is kept, the remote's version is not
+        // applied — so it is neither "updated" nor a skip notice.
+        let kept = BTreeMap::from([(
+            PathBuf::from("mine.csv"),
+            RemoteChange::Modified(hash_of(b"x")),
+        )]);
+        let report = report_of(uri(), &kept, &nothing, &ChangeSet::new(), None);
+        assert!(
+            report.is_empty(),
+            "kept local work was reported: {report:?}"
+        );
+
+        // A path removed on both sides — trivially resolved, never touched.
+        let both_removed = BTreeMap::from([(PathBuf::from("gone.csv"), RemoteChange::Removed)]);
+        let report = report_of(uri(), &both_removed, &nothing, &ChangeSet::new(), None);
+        assert!(
+            report.is_empty(),
+            "a both-removed path was reported: {report:?}"
+        );
+
+        // A path both sides added with the same content: the classifier lets
+        // the pull through, and the file is already on disk. Calling it "not
+        // downloaded" would send the user looking for something they have.
+        let both_added = BTreeMap::from([(
+            PathBuf::from("same.csv"),
+            RemoteChange::Added(hash_of(b"same")),
+        )]);
+        let locally = ChangeSet::from([(
+            PathBuf::from("same.csv"),
+            Change::Added(ManifestRow::default()),
+        )]);
+        let report = report_of(uri(), &both_added, &nothing, &locally, None);
+        assert!(
+            report.is_empty(),
+            "a path the user already has was reported as outstanding: {report:?}"
+        );
+
+        // A metadata-only revision: identical rows, so an empty delta and
+        // nothing applied. The hashes advance and no file moved.
+        let report = report_of(
+            uri(),
+            &BTreeMap::new(),
+            &nothing,
+            &ChangeSet::new(),
+            Some("retagged".to_owned()),
+        );
+        assert!(report.is_empty(), "a metadata-only revision named files");
+        // Its message still travels — it is the only thing that changed.
+        assert_eq!(report.message.as_deref(), Some("retagged"));
+    }
+
+    /// `ManifestHeader::default` writes `Some(String::new())`, which the desktop
+    /// already treats as absent elsewhere.
+    #[test]
+    fn an_empty_message_is_absent() {
+        let report = report_of(
+            uri(),
+            &BTreeMap::new(),
+            &Applied::default(),
+            &ChangeSet::new(),
+            Some(String::new()),
+        );
+        assert_eq!(report.message, None);
     }
 
     fn manifest_of(rows: Vec<ManifestRow>) -> Manifest {
@@ -787,7 +1072,7 @@ mod tests {
         };
 
         let mut base = base;
-        let lineage = pull_package(
+        let (lineage, _report) = pull_package(
             lineage,
             &mut base,
             &paths,
@@ -881,7 +1166,7 @@ mod tests {
         };
 
         let mut base = base;
-        let lineage = pull_package(
+        let (lineage, _report) = pull_package(
             lineage,
             &mut base,
             &paths,

@@ -9,11 +9,44 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.21.2-alpha1] - 2026-08-25
+## [v0.22.1-alpha1] - 2026-09-09
 
 ### Fixed
 
-- Committing to a host you are signed out of no longer fails with a six-line Rust error chain — the message names the host — and autosync stops retrying a dead session in silence: the affected packages now show the error instead of looking idle (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- A host QuiltSync cannot get credentials for at all — rather than one whose credentials S3 rejects (v0.21.2) — no longer fails with a six-line Rust error chain. It is reported as the dead session it is, so the sign-in affordance appears and background sync stops retrying it in silence (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+## [v0.22.0] - 2026-09-08
+
+### Added
+
+- When a new revision arrives, a notification names the files it brought — new, updated, removed — where a background pull used to change your folder in silence. Notifications stack, each closes on its own button, and one raised while the window was shut is waiting when you open it. Under individual-file sync a revision's new files are listed rather than downloaded, and the notification says so
+  - <https://github.com/quiltdata/quilt-rs/pull/897>
+  - <https://github.com/quiltdata/quilt-rs/pull/898>
+- Before you pull, the packages list and an outdated package's banner name the files the revision would bring (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Changed
+
+- A manual Pull is confirmed by that report instead of "Successfully pulled package …", which said the same thing twice over. A pull with nothing to report — a revision that moved no files — still shows the line (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Fixed
+
+- *Save diagnostics* now includes the end of the log. The last lines of a session were dropped when the app quit — the ones covering whatever you were doing when the problem started — so the archive you send support stopped just short of the part that explains it. A crash or a force-quit still loses them (<https://github.com/quiltdata/quilt-rs/pull/883>)
+
+### quilt-rs
+
+- Updated [from v0.36.0 to v0.37.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.36.0...quilt-rs/v0.37.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.21.2] - 2026-09-02
+
+### Fixed
+
+- A credential S3 refuses is no longer reported as raw AWS error text: where the response names the cause, it is told apart from a role denial, and where the bucket was reached with your own `~/.aws` credentials it says to update that file rather than offering a sign-in that cannot help. Two paths do not benefit yet — an installed package's page and the packages list keep showing last-known state, and a push reports the rejection as a role denial (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- Background sync tells a refused credential from a network blip instead of retrying it quietly, and counts one episode per deployment rather than one per package. What you see is unchanged: the affordance still renders per package, and there is no notification (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- A missing package or object now reads "Package not found: the requested version or object does not exist" instead of the AWS error text (<https://github.com/quiltdata/quilt-rs/pull/861>)
+
+### quilt-rs
+
+- Updated [from v0.35.0 to v0.36.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.35.0...quilt-rs/v0.36.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.21.1] - 2026-08-07
 

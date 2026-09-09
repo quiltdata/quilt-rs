@@ -1,11 +1,14 @@
+use std::path::PathBuf;
+
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::lineage::SyncScope;
-use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
 use crate::cli::output::Std;
+use crate::cli::text::printable;
+use crate::cli::text::printable_line;
 
 #[derive(Debug)]
 pub struct Input {
@@ -16,11 +19,45 @@ pub struct Input {
 #[derive(Debug)]
 pub struct Output {
     pub hash: String,
+    pub report: quilt_rs::flow::PullReport,
+}
+
+/// One group of the report: its heading, then its paths one per line.
+///
+/// Grouped by what happened to this copy rather than by the remote's diff, and
+/// worded so the two "new files" cases cannot be confused — under the CLI's
+/// sparse scope an added path is listed and not fetched, and saying so is the
+/// difference between a true line and a misleading one.
+fn group(f: &mut std::fmt::Formatter<'_>, heading: &str, paths: &[PathBuf]) -> std::fmt::Result {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let plural = if paths.len() == 1 { "" } else { "s" };
+    write!(f, "\n{} file{plural} {heading}:", paths.len())?;
+    for path in paths {
+        // One path per line, so a path may not carry a line break of its own:
+        // a forged heading in this list is indistinguishable from a real one.
+        write!(f, "\n  {}", printable_line(&path.display().to_string()))?;
+    }
+    Ok(())
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r#"Revision "{}" pulled"#, self.hash)
+        write!(f, r#"Revision "{}" pulled"#, self.hash)?;
+        // Stdout has no room constraint, so it carries the whole list — it is
+        // the one surface that can, and the face an agent loop reads.
+        group(f, "new", &self.report.added)?;
+        group(f, "new, not downloaded", &self.report.added_not_fetched)?;
+        group(f, "updated", &self.report.updated)?;
+        group(f, "removed", &self.report.removed)?;
+        if let Some(message) = self.report.message.as_deref() {
+            // Labelled, because a pull advances to `latest` in one step and can
+            // span several revisions: this is the newest one's message, not an
+            // account of everything above it.
+            write!(f, "\nLatest revision: {}", printable(message))?;
+        }
+        Ok(())
     }
 }
 
@@ -32,7 +69,7 @@ async fn pull_package(
     local_domain: &quilt_rs::LocalDomain,
     namespace: Namespace,
     host_config: Option<HostConfig>,
-) -> Result<ManifestUri, Error> {
+) -> Result<quilt_rs::flow::PullReport, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         // Sparse checkout, always. The CLI has no setting for the sync scope
         // and no surface to show one, so it asks for the narrow scope rather
@@ -52,8 +89,11 @@ pub async fn model(
         host_config,
     }: Input,
 ) -> Result<Output, Error> {
-    let ManifestUri { hash, .. } = pull_package(local_domain, namespace, host_config).await?;
-    Ok(Output { hash })
+    let report = pull_package(local_domain, namespace, host_config).await?;
+    Ok(Output {
+        hash: report.manifest_uri.hash.clone(),
+        report,
+    })
 }
 
 #[cfg(test)]
@@ -70,7 +110,7 @@ mod tests {
     ///   * pulls the latest version
     ///   * verifies the package is up to date
     #[test(tokio::test)]
-    async fn test_model() -> Result<(), Error> {
+    async fn live_model() -> Result<(), Error> {
         let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
         {

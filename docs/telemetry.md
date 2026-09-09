@@ -61,6 +61,11 @@ install can hold a file from months ago; a busy one holds ten days. Read as a
 calendar window it is simply wrong, and that misreading is the reason this
 paragraph exists.
 
+**The tail survives a quit, not a crash.** Lines go to a background writer, so
+whatever is still queued when the process ends is lost. `App::run`'s exit callback
+in `main.rs` drops the writer's guard, which drains the queue — up to about a second
+of the quit. A `kill`, a signal or an aborting panic never reach it.
+
 **Turning up the volume.** `QUILTSYNC_LOG` **replaces** the defaults for both
 sinks:
 
@@ -164,8 +169,8 @@ reuse later.
 timeout — keeps its events in `<app-data>/unsent_events.jsonl`, one per line,
 bounded at 1000 with the oldest dropped. They replay on the next send that
 succeeds. A *refused* send is not kept: the API answered, so a retry earns the
-same answer. Nothing is flushed at exit, because nothing runs at exit: Tauri's
-`run` ends the process directly, so no destructor gets a chance.
+same answer. Nothing is flushed at exit: exit-time work exists (the log drains
+there, above), but a send is a network round trip and a quit must not wait on one.
 
 ## Verifying a change without credentials
 

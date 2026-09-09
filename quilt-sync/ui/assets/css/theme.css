@@ -43,6 +43,10 @@
   --q-ui-z-index-progress: 50;
   --q-ui-z-index-version: 60;
   --q-ui-z-index-popover: 100;
+  /* Above the popover tier, which `notify.css` already sits on top of at
+     `popover + 1`. The toast layer reports background work and must not be
+     interleaved with page content. */
+  --q-ui-z-index-toasts: 110;
 
   /* Sizes */
   --q-ui-container-size: 1280px;

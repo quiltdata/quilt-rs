@@ -274,7 +274,7 @@ pub async fn package_pull(
     namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
     experimental: &ExperimentalSettings,
-) -> Result<(), Error> {
+) -> Result<quilt_rs::flow::PullReport, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
@@ -286,8 +286,7 @@ pub async fn package_pull(
     let scope = resolve_sync_scope(stored, experimental);
     model
         .package_pull(&installed_package, host_config, scope)
-        .await?;
-    Ok(())
+        .await
 }
 
 /// Set the package's remote. Returns `Some(reason)` when the remote was set but
@@ -456,8 +455,7 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model
@@ -524,8 +522,7 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model.expect_resolve_workflow().returning(|_, _| Ok(None));
@@ -566,8 +563,7 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model

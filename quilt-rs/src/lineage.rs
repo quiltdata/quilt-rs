@@ -35,6 +35,7 @@ pub use package::PathState;
 pub use package::SyncScope;
 
 mod home;
+pub use home::DEFAULT_HOME_DIR_NAME;
 pub use home::Home;
 
 /// It's essentially just a map of `PackageLineage`.
@@ -189,7 +190,13 @@ impl DomainLineageIo {
     ) -> Res<DomainLineage> {
         match storage.read_bytes(&self.path).await {
             Ok(bytes) => {
-                let mut lineage = DomainLineage::from_slice(&bytes)?;
+                let mut lineage = match DomainLineage::from_slice(&bytes) {
+                    Ok(lineage) => lineage,
+                    Err(Error::Lineage(LineageError::MissingHome)) => {
+                        serde_json::from_slice(&bytes)?
+                    }
+                    Err(err) => return Err(err),
+                };
                 lineage.home = home.into();
                 self.write(storage, lineage).await
             }
@@ -442,6 +449,25 @@ mod tests {
             )
             .await?;
         let lineage = DomainLineageIo::new(file_path).read(&storage).await?;
+        assert_eq!(lineage, DomainLineage::new("/home/directory"));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_set_home_repairs_existing_lineage_with_missing_home() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(
+                &file_path,
+                ByteStream::from_static(br#"{"packages":{},"home":""}"#),
+            )
+            .await?;
+
+        let lineage = DomainLineageIo::new(file_path)
+            .set_home(&storage, "/home/directory")
+            .await?;
+
         assert_eq!(lineage, DomainLineage::new("/home/directory"));
         Ok(())
     }

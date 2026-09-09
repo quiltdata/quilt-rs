@@ -54,6 +54,18 @@
     white-space: nowrap;
   }
 
+  /* The incoming-revision line. Secondary text, not the error hint: a package
+     with a newer revision is not a fault, and the hint slot reddens the row. */
+  .item-note {
+    display: block;
+    overflow: hidden;
+    font-size: 0.875rem;
+    line-height: 1.43;
+    color: var(--q-ui-palette-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .item-error-hint {
     color: var(--q-ui-palette-error);
     display: block;

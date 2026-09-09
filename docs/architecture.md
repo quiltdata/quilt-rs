@@ -175,6 +175,44 @@ metadata, `Clear` drops it, `Set` replaces it — and callers with no
 opinion pass `Keep`, so a background commit can never strip metadata by
 omission.
 
+### Undo Commit
+
+Discards the newest local commit and restores the revision before it.
+The inverse of Commit, and unrelated to Reset Local (below), which
+resolves `Diverged` against the remote.
+
+- **Reach is the pending-commit chain, not the absence of a remote.**
+  `CommitState.prev_hashes` is the only on-disk record of a revision's
+  parent, and push consumes it while Reset Local clears it. A package
+  with no remote is simply the one place neither can have happened. Two
+  consequences follow rather than being special cases: the initial commit
+  from Create has no parent and can never be undone (Uninstall is the
+  different act), and the first push ends undo permanently.
+- **Refuses on any package that has a remote** — narrower than the rule
+  above. A remote-backed package with unpushed commits still has a chain,
+  but undoing there would leave a pending commit equal to its own base,
+  which the four hashes and Push would both have to be taught to read.
+- **Refuses unless every path it would touch holds the undone revision's
+  committed content**, or nothing where that revision has nothing. The
+  checked set is the *union* of the tracked paths and the restore's
+  destinations: those differ, because the restore writes rows of the
+  revision being restored. A directory at a destination is allowed — it
+  can only exist because tracked files sit under it, and each is checked
+  on its own.
+- **Applies the manifest delta**, not a rebuild: paths equal in both
+  revisions are left alone. Writes and creations come first and removals
+  last, except a removal whose path nests with a write (`a` vs `a/b`) —
+  that one is hoisted, because a file at `a` blocks creating `a/b` and a
+  directory at `a` blocks writing the file `a`.
+- **Not resumable.** A part-way failure leaves a mix of both revisions,
+  names the paths, and refuses until they are resolved; the lineage is
+  written last, so it still describes the state before the attempt.
+  Nothing is lost — the mix is all committed content `objects/` retains.
+  Resuming would require the guard to tell undo's own half-finished work
+  from a user's edits, which nothing on disk records.
+- Prunes nothing, so the discarded revision still appears in `quilt log`
+  and there is no verb to return to it.
+
 ### Push
 
 - Pushing with no pending commit is a **no-op success**
@@ -236,6 +274,16 @@ manifest, and takes the status walk last, so no network happens between
 classification and mutation. Paths absent from the new revision are removed from
 the working tree and from tracking — logged, not an error.
 
+Both halves report what they saw. `pull` returns a `flow::PullReport` — paths
+added and fetched, added and left on the remote, updated, removed, plus the
+newest revision's message — grouped by what happened to *this* copy rather than
+by the remote's diff, since under `SyncScope::IndividualFiles` an added path is
+listed and not written. A path in the delta can land in no group, each case
+meaning nothing moved: both sides reached the same result, the user's edit was
+kept, or this copy does not track the path at all. `pull_outcome` returns a
+`flow::PullPreview` — the verdict plus the paths the pending revision adds — so
+a caller can name incoming files before pulling.
+
 ### Refresh Latest
 
 `flow::refresh_latest_hash` is the only path that mutates `latest_hash`
@@ -259,7 +307,9 @@ no reference counting).
 
 The `UpstreamState` classifier (see
 [`docs/mental-model.md`](mental-model.md)) reports `Diverged` when both
-sides moved past the merge base. A `Diverged` package leaves that state
+sides moved past the merge base. Neither remedy below is Undo Commit:
+these resolve a disagreement with the remote, undo steps back through a
+package's own unpushed commits. A `Diverged` package leaves that state
 via one of two remediation flows: Certify Latest biases local-wins by
 pushing the local commit (if any) and tagging it as `latest`; Reset Local
 biases remote-wins by discarding the local commit chain and re-installing

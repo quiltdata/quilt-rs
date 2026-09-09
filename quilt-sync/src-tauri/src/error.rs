@@ -195,6 +195,28 @@ impl Error {
         matches!(self, Error::Quilt(err) if err.is_access_denied())
     }
 
+    /// True when S3 rejected the credentials themselves.
+    ///
+    /// The counterpart to [`Error::is_access_denied`]: that one says the
+    /// session is healthy and the role is not allowed, this one says the
+    /// session is not healthy. The watcher must not back this off — retrying a
+    /// rejected credential never succeeds — so it routes to the same
+    /// login-required affordance a refused vend does.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self, Error::Quilt(err) if err.is_invalid_credentials())
+    }
+
+    /// The deployment this request was for, if any. `None` for a bare S3
+    /// bucket reached with ambient credentials, and for non-S3 errors.
+    #[must_use]
+    pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
+        match self {
+            Error::Quilt(err) => err.s3_host(),
+            _ => None,
+        }
+    }
+
     /// Serialize actionable errors as JSON so the frontend can parse and react
     /// (e.g. redirect to `/login` or `/setup`). Falls back to `Display` for
     /// all other errors.
@@ -225,9 +247,51 @@ impl Error {
                 "message": self.to_string(),
             })
             .to_string(),
+            Error::Quilt(quilt::Error::S3(error)) => s3_error_to_frontend(error),
             _ => self.to_string(),
         }
     }
+}
+
+fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
+    let (kind, message) = match &error.kind {
+        quilt::S3ErrorKind::InvalidCredentials(_) if error.host.is_none() => (
+            "credentials_invalid",
+            "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
+                .to_string(),
+        ),
+        // A stale session on a Quilt deployment is the same dead end as a
+        // refused vend, so it takes the same `login_required` route rather than
+        // a second kind: the frontend already navigates to `/login?host=…&back=…`
+        // for that, which turns "sign in again" from a sentence into somewhere
+        // to go. Only user-initiated commands reach this — autosync reports a
+        // login episode on its own event channel and never navigates.
+        quilt::S3ErrorKind::InvalidCredentials(_) => (
+            "login_required",
+            format!(
+                "Your session for {} has expired. Please sign in again.",
+                error.host.as_ref().expect("host checked above")
+            ),
+        ),
+        quilt::S3ErrorKind::NotFound(_) => (
+            "not_found",
+            "Package not found: the requested version or object does not exist.".to_string(),
+        ),
+        quilt::S3ErrorKind::AccessDenied(_) => (
+            "access_denied",
+            "The active role does not have access to this object.".to_string(),
+        ),
+        _ => return error.to_string(),
+    };
+
+    let mut response = serde_json::json!({
+        "kind": kind,
+        "message": message,
+    });
+    if let Some(host) = &error.host {
+        response["host"] = serde_json::Value::String(host.to_string());
+    }
+    response.to_string()
 }
 
 impl From<Error> for String {
@@ -291,5 +355,59 @@ mod tests {
         let result = err.to_frontend_string();
         assert_eq!(result, "General error: something broke");
         assert!(serde_json::from_str::<serde_json::Value>(&result).is_err());
+    }
+
+    #[test]
+    fn to_frontend_string_invalid_local_credentials_is_actionable() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::InvalidCredentials(
+                "InvalidAccessKeyId: raw SDK details".to_string(),
+            ),
+        )));
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "credentials_invalid");
+        assert_eq!(
+            json["message"],
+            "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
+    }
+
+    /// A stale session on a deployment routes to the kind the frontend already
+    /// navigates on, and carries the host it needs to build `/login?host=…`.
+    /// Reporting it as its own kind would render a page telling the user to sign
+    /// in with no way to do so.
+    #[test]
+    fn to_frontend_string_expired_session_sends_the_user_to_login() {
+        let host: quilt_uri::Host = "demo.quiltdata.com".parse().unwrap();
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error {
+            host: Some(host.clone()),
+            kind: quilt::S3ErrorKind::InvalidCredentials(
+                "ExpiredToken: raw SDK details".to_string(),
+            ),
+        }));
+
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["host"], host.to_string());
+        assert_eq!(
+            json["message"],
+            format!("Your session for {host} has expired. Please sign in again.")
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
+    }
+
+    #[test]
+    fn to_frontend_string_missing_object_is_actionable() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::NotFound("NoSuchKey: raw SDK details".to_string()),
+        )));
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "not_found");
+        assert_eq!(
+            json["message"],
+            "Package not found: the requested version or object does not exist."
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
     }
 }

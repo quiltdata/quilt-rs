@@ -9,15 +9,40 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.35.1-alpha1] - 2026-08-07
+## [v0.38.0-alpha1] - 2026-09-09
+
+### Fixed
+
+- A vend that never happens is now reported as a dead session too. `InvalidCredentials` (v0.36.0) covers a credential S3 *rejects*, which names a code in its response; a provider that refuses to vend at all fails before any request is signed, so it comes back as a code-less dispatch failure that no caller could tell from a transport fault. Recovered as `LoginError::Required` at every vending call site — existence checks, object reads, URL resolution, and the four upload legs (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+## [v0.37.0] - 2026-09-08
+
+### Added
+
+- `flow::PullReport` names what a pull applied: the files it wrote, rewrote and deleted, the ones the revision added and left on the remote, and the newest revision's message. Grouping contract in [`docs/architecture.md`](../docs/architecture.md) (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- `flow::PullPreview` pairs a dry run's `PullOutcome` with the paths the pending revision adds, so a caller can name incoming files before pulling (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Changed
+
+- **Breaking:** `flow::pull_package` returns `(PackageLineage, PullReport)` and `InstalledPackage::pull` returns `PullReport`, where both returned the lineage alone. `InstalledPackage::pull_outcome` returns `flow::PullPreview` instead of `flow::PullOutcome`; the verdict is its `outcome` field (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+## [v0.36.0] - 2026-09-02
 
 ### Added
 
 - `LocalDomain::get_lineage` reads the whole lineage record in one go, for callers that want every installed package at once — `list_installed_packages` plus `InstalledPackage::lineage` per package re-reads and re-parses that record once per package (<https://github.com/quiltdata/quilt-rs/pull/846>)
+- `flow::list_revisions` and `InstalledPackage::revisions` list the revisions a working copy holds, newest first, as `flow::Revision` values carrying the top-hash, the commit message, and when this copy obtained the revision — a manifest records no commit time of its own, so for a fetched revision that is the fetch time (<https://github.com/quiltdata/quilt-rs/pull/849>)
+- `S3ErrorKind::InvalidCredentials` separates S3 rejecting the credentials from `AccessDenied`. `Error::is_invalid_credentials()` returns `true` for that case; `Error::s3_host()` returns the deployment a request was for, or `None` for a bare bucket. Together they tell "sign in again" from "retry later": retrying a rejected credential never succeeds. Two limits: the distinction needs an error code, so a 403 carrying none — what a HEAD request gets, since it has no response body — still classifies as `AccessDenied`; and `InstalledPackage::status` degrades a rejected credential to stale lineage along with genuinely offline errors, so a caller of that method never sees it (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- `InstalledPackage::undo_commit` discards a package's newest local commit and restores the one before it — available while the pending-commit chain still records a parent, which is until the first push. Contract in [`docs/architecture.md`](../docs/architecture.md) (<https://github.com/quiltdata/quilt-rs/pull/860>)
+- `DEFAULT_HOME_DIR_NAME` is public, naming the directory QuiltSync keeps working copies in, so another caller can default to the same place (<https://github.com/quiltdata/quilt-rs/pull/848>)
+
+### Changed
+
+- **Breaking:** two exhaustive error enums gained a variant, so an exhaustive `match` over either needs a new arm — `S3ErrorKind::InvalidCredentials` (<https://github.com/quiltdata/quilt-rs/pull/861>) and `PackageOpError::Undo` (<https://github.com/quiltdata/quilt-rs/pull/860>)
 
 ### Fixed
 
-- A call made without a valid session now fails with `LoginError::Required` instead of a generic S3 error carrying the AWS SDK's entire wrap chain in its message. Credentials are vended lazily inside the SDK provider, so a signed-out session arrived as a dispatch failure no caller could distinguish from a transport fault — leaving it unable to offer re-authentication, and the sync watcher retrying a call that could never succeed. Covers existence checks, object reads, URL resolution, and all four upload legs (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- `set_home` repairs a lineage record whose home is missing or empty instead of failing to read it (<https://github.com/quiltdata/quilt-rs/pull/848>)
 
 ## [v0.35.0] - 2026-08-07
 

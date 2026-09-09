@@ -3,6 +3,8 @@ use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
@@ -13,6 +15,7 @@ use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::debug;
 use tracing::info;
 use tracing::trace;
@@ -83,10 +86,17 @@ pub(super) fn classify_s3_error(
     described: &str,
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
-    match (code, status) {
-        (Some("AccessDenied"), _) | (None, Some(403)) => {
-            S3ErrorKind::AccessDenied(described.to_string())
+    match code {
+        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+        None if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
+        Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
+            S3ErrorKind::InvalidCredentials(described.to_string())
         }
+        // Only codes meaning a missing *object* belong here. `push` reads
+        // `is_not_found` on a package's `latest` tag as "no revisions yet, so
+        // this is a first push" (flow/push.rs), so a code that means a missing
+        // bucket would send it to write into one that does not exist.
+        Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
         _ => fallback(described.to_string()),
     }
 }
@@ -147,7 +157,11 @@ where
     classify_s3_error(code.as_deref(), status, &describe_sdk_error(err), fallback)
 }
 
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
+async fn get_object_stream(
+    client: &aws_sdk_s3::Client,
+    s3_uri: &S3Uri,
+    host: Option<&Host>,
+) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -155,10 +169,14 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
     };
 
     let result = result.send().await.map_err(|err| match &err {
-        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
-            Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
-        }
-        _ => s3_error_or_login(err, None, S3ErrorKind::Raw),
+        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => Error::S3(S3Error {
+            host: host.cloned(),
+            kind: S3ErrorKind::NotFound(s3_uri.to_string()),
+        }),
+        // The host separates a deployment session, whose remedy is signing in,
+        // from ambient `~/.aws` credentials, whose remedy is the file. A `None`
+        // here is read downstream as the latter.
+        _ => s3_error_or_login(err, host, S3ErrorKind::Raw),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -225,6 +243,12 @@ pub struct RemoteS3 {
     auth: auth::Auth,
     http: crate::io::remote::client::ReqwestClient,
     s3: RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>,
+    /// One construction lock per credentials key, so concurrent misses build
+    /// one client instead of N. Held across the build, which awaits.
+    client_locks: RwLock<HashMap<CredsRef, Arc<AsyncMutex<()>>>>,
+    /// Bumped by every invalidation, so a builder that started before one
+    /// cannot write its pre-invalidation client back.
+    client_cache_generation: AtomicU64,
     regions: RwLock<HashMap<String, Region>>,
 }
 
@@ -234,26 +258,11 @@ impl RemoteS3 {
         RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),
             s3: RwLock::new(HashMap::new()),
+            client_locks: RwLock::new(HashMap::new()),
+            client_cache_generation: AtomicU64::new(0),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, Arc::new(storage)),
         }
-    }
-
-    pub fn try_clone(&self) -> Res<Self> {
-        let s3 = match self.s3.read() {
-            Ok(s3) => s3.clone(),
-            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
-        };
-        let regions = match self.regions.read() {
-            Ok(regions) => regions.clone(),
-            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
-        };
-        Ok(RemoteS3 {
-            http: self.http.clone(),
-            s3: RwLock::new(s3),
-            regions: RwLock::new(regions),
-            auth: self.auth.clone(),
-        })
     }
 
     pub async fn login(&self, host: &Host, refresh_token: String) -> Res {
@@ -366,6 +375,32 @@ impl RemoteS3 {
             return Ok(client);
         }
 
+        // Cache misses for the same principal can arrive together when a package
+        // opens. Share one construction lock across every cloned RemoteS3 handle,
+        // then recheck the shared cache after waiting.
+        let client_lock = {
+            let mut locks = self
+                .client_locks
+                .write()
+                .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+            locks
+                .entry(creds_ref.clone())
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+                .clone()
+        };
+        let _client_guard = client_lock.lock().await;
+        if let Some(client) = self
+            .s3
+            .read()
+            .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?
+            .get(&creds_ref)
+            .cloned()
+        {
+            info!("✔️ Using cached S3 client for region {:?}", region);
+            return Ok(client);
+        }
+        let cache_generation = self.client_cache_generation.load(Ordering::SeqCst);
+
         // `debug`, and worth reading as a signal rather than noise: a *new* client
         // per fetch means the client cache is not being hit, which is TLS and config
         // work repeated for nothing. The line stays so that stays visible.
@@ -407,11 +442,27 @@ impl RemoteS3 {
         // The construction is already announced above; this only says it finished.
         trace!("✔️ created new S3 client for region {:?}", region);
 
-        // Cache the new client
+        self.cache_client_if_current(creds_ref, client, cache_generation)
+    }
+
+    fn cache_client_if_current(
+        &self,
+        creds_ref: CredsRef,
+        client: aws_sdk_s3::Client,
+        cache_generation: u64,
+    ) -> Res<aws_sdk_s3::Client> {
         let mut map = self
             .s3
             .write()
             .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+
+        // Invalidation takes this same write lock before advancing the
+        // generation. If it ran while the async client was being built, the
+        // client may serve its already in-flight caller but must not repopulate
+        // the shared cache with pre-invalidation state.
+        if self.client_cache_generation.load(Ordering::SeqCst) != cache_generation {
+            return Ok(client);
+        }
 
         match map.entry(creds_ref) {
             Entry::Occupied(mut entry) => {
@@ -443,10 +494,17 @@ impl RemoteS3 {
             Ok(map) => map,
             Err(poisoned) => poisoned.into_inner(),
         };
+        self.client_cache_generation.fetch_add(1, Ordering::SeqCst);
         match host {
             Some(host) => map.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
             None => map.clear(),
         }
+        // Keep the per-principal construction locks for the lifetime of this
+        // shared cache. Removing one during invalidation would let a request
+        // already holding the old lock race a later miss holding a newly
+        // created lock; the pre-invalidation request could then overwrite the
+        // fresh client. The key space is bounded by the hosts and regions used
+        // by this RemoteS3 instance.
     }
 
     async fn get_client_for_bucket(
@@ -510,7 +568,7 @@ impl Remote for RemoteS3 {
             host, s3_uri
         );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        match get_object_stream(&client, s3_uri).await {
+        match get_object_stream(&client, s3_uri, host).await {
             Ok(stream) => {
                 debug!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
@@ -524,6 +582,14 @@ impl Remote for RemoteS3 {
             // on — that the active role, not the session, is the problem.
             Err(e) if e.is_access_denied() => {
                 warn!("❌ Access denied reading {}: {}", s3_uri, e);
+                Err(e)
+            }
+            // A rejected credential says the session is dead, not that this
+            // read failed: autosync raises the login affordance on it rather
+            // than backing off. Re-wrapped, it is indistinguishable from a
+            // network fault.
+            Err(e) if e.is_invalid_credentials() => {
+                warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
                 Err(e)
             }
             Err(e) => {
@@ -589,7 +655,14 @@ impl Remote for RemoteS3 {
             .await?;
 
         if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
-            multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
+            multipart_upload_and_sha256_chunksum(
+                client,
+                source_path,
+                dest_uri,
+                size,
+                host_config.host.as_ref(),
+            )
+            .await
         } else {
             put_and_request_checksum(client, source_path, dest_uri, host_config).await
         }
@@ -628,7 +701,7 @@ mod tests {
     use crate::paths::DomainPaths;
 
     #[test(tokio::test)]
-    async fn test_multipart_upload() -> Res<()> {
+    async fn live_multipart_upload() -> Res<()> {
         // Create a temporary file with the test content
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(less_than_8mb())?;
@@ -671,7 +744,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_zero_bytes_upload() -> Res<()> {
+    async fn live_zero_bytes_upload() -> Res<()> {
         // Create a temporary file with zero bytes
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(zero_bytes())?;
@@ -715,7 +788,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_crc64_upload() -> Res<()> {
+    async fn live_crc64_upload() -> Res<()> {
         // Read the fixture file content
         let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");
         let file_content = std::fs::read(fixture_path)?;
@@ -820,11 +893,16 @@ mod tests {
         );
     }
 
-    /// Both of these are also HTTP 403, which is exactly why we key on the
-    /// code: they mean "re-vend credentials", not "wrong role".
+    /// Credential failures are also HTTP 403, which is exactly why we key on
+    /// the code: they mean "re-vend credentials", not "wrong role".
     #[test]
-    fn expired_credential_codes_do_not_classify_as_access_denied() {
-        for code in ["ExpiredToken", "InvalidAccessKeyId"] {
+    fn credential_codes_classify_as_invalid_credentials() {
+        for code in [
+            "ExpiredToken",
+            "InvalidAccessKeyId",
+            "InvalidToken",
+            "InvalidClientTokenId",
+        ] {
             let err = classify_s3_error(
                 Some(code),
                 Some(403),
@@ -835,7 +913,47 @@ mod tests {
                 !S3Error::new(err).is_access_denied(),
                 "{code} must not be read as a role denial"
             );
+            let err = classify_s3_error(
+                Some(code),
+                Some(403),
+                &format!("{code}: nope"),
+                S3ErrorKind::Raw,
+            );
+            assert!(
+                S3Error::new(err).is_invalid_credentials(),
+                "{code} must be shown as a credential failure"
+            );
         }
+    }
+
+    /// A bucket that is not there is not "the object is not there".
+    ///
+    /// `push` reads `is_not_found` on the `latest` tag as "first push for this
+    /// package"; classifying `NoSuchBucket` as `NotFound` would make a
+    /// misspelled bucket take that branch instead of failing.
+    #[test]
+    fn missing_bucket_does_not_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchBucket"),
+            Some(404),
+            "NoSuchBucket: no-such-bucket",
+            S3ErrorKind::Raw,
+        );
+        assert!(
+            !S3Error::new(err).is_not_found(),
+            "a missing bucket must not read as a missing object"
+        );
+    }
+
+    #[test]
+    fn missing_objects_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchKey"),
+            Some(404),
+            "NoSuchKey: missing",
+            S3ErrorKind::GetObject,
+        );
+        assert_eq!(err, S3ErrorKind::NotFound("NoSuchKey: missing".to_string()));
     }
 
     #[test]
@@ -1174,6 +1292,90 @@ mod tests {
         // Clearing None empties everything.
         remote.clear_client_cache(None);
         assert!(remote.s3.read().unwrap().is_empty());
+    }
+
+    /// Every `InstalledPackage` a domain hands out must reach *the* caches,
+    /// not a copy of them. A per-package copy starts empty, discards whatever
+    /// it builds, and — the part that matters beyond wasted work — puts the
+    /// clients holding vended STS credentials outside the reach of the
+    /// `clear_client_cache` that logout depends on.
+    ///
+    /// Asserted through the domain rather than on a clone helper, so it holds
+    /// for *every* cache on the remote and cannot pass while one is left
+    /// behind.
+    #[test]
+    fn packages_share_the_domain_caches() {
+        use crate::local_domain::LocalDomain;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let domain = LocalDomain::new(temp.path());
+        let first = domain.create_installed_package(("acme", "demo").into());
+        let second = domain.create_installed_package(("acme", "other").into());
+
+        let key = CredsRef {
+            region: Region::new("us-east-1"),
+            host: None,
+        };
+        first
+            .remote
+            .s3
+            .write()
+            .unwrap()
+            .insert(key.clone(), dummy_client("us-east-1"));
+        first
+            .remote
+            .regions
+            .write()
+            .unwrap()
+            .insert("some-bucket".to_string(), Region::new("us-east-1"));
+
+        assert!(
+            second.remote.s3.read().unwrap().contains_key(&key),
+            "a client built by one package must be visible to the next"
+        );
+        assert!(
+            second
+                .remote
+                .regions
+                .read()
+                .unwrap()
+                .contains_key("some-bucket"),
+            "a region resolved by one package must be visible to the next"
+        );
+        assert!(
+            domain.get_remote().s3.read().unwrap().contains_key(&key),
+            "and to the domain the packages came from"
+        );
+
+        // The reason this matters on logout: the flush must reach what the
+        // packages built, not just what the domain built itself.
+        domain.get_remote().clear_client_cache(None);
+        assert!(
+            first.remote.s3.read().unwrap().is_empty(),
+            "clear_client_cache must reach clients cached through a package"
+        );
+    }
+
+    #[test]
+    fn invalidation_rejects_a_client_built_by_an_older_generation() {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let key = CredsRef {
+            region: Region::new("us-east-1"),
+            host: None,
+        };
+        let stale_generation = remote.client_cache_generation.load(Ordering::SeqCst);
+
+        remote.clear_client_cache(None);
+        remote
+            .cache_client_if_current(key.clone(), dummy_client("us-east-1"), stale_generation)
+            .unwrap();
+        assert!(!remote.s3.read().unwrap().contains_key(&key));
+
+        let current_generation = remote.client_cache_generation.load(Ordering::SeqCst);
+        remote
+            .cache_client_if_current(key.clone(), dummy_client("us-east-1"), current_generation)
+            .unwrap();
+        assert!(remote.s3.read().unwrap().contains_key(&key));
     }
 
     /// Never called: compiling these calls is the proof that the three

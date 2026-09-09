@@ -13,7 +13,6 @@ use crate::quilt;
 use crate::telemetry::prelude::*;
 
 use quilt_rs::RoleInfo;
-use quilt_rs::flow::PullOutcome;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
@@ -169,7 +168,7 @@ pub trait QuiltModel {
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt_uri::ManifestUri, Error> {
+    ) -> Result<quilt::flow::PullReport, Error> {
         Ok(package.pull(host_config, scope).await?)
     }
 
@@ -191,7 +190,7 @@ pub trait QuiltModel {
     async fn package_pull_outcome(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<PullOutcome, Error> {
+    ) -> Result<quilt::flow::PullPreview, Error> {
         Ok(package.pull_outcome(None).await?)
     }
 

@@ -13,6 +13,7 @@ use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
 use crate::autopull::Watcher;
+use crate::autopull::pull_toast;
 use crate::experimental_settings::ExperimentalSettings;
 use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
@@ -20,10 +21,10 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
-use crate::quilt::flow::PullOutcome;
 use crate::quilt::lineage::SyncScope;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{PackageEvent, RemotePackageEvent};
+use crate::toast::ToastCenter;
 
 async fn package_commit_command(
     m: &model::Model,
@@ -58,7 +59,14 @@ pub async fn package_commit(
 ) -> Result<String, String> {
     let msg_init = format!("Committing package {namespace}");
     let msg_ok = format!("Successfully committed {namespace}");
-    let msg_err = |err: &Error| format!("Failed to commit: {err}");
+    // Committing is not offline — the workflow gate reads the bucket's config
+    // before any manifest is written — so a dead session lands here, on the
+    // screen where the user has just typed a message and metadata. Carry the
+    // remedy; a role denial keeps its own message from the commit affordances
+    // rather than borrowing the push path's "can't write here".
+    let msg_err = |err: &Error| {
+        auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
+    };
 
     let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
     if let Ok(ns) = &result {
@@ -147,9 +155,39 @@ pub async fn reset_local(
 fn write_failure_message(action: &str, err: &Error) -> String {
     if err.is_access_denied() {
         "Current role can't write here — switch role".to_string()
+    } else if let Some(message) = auth_failure_message(err) {
+        message
     } else {
         format!("Failed to {action}: {err}")
     }
+}
+
+/// The remedy sentence for a failure that means "this session cannot act",
+/// or `None` when the error is something else.
+///
+/// Both paths that reach it report through a toast, not the error page
+/// `to_frontend_string` feeds, so neither can navigate to `/login` — the
+/// message has to carry the remedy and the host itself.
+///
+/// The two auth cases get the *same* sentence on purpose. A rejected
+/// credential was vended and refused by S3; a refused vend never produced one.
+/// The distinction is real, and it is entirely about our plumbing: the user
+/// signs in again either way, so reporting which one happened would tell them
+/// something they cannot act on.
+fn auth_failure_message(err: &Error) -> Option<String> {
+    if err.is_invalid_credentials() {
+        return Some(match err.s3_host() {
+            Some(host) => format!("Your session for {host} has expired — sign in again"),
+            None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
+        });
+    }
+    if let Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) = err {
+        return Some(match host {
+            Some(host) => format!("You are signed out of {host} — sign in again"),
+            None => "No credentials available — sign in again".to_string(),
+        });
+    }
+    None
 }
 
 async fn package_push_command(
@@ -346,10 +384,10 @@ async fn package_pull_command(
     m: &model::Model,
     namespace: &str,
     experimental: &ExperimentalSettings,
-) -> Result<quilt_uri::Namespace, Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_pull(m, &namespace, None, experimental).await?;
-    Ok(namespace)
+    let report = model::package_pull(m, &namespace, None, experimental).await?;
+    Ok((namespace, report))
 }
 
 /// Record whether this package keeps its whole contents.
@@ -387,30 +425,64 @@ pub async fn package_pull(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
     experimental: tauri::State<'_, SharedExperimentalSettings>,
+    toasts: tauri::State<'_, ToastCenter>,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Pulling package {namespace}");
-    let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
     let experimental = experimental.read().await.clone();
     let result = package_pull_command(&m, &namespace, &experimental).await;
-    if let Ok(ns) = &result {
+    let mut reported = false;
+    if let Ok((ns, report)) = &result {
         watcher.clear_paused(ns).await;
+        // The same report the tick posts, from the same wording. A manual pull
+        // brings files too, and "Successfully pulled" says nothing about which —
+        // which is the whole of what this feature adds.
+        if let Some(toast) = pull_toast::report_toast(ns, report) {
+            toasts
+                .post(crate::toast::ToastDraft {
+                    kind: toast.kind,
+                    title: Some(toast.title),
+                    body: toast.body,
+                    groups: toast.groups,
+                    timeout_ms: None,
+                })
+                .await;
+            reported = true;
+        }
     }
     Notify::new(msg_init)
         .on_success(
             &tracing,
             MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
         )
-        .map(result.map(|_| ()), msg_ok, msg_err)
+        .map(
+            result.map(|_| ()),
+            pull_success_message(&namespace, reported),
+            msg_err,
+        )
+}
+
+/// The page's own confirmation of a pull — empty when the toast has already
+/// said it.
+///
+/// The toast names the package and what arrived, so this line would repeat it
+/// from behind the toast layer, where it reads as a backdrop rather than a
+/// message. It speaks only when there was no report to post.
+fn pull_success_message(namespace: &str, reported: bool) -> String {
+    if reported {
+        String::new()
+    } else {
+        format!("Successfully pulled package {namespace}")
+    }
 }
 
 async fn package_pull_outcome_command(
     m: &model::Model,
     namespace: &str,
-) -> Result<PullOutcome, Error> {
+) -> Result<quilt::flow::PullPreview, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = m
         .get_installed_package(&namespace)
@@ -428,7 +500,7 @@ async fn package_pull_outcome_command(
 pub async fn package_pull_outcome(
     m: tauri::State<'_, model::Model>,
     namespace: String,
-) -> Result<PullOutcome, String> {
+) -> Result<quilt::flow::PullPreview, String> {
     package_pull_outcome_command(&m, &namespace)
         .await
         .map_err(|e| e.to_string())
@@ -800,6 +872,22 @@ mod tests {
         )))
     }
 
+    /// One click, one message. The toast names the package and what arrived,
+    /// so the page's own line would repeat it — from behind the toast layer,
+    /// where its white box reads as a backdrop rather than as a message.
+    #[test]
+    fn a_reported_pull_leaves_the_page_slot_to_the_toast() {
+        assert_eq!(super::pull_success_message("acme/rna-seq", true), "");
+    }
+
+    /// And when there was nothing to report — a metadata-only revision raises
+    /// no toast — the click still has to be answered.
+    #[test]
+    fn an_unreported_pull_still_confirms_the_click() {
+        let msg = super::pull_success_message("acme/rna-seq", false);
+        assert_eq!(msg, "Successfully pulled package acme/rna-seq");
+    }
+
     /// A denied push must say the role cannot write here, not surface a raw
     /// storage error. Write denial is invisible until the push — the
     /// readable bucket list never distinguishes read from write.
@@ -832,6 +920,93 @@ mod tests {
         assert_eq!(
             super::write_failure_message("publish package", &access_denied_error()),
             super::write_failure_message("push package", &access_denied_error()),
+        );
+    }
+
+    fn expired_session_error() -> Error {
+        Error::from(quilt::Error::S3(quilt::S3Error {
+            host: Some("demo.quiltdata.com".parse().unwrap()),
+            kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+        }))
+    }
+
+    /// A write is where a stale session usually surfaces. The toast cannot
+    /// navigate to `/login` the way the error page does, so the message itself
+    /// has to carry the remedy and the host.
+    #[test]
+    fn push_with_an_expired_session_names_signing_in() {
+        let msg = super::write_failure_message("push package", &expired_session_error());
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(
+            msg.contains("demo.quiltdata.com"),
+            "must name the host, got: {msg}"
+        );
+        assert!(!msg.contains("ExpiredToken"), "raw SDK text leaked: {msg}");
+        assert!(!msg.contains("S3 error"), "got: {msg}");
+    }
+
+    /// The screenshot case: a commit, not a push. Committing reads the bucket's
+    /// workflow config before writing anything, so a dead session fails here —
+    /// and this path did not share the push path's remedy text.
+    #[test]
+    fn commit_while_signed_out_names_signing_in() {
+        let host: quilt_uri::Host = "nightly.quilttest.com".parse().unwrap();
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::Required(Some(
+            host.clone(),
+        ))));
+        let msg =
+            super::auth_failure_message(&err).unwrap_or_else(|| format!("Failed to commit: {err}"));
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(
+            msg.contains("nightly.quilttest.com"),
+            "must name the host: {msg}"
+        );
+        assert!(!msg.contains("Failed to commit"), "fell through: {msg}");
+    }
+
+    /// Anything that is not an auth failure must keep its existing text, so the
+    /// new branch narrows the message set rather than replacing it.
+    #[test]
+    fn auth_message_declines_a_non_auth_error() {
+        let err = Error::Commit("Message is required".to_string());
+        assert!(super::auth_failure_message(&err).is_none());
+    }
+
+    /// A refused vend is the same dead end as a rejected credential, one step
+    /// earlier, so the toast must carry the same remedy rather than falling
+    /// through to `Failed to push package: …` and a bare error label.
+    #[test]
+    fn push_while_signed_out_names_signing_in() {
+        let host: quilt_uri::Host = "demo.quiltdata.com".parse().unwrap();
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::Required(Some(
+            host.clone(),
+        ))));
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(
+            msg.contains("demo.quiltdata.com"),
+            "must name the host: {msg}"
+        );
+        assert!(!msg.contains("Failed to push"), "fell through: {msg}");
+        assert!(!msg.contains("Login required"), "raw label leaked: {msg}");
+    }
+
+    /// Ambient credentials have no deployment to sign in to, so the remedy is
+    /// the file, not a login.
+    #[test]
+    fn push_with_invalid_local_credentials_names_the_file() {
+        let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::InvalidCredentials("InvalidAccessKeyId: nope".to_string()),
+        )));
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(msg.contains("~/.aws/credentials"), "got: {msg}");
+        assert!(
+            !msg.contains("sign in"),
+            "there is no stack to sign in to: {msg}"
         );
     }
 
