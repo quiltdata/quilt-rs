@@ -218,8 +218,20 @@ pub enum RemoteCatalogError {
 
 #[derive(Error, Debug, PartialEq)]
 pub enum LoginError {
-    #[error("Login required{}", .0.as_ref().map_or(String::new(), |h| format!(": {h}")))]
-    Required(Option<Host>),
+    /// No usable session for this deployment: either nothing is stored for it,
+    /// or what was stored could not be renewed. `None` when the call carried no
+    /// deployment — a bare bucket reached with ambient AWS credentials.
+    ///
+    /// **Describes a state, and deliberately does not name a remedy.** The
+    /// remedy is not the library's to pick: a page with nothing local to show
+    /// sends the user to sign in, a page holding their work says so in place,
+    /// the background watcher records it and stays quiet, and the CLI prints
+    /// the command to run. A variant called `Required` had made that choice for
+    /// all four — the desktop navigated away from a half-typed commit because
+    /// the *name* said an action was needed, not because that surface decided
+    /// one was.
+    #[error("No session{}", .0.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
+    NoSession(Option<Host>),
 
     #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]
     RequiredRegistryUrl(Host),
@@ -419,6 +431,20 @@ impl Error {
     #[must_use]
     pub fn is_invalid_credentials(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
+    }
+
+    /// Returns `true` when there is no usable session, by **either** route:
+    /// the credential was refused before it was ever issued
+    /// ([`LoginError::NoSession`]), or it was issued and then rejected by S3
+    /// ([`S3ErrorKind::InvalidCredentials`]).
+    ///
+    /// One predicate because it is one state. The two routes differ in where
+    /// the failure was noticed, which is an implementation fact: a caller
+    /// deciding what to show a user needs the state, and a caller that wanted
+    /// to tell the routes apart would be reporting our plumbing.
+    #[must_use]
+    pub fn is_session_absent(&self) -> bool {
+        self.is_invalid_credentials() || matches!(self, Error::Login(LoginError::NoSession(_)))
     }
 
     /// The deployment this request was for, if any.

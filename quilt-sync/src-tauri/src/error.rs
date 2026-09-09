@@ -207,6 +207,16 @@ impl Error {
         matches!(self, Error::Quilt(err) if err.is_invalid_credentials())
     }
 
+    /// True when there is no usable session, by either route — see
+    /// [`quilt::Error::is_session_absent`]. This is the predicate a surface
+    /// should branch on when deciding what to show; the narrower
+    /// [`Error::is_invalid_credentials`] exists for the watcher, which counts
+    /// episodes and wants only the rejected-credential route.
+    #[must_use]
+    pub fn is_session_absent(&self) -> bool {
+        matches!(self, Error::Quilt(err) if err.is_session_absent())
+    }
+
     /// The deployment this request was for, if any. `None` for a bare S3
     /// bucket reached with ambient credentials, and for non-S3 errors.
     #[must_use]
@@ -217,14 +227,24 @@ impl Error {
         }
     }
 
-    /// Serialize actionable errors as JSON so the frontend can parse and react
-    /// (e.g. redirect to `/login` or `/setup`). Falls back to `Display` for
-    /// all other errors.
+    /// Serialize a *recognized state* as JSON so the frontend can decide what to
+    /// do about it. Falls back to `Display` for everything else.
+    ///
+    /// The kinds name **what happened**, never what to do — `session_absent`,
+    /// not `login_required`. Which response a state deserves depends on the
+    /// surface receiving it, and only the surface knows: one with nothing local
+    /// to render can send the user to sign in, one holding their unsaved work
+    /// must not. Naming the action here made that choice for every caller at
+    /// once, and the caller that suffered for it was the commit page.
     pub fn to_frontend_string(&self) -> String {
         match self {
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+            // Both routes to a dead session report the same state. They differ
+            // only in where it was noticed — the credential was refused before
+            // it was issued, or issued and then rejected — which is our
+            // plumbing, not a difference the user can act on.
+            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
                 let mut json = serde_json::json!({
-                    "kind": "login_required",
+                    "kind": "session_absent",
                     "message": self.to_string(),
                 });
                 if let Some(h) = host {
@@ -234,7 +254,7 @@ impl Error {
             }
             Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(host))) => {
                 serde_json::json!({
-                    "kind": "login_required",
+                    "kind": "session_absent",
                     "message": self.to_string(),
                     "host": host.to_string(),
                 })
@@ -261,13 +281,12 @@ fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
                 .to_string(),
         ),
         // A stale session on a Quilt deployment is the same dead end as a
-        // refused vend, so it takes the same `login_required` route rather than
-        // a second kind: the frontend already navigates to `/login?host=…&back=…`
-        // for that, which turns "sign in again" from a sentence into somewhere
-        // to go. Only user-initiated commands reach this — autosync reports a
-        // login episode on its own event channel and never navigates.
+        // refused vend, so both report the one `session_absent` state rather
+        // than a kind each. What the receiving surface does about it is its
+        // own call. Only user-initiated commands reach this — autosync reports
+        // a login episode on its own event channel.
         quilt::S3ErrorKind::InvalidCredentials(_) => (
-            "login_required",
+            "session_absent",
             format!(
                 "Your session for {} has expired. Please sign in again.",
                 error.host.as_ref().expect("host checked above")
@@ -307,20 +326,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn to_frontend_string_login_required_with_host() {
+    fn to_frontend_string_session_absent_with_host() {
         let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(Some(host))));
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+            host,
+        ))));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
         assert_eq!(json["host"], "catalog.dev");
-        assert!(json["message"].as_str().unwrap().contains("Login required"));
+        assert!(json["message"].as_str().unwrap().contains("No session"));
     }
 
     #[test]
-    fn to_frontend_string_login_required_no_host() {
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(None)));
+    fn to_frontend_string_session_absent_no_host() {
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(None)));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
         assert!(
             json.get("host").is_none(),
             "host should be absent when None"
@@ -328,13 +349,13 @@ mod tests {
     }
 
     #[test]
-    fn to_frontend_string_login_required_registry_url() {
+    fn to_frontend_string_session_absent_registry_url() {
         let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
         let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(
             host,
         )));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
         assert_eq!(json["host"], "catalog.dev");
     }
 
@@ -388,7 +409,7 @@ mod tests {
         }));
 
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
         assert_eq!(json["host"], host.to_string());
         assert_eq!(
             json["message"],

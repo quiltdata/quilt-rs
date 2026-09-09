@@ -320,6 +320,20 @@ async fn get_commit_data_from_model(
             no_access_reason = denied_mark(m, roles, origin_host).await.reason;
             m.recompute_local_status(&installed_package, None).await?
         }
+        // A dead session is the same shape as a denial for this page's
+        // purposes: the remote answer is unavailable, everything the page
+        // actually shows — the working-tree changes, the message, the
+        // metadata — is local and was not refused. Propagating it would send
+        // the frontend to `/login` and take the page away, which is the one
+        // thing this page must not do: it is where the user's unsaved work
+        // lives. The commit *action* still refuses, and says why.
+        Err(err) if err.is_session_absent() => {
+            tracing::info!(
+                "No session for the remote of {}; opening the commit page on cached lineage",
+                installed_package.namespace,
+            );
+            m.recompute_local_status(&installed_package, None).await?
+        }
         Err(err) => return Err(err),
     };
 
@@ -851,6 +865,55 @@ mod tests {
             .returning(|_| Ok(std::collections::BTreeMap::new()));
         model.expect_get_workflows_config().returning(|_| Ok(None));
         model
+    }
+
+    /// The same rule for a dead session, and the reason this change exists.
+    ///
+    /// Everything the Commit page shows is local — the working-tree changes,
+    /// the message, the metadata the user has been typing. Propagating a
+    /// session error instead of recomputing would hand the frontend a state it
+    /// reports by navigating to `/login`, taking the page and the unsaved work
+    /// with it. The page opens; the commit *action* is what refuses.
+    ///
+    /// Pinned for **both** routes to the state, since the whole point of the
+    /// predicate is that a caller does not care which one it got.
+    #[tokio::test]
+    async fn commit_data_opens_when_there_is_no_session() -> Result<(), String> {
+        for err in [
+            Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+                "demo.quiltdata.com".parse().unwrap(),
+            )))),
+            Error::from(quilt::Error::S3(quilt::S3Error {
+                host: Some("demo.quiltdata.com".parse().unwrap()),
+                kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+            })),
+        ] {
+            let described = err.to_string();
+            let mut model = denial_contrast_model();
+            model
+                .expect_get_installed_package_status()
+                .return_once(move |_, _| Err(err));
+            model.expect_recompute_local_status().returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    one_local_change(),
+                ))
+            });
+
+            let tracing = crate::telemetry::Telemetry::default();
+            let namespace = ("foo", "bar").into();
+
+            let data =
+                get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
+                    .await
+                    .map_err(|e| format!("page must open without a session ({described}): {e}"))?;
+
+            assert_eq!(
+                data.namespace, "foo/bar",
+                "the page opened on cached lineage ({described})"
+            );
+        }
+        Ok(())
     }
 
     /// Opening the page is local work: a role that cannot read the remote

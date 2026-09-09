@@ -88,10 +88,10 @@ pub(super) fn classify_retry_outcome<T>(
         Err(e) if is_auth_error(&e) => {
             warn!(
                 status = ?http_status(&e),
-                "❌ Auth error on {} for {} persisted after retry, login required: {}",
+                "❌ Auth error on {} for {} persisted after retry, no session remains: {}",
                 endpoint, host, e
             );
-            Err(LoginError::Required(Some(host.to_owned())).into())
+            Err(LoginError::NoSession(Some(host.to_owned())).into())
         }
         Err(e) => {
             warn!(

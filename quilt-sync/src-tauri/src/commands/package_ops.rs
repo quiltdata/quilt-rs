@@ -162,32 +162,33 @@ fn write_failure_message(action: &str, err: &Error) -> String {
     }
 }
 
-/// The remedy sentence for a failure that means "this session cannot act",
-/// or `None` when the error is something else.
+/// The remedy sentence for a failure that means "there is no session to act
+/// with", or `None` when the error is something else.
 ///
-/// Both paths that reach it report through a toast, not the error page
-/// `to_frontend_string` feeds, so neither can navigate to `/login` — the
-/// message has to carry the remedy and the host itself.
+/// This is a *toast* path, not the error page `to_frontend_string` feeds. It
+/// cannot navigate — the user is standing on a screen holding work they have
+/// typed — so the message carries the remedy and names the deployment itself.
+/// That is the surface deciding, which is why the decision lives here and not
+/// in the error.
 ///
-/// The two auth cases get the *same* sentence on purpose. A rejected
-/// credential was vended and refused by S3; a refused vend never produced one.
-/// The distinction is real, and it is entirely about our plumbing: the user
-/// signs in again either way, so reporting which one happened would tell them
-/// something they cannot act on.
+/// One sentence covers both routes to the state, keyed on whether there is a
+/// **deployment** rather than on how the failure was noticed. A named
+/// deployment can be signed back into; ambient AWS credentials can only be
+/// fixed in the file. Whether the credential was refused before being issued
+/// or issued and then rejected is our plumbing, and the user signs in either
+/// way.
 fn auth_failure_message(err: &Error) -> Option<String> {
-    if err.is_invalid_credentials() {
-        return Some(match err.s3_host() {
-            Some(host) => format!("Your session for {host} has expired — sign in again"),
-            None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
-        });
+    if !err.is_session_absent() {
+        return None;
     }
-    if let Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) = err {
-        return Some(match host {
-            Some(host) => format!("You are signed out of {host} — sign in again"),
-            None => "No credentials available — sign in again".to_string(),
-        });
-    }
-    None
+    let host = match err {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => host.as_ref(),
+        _ => err.s3_host(),
+    };
+    Some(match host {
+        Some(host) => format!("Not signed in to {host} — sign in again"),
+        None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
+    })
 }
 
 async fn package_push_command(
@@ -952,7 +953,7 @@ mod tests {
     #[test]
     fn commit_while_signed_out_names_signing_in() {
         let host: quilt_uri::Host = "nightly.quilttest.com".parse().unwrap();
-        let err = Error::from(quilt::Error::Login(quilt::LoginError::Required(Some(
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
             host.clone(),
         ))));
         let msg =
@@ -980,7 +981,7 @@ mod tests {
     #[test]
     fn push_while_signed_out_names_signing_in() {
         let host: quilt_uri::Host = "demo.quiltdata.com".parse().unwrap();
-        let err = Error::from(quilt::Error::Login(quilt::LoginError::Required(Some(
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
             host.clone(),
         ))));
         let msg = super::write_failure_message("push package", &err);
@@ -991,7 +992,7 @@ mod tests {
             "must name the host: {msg}"
         );
         assert!(!msg.contains("Failed to push"), "fell through: {msg}");
-        assert!(!msg.contains("Login required"), "raw label leaked: {msg}");
+        assert!(!msg.contains("No session"), "raw label leaked: {msg}");
     }
 
     /// Ambient credentials have no deployment to sign in to, so the remedy is

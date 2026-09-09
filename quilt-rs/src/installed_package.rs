@@ -200,8 +200,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
                 Ok(lineage) => lineage,
-                Err(Error::Login(LoginError::Required(_))) => {
-                    return Err(Error::Login(LoginError::Required(
+                Err(Error::Login(LoginError::NoSession(_))) => {
+                    return Err(Error::Login(LoginError::NoSession(
                         lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
                     )));
                 }

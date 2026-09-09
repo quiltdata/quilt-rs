@@ -182,7 +182,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             Err(WatchError::LoginRequired(host.clone()))
         }
         _ => Err(WatchError::Conflict(PausedReason::Other(err.to_string()))),
@@ -195,7 +195,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 // `Transient`.
 fn classify_transient_or_login(err: Error) -> WatchError {
     match &err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             WatchError::LoginRequired(host.clone())
         }
         // A denial is neither a broken session nor a blip: the credentials

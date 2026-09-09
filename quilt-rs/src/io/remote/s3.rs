@@ -38,7 +38,7 @@ use crate::io::remote::describe_sdk_error;
 use crate::io::remote::host::fetch_host_config;
 use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
 use crate::io::remote::object::put_and_request_checksum;
-use crate::io::remote::recover_login_required;
+use crate::io::remote::recover_absent_session;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::auth::OAuthClient;
 use crate::object_hash::ObjectHash;
@@ -106,7 +106,7 @@ pub(super) fn classify_s3_error(
 ///
 /// Credentials are vended lazily inside the SDK provider, so a signed-out
 /// session surfaces as a dispatch failure rather than as anything auth-shaped
-/// (see [`recover_login_required`]). Classifying it as S3 trouble is what makes
+/// (see [`recover_absent_session`]). Classifying it as S3 trouble is what makes
 /// a dead session read as a storage error and retry silently in the watcher, so
 /// every path that vends checks for it before classifying — and keeps the full
 /// wrap chain in the log, where it is useful, instead of in the message, where
@@ -115,7 +115,7 @@ pub(super) fn classify_s3_error(
 /// A login failure means the same thing on every path, unlike a denial (which
 /// is a *read* fact on one path and a *write* fact on another), so no path opts
 /// out.
-pub(super) fn s3_error_or_login<E>(
+pub(super) fn s3_error_or_session_loss<E>(
     err: SdkError<E>,
     host: Option<&Host>,
     fallback: fn(String) -> S3ErrorKind,
@@ -123,7 +123,7 @@ pub(super) fn s3_error_or_login<E>(
 where
     E: ProvideErrorMetadata + std::error::Error + Send + Sync + 'static,
 {
-    if let Some(login) = recover_login_required(&err) {
+    if let Some(login) = recover_absent_session(&err) {
         warn!(
             host = ?host,
             "❌ Signed out — the credential provider refused: {}",
@@ -176,7 +176,7 @@ async fn get_object_stream(
         // The host separates a deployment session, whose remedy is signing in,
         // from ambient `~/.aws` credentials, whose remedy is the file. A `None`
         // here is read downstream as the latter.
-        _ => s3_error_or_login(err, host, S3ErrorKind::Raw),
+        _ => s3_error_or_session_loss(err, host, S3ErrorKind::Raw),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -415,7 +415,7 @@ impl RemoteS3 {
 
                 // Check if we have valid credentials
                 if config.credentials_provider().is_none() {
-                    return Err(Error::Login(LoginError::Required(None)));
+                    return Err(Error::Login(LoginError::NoSession(None)));
                 }
                 config
             }
@@ -516,7 +516,7 @@ impl RemoteS3 {
         self.get_client_for_region(host, region)
             .await
             .map_err(|e| match e {
-                Error::Login(LoginError::Required(_)) | Error::S3(_) => e,
+                Error::Login(LoginError::NoSession(_)) | Error::S3(_) => e,
                 _ => Error::S3(S3Error {
                     host: host.cloned(),
                     kind: S3ErrorKind::Client(e.to_string()),
@@ -553,7 +553,7 @@ impl Remote for RemoteS3 {
             // Anything else stays a plain existence failure.
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(s3_error_or_login(err, host, S3ErrorKind::Exists))
+                Err(s3_error_or_session_loss(err, host, S3ErrorKind::Exists))
             }
         }
     }
@@ -618,7 +618,7 @@ impl Remote for RemoteS3 {
             .await
             // A denial is typed distinctly so the push path can say "this role
             // cannot write here"; anything else stays a plain put failure.
-            .map_err(|err| s3_error_or_login(err, host, S3ErrorKind::PutObject))?;
+            .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::PutObject))?;
 
         Ok(())
     }
@@ -637,7 +637,7 @@ impl Remote for RemoteS3 {
             }),
             // Same reasoning as [`Remote::exists`]: only a genuine denial
             // changes the kind, everything else stays a resolve failure.
-            Err(err) => Err(s3_error_or_login(err, host, S3ErrorKind::ResolveUrl)),
+            Err(err) => Err(s3_error_or_session_loss(err, host, S3ErrorKind::ResolveUrl)),
         }
     }
 
@@ -1579,13 +1579,13 @@ mod tests {
     /// a dependency bump ever severs the chain, this test fails while a
     /// shape-asserting one would keep passing over a fix that no longer works.
     #[test(tokio::test)]
-    async fn login_required_survives_the_sdk_wrap() -> Res<()> {
+    async fn an_absent_session_survives_the_sdk_wrap() -> Res<()> {
         use std::str::FromStr;
 
         use tempfile::TempDir;
 
         // An empty domain: no tokens on disk, so the provider has nothing to
-        // refresh from and refuses with `LoginError::Required`.
+        // refresh from and refuses with `LoginError::NoSession`.
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());
         let storage = Arc::new(LocalStorage::new());
@@ -1613,10 +1613,10 @@ mod tests {
             .expect_err("an unauthenticated vend cannot produce a response");
 
         let recovered =
-            recover_login_required(&err).expect("the login refusal must survive the SDK wrap");
+            recover_absent_session(&err).expect("the absent session must survive the SDK wrap");
         assert_eq!(
             recovered.to_string(),
-            format!("Login required: {host}"),
+            format!("No session for {host}"),
             "recovered the wrong error out of the chain"
         );
 
@@ -1624,15 +1624,15 @@ mod tests {
         // classifying it as storage trouble — the whole point of the fix.
         assert!(
             matches!(
-                s3_error_or_login(err, Some(&host), S3ErrorKind::Exists),
-                Error::Login(LoginError::Required(Some(h))) if h == host
+                s3_error_or_session_loss(err, Some(&host), S3ErrorKind::Exists),
+                Error::Login(LoginError::NoSession(Some(h))) if h == host
             ),
             "the call-site helper classified a signed-out session as an S3 error"
         );
         Ok(())
     }
 
-    /// The negative half: a dispatch failure with no login refusal behind it
+    /// The negative half: a dispatch failure with no absent session behind it
     /// must keep its operation-specific S3 kind. Without this, the recovery
     /// could type every transport fault as "signed out" and pass the test
     /// above while making the classification strictly worse.
@@ -1662,12 +1662,12 @@ mod tests {
             .expect_err("nothing is listening on that port");
 
         assert!(
-            recover_login_required(&err).is_none(),
-            "a transport fault was mistaken for a login refusal"
+            recover_absent_session(&err).is_none(),
+            "a transport fault was mistaken for an absent session"
         );
         assert!(
             matches!(
-                s3_error_or_login(err, Some(&host), S3ErrorKind::Exists),
+                s3_error_or_session_loss(err, Some(&host), S3ErrorKind::Exists),
                 Error::S3(S3Error {
                     kind: S3ErrorKind::Exists(_),
                     ..

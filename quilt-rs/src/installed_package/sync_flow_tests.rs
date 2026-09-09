@@ -427,21 +427,21 @@ struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
     fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
     fn get_object_stream(
         &self,
         _host: Option<&Host>,
         _s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<crate::io::remote::RemoteObjectStream>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
     fn resolve_url(
         &self,
         _host: Option<&Host>,
         _s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<S3Uri>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
     fn put_object(
         &self,
@@ -449,7 +449,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
     ) -> impl Future<Output = Res> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
     fn upload_file(
         &self,
@@ -458,7 +458,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _dest_uri: &S3Uri,
         _size: u64,
     ) -> impl Future<Output = Res<(S3Uri, ObjectHash)>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
     fn host_config(
         &self,
@@ -644,7 +644,7 @@ async fn test_status_propagates_login_required() -> Res {
     // status() should propagate LoginRequired so the UI can show a Login button
     let result = package.status(None).await;
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "Expected LoginRequired error, got: {result:?}"
     );
 

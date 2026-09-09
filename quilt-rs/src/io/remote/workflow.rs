@@ -239,7 +239,7 @@ pub(crate) fn entry_view(row: &ManifestRow) -> EntryView<'_> {
 /// watcher classifies as a conflict (pause the namespace), not a transient
 /// (retry) — while a failed *fetch* stays an `Error::S3` and remains transient.
 /// The one fetch failure that does not: an unauthenticated one, which the S3
-/// boundary now recovers as [`crate::error::LoginError::Required`] rather than
+/// boundary now recovers as [`crate::error::LoginError::NoSession`] rather than
 /// letting a signed-out session retry forever as storage trouble.
 pub(crate) async fn validate_workflow<R: Remote>(
     remote: &R,
@@ -348,7 +348,7 @@ pub(crate) async fn validate_workflow_with_config<R: Remote>(
 /// missing/unknown workflow as [`crate::Error::RemoteCatalog`] — both
 /// classified as conflicts by the sync watcher — while a failed *fetch* stays
 /// an `Error::S3` and remains transient, except an unauthenticated one, which
-/// arrives typed as [`crate::error::LoginError::Required`].
+/// arrives typed as [`crate::error::LoginError::NoSession`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
     remote: &R,
@@ -463,7 +463,7 @@ mod tests {
     /// signed-out session, and whose every other method panics.
     ///
     /// The panics are the point: if the gate ever reaches past `exists` on a
-    /// login refusal, this stub says so loudly instead of quietly passing.
+    /// absent session, this stub says so loudly instead of quietly passing.
     struct SignedOutRemote {
         host: Host,
     }
@@ -480,14 +480,14 @@ mod tests {
     )]
     impl Remote for SignedOutRemote {
         async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
-            Err(Error::Login(LoginError::Required(Some(self.host.clone()))))
+            Err(Error::Login(LoginError::NoSession(Some(self.host.clone()))))
         }
         async fn get_object_stream(
             &self,
             _host: Option<&Host>,
             _s3_uri: &S3Uri,
         ) -> Res<RemoteObjectStream> {
-            unreachable!("the gate must not fetch after a login refusal")
+            unreachable!("the gate must not fetch after an absent session")
         }
         async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
             unreachable!("not part of the gate")
@@ -519,7 +519,7 @@ mod tests {
 
     /// The seam above the recovery, not the recovery itself.
     ///
-    /// Typing a login refusal at the S3 boundary buys nothing if a frame in
+    /// Typing an absent session at the S3 boundary buys nothing if a frame in
     /// between re-wraps it — the failure mode that made the role-switcher
     /// change a no-op through four layers, every test green. The workflow gate
     /// is the caller that matters here: it makes the commit path's first S3
@@ -527,7 +527,7 @@ mod tests {
     /// watcher and the UI will actually branch on, at the point they receive
     /// it.
     #[test(tokio::test)]
-    async fn the_gate_propagates_a_login_refusal_untouched() -> Res<()> {
+    async fn the_gate_propagates_an_absent_session_untouched() -> Res<()> {
         use std::str::FromStr;
 
         let host = Host::from_str("nightly.quilttest.com").unwrap();
@@ -539,8 +539,8 @@ mod tests {
             .expect_err("a signed-out session cannot produce a workflows config");
 
         assert!(
-            matches!(&err, Error::Login(LoginError::Required(Some(h))) if *h == host),
-            "the gate re-wrapped a login refusal into {err:?} — the watcher would \
+            matches!(&err, Error::Login(LoginError::NoSession(Some(h))) if *h == host),
+            "the gate re-wrapped an absent session into {err:?} — the watcher would \
              classify this as storage trouble and retry it in silence"
         );
         Ok(())
