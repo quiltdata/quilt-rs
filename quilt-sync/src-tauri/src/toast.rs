@@ -3,19 +3,16 @@
 //! Distinct from [`notify`](crate::notify), which is the log-and-telemetry
 //! helper around a command's result — this is a user-facing surface.
 //!
-//! **Additive by construction.** The existing per-page notification slot
-//! (`Layout`'s single `Option<Notification>`) is untouched; nothing that
-//! reports through it changes. This is where *new* notifications go, and the
-//! difference that earns a second mechanism is the direction: a page toast is
-//! raised by something the user just did and dies with the page, while these
-//! are raised by the backend — including the autosync tick, which runs when no
-//! page is mounted at all.
+//! The split from the per-page slot (`Layout`'s single `Option<Notification>`)
+//! is by direction: that slot belongs to the screen that raised it and dies
+//! with the page, while these come from the backend — including the autosync
+//! tick, which runs with no page mounted. A command whose report lands here
+//! leaves that slot empty rather than saying the same thing twice.
 //!
 //! Which is why the centre **retains** what it emits. An event alone reaches
-//! only a mounted window, so a toast raised while the app was in the tray
-//! would be lost; the client hydrates from [`ToastCenter::live`] on mount and
-//! then follows [`TOAST_EVENT`]. Retention is in memory only: a restart is a
-//! clean slate.
+//! only a mounted window, so the client hydrates from [`ToastCenter::live`] on
+//! mount and then follows [`TOAST_EVENT`]. Retention is in memory only: a
+//! restart is a clean slate.
 
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicU64;
@@ -39,6 +36,20 @@ pub const TOAST_EVENT: &str = "toast";
 #[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
 const CAPACITY: usize = 50;
 
+/// A list under a heading — a group of paths, say — carried as data so the
+/// client can render a real list. Indentation in `body` would not survive a
+/// wrap: a long path's second half lands at the left margin, reading as an
+/// item of its own.
+#[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
+#[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ToastGroup {
+    pub heading: String,
+    pub items: Vec<String>,
+    /// How many items the heading counts but the list does not show.
+    pub more: usize,
+}
+
 /// One notification, as the client renders it.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +60,11 @@ pub struct Toast {
     pub kind: ToastKind,
     /// A short heading. `None` renders the body alone.
     pub title: Option<String>,
+    /// The lead sentence: what happened. `groups` carries the detail.
     pub body: String,
+    /// Zero or more lists under headings, rendered as lists rather than as
+    /// indented text in `body`.
+    pub groups: Vec<ToastGroup>,
     /// Auto-dismiss delay. `None` stands until the user closes it — which is
     /// the right default for anything reporting an unattended change, since a
     /// timer would race the user's absence.
@@ -57,9 +72,10 @@ pub struct Toast {
 }
 
 #[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ToastKind {
+    #[default]
     Info,
     Success,
     Warning,
@@ -94,6 +110,17 @@ impl ToastEmitter for TauriToastEmitter {
     }
 }
 
+/// A toast before the centre gives it an id — what a caller composes.
+#[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ToastDraft {
+    pub kind: ToastKind,
+    pub title: Option<String>,
+    pub body: String,
+    pub groups: Vec<ToastGroup>,
+    pub timeout_ms: Option<u32>,
+}
+
 /// The retained set of undismissed toasts, plus the ids to hand out.
 pub struct ToastCenter {
     live: RwLock<VecDeque<Toast>>,
@@ -118,19 +145,21 @@ impl ToastCenter {
     /// a duplicate is a render concern the client already de-duplicates by id,
     /// while a miss is unrecoverable.
     #[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
-    pub async fn post(
-        &self,
-        kind: ToastKind,
-        title: Option<String>,
-        body: String,
-        timeout_ms: Option<u32>,
-    ) -> u64 {
+    pub async fn post(&self, draft: ToastDraft) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let ToastDraft {
+            kind,
+            title,
+            body,
+            groups,
+            timeout_ms,
+        } = draft;
         let toast = Toast {
             id,
             kind,
             title,
             body,
+            groups,
             timeout_ms,
         };
         {
@@ -181,12 +210,17 @@ mod tests {
         (center, seen)
     }
 
+    fn draft(body: &str) -> ToastDraft {
+        ToastDraft {
+            body: body.to_owned(),
+            ..ToastDraft::default()
+        }
+    }
+
     #[tokio::test]
     async fn post_retains_and_emits() {
         let (center, seen) = center();
-        let id = center
-            .post(ToastKind::Info, None, "one".to_owned(), None)
-            .await;
+        let id = center.post(draft("one")).await;
         assert_eq!(center.live().await.len(), 1);
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(seen.lock().unwrap()[0].id, id);
@@ -196,9 +230,7 @@ mod tests {
     async fn ids_are_unique_and_live_is_oldest_first() {
         let (center, _) = center();
         for body in ["one", "two", "three"] {
-            center
-                .post(ToastKind::Info, None, body.to_owned(), None)
-                .await;
+            center.post(draft(body)).await;
         }
         let live = center.live().await;
         let bodies: Vec<_> = live.iter().map(|t| t.body.as_str()).collect();
@@ -211,7 +243,10 @@ mod tests {
     async fn dismiss_removes_once() {
         let (center, _) = center();
         let id = center
-            .post(ToastKind::Success, None, "gone".to_owned(), None)
+            .post(ToastDraft {
+                kind: ToastKind::Success,
+                ..draft("gone")
+            })
             .await;
         assert!(center.dismiss(id).await);
         assert!(center.live().await.is_empty());
@@ -241,13 +276,33 @@ mod tests {
         }
     }
 
+    /// `groups` is what the client renders as a list; a draft's groups reaching
+    /// the retained toast is the whole point of carrying them as data.
+    #[tokio::test]
+    async fn groups_survive_the_post() {
+        let (center, seen) = center();
+        center
+            .post(ToastDraft {
+                groups: vec![ToastGroup {
+                    heading: "2 files new".to_owned(),
+                    items: vec!["a.csv".to_owned()],
+                    more: 1,
+                }],
+                ..draft("Updated to a newer revision.")
+            })
+            .await;
+        let retained = center.live().await;
+        let emitted = seen.lock().unwrap()[0].clone();
+        assert_eq!(emitted.groups, retained[0].groups);
+        assert_eq!(emitted.groups[0].heading, "2 files new");
+        assert_eq!(emitted.groups[0].more, 1);
+    }
+
     #[tokio::test]
     async fn capacity_drops_the_oldest() {
         let (center, _) = center();
         for n in 0..=CAPACITY {
-            center
-                .post(ToastKind::Info, None, n.to_string(), None)
-                .await;
+            center.post(draft(&n.to_string())).await;
         }
         let live = center.live().await;
         assert_eq!(live.len(), CAPACITY);

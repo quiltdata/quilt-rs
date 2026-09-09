@@ -327,7 +327,27 @@ pub enum Notification {
 
 Messages are rendered as text nodes (not `inner_html`), so they
 are auto-escaped by Leptos. Users dismiss notifications by clicking
-the overlay.
+the overlay. An empty success message leaves the slot empty — the overlay is
+raised for as long as the slot holds anything, so a blank would dim the app
+behind a notification that is not there.
+
+### Toast stack
+
+`components/toasts.rs` renders a second, separate surface: the notifications the
+*backend* posts. Mounted once in `App`, outside the router, so an entry survives
+navigation. The split from the enum above is by direction — that slot belongs to
+the screen that raised it and dies with the page, while these come from the
+backend, including the autosync tick, which runs with no page mounted.
+
+The backend holds the list (`toast::ToastCenter`, bounded, in memory): the client
+hydrates from `get_toasts` on mount and then follows the `toast` event, so an
+entry posted while the window was shut is still there when it opens. Each entry
+carries a kind, a lead sentence, zero or more `ToastGroup`s (a heading, its
+items, and a count of the remainder) rendered as lists, and an optional
+self-dismiss delay. Dismissing calls `dismiss_toast` — the backend is
+authoritative, so a snapshot replaces the visible set rather than merging into
+it. The layer takes the pointer only over the list and its controls, never over
+its own box, and renders nothing at all when empty.
 
 ### Breadcrumbs
 

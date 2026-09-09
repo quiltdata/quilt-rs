@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.21.3-alpha1"
+version = "0.22.0"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -24,20 +24,20 @@ opener = { version = "0.8.5", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
 quilt-uri = { path = "../../quilt-uri" }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
-rust-i18n = "4.2.1"
+rust-i18n = "4.2.2"
 semver = "1.0.28"
-sentry = { version = "0.49.1", features = ["tracing"] }
+sentry = { version = "0.49.2", features = ["tracing"] }
 mixpanel-rs = "0.3.1"
 notify = "8.2"
 notify-debouncer-full = "0.7"
 serde.workspace = true
 serde_json.workspace = true
-serde_qs = "1.1.2"
+serde_qs = "1.1.3"
 tauri = { version = "2.11.5", features = ["test", "devtools", "tray-icon", "image-png"] }
-tauri-plugin-deep-link = "2.4.9"
+tauri-plugin-deep-link = "2.4.10"
 tauri-plugin-process = "2.3.1"
-tauri-plugin-shell = "2.3.5"
-tauri-plugin-updater = "2.10.1"
+tauri-plugin-shell = "2.3.6"
+tauri-plugin-updater = "2.11.0"
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -61,7 +61,7 @@ serial_test = "4"
 tokio-test.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-single-instance = { version = "2.4.3", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "2.4.4", features = ["deep-link"] }
 
 [lints]
 workspace = true

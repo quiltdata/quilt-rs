@@ -13,6 +13,7 @@ use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
 use crate::autopull::Watcher;
+use crate::autopull::pull_toast;
 use crate::experimental_settings::ExperimentalSettings;
 use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
@@ -20,10 +21,10 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
-use crate::quilt::flow::PullOutcome;
 use crate::quilt::lineage::SyncScope;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{PackageEvent, RemotePackageEvent};
+use crate::toast::ToastCenter;
 
 async fn package_commit_command(
     m: &model::Model,
@@ -354,10 +355,10 @@ async fn package_pull_command(
     m: &model::Model,
     namespace: &str,
     experimental: &ExperimentalSettings,
-) -> Result<quilt_uri::Namespace, Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_pull(m, &namespace, None, experimental).await?;
-    Ok(namespace)
+    let report = model::package_pull(m, &namespace, None, experimental).await?;
+    Ok((namespace, report))
 }
 
 /// Record whether this package keeps its whole contents.
@@ -395,30 +396,64 @@ pub async fn package_pull(
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
     experimental: tauri::State<'_, SharedExperimentalSettings>,
+    toasts: tauri::State<'_, ToastCenter>,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Pulling package {namespace}");
-    let msg_ok = format!("Successfully pulled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
     let experimental = experimental.read().await.clone();
     let result = package_pull_command(&m, &namespace, &experimental).await;
-    if let Ok(ns) = &result {
+    let mut reported = false;
+    if let Ok((ns, report)) = &result {
         watcher.clear_paused(ns).await;
+        // The same report the tick posts, from the same wording. A manual pull
+        // brings files too, and "Successfully pulled" says nothing about which —
+        // which is the whole of what this feature adds.
+        if let Some(toast) = pull_toast::report_toast(ns, report) {
+            toasts
+                .post(crate::toast::ToastDraft {
+                    kind: toast.kind,
+                    title: Some(toast.title),
+                    body: toast.body,
+                    groups: toast.groups,
+                    timeout_ms: None,
+                })
+                .await;
+            reported = true;
+        }
     }
     Notify::new(msg_init)
         .on_success(
             &tracing,
             MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
         )
-        .map(result.map(|_| ()), msg_ok, msg_err)
+        .map(
+            result.map(|_| ()),
+            pull_success_message(&namespace, reported),
+            msg_err,
+        )
+}
+
+/// The page's own confirmation of a pull — empty when the toast has already
+/// said it.
+///
+/// The toast names the package and what arrived, so this line would repeat it
+/// from behind the toast layer, where it reads as a backdrop rather than a
+/// message. It speaks only when there was no report to post.
+fn pull_success_message(namespace: &str, reported: bool) -> String {
+    if reported {
+        String::new()
+    } else {
+        format!("Successfully pulled package {namespace}")
+    }
 }
 
 async fn package_pull_outcome_command(
     m: &model::Model,
     namespace: &str,
-) -> Result<PullOutcome, Error> {
+) -> Result<quilt::flow::PullPreview, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = m
         .get_installed_package(&namespace)
@@ -436,7 +471,7 @@ async fn package_pull_outcome_command(
 pub async fn package_pull_outcome(
     m: tauri::State<'_, model::Model>,
     namespace: String,
-) -> Result<PullOutcome, String> {
+) -> Result<quilt::flow::PullPreview, String> {
     package_pull_outcome_command(&m, &namespace)
         .await
         .map_err(|e| e.to_string())
@@ -806,6 +841,22 @@ mod tests {
         Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
             quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
         )))
+    }
+
+    /// One click, one message. The toast names the package and what arrived,
+    /// so the page's own line would repeat it — from behind the toast layer,
+    /// where its white box reads as a backdrop rather than as a message.
+    #[test]
+    fn a_reported_pull_leaves_the_page_slot_to_the_toast() {
+        assert_eq!(super::pull_success_message("acme/rna-seq", true), "");
+    }
+
+    /// And when there was nothing to report — a metadata-only revision raises
+    /// no toast — the click still has to be answered.
+    #[test]
+    fn an_unreported_pull_still_confirms_the_click() {
+        let msg = super::pull_success_message("acme/rna-seq", false);
+        assert_eq!(msg, "Successfully pulled package acme/rna-seq");
     }
 
     /// A denied push must say the role cannot write here, not surface a raw

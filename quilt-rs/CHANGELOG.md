@@ -9,6 +9,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.37.0] - 2026-09-08
+
+### Added
+
+- `flow::PullReport` names what a pull applied: the files it wrote, rewrote and deleted, the ones the revision added and left on the remote, and the newest revision's message. Grouping contract in [`docs/architecture.md`](../docs/architecture.md) (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- `flow::PullPreview` pairs a dry run's `PullOutcome` with the paths the pending revision adds, so a caller can name incoming files before pulling (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Changed
+
+- **Breaking:** `flow::pull_package` returns `(PackageLineage, PullReport)` and `InstalledPackage::pull` returns `PullReport`, where both returned the lineage alone. `InstalledPackage::pull_outcome` returns `flow::PullPreview` instead of `flow::PullOutcome`; the verdict is its `outcome` field (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
 ## [v0.36.0] - 2026-09-02
 
 ### Added

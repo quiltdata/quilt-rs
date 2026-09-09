@@ -8,6 +8,7 @@ use test_log::test;
 
 use aws_sdk_s3::primitives::ByteStream;
 
+use crate::flow::PullOutcome;
 use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::StorageExt;
 use crate::lineage::DomainLineageIo;
@@ -843,7 +844,7 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
         namespace,
     };
 
-    let outcome = package.pull_outcome(None).await?;
+    let outcome = package.pull_outcome(None).await?.outcome;
     assert!(
         matches!(
             outcome,
@@ -899,7 +900,7 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
     };
 
     assert!(matches!(
-        package.pull_outcome(None).await?,
+        package.pull_outcome(None).await?.outcome,
         PullOutcome::UpToDate
     ));
 
@@ -973,7 +974,7 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
     };
 
     assert!(matches!(
-        package.pull_outcome(None).await?,
+        package.pull_outcome(None).await?.outcome,
         PullOutcome::UpToDate
     ));
 
@@ -1039,7 +1040,7 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
     };
 
     assert!(matches!(
-        package.pull_outcome(None).await?,
+        package.pull_outcome(None).await?.outcome,
         PullOutcome::UpToDate
     ));
 

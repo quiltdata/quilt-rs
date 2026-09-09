@@ -20,6 +20,7 @@ use leptos::task::spawn_local;
 
 use crate::commands;
 use crate::commands::Toast;
+use crate::commands::ToastGroup;
 use crate::commands::ToastKind;
 use crate::tauri as tauri_bridge;
 
@@ -191,6 +192,31 @@ fn ToastLayer(store: Store) -> impl IntoView {
     }
 }
 
+/// A heading and its items, as a real list. The heading counts every path,
+/// `items` names the first few, and `more` states the remainder — a list that
+/// stops short silently reads as the whole set.
+fn group_view(group: ToastGroup) -> impl IntoView {
+    let items = group
+        .items
+        .into_iter()
+        .map(|item| view! { <li>{item}</li> })
+        .collect_view();
+    let more = (group.more > 0).then(|| {
+        let label = format!("and {} more", group.more);
+        view! { <li class="more">{label}</li> }
+    });
+
+    view! {
+        <div class="group">
+            <span class="heading">{group.heading}</span>
+            <ul class="items">
+                {items}
+                {more}
+            </ul>
+        </div>
+    }
+}
+
 #[component]
 fn ToastCard(toast: Toast, store: Store) -> impl IntoView {
     let id = toast.id;
@@ -224,12 +250,22 @@ fn ToastCard(toast: Toast, store: Store) -> impl IntoView {
     };
     let title = toast.title.clone();
     let body = toast.body.clone();
+    // Fixed once posted, so plain markup: a keyed `For` would need an id the
+    // group does not have. Hoisted out of `view!`, whose tag tokenizer reads
+    // `collect_view`'s shape as markup.
+    let groups = toast
+        .groups
+        .clone()
+        .into_iter()
+        .map(group_view)
+        .collect_view();
 
     view! {
         <div class=kind_class role="status">
             <div class="content">
                 {title.map(|t| view! { <span class="title">{t}</span> })}
                 <span class="body">{body}</span>
+                {groups}
             </div>
             <button
                 class="close"
@@ -276,6 +312,7 @@ mod tests {
             kind,
             title: title.map(str::to_owned),
             body: body.to_owned(),
+            groups: Vec::new(),
             timeout_ms: None,
         }
     }
@@ -409,6 +446,57 @@ mod tests {
         let store = store_of(two);
         let el = mount(move || view! { <ToastLayer store=store /> });
         assert!(el.query_selector("button.dismiss-all").unwrap().is_some());
+    }
+
+    /// The paths arrive as data precisely so they can be a list: indentation in
+    /// a string stops meaning anything once a long path wraps, which is what
+    /// made a wrapped path read as an item of its own.
+    #[wasm_bindgen_test]
+    fn a_group_renders_as_a_list_under_its_heading() {
+        let store = store_of(BTreeMap::new());
+        let t = Toast {
+            groups: vec![ToastGroup {
+                heading: "2 files new".to_owned(),
+                items: vec!["qc/summary.csv".to_owned(), "qc/flags.json".to_owned()],
+                more: 0,
+            }],
+            ..toast(ToastKind::Success, Some("acme/rna-seq"), "Updated.")
+        };
+        let el = mount(move || view! { <ToastCard toast=t store=store /> });
+        let heading = el.query_selector(".group .heading").unwrap().unwrap();
+        assert_eq!(heading.text_content().unwrap(), "2 files new");
+        let items = el.query_selector_all(".group .items li").unwrap();
+        assert_eq!(items.length(), 2);
+        assert_eq!(
+            items.item(0).unwrap().text_content().unwrap(),
+            "qc/summary.csv"
+        );
+        assert!(el.query_selector(".more").unwrap().is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_capped_group_states_the_remainder() {
+        let store = store_of(BTreeMap::new());
+        let t = Toast {
+            groups: vec![ToastGroup {
+                heading: "5 files new".to_owned(),
+                items: vec!["a".to_owned()],
+                more: 4,
+            }],
+            ..toast(ToastKind::Info, None, "Updated.")
+        };
+        let el = mount(move || view! { <ToastCard toast=t store=store /> });
+        let more = el.query_selector(".items .more").unwrap().unwrap();
+        assert_eq!(more.text_content().unwrap(), "and 4 more");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_toast_without_groups_renders_no_list() {
+        let store = store_of(BTreeMap::new());
+        let t = toast(ToastKind::Info, None, "nothing to list");
+        let el = mount(move || view! { <ToastCard toast=t store=store /> });
+        assert!(el.query_selector(".group").unwrap().is_none());
+        assert!(el.query_selector("ul").unwrap().is_none());
     }
 
     #[wasm_bindgen_test]

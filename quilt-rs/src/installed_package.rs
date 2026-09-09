@@ -8,7 +8,6 @@ use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
 use crate::flow;
-use crate::flow::PullOutcome;
 use crate::flow::UserMeta;
 use std::sync::Arc;
 
@@ -55,6 +54,15 @@ pub struct PushOutcome {
 /// Alias of [`flow::PublishOutcome`] parameterized over the public
 /// [`PushOutcome`], so external callers see a non-generic type name.
 pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
+
+/// Every early return from the dry run means the same thing — nothing for a
+/// pull to do, and so no incoming paths to name.
+fn nothing_to_pull() -> flow::PullPreview {
+    flow::PullPreview {
+        outcome: flow::PullOutcome::UpToDate,
+        added: Vec::new(),
+    }
+}
 
 /// Result of [`InstalledPackage::set_remote`].
 ///
@@ -508,7 +516,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Res<ManifestUri> {
+    ) -> Res<flow::PullReport> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -533,7 +541,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        let lineage = flow::pull(
+        let (lineage, report) = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
@@ -545,8 +553,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             scope,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote()?.clone())
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(report)
     }
 
     /// Dry-run: what would `pull` do right now, without mutating anything?
@@ -575,7 +583,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// For a package with a real remote, propagates tag-resolution, manifest
     /// read, and remote fetch errors. The Local early return never touches the
     /// network, so those shapes cannot produce those errors.
-    pub async fn pull_outcome(&self, host_config_opt: Option<HostConfig>) -> Res<PullOutcome> {
+    pub async fn pull_outcome(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullPreview> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         // A local-only package has no `latest` tag to resolve: `snapshot_for_pull`
@@ -585,7 +596,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // contract. A remote whose local hash is empty but whose `latest` tag has
         // moved classifies as `Diverged` (not `Local`), so it still fetches below.
         if UpstreamState::from(lineage.clone()) == UpstreamState::Local {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
 
         // Divergence-by-hash is a purely lineage-local fact: `UpstreamState::from`
@@ -603,7 +614,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // read refreshes `latest_hash`, so it correctly falls through to the
         // post-walk `!= Behind` check below rather than being caught here.
         if UpstreamState::from(lineage.clone()) == UpstreamState::Diverged {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
 
         let remote_uri = lineage.remote()?.clone();
@@ -628,7 +639,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         {
             Ok((_, snapshot)) => snapshot,
             Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
-                return Ok(PullOutcome::UpToDate);
+                return Ok(nothing_to_pull());
             }
             Err(err) => return Err(err),
         };
@@ -637,13 +648,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // `Diverged`/`Ahead` still report `UpToDate` (nothing to pull), matching
         // the previous contract.
         if snapshot.status.upstream_state != UpstreamState::Behind {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
-        Ok(flow::classify_pull(
-            &snapshot.status,
-            &base,
-            &snapshot.latest_manifest,
-        ))
+        Ok(flow::PullPreview {
+            added: flow::remote_additions(&base, &snapshot.latest_manifest),
+            outcome: flow::classify_pull(&snapshot.status, &base, &snapshot.latest_manifest),
+        })
     }
 
     /// Pushes any pending local commit, then promotes the resulting remote

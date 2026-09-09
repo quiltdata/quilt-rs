@@ -19,10 +19,10 @@ path = "src/gallery.rs"
 [dependencies]
 leptos = { version = "0.8.20", features = ["csr"] }
 leptos_router = "0.8.15"
-wasm-bindgen = "0.2.126"
-wasm-bindgen-futures = "0.4.76"
-js-sys = "0.3.103"
-web-sys = { version = "0.3.103", features = ["Document", "Element", "HtmlDialogElement", "HtmlElement", "HtmlFormElement", "HtmlTextAreaElement", "KeyboardEvent", "Storage", "Window", "Location"] }
+wasm-bindgen = "0.2.128"
+wasm-bindgen-futures = "0.4.78"
+js-sys = "0.3.105"
+web-sys = { version = "0.3.105", features = ["Document", "Element", "HtmlDialogElement", "HtmlElement", "HtmlFormElement", "HtmlTextAreaElement", "KeyboardEvent", "Storage", "Window", "Location"] }
 serde.workspace = true
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = "0.1.7"
@@ -42,8 +42,8 @@ folders = ["./src/kit/", "./src/pages/"]
 extensions = [".module.scss"]
 
 [dev-dependencies]
-wasm-bindgen-test = "0.3.76"
-web-sys = { version = "0.3.103", features = ["DomTokenList", "Element", "Event", "HtmlButtonElement", "HtmlInputElement", "KeyboardEvent", "KeyboardEventInit", "Node", "NodeList"] }
+wasm-bindgen-test = "0.3.78"
+web-sys = { version = "0.3.105", features = ["DomTokenList", "Element", "Event", "HtmlButtonElement", "HtmlInputElement", "KeyboardEvent", "KeyboardEventInit", "Node", "NodeList"] }
 
 [lints]
 workspace = true

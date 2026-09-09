@@ -18,6 +18,7 @@ use crate::model::Model;
 use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
 
+pub mod pull_toast;
 pub mod reporter;
 pub mod settings;
 pub mod status;

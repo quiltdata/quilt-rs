@@ -219,7 +219,7 @@ pub(super) fn InstalledPackageContent(
         async move {
             if is_behind {
                 match commands::package_pull_outcome(ns).await {
-                    Ok(outcome) => PullCheck::Ready(outcome),
+                    Ok(preview) => PullCheck::Ready(preview),
                     Err(_) => PullCheck::Failed,
                 }
             } else {

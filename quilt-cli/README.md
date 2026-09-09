@@ -59,6 +59,12 @@ copy.
 downloaded only for the paths you name with `--path` (repeatable) or a
 `&path=` parameter in the URI.
 
+`pull` reports the files it moved, in four groups: downloaded, left on the
+remote, updated, removed. A path you do not track is absent from all four — a
+pull writes nothing for it, so a copy that installed no paths reports no files
+at all. The message that follows is the newest revision's only: a pull advances
+to `latest` in one step and may span several revisions.
+
 Run `quilt <command> --help` for arguments.
 
 ## Global flags

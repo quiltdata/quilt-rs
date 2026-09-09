@@ -54,7 +54,9 @@ pub async fn reset_to_latest(
     // Reset's touch-set is every installed path: overwrite local with remote.
     let touched: Vec<PathBuf> = lineage.paths.keys().cloned().collect();
 
-    let result = apply_latest_update(
+    // Reset needs only the lineage: it overwrites every installed path by
+    // definition, so there is nothing a caller would report about which moved.
+    let (result, _applied) = apply_latest_update(
         lineage,
         manifest,
         paths,
