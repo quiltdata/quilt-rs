@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use ignore::gitignore::Gitignore;
 use notify::ErrorKind;
 use notify::EventKind;
 use notify::RecommendedWatcher;
@@ -21,6 +22,7 @@ use tokio::sync::mpsc;
 use crate::autopull::StatusReporter;
 use crate::autopull::reporter::SubscriberErrorEvent;
 use crate::fswatcher::filter;
+use crate::quilt;
 use crate::telemetry::prelude::*;
 
 /// Categorized error from the OS-level subscription.
@@ -99,11 +101,49 @@ fn classify(err: notify::Error, namespace: Option<&Namespace>) -> SubscriberErro
     }
 }
 
+/// The ignore file's name, which is the one path it can never exclude.
+const QUILTIGNORE_FILE: &str = ".quiltignore";
+
 /// One signal per debounce-flush per affected namespace. The reactor consumes
 /// these from an mpsc channel.
 #[derive(Debug, Clone)]
 pub struct MappingSignal {
     pub namespace: Namespace,
+}
+
+/// A watched package: where it lives, and what it asks to have ignored.
+///
+/// The matcher is cached rather than loaded per event; `add` refreshes it, so a
+/// reconcile is the pickup point for an edited `.quiltignore`.
+struct WatchedRoot {
+    path: PathBuf,
+    quiltignore: Option<Gitignore>,
+}
+
+impl WatchedRoot {
+    /// Whether `path` is excluded by this package's `.quiltignore`.
+    ///
+    /// Never the ignore file itself: editing it moves the changeset, so it is
+    /// always a real change — and that is what keeps a stale matcher
+    /// self-correcting.
+    fn excludes(&self, path: &Path) -> bool {
+        let Some(gi) = self.quiltignore.as_ref() else {
+            return false;
+        };
+        // `matched_path_or_any_parents` panics on a path outside the matcher's
+        // root, so the relative key has to come from a checked strip, not from
+        // the prefix test that resolved the namespace.
+        let Ok(relative) = path.strip_prefix(&self.path) else {
+            return false;
+        };
+        if relative == Path::new(QUILTIGNORE_FILE) {
+            return false;
+        }
+        // `is_dir: false` is safe for a leaf: the matcher tests every *parent*
+        // as a directory, so `cache/` matches `cache/x.tmp` without a stat —
+        // which a removed path could not supply anyway.
+        quilt::quiltignore::is_ignored(gi, relative, false)
+    }
 }
 
 /// Owns the OS-level subscription and the namespace ↔ root mapping. The
@@ -112,7 +152,7 @@ pub struct MappingSignal {
 /// from both the `watch`/`unwatch` Tauri thread and the event handler thread.
 pub struct Subscription {
     debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
-    watched: Arc<Mutex<BTreeMap<Namespace, PathBuf>>>,
+    watched: Arc<Mutex<BTreeMap<Namespace, WatchedRoot>>>,
 }
 
 impl Subscription {
@@ -126,7 +166,7 @@ impl Subscription {
         signal_tx: mpsc::Sender<MappingSignal>,
         reporter: &Arc<dyn StatusReporter>,
     ) -> Result<Self, SubscriberError> {
-        let watched: Arc<Mutex<BTreeMap<Namespace, PathBuf>>> =
+        let watched: Arc<Mutex<BTreeMap<Namespace, WatchedRoot>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let watched_for_cb = Arc::clone(&watched);
         let reporter_for_cb = Arc::clone(reporter);
@@ -174,12 +214,28 @@ impl Subscription {
             );
             package_home
         });
+        // A failure to read `.quiltignore` leaves the matcher absent rather
+        // than failing the watch: not screening is the safe direction — it
+        // costs walks, where wrongly screening would drop real changes.
+        let quiltignore = quilt::quiltignore::load(&package_home).unwrap_or_else(|err| {
+            warn!(
+                "fswatcher: {}/{QUILTIGNORE_FILE} unreadable, not screening ignored paths: {err}",
+                package_home.display(),
+            );
+            None
+        });
         let existing_path = {
             let watched = self.watched.lock().unwrap();
-            watched.get(&namespace).cloned()
+            watched.get(&namespace).map(|w| w.path.clone())
         };
         if let Some(existing) = existing_path.as_ref() {
             if existing == &package_home {
+                // The OS watch is already right, so this stays a no-op for
+                // `notify` — but the matcher is replaced, which is what makes
+                // a reconcile the refresh point for an edited `.quiltignore`.
+                if let Some(entry) = self.watched.lock().unwrap().get_mut(&namespace) {
+                    entry.quiltignore = quiltignore;
+                }
                 return Ok(());
             }
             let _ = self.debouncer.unwatch(existing);
@@ -189,7 +245,13 @@ impl Subscription {
             .watch(&package_home, RecursiveMode::Recursive)
         {
             Ok(()) => {
-                self.watched.lock().unwrap().insert(namespace, package_home);
+                self.watched.lock().unwrap().insert(
+                    namespace,
+                    WatchedRoot {
+                        path: package_home,
+                        quiltignore,
+                    },
+                );
                 Ok(())
             }
             Err(err) => Err(classify(err, Some(&namespace))),
@@ -197,9 +259,9 @@ impl Subscription {
     }
 
     pub fn remove(&mut self, namespace: &Namespace) {
-        let path = self.watched.lock().unwrap().remove(namespace);
-        if let Some(path) = path {
-            let _ = self.debouncer.unwatch(&path);
+        let entry = self.watched.lock().unwrap().remove(namespace);
+        if let Some(entry) = entry {
+            let _ = self.debouncer.unwatch(&entry.path);
         }
     }
 
@@ -252,9 +314,14 @@ impl Subscription {
 /// ownership, or extended attributes, so every metadata-only variant is safe
 /// to ignore. Unknown top-level event kinds still pass through because they may
 /// be a backend's only representation of a content mutation.
+///
+/// A path the package's own `.quiltignore` excludes is dropped too. The walk
+/// already skips ignored subtrees, so such an event could only ever buy a
+/// recompute that finds nothing — and an ignored path is outside the model in
+/// both directions: neither reported, nor a cause of reporting.
 fn affected_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
-    watched: &BTreeMap<Namespace, PathBuf>,
+    watched: &BTreeMap<Namespace, WatchedRoot>,
 ) -> BTreeSet<Namespace> {
     let mut touched = BTreeSet::new();
     for event in events {
@@ -265,9 +332,13 @@ fn affected_namespaces(
             if filter::is_ignored(path) {
                 continue;
             }
-            if let Some(ns) = namespace_for(path, watched) {
-                touched.insert(ns.clone());
+            let Some((namespace, root)) = namespace_for(path, watched) else {
+                continue;
+            };
+            if root.excludes(path) {
+                continue;
             }
+            touched.insert(namespace.clone());
         }
     }
     touched
@@ -282,12 +353,11 @@ fn is_non_content_event(kind: EventKind) -> bool {
 
 fn namespace_for<'a>(
     path: &Path,
-    watched: &'a BTreeMap<Namespace, PathBuf>,
-) -> Option<&'a Namespace> {
+    watched: &'a BTreeMap<Namespace, WatchedRoot>,
+) -> Option<(&'a Namespace, &'a WatchedRoot)> {
     watched
         .iter()
-        .find(|(_, root)| path.starts_with(root))
-        .map(|(ns, _)| ns)
+        .find(|(_, root)| path.starts_with(&root.path))
 }
 
 /// Handle an error that arrived through `notify-debouncer-full`'s async
@@ -300,7 +370,7 @@ fn namespace_for<'a>(
 ///    react (currently it only toasts `inotify_limit`; the others are
 ///    logged to the console).
 fn handle_async_error(
-    watched: &Arc<Mutex<BTreeMap<Namespace, PathBuf>>>,
+    watched: &Arc<Mutex<BTreeMap<Namespace, WatchedRoot>>>,
     reporter: &dyn StatusReporter,
     err: notify::Error,
 ) {
@@ -309,7 +379,7 @@ fn handle_async_error(
         let mut watched = watched.lock().unwrap();
         let to_drop: Vec<Namespace> = watched
             .iter()
-            .filter(|(_, root)| err.paths.iter().any(|p| p.starts_with(root)))
+            .filter(|(_, root)| err.paths.iter().any(|p| p.starts_with(&root.path)))
             .map(|(ns, _)| ns.clone())
             .collect();
         for ns in &to_drop {
@@ -339,6 +409,16 @@ mod tests {
         Arc::new(RecordingReporter::default())
     }
 
+    /// A watched root with no `.quiltignore`, for the event-kind tests: they
+    /// are about which *kinds* reach a namespace, so the ignore screen is not
+    /// the variable under test.
+    fn unignored(path: &str) -> WatchedRoot {
+        WatchedRoot {
+            path: PathBuf::from(path),
+            quiltignore: None,
+        }
+    }
+
     fn debounced(kind: EventKind) -> notify_debouncer_full::DebouncedEvent {
         notify_debouncer_full::DebouncedEvent::new(
             notify::Event {
@@ -353,7 +433,7 @@ mod tests {
     #[test]
     fn status_reads_and_all_metadata_variants_do_not_wake_the_watcher() {
         let namespace: Namespace = ("acme", "demo").into();
-        let watched = BTreeMap::from([(namespace, PathBuf::from("/pkg"))]);
+        let watched = BTreeMap::from([(namespace, unignored("/pkg"))]);
         let metadata_kinds = [
             MetadataKind::Any,
             MetadataKind::AccessTime,
@@ -383,7 +463,7 @@ mod tests {
     #[test]
     fn content_mutations_still_wake_the_watcher() {
         let namespace: Namespace = ("acme", "demo").into();
-        let watched = BTreeMap::from([(namespace.clone(), PathBuf::from("/pkg"))]);
+        let watched = BTreeMap::from([(namespace.clone(), unignored("/pkg"))]);
 
         assert_eq!(
             affected_namespaces(
@@ -411,6 +491,91 @@ mod tests {
         let signal = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await?
             .expect("subscription should emit a signal");
+        assert_eq!(signal.namespace, ns);
+        Ok(())
+    }
+
+    /// The regression test for the defect this screen exists to stop, stated as
+    /// the loop rather than as an event taxonomy: the app **reads the tree it
+    /// watches** — that is what a status walk is — so a screen that admits
+    /// reads makes the walk re-trigger itself, and the app's own bookkeeping
+    /// becomes its workload.
+    ///
+    /// Deliberately not written against `EventKind`: a unit assertion that
+    /// `Access(_)` is filtered passes on a platform whose backend spells a read
+    /// differently, which is exactly the case the assertion is meant to cover.
+    /// This drives the real watcher instead and requires silence.
+    #[tokio::test]
+    async fn reading_the_watched_tree_does_not_signal() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        tokio::fs::create_dir(dir.path().join("nested")).await?;
+        for name in ["a.md", "nested/b.md"] {
+            tokio::fs::write(dir.path().join(name), b"# seed\n").await?;
+        }
+
+        let (tx, mut rx) = mpsc::channel::<MappingSignal>(64);
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
+        sub.add(("acme", "demo").into(), dir.path().to_path_buf())?;
+        // Let the watch attach and the seeding events drain.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        while rx.try_recv().is_ok() {}
+
+        // The only thing that happens from here is a read of the tree, shaped
+        // like the walk: a listing of every directory, then every file's bytes.
+        for _ in 0..3 {
+            let mut queue = vec![dir.path().to_path_buf()];
+            while let Some(current) = queue.pop() {
+                let mut entries = tokio::fs::read_dir(&current).await?;
+                while let Some(entry) = entries.next_entry().await? {
+                    if entry.file_type().await?.is_dir() {
+                        queue.push(entry.path());
+                    } else {
+                        let _ = tokio::fs::read(entry.path()).await?;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        assert!(
+            rx.try_recv().is_err(),
+            "reading the watched tree must not signal — a read is not a change, \
+             and a walk that re-arms its own trigger never lets the app go idle",
+        );
+        Ok(())
+    }
+
+    /// The `.quiltignore` half: an ignored path is outside the model in both
+    /// directions, so it is neither reported nor a cause of reporting — while
+    /// the ignore file itself always is, since editing it moves the changeset.
+    #[tokio::test]
+    async fn ignored_paths_do_not_signal_but_the_ignore_file_does()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        tokio::fs::write(dir.path().join(".quiltignore"), b".rumdl_cache/\n").await?;
+        tokio::fs::create_dir(dir.path().join(".rumdl_cache")).await?;
+
+        let (tx, mut rx) = mpsc::channel::<MappingSignal>(64);
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
+        let ns: Namespace = ("acme", "demo").into();
+        sub.add(ns.clone(), dir.path().to_path_buf())?;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        while rx.try_recv().is_ok() {}
+
+        // A write deep inside the ignored directory: the matcher has to reach
+        // it through the *parent* pattern, with no walk context to lean on.
+        tokio::fs::write(dir.path().join(".rumdl_cache/deep.json"), b"{}").await?;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "a write inside an ignored directory must not cost a status walk",
+        );
+
+        // The ignore file is the one path that can never be ignored.
+        tokio::fs::write(dir.path().join(".quiltignore"), b".rumdl_cache/\nnotes/\n").await?;
+        let signal = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await?
+            .expect("editing .quiltignore changes the changeset, so it must signal");
         assert_eq!(signal.namespace, ns);
         Ok(())
     }
