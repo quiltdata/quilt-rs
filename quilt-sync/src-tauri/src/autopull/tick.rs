@@ -478,6 +478,30 @@ pub(crate) async fn run_once(
     roles: &RoleCache,
     inner: &WatcherInner,
 ) -> Result<(), Error> {
+    // Re-arm before doing any work, so a running tick advertises the tick that
+    // FOLLOWS it rather than the one it is serving (qhq-8mgw.30). The loop arms
+    // `now + cadence` and then sleeps exactly `cadence`, so on arrival here the
+    // deadline is already now, and it stays in the past for however long this
+    // tick takes — a network round trip per package on a large install. A card
+    // reading that refetches on its due-floor, reads the same past deadline, and
+    // rebuilds its ring from zero on a loop.
+    //
+    // The deadline this writes is early by this tick's own duration, which
+    // `kit/countdown.rs` sanctions outright: a ring that sits full for a few
+    // seconds is truthful, where one that restarts from zero is not.
+    //
+    // Before the cheap pre-check below, not after: the loop arms unconditionally
+    // today, and whether a disabled direction should advertise a deadline at all
+    // is a different question from when the arming happens.
+    {
+        let cadence = {
+            let settings = inner.settings.read().await;
+            let mode = *inner.window_mode.read().await;
+            crate::autopull::cadence_for_mode(&settings.pull, mode)
+        };
+        crate::autopull::arm_next_pull(inner, cadence).await;
+    }
+
     // Cheap pre-check: if both directions are off we have nothing to
     // do. Per-direction gating lives inside `refresh_then_maybe_sync`
     // so a single-direction config (pull only / push only) still

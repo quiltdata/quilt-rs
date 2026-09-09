@@ -364,6 +364,43 @@ async fn run_once_disabled_is_a_noop() -> Result<(), Error> {
 }
 
 #[tokio::test]
+async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> Result<(), Error> {
+    // qhq-8mgw.30. The spawn loop arms `now + cadence` and then sleeps exactly
+    // `cadence`, so by the time the tick begins the deadline IS now — and stays
+    // in the past for the tick's whole duration, which on a large install is a
+    // network round trip per package. The v2 card then reads a past deadline,
+    // waits its due-floor, refetches, reads the same past deadline back, and
+    // rebuilds its ring from zero every 10s instead of letting it sit full.
+    //
+    // Armed here rather than in the loop because the loop needs a Tauri runtime
+    // and cannot be driven from a test — `arm_next_pull`'s own doc gives that as
+    // the reason it is a free function, and the same reasoning applies to when it
+    // is called. The cadence arithmetic is pinned separately, by
+    // `arming_the_pull_records_a_deadline_one_cadence_out`.
+    let model = MockQuiltModel::new();
+    let inner = make_inner(AutosyncSettings::default());
+    assert!(
+        inner.clocks.next_pull_at.read().await.is_none(),
+        "precondition: a cold start has nothing armed"
+    );
+
+    let before = Utc::now();
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let at = inner
+        .clocks
+        .next_pull_at
+        .read()
+        .await
+        .expect("a tick must arm the tick that follows it");
+    assert!(
+        at > before,
+        "a running tick must not advertise a deadline already past: {at} vs {before}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
     let host: Host = "catalog.dev".parse().unwrap();
