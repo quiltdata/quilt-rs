@@ -80,6 +80,10 @@ impl RefreshOutcome {
             upstream,
             has_changes,
             published: None,
+            // Nothing was pulled: this arm reports a tree it only observed, and
+            // says when publishing becomes possible. `main` added the field in
+            // `e4cd6ea` while this constructor lived only on this branch.
+            pulled: None,
             fingerprint,
             publish_arm_at: Some(arm_at),
         }

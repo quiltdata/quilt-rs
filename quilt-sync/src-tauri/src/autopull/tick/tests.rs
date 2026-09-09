@@ -580,6 +580,9 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        // Branch-only field (plan 3's `next_pull_at`), so `main`'s own test could
+        // not have set it.
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
