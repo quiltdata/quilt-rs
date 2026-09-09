@@ -145,8 +145,28 @@ fn render_files_fetch_error() -> impl IntoView {
 #[derive(Clone, Copy)]
 struct RowSignals {
     state: RwSignal<PackageState>,
-    provisional: RwSignal<bool>,
+    confidence: RwSignal<Confidence>,
     role_switch_host: RwSignal<Option<String>>,
+}
+
+/// How much the page knows about a row's state.
+///
+/// One field rather than a `provisional` boolean beside an `unchecked` one:
+/// "settled but unchecked" is not a thing, and a type that cannot express it
+/// beats a note asking people not to — `kit/banner.rs` makes the same argument
+/// for its own enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Confidence {
+    /// The heavy phase answered, and this is its answer.
+    Settled,
+    /// Its call is still out. Not news: the row is dashed and dimmed, and the
+    /// queue waits rather than speaking (R3).
+    Pending,
+    /// Its call failed, so the row keeps the light phase's state — which is not
+    /// wrong, only unwitnessed, and right most of the time. This is what tells
+    /// "we could not look" apart from "we have not looked yet", which one
+    /// boolean could not (qhq-8mgw.51).
+    Unchecked,
 }
 
 impl RowSignals {
@@ -157,9 +177,32 @@ impl RowSignals {
     fn new(state: PackageState, role_switch_host: Option<String>, provisional: bool) -> Self {
         Self {
             state: RwSignal::new(state),
-            provisional: RwSignal::new(provisional),
+            confidence: RwSignal::new(if provisional {
+                Confidence::Pending
+            } else {
+                Confidence::Settled
+            }),
             role_switch_host: RwSignal::new(role_switch_host),
         }
+    }
+
+    /// Whether anything has confirmed this state. Both unconfirmed reasons dim
+    /// the row, because the dim says *unconfirmed* and that is true of both.
+    fn provisional(self) -> bool {
+        self.confidence.get() != Confidence::Settled
+    }
+
+    /// The heavy phase's call failed. Recorded rather than only logged, so the
+    /// queue can name the packages the page could not account for.
+    fn mark_unchecked(self) {
+        self.confidence.set(Confidence::Unchecked);
+    }
+
+    /// A call is out for this row again. Clears a previous failure, so a retry in
+    /// flight stops the cause naming a package it is currently re-checking — the
+    /// queue then waits on `in_flight`, as it does for a first load (R3).
+    fn mark_pending(self) {
+        self.confidence.set(Confidence::Pending);
     }
 
     /// Replace the light phase's guess with the heavy phase's answer — in BOTH
@@ -169,7 +212,7 @@ impl RowSignals {
     fn apply(self, refreshed: MainPagePackageRefreshData) {
         self.state.set(refreshed.state);
         self.role_switch_host.set(refreshed.role_switch_host);
-        self.provisional.set(false);
+        self.confidence.set(Confidence::Settled);
     }
 }
 
@@ -228,6 +271,12 @@ impl PackageStore {
         self.outstanding.update(|n| *n = n.saturating_sub(1));
     }
 
+    /// More calls are going out — the counterpart to [`answered`](Self::answered),
+    /// for a retry, which fires calls the seed never counted.
+    fn asking(&self, n: usize) {
+        self.outstanding.update(|o| *o += n);
+    }
+
     /// Whether any heavy-phase call is still outstanding (R3).
     fn in_flight(&self) -> bool {
         self.outstanding.get() > 0
@@ -248,7 +297,7 @@ impl PackageStore {
             .iter()
             .filter_map(|p| {
                 let row = self.row(&p.namespace)?;
-                if row.provisional.get() {
+                if row.provisional() {
                     return None;
                 }
                 Some(MainPagePackageData {
@@ -258,6 +307,21 @@ impl PackageStore {
                     ..p.clone()
                 })
             })
+            .collect()
+    }
+
+    /// The light-phase rows whose heavy-phase call **failed** — never the ones
+    /// still waiting. `settled` drops both alike, because neither is confirmed;
+    /// only these two are something the page can speak about, and the light
+    /// payload is what carries the host the queue groups them by.
+    fn unchecked(&self, light: &[MainPagePackageData]) -> Vec<MainPagePackageData> {
+        light
+            .iter()
+            .filter(|p| {
+                self.row(&p.namespace)
+                    .is_some_and(|row| row.confidence.get() == Confidence::Unchecked)
+            })
+            .cloned()
             .collect()
     }
 }
@@ -292,13 +356,42 @@ fn record_refresh(
     match result {
         Ok(refreshed) => row.apply(refreshed),
         Err(err) => {
-            // The row keeps the light phase's state and stays provisional, which
-            // is honest: nothing confirmed it. The error is logged, not rendered —
-            // the words a user reads come only from `kit::render`.
+            // The row keeps the light phase's state, which is honest: nothing
+            // confirmed it, and it is not wrong — only unwitnessed. What the
+            // failure adds is that we could not look, as distinct from not having
+            // looked yet, which is what the queue names as a shared cause
+            // (qhq-8mgw.51). Still logged, because the backend's own words are
+            // diagnostic and never reach the page.
+            row.mark_unchecked();
             web_sys::console::error_1(&format!("refresh_main_page_package failed: {err}").into());
         }
     }
     store.answered();
+}
+
+/// Re-check exactly these packages, and nothing else.
+///
+/// What the appbar's Refresh cannot do: that notifies the page's trigger and
+/// reloads every payload. This re-fires only the heavy-phase calls a cause names,
+/// which is the affordance v1 had per row and this design moved to the cause
+/// (`gallery/unchecked.rs`).
+///
+/// The rows are looked up BEFORE the counter is raised, so a namespace with no row
+/// cannot leave `outstanding` permanently above zero and the queue silent forever
+/// (R3) — the same hazard the resolve's own `store.answered()` arm guards.
+fn recheck(store: PackageStore, namespaces: &[String]) {
+    let rows: Vec<(String, RowSignals)> = namespaces
+        .iter()
+        .filter_map(|namespace| Some((namespace.clone(), store.row(namespace)?)))
+        .collect();
+    store.asking(rows.len());
+    for (namespace, row) in rows {
+        row.mark_pending();
+        leptos::task::spawn_local(async move {
+            let result = commands::refresh_main_page_package(namespace).await;
+            record_refresh(row, store, result);
+        });
+    }
 }
 
 /// One row: a pure view over the signals the page holds for it. The heavy-phase
@@ -325,7 +418,7 @@ fn PackageListRow(
             changed_at=changed_at
             state=words
             tone=tone
-            provisional=row.provisional
+            provisional=Signal::derive(move || row.provisional())
         />
     }
 }
@@ -374,7 +467,7 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
     let mut cause: Option<String> = None;
     for row in &group.rows {
         let signals = store.row(&row.namespace)?;
-        if signals.provisional.get() {
+        if signals.provisional() {
             return None;
         }
         let state = signals.state.get();
@@ -762,8 +855,14 @@ fn MainPageRegions(
                         // settling re-renders the queue and nothing else: the list
                         // below reads its own per-row signals, and a settle must
                         // cost nothing list-wide.
+                        let unchecked_light = light.clone();
                         let settled = Signal::derive(move || store.settled(&light));
+                        let unchecked = Signal::derive(move || store.unchecked(&unchecked_light));
                         let in_flight = Signal::derive(move || store.in_flight());
+                        let retry =
+                            Callback::new(move |namespaces: Vec<String>| {
+                                recheck(store, &namespaces);
+                            });
                         // The accounts read is awaited here too, for the queue's
                         // join — inside this arm, because a page with no rows has
                         // no queue to join anything to. Its failure is not logged a
@@ -786,6 +885,8 @@ fn MainPageRegions(
                                 hosts=hosts
                                 in_flight=in_flight
                                 total=total
+                                unchecked=unchecked
+                                retry=retry
                             />
                             <div class=style::list_region>
                             {list_toolbar(
@@ -1164,7 +1265,7 @@ mod tests {
         let one = store.row("a/one").expect("seeded from this payload");
         assert_eq!(one.state.get_untracked(), PackageState::Latest);
         assert!(
-            one.provisional.get_untracked(),
+            one.confidence.get_untracked() == Confidence::Pending,
             "the light phase's guess is provisional by construction"
         );
         assert!(store.row("b/absent").is_none());
@@ -3292,7 +3393,7 @@ mod tests {
         assert_eq!(store.outstanding.get_untracked(), 0);
         assert_eq!(row.state.get_untracked(), PackageState::Behind);
         assert!(
-            !row.provisional.get_untracked(),
+            row.confidence.get_untracked() == Confidence::Settled,
             "the heavy phase confirmed it"
         );
     }
@@ -3335,7 +3436,7 @@ mod tests {
             PackageState::PendingChanges { files: 3 }
         );
         assert!(
-            !row.provisional.get_untracked(),
+            row.confidence.get_untracked() == Confidence::Settled,
             "the heavy phase confirmed it"
         );
     }
@@ -3709,6 +3810,61 @@ mod tests {
             calls.get_untracked() - before,
             1,
             "one tick's news costs one refetch, not one per package"
+        );
+    }
+    #[wasm_bindgen_test]
+    fn unchecked_names_only_the_rows_whose_check_failed() {
+        // qhq-8mgw.51. Three rows, three fates, and the third is why one boolean
+        // was not enough: a row still waiting is NOT news — the queue waits for
+        // it (R3) — while a row whose call failed is something the page can
+        // speak about. A fixture without the waiting row would not tell them
+        // apart.
+        let light = vec![
+            pkg("a/confirmed", PackageState::Latest),
+            pkg("a/failed", PackageState::Latest),
+            pkg("a/waiting", PackageState::Latest),
+        ];
+        let store = PackageStore::seed(&light);
+        store
+            .row("a/confirmed")
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Latest,
+                role_switch_host: None,
+            });
+        record_refresh(
+            store.row("a/failed").unwrap(),
+            store,
+            Err("no route to host".to_string()),
+        );
+
+        let unchecked = store.unchecked(&light);
+        assert_eq!(unchecked.len(), 1, "only the one whose check failed");
+        assert_eq!(unchecked[0].namespace, "a/failed");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_failed_check_keeps_the_cached_state_and_stays_out_of_settled() {
+        // The failure is not a state: the package is whatever the light phase
+        // said, only unwitnessed. Overwriting it would throw away the
+        // informative half, which is the argument for a cause row rather than
+        // words in the row's state label.
+        let light = vec![pkg("a/failed", PackageState::Behind)];
+        let store = PackageStore::seed(&light);
+        record_refresh(
+            store.row("a/failed").unwrap(),
+            store,
+            Err("credential vending failed".to_string()),
+        );
+
+        assert_eq!(
+            store.row("a/failed").unwrap().state.get_untracked(),
+            PackageState::Behind,
+            "a failed check must not overwrite what the light phase knew"
+        );
+        assert!(
+            store.settled(&light).is_empty(),
+            "and nothing unconfirmed reaches the queue as a fact (R2)"
         );
     }
 }

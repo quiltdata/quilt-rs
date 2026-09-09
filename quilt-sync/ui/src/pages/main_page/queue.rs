@@ -63,11 +63,28 @@ pub enum CauseAction {
     /// the same fact stored twice, told apart only by which copy a later
     /// change forgot.
     SwitchRole,
+    /// `[Try again]`, re-checking only this cause's own packages — which is the
+    /// one thing the appbar's Refresh cannot do, since it reloads the page.
+    ///
+    /// Carries no members for `SwitchRole`'s reason: the cause already holds
+    /// them, and [`cause_trailing`] is handed them beside the action. The host
+    /// is not carried either — it is already in the cause's `text`.
+    TryAgain,
 }
 
 /// The queue, derived. Section 4.3: it has no payload — given the resolved
 /// package list and the host facts, everything below is computed here.
-pub fn derive_queue(packages: &[MainPagePackageData], hosts: &[AccountHostData]) -> Vec<QueueItem> {
+/// `unchecked` is the packages whose heavy-phase call FAILED — not the ones still
+/// waiting, which are not news (R3). They arrive separately because `packages` is
+/// the *settled* list and R2 drops them before the queue could see them: without a
+/// third input the region on a page where every check failed is not merely quiet
+/// but absent, since it returns nothing twice over. Same move as `be124d0` made
+/// for `PullConflict` — turn an absence into a fact the page carries.
+pub fn derive_queue(
+    packages: &[MainPagePackageData],
+    hosts: &[AccountHostData],
+    unchecked: &[MainPagePackageData],
+) -> Vec<QueueItem> {
     let signed_out: HashSet<&str> = hosts
         .iter()
         .filter(|h| !h.signed_in)
@@ -150,6 +167,40 @@ pub fn derive_queue(packages: &[MainPagePackageData], hosts: &[AccountHostData])
                 action: CauseAction::SignIn {
                     host: host.to_string(),
                 },
+                members: members.iter().map(|p| p.namespace.clone()).collect(),
+            },
+        ));
+    }
+
+    // Host-grouped, so the sentence and its remedy share a scope, exactly as the
+    // signed-out cause does. A package with no host to name is skipped rather than
+    // given a row: "unchecked" is not a state, so `QueueItem::Package` has nothing
+    // to render it with, and a cause keyed on a host cannot name one that is
+    // absent — the same ruling `role_denied_groups` follows for a missing bucket.
+    // Such a row stays dashed and dimmed in the list, as it does today.
+    let mut unchecked_groups: HashMap<&str, Vec<&MainPagePackageData>> = HashMap::new();
+    for package in unchecked {
+        if let Some(host) = package.host.as_deref() {
+            unchecked_groups.entry(host).or_default().push(package);
+        }
+    }
+    for (host, members) in unchecked_groups {
+        // `new revisions` is the phrase the page already uses for this operation,
+        // on the autosync toggle. Not `Couldn't reach {host}`: the call can fail in
+        // credential vending, in the role query or in the hash walk, none of which
+        // establishes a network fact, and this epic has already paid twice for a
+        // state it manufactured. Not `changes` either — on this page that word
+        // means local file changes.
+        let text = format!("Couldn't check for new revisions on {host}");
+        ranked_causes.push((
+            // After signed-out, which is the *attributable* half of error: an
+            // unattributable failure is weaker information, so the page says what
+            // it knows before what it could not determine.
+            5,
+            text.clone(),
+            QueueItem::Cause {
+                text,
+                action: CauseAction::TryAgain,
                 members: members.iter().map(|p| p.namespace.clone()).collect(),
             },
         ));
@@ -267,7 +318,13 @@ fn package_action(
 /// that control is host-scoped and lives on the Accounts card's host row.
 fn cause_trailing(
     action: &CauseAction,
+    // The namespaces this cause holds, for an action scoped to exactly them.
+    // Passed beside the action rather than inside it — the cause already owns
+    // them, and a second copy would be told apart only by which one a later
+    // change forgot.
+    members: &[String],
     navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
+    retry: Callback<Vec<String>>,
 ) -> AnyView {
     match action {
         CauseAction::SignIn { host } => {
@@ -280,6 +337,13 @@ fn cause_trailing(
             .into_any()
         }
         CauseAction::SwitchRole => view! { "Change your role in Accounts, above." }.into_any(),
+        CauseAction::TryAgain => {
+            let members = members.to_vec();
+            view! {
+                <Button on_click=move |_| retry.run(members.clone())>"Try again"</Button>
+            }
+            .into_any()
+        }
     }
 }
 
@@ -303,6 +367,13 @@ pub fn QueueRegion(
     /// line speaks for all of them, so it may not be drawn until `packages`
     /// accounts for all of them — see the guard below.
     total: Signal<usize>,
+    /// The packages whose check failed — see [`derive_queue`]. Reactive for the
+    /// same reason `packages` is: a retry that answers must move the region
+    /// without anything upstream re-running.
+    unchecked: Signal<Vec<MainPagePackageData>>,
+    /// Re-check exactly these namespaces. The page owns the store and the call;
+    /// the queue only knows which packages a cause speaks for.
+    retry: Callback<Vec<String>>,
 ) -> impl IntoView {
     // Created ONCE per construction, outside the closure below — that placement
     // is R4 and R6 in one line. A settle re-runs the closure and finds the
@@ -330,13 +401,14 @@ pub fn QueueRegion(
 
     move || {
         let packages = packages.get();
+        let unchecked = unchecked.get();
         // `view!` moves its children into closures of their own, so a handle
         // captured by this closure cannot merely be borrowed out of it and leave
         // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
         // cloned again at each use below.
         let navigate = navigate.clone();
         let owner = owner.clone();
-        if packages.is_empty() {
+        if packages.is_empty() && unchecked.is_empty() {
             // Nothing to speak for. Two ways to get here: a fresh install with
             // no packages at all, and — since the caller began handing in the
             // resolved list — every page load, until the first row settles.
@@ -344,10 +416,15 @@ pub fn QueueRegion(
             // cases; it invents copy for a case the zero line was never meant to
             // speak for. The empty-install story belongs to the list's own
             // blankslate, which a later plan owns.
+            //
+            // `unchecked` is what keeps the offline case out of here (qhq-8mgw.51):
+            // with every call failed the settled list is empty too, and bailing on
+            // that alone left the region ABSENT — no card, no heading, no zero
+            // line — over a page of rows the app could not read.
             return ().into_any();
         }
 
-        let items = derive_queue(&packages, &hosts);
+        let items = derive_queue(&packages, &hosts, &unchecked);
         if items.is_empty() {
             if in_flight.get() || packages.len() < total.get() {
                 // Nothing known, and the page is not entitled to say so. Two
@@ -409,7 +486,8 @@ pub fn QueueRegion(
                                         signal
                                     });
                                 let member_count = members.len();
-                                let trailing = cause_trailing(&action, navigate.clone());
+                                let trailing =
+                                    cause_trailing(&action, &members, navigate.clone(), retry);
                                 view! {
                                     <CauseRow
                                         text=text
@@ -514,6 +592,7 @@ mod tests {
         let items = derive_queue(
             &[pkg("a/b", PackageState::Latest, Some("h.io"))],
             &[host("h.io", true)],
+            &[],
         );
         assert!(items.is_empty());
     }
@@ -530,6 +609,7 @@ mod tests {
                 pkg("b/three", PackageState::Behind, Some("custom.registry.io")),
             ],
             &[host("custom.registry.io", false)],
+            &[],
         );
 
         match &items[0] {
@@ -561,6 +641,7 @@ mod tests {
         let items = derive_queue(
             &[pkg("a/one", PackageState::Unknown, Some("h.io"))],
             &[host("h.io", true)],
+            &[],
         );
         assert!(
             items.iter().all(|i| !matches!(i, QueueItem::Cause { .. })),
@@ -606,6 +687,7 @@ mod tests {
                 ),
             ],
             &[host("h.io", true)],
+            &[],
         );
         let causes: Vec<_> = items
             .iter()
@@ -640,6 +722,7 @@ mod tests {
                 Some("h.io"),
             )],
             &[host("h.io", false)],
+            &[],
         );
         assert_eq!(items.len(), 1);
         assert!(
@@ -655,6 +738,7 @@ mod tests {
         let items = derive_queue(
             &[pkg("a/one", PackageState::Unknown, Some("h.io"))],
             &[host("h.io", false)],
+            &[],
         );
         assert!(matches!(&items[0], QueueItem::Cause { members, .. } if members.len() == 1));
     }
@@ -676,6 +760,7 @@ mod tests {
                 pkg("a/out", PackageState::Unknown, Some("gone.io")),
             ],
             &[host("h.io", true), host("gone.io", false)],
+            &[],
         );
         let shape: Vec<&str> = items
             .iter()
@@ -693,6 +778,7 @@ mod tests {
         let items = derive_queue(
             &[pkg("local/thing", PackageState::Unpublished, None)],
             &[host("h.io", false)],
+            &[],
         );
         assert!(matches!(&items[0], QueueItem::Package { .. }));
     }
@@ -716,6 +802,7 @@ mod tests {
                 ),
             ],
             &[host("gone.io", false), host("h.io", true)],
+            &[],
         );
         let causes: Vec<&str> = items
             .iter()
@@ -751,6 +838,7 @@ mod tests {
                 Some("h.io"),
             )],
             &[host("h.io", true)],
+            &[],
         );
         assert_eq!(items.len(), 1, "not dropped, and not folded into a cause");
         assert!(
@@ -800,6 +888,28 @@ mod tests {
             hosts,
             in_flight,
             Signal::derive(move || packages.get().len()),
+            Signal::stored(Vec::new()),
+            Callback::new(|_| ()),
+        )
+    }
+
+    /// [`mount_region`] plus the packages whose check failed, for the cause only
+    /// they produce. `retry` is handed in so a test can count what a click asks
+    /// for — the call is the only observable the affordance has.
+    fn mount_region_unchecked(
+        packages: Signal<Vec<MainPagePackageData>>,
+        hosts: Vec<AccountHostData>,
+        unchecked: Vec<MainPagePackageData>,
+        retry: Callback<Vec<String>>,
+    ) -> web_sys::Element {
+        let total = unchecked.len() + packages.get_untracked().len();
+        mount_region_of(
+            packages,
+            hosts,
+            Signal::stored(false),
+            Signal::stored(total),
+            Signal::stored(unchecked),
+            retry,
         )
     }
 
@@ -810,6 +920,8 @@ mod tests {
         hosts: Vec<AccountHostData>,
         in_flight: Signal<bool>,
         total: Signal<usize>,
+        unchecked: Signal<Vec<MainPagePackageData>>,
+        retry: Callback<Vec<String>>,
     ) -> web_sys::Element {
         mount(move || {
             view! {
@@ -818,6 +930,8 @@ mod tests {
                     hosts=hosts
                     in_flight=in_flight
                     total=total
+                    unchecked=unchecked
+                    retry=retry
                 />
             }
         })
@@ -1347,6 +1461,8 @@ mod tests {
                         hosts=hosts.clone()
                         in_flight=Signal::stored(false)
                         total=Signal::derive(move || packages.get().len())
+                        unchecked=Signal::stored(Vec::new())
+                        retry=Callback::new(|_| ())
                     />
                 </Show>
             }
@@ -1368,6 +1484,177 @@ mod tests {
             expander(&el).get_attribute("aria-expanded").unwrap(),
             "false",
             "a new region collapses every group"
+        );
+    }
+    #[wasm_bindgen_test]
+    fn a_failed_check_becomes_one_cause_grouped_by_host() {
+        // qhq-8mgw.51. Host-grouped, so the sentence and its remedy share a
+        // scope, exactly as the signed-out cause does. The cached states differ
+        // on purpose: the failure is not a state, and a fixture where every row
+        // said the same thing would not show that.
+        let items = derive_queue(
+            &[],
+            &[host("open.quiltdata.com", true)],
+            &[
+                pkg("a/one", PackageState::Latest, Some("open.quiltdata.com")),
+                pkg("a/two", PackageState::Behind, Some("open.quiltdata.com")),
+            ],
+        );
+
+        assert_eq!(items.len(), 1, "one host, one cause");
+        match &items[0] {
+            QueueItem::Cause {
+                text,
+                action,
+                members,
+            } => {
+                assert_eq!(
+                    text,
+                    "Couldn't check for new revisions on open.quiltdata.com"
+                );
+                assert_eq!(members.len(), 2, "the count CauseRow renders is these");
+                assert!(matches!(action, CauseAction::TryAgain), "got {action:?}");
+            }
+            other @ QueueItem::Package { .. } => panic!("expected a cause, got {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn failed_checks_on_two_hosts_are_two_causes() {
+        // One remedy per host, because [Try again] re-checks the packages its own
+        // cause names — a single cause over two hosts would offer one control for
+        // two scopes.
+        let items = derive_queue(
+            &[],
+            &[],
+            &[
+                pkg("a/one", PackageState::Latest, Some("one.example.com")),
+                pkg("b/two", PackageState::Latest, Some("two.example.com")),
+            ],
+        );
+
+        assert_eq!(items.len(), 2, "a cause each");
+        let texts: Vec<&str> = items
+            .iter()
+            .map(|item| match item {
+                QueueItem::Cause { text, .. } => text.as_str(),
+                other @ QueueItem::Package { .. } => {
+                    panic!("expected causes, got {other:?}")
+                }
+            })
+            .collect();
+        assert!(texts.iter().any(|t| t.ends_with("one.example.com")));
+        assert!(texts.iter().any(|t| t.ends_with("two.example.com")));
+    }
+
+    #[wasm_bindgen_test]
+    fn a_failed_check_with_no_host_is_left_to_its_row() {
+        // A cause keyed on a host cannot name one that is absent — the ruling
+        // `role_denied_groups` already follows for a missing bucket. "Unchecked"
+        // is not a state either, so there is no per-package row to fall back to:
+        // it stays dashed and dimmed in the list, and the queue says nothing.
+        let items = derive_queue(&[], &[], &[pkg("a/one", PackageState::Latest, None)]);
+
+        assert!(
+            items.is_empty(),
+            "nothing nameable, so nothing claimed: {items:?}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_unchecked_cause_sorts_after_signed_out() {
+        // Signed-out is the attributable half of error and carries a specific
+        // remedy; a failed check is weaker information. The page says what it
+        // knows before what it could not determine.
+        let items = derive_queue(
+            &two_signed_out(),
+            &one_signed_out(),
+            &[pkg(
+                "z/failed",
+                PackageState::Latest,
+                Some("open.quiltdata.com"),
+            )],
+        );
+
+        let texts: Vec<&str> = items
+            .iter()
+            .filter_map(|item| match item {
+                QueueItem::Cause { text, .. } => Some(text.as_str()),
+                QueueItem::Package { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Signed out from custom.registry.io",
+                "Couldn't check for new revisions on open.quiltdata.com",
+            ],
+            "a rank swap must fail this"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_region_speaks_when_every_check_failed() {
+        // The case this cause exists for. With every call failed the settled list
+        // is empty too, so the region used to return nothing TWICE over and was
+        // absent — no card, no heading, no zero line — over a page of rows the
+        // app could not read.
+        let el = mount_region_unchecked(
+            Signal::stored(Vec::new()),
+            vec![host("open.quiltdata.com", true)],
+            vec![pkg(
+                "a/one",
+                PackageState::Latest,
+                Some("open.quiltdata.com"),
+            )],
+            Callback::new(|_| ()),
+        );
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(
+            text.contains("Couldn't check for new revisions on open.quiltdata.com"),
+            "the region must speak rather than vanish; got {text:?}"
+        );
+        assert!(
+            !text.contains("Everything is Latest"),
+            "and must not post an all-clear over packages it could not read"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn try_again_asks_for_only_this_causes_packages() {
+        // The affordance the appbar's Refresh cannot offer: that reloads every
+        // payload. The call is its only observable, so this counts what a click
+        // asks for, and asserts WHICH packages — a retry that re-checked the
+        // whole roster would pass a bare call-count assertion.
+        let asked: RwSignal<Vec<Vec<String>>> = RwSignal::new(Vec::new());
+        let el = mount_region_unchecked(
+            Signal::stored(Vec::new()),
+            vec![host("open.quiltdata.com", true)],
+            vec![
+                pkg("a/one", PackageState::Latest, Some("open.quiltdata.com")),
+                pkg("a/two", PackageState::Latest, Some("open.quiltdata.com")),
+            ],
+            Callback::new(move |names: Vec<String>| asked.update(|log| log.push(names))),
+        );
+
+        let button = el
+            .query_selector("button:not([aria-expanded])")
+            .unwrap()
+            .expect("the cause's own control")
+            .dyn_into::<web_sys::HtmlButtonElement>()
+            .unwrap();
+        assert_eq!(
+            button.text_content().unwrap_or_default().trim(),
+            "Try again"
+        );
+        button.click();
+        leptos::task::tick().await;
+
+        assert_eq!(
+            asked.get_untracked(),
+            vec![vec!["a/one".to_string(), "a/two".to_string()]],
+            "exactly the cause's own members, once"
         );
     }
 }
