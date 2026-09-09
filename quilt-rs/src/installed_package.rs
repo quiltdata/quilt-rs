@@ -214,6 +214,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 // to tell the user why. Callers distinguish it with
                 // [`Error::is_access_denied`].
                 Err(err) if err.is_access_denied() => return Err(err),
+                // Nor is a rejected credential: the session is dead, and
+                // stale lineage would report the package as fine.
+                Err(err) if err.is_session_absent() => return Err(err),
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
                     lineage

@@ -314,9 +314,10 @@ fn CommitContent(
     // vanished button explains nothing) and both carry the same tooltip saying
     // why and what to do about it.
     let no_access_reason = data.no_access_reason.clone();
+    let no_session = data.no_session;
     let no_session_host = data.no_session_host.clone();
     let commit_hint = util::commit_denied_hint(no_access_reason.as_deref())
-        .or_else(|| util::commit_no_session_hint(no_session_host.as_deref()));
+        .or_else(|| util::commit_no_session_hint(no_session, no_session_host.as_deref()));
     let commit_blocked = commit_hint.is_some();
     let commit_is_disabled =
         Signal::derive(move || commit_disabled(&message.get(), commit_blocked));
@@ -1043,10 +1044,16 @@ mod tests {
         assert_eq!(commit_denied_hint(None), None);
 
         assert_eq!(
-            crate::util::commit_no_session_hint(Some("nightly.quilttest.com")).as_deref(),
+            crate::util::commit_no_session_hint(true, Some("nightly.quilttest.com")).as_deref(),
             Some("Not signed in to nightly.quilttest.com. Sign in to commit.")
         );
-        assert_eq!(crate::util::commit_no_session_hint(None), None);
+        // A bare bucket on ambient credentials has no deployment to sign in
+        // to, and must still block rather than falling through to enabled.
+        assert_eq!(
+            crate::util::commit_no_session_hint(true, None).as_deref(),
+            Some("No usable AWS credentials. Update ~/.aws/credentials to commit.")
+        );
+        assert_eq!(crate::util::commit_no_session_hint(false, None), None);
     }
 
     /// The message gate is unchanged and independent of the rest: an empty

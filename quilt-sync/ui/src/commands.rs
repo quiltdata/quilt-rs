@@ -73,8 +73,11 @@ pub struct CommitData {
     /// work (the workflow gate reads the bucket's config first), so this
     /// disables the commit affordances and supplies their tooltip.
     pub no_access_reason: Option<String>,
-    /// The deployment there is no session for. Disables the commit
-    /// affordances like a denial, but the remedy is a sign-in.
+    /// There is no session to commit with. Disables the commit affordances
+    /// like a denial, but the remedy is a sign-in.
+    pub no_session: bool,
+    /// The deployment to sign in to, when there is one; `None` for ambient
+    /// AWS credentials, whose remedy is the file.
     pub no_session_host: Option<String>,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,

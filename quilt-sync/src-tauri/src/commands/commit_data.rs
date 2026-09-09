@@ -103,10 +103,14 @@ pub struct CommitData {
     /// so on a denial the commit affordances cannot succeed and the page
     /// disables them, quoting this as the reason.
     pub no_access_reason: Option<String>,
-    /// The deployment this package has no session for. `Some` disables the
-    /// commit affordances, like a denial does, but the remedy is a sign-in
-    /// rather than a role switch — so it is a separate field, not a second
-    /// meaning for `no_access_reason`.
+    /// There is no session to commit with. Disables the commit affordances
+    /// like a denial does, but the remedy is a sign-in rather than a role
+    /// switch — a separate field, not a second meaning for
+    /// `no_access_reason`.
+    pub no_session: bool,
+    /// The deployment to sign in to, when there is one. `None` for a bare
+    /// bucket on ambient AWS credentials, whose remedy is the file — so it
+    /// cannot carry the blocked state on its own.
     pub no_session_host: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
@@ -312,6 +316,7 @@ async fn get_commit_data_from_model(
     // the commit affordances can be disabled and explained rather than
     // failing on click.
     let mut no_access_reason = None;
+    let mut no_session = false;
     let mut no_session_host = None;
     let status = match m
         .get_installed_package_status(&installed_package, None)
@@ -334,6 +339,7 @@ async fn get_commit_data_from_model(
                 "No session for the remote of {}; opening the commit page on cached lineage",
                 installed_package.namespace,
             );
+            no_session = true;
             no_session_host = origin_host.map(ToString::to_string);
             m.recompute_local_status(&installed_package, None).await?
         }
@@ -476,6 +482,7 @@ async fn get_commit_data_from_model(
         workflow,
         workflows,
         no_access_reason,
+        no_session,
         no_session_host,
         entries: entries_list,
         ignored_count,
@@ -915,6 +922,10 @@ mod tests {
                 Some("test.quilt.dev"),
                 "the page must name its own deployment so the commit action can \
                  explain itself, instead of looking ready ({described})"
+            );
+            assert!(
+                data.no_session,
+                "blocked-ness must not depend on there being a host to name ({described})"
             );
             assert_eq!(
                 data.no_access_reason, None,

@@ -580,7 +580,7 @@ impl Remote for RemoteS3 {
             // read failed: autosync raises the login affordance on it rather
             // than backing off. Re-wrapped, it is indistinguishable from a
             // network fault.
-            Err(e) if e.is_invalid_credentials() => {
+            Err(e) if e.is_session_absent() => {
                 warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
                 Err(e)
             }

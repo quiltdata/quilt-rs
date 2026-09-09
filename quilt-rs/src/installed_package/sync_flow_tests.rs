@@ -423,6 +423,63 @@ async fn test_manifest_recovery_from_corruption() -> Res {
 }
 
 /// A remote that always returns `LoginRequired`, simulating a logged-out user.
+/// Refuses with the route where S3 rejected an issued credential, rather than
+/// the provider refusing to vend. `status()` must treat both as a dead session.
+struct RejectedCredentialRemote;
+
+impl crate::io::remote::Remote for RejectedCredentialRemote {
+    fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn get_object_stream(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<crate::io::remote::RemoteObjectStream>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn resolve_url(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<S3Uri>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn put_object(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+    ) -> impl Future<Output = Res> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn upload_file(
+        &self,
+        _host_config: &crate::io::remote::HostConfig,
+        _source_path: impl AsRef<std::path::Path>,
+        _dest_uri: &S3Uri,
+        _size: u64,
+    ) -> impl Future<Output = Res<(S3Uri, crate::object_hash::ObjectHash)>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn host_config(
+        &self,
+        _host: Option<&Host>,
+    ) -> impl Future<Output = Res<crate::io::remote::HostConfig>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
+        std::future::ready(Err(rejected_credential()))
+    }
+}
+
+fn rejected_credential() -> Error {
+    Error::S3(crate::error::S3Error {
+        host: Some("nightly.quilttest.com".parse().unwrap()),
+        kind: crate::error::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+    })
+}
+
 struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
@@ -593,6 +650,68 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
     assert!(
         err.is_access_denied(),
         "the denial must survive as a typed denial, not a warning: {err}"
+    );
+
+    Ok(())
+}
+
+/// The other route to a dead session, asserted through `status()` itself.
+///
+/// **Does not isolate the guarded arm.** This stub refuses every read, and both
+/// the tag refresh and the manifest read go through `get_object_stream`, so the
+/// error also reaches the caller via the manifest `?`. It pins the end-to-end
+/// claim — a rejected credential leaves `status()` as a session failure — not
+/// the specific arm that stops the swallow-and-continue fallback. Isolating
+/// that needs a stub that refuses the tag read and serves the manifest.
+#[test(tokio::test)]
+async fn test_status_propagates_a_rejected_credential() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "rejectedcred").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // Package with remote configured but never pushed (empty hash)
+    let lineage_json = r#"{
+        "packages": {
+            "test/rejectedcred": {
+                "commit": null,
+                "remote": {
+                    "bucket": "my-bucket",
+                    "namespace": "test/rejectedcred",
+                    "hash": "",
+                    "origin": "nightly.quilttest.com"
+                },
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": "/tmp/working_dir"
+    }"#;
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(RejectedCredentialRemote),
+        storage,
+        namespace,
+    };
+
+    // The seam a mocked status call hides: the swallow-and-continue arm
+    // below must not take this, or a dead session reports as a healthy package.
+    let result = package.status(None).await;
+    assert!(
+        result.as_ref().is_err_and(Error::is_session_absent),
+        "Expected LoginRequired error, got: {result:?}"
     );
 
     Ok(())
