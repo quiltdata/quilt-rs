@@ -75,6 +75,7 @@ fn refresh_icon() -> AnyView {
 }
 use crate::kit::Blankslate;
 use crate::kit::Button;
+use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::GroupHeading;
 use crate::kit::IconButton;
@@ -936,7 +937,36 @@ fn MainPageRegions(
                                                     rows.clone(),
                                                     &text,
                                                 );
-                                                if filtered.is_empty() && !text.trim().is_empty() {
+                                                if rows.is_empty() && text.trim().is_empty() {
+                                                    // qhq-8mgw.48: the empty ROSTER, which is
+                                                    // not the empty search below — different
+                                                    // words, and the only one of the two that
+                                                    // carries an action. A reader who has
+                                                    // typed something is answered about what
+                                                    // they typed, which is why this wants an
+                                                    // empty query and not merely no rows.
+                                                    //
+                                                    // Words and action are the gallery's, and
+                                                    // the action opens the dialog plan 8 built
+                                                    // — the scene predates it and drew an
+                                                    // inert button.
+                                                    view! {
+                                                        <Blankslate
+                                                            heading="No packages yet"
+                                                            description="A package is a folder of files that QuiltSync keeps in step with an S3 bucket. Create one from a folder you already have, or install an existing package from the catalog."
+                                                            primary_action=view! {
+                                                                <Button
+                                                                    variant=ButtonVariant::Primary
+                                                                    on_click=move |_| create_open.set(true)
+                                                                >
+                                                                    "Create package"
+                                                                </Button>
+                                                            }
+                                                                .into_any()
+                                                        />
+                                                    }
+                                                        .into_any()
+                                                } else if filtered.is_empty() && !text.trim().is_empty() {
                                                     view! {
                                                         <Blankslate
                                                             heading=format!(
@@ -3865,6 +3895,113 @@ mod tests {
         assert!(
             store.settled(&light).is_empty(),
             "and nothing unconfirmed reaches the queue as a fact (R2)"
+        );
+    }
+    /// Every button labelled `Create package`, in document order. When the roster
+    /// is empty there are two — the toolbar's and the blankslate's — and they are
+    /// told apart by that order rather than by a class: `stylance` emits
+    /// `<class>-<hash>` per module, so a `[class*=root]` selector matches several
+    /// unrelated components and would pass while asserting nothing.
+    fn create_package_buttons(el: &web_sys::Element) -> Vec<web_sys::HtmlButtonElement> {
+        let list = el.query_selector_all("button").unwrap();
+        (0..list.length())
+            .filter_map(|i| {
+                let button: web_sys::HtmlButtonElement = list.get(i)?.dyn_into().ok()?;
+                (button.text_content().unwrap_or_default().trim() == "Create package")
+                    .then_some(button)
+            })
+            .collect()
+    }
+
+    fn no_packages() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: Vec::new(),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_empty_roster_says_so_and_offers_the_one_thing_to_do() {
+        // qhq-8mgw.48. `group_packages` over an empty roster yields no groups, so
+        // the card body drew NOTHING — the packages view was the last region on
+        // the page with no empty state, the feed having had one since plan 7.
+        // The words are the gallery's, unchanged (`gallery/packages.rs`).
+        let el = mount_regions(Ok(no_packages()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("No packages yet"), "got: {text}");
+        assert!(
+            text.contains(
+                "A package is a folder of files that QuiltSync keeps in step with an S3 bucket.",
+            ),
+            "the gallery's own description: {text}"
+        );
+        assert_eq!(
+            create_package_buttons(&el).len(),
+            2,
+            "the toolbar's and the blankslate's own"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_roster_with_packages_draws_no_empty_state() {
+        // The absence half, paired with the presence above: an empty state that
+        // rendered over a populated list would pass any assertion that only ever
+        // looked at the empty case.
+        let el = mount_regions(Ok(two_packages_all_latest()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(!text.contains("No packages yet"), "got: {text}");
+        assert_eq!(create_package_buttons(&el).len(), 1, "only the toolbar's");
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_empty_rosters_action_opens_the_create_dialog() {
+        // The scene was drawn before plan 8 built the dialog, so its button was
+        // `|_| ()`. A blankslate whose only action does nothing is worse than
+        // none: this is the state where the user genuinely cannot proceed without
+        // it and has no way to guess what to do.
+        let el = mount_regions(Ok(no_packages()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the create dialog is mounted permanently")
+            .dyn_into::<web_sys::HtmlDialogElement>()
+            .unwrap();
+        assert!(!dialog.open(), "closed until asked for");
+
+        let buttons = create_package_buttons(&el);
+        // The precondition that makes the click below mean anything: without it
+        // `last()` is the TOOLBAR's button, which opens the same dialog, and this
+        // test would pass with no blankslate on the page at all.
+        assert_eq!(buttons.len(), 2, "the toolbar's, then the blankslate's");
+        buttons.last().expect("the blankslate's action").click();
+        leptos::task::tick().await;
+
+        assert!(dialog.open(), "the blankslate's action must open it");
+    }
+    #[wasm_bindgen_test]
+    async fn a_search_on_an_empty_roster_answers_the_search() {
+        // The half of the condition the other three do not reach: with no
+        // packages AND a query, both empties are true, and the useful answer is
+        // about what the reader just typed. Dropping the query test from the
+        // guard would put "No packages yet" over a search box with text in it.
+        let el = mount_regions(Ok(no_packages()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+        type_search(&el, "plate-07");
+        sleep_ms(20).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("No packages match \u{201c}plate-07\u{201d}"),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("No packages yet"),
+            "and not both at once: {text}"
         );
     }
 }
