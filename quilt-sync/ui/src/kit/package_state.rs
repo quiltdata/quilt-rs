@@ -290,6 +290,24 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn a_role_denial_deserialises_to_itself_and_not_to_unknown() {
+        // The wire kind that had never been deserialised ANYWHERE: `role_denied`
+        // gained a producer in plan 2 and no reader ever parsed one, and
+        // `#[serde(other)]` turns a kind this build does not name into `Unknown`
+        // — which renders "Sync stopped", reading a denial as an unreadable state.
+        //
+        // This was a manual check needing a machine with two roles, one of them
+        // without access to a bucket. A serde arm does not deserve that.
+        let parsed: PackageState =
+            serde_json::from_str(r#"{"kind":"role_denied","role":"analyst"}"#).unwrap();
+        assert!(
+            matches!(&parsed, PackageState::RoleDenied { role } if role.as_deref() == Some("analyst")),
+            "got {parsed:?}, which is what a missing arm looks like"
+        );
+        assert_eq!(render(&parsed, Site::ListRow).words, "No access");
+    }
+
+    #[wasm_bindgen_test]
     fn an_unrecognised_kind_deserialises_to_unknown_rather_than_failing() {
         let parsed: PackageState =
             serde_json::from_str(r#"{"kind":"something_added_next_year"}"#).unwrap();
