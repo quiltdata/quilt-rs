@@ -103,6 +103,11 @@ pub struct CommitData {
     /// so on a denial the commit affordances cannot succeed and the page
     /// disables them, quoting this as the reason.
     pub no_access_reason: Option<String>,
+    /// The deployment this package has no session for. `Some` disables the
+    /// commit affordances, like a denial does, but the remedy is a sign-in
+    /// rather than a role switch — so it is a separate field, not a second
+    /// meaning for `no_access_reason`.
+    pub no_session_host: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -307,6 +312,7 @@ async fn get_commit_data_from_model(
     // the commit affordances can be disabled and explained rather than
     // failing on click.
     let mut no_access_reason = None;
+    let mut no_session_host = None;
     let status = match m
         .get_installed_package_status(&installed_package, None)
         .await
@@ -328,6 +334,7 @@ async fn get_commit_data_from_model(
                 "No session for the remote of {}; opening the commit page on cached lineage",
                 installed_package.namespace,
             );
+            no_session_host = origin_host.map(ToString::to_string);
             m.recompute_local_status(&installed_package, None).await?
         }
         Err(err) => return Err(err),
@@ -469,6 +476,7 @@ async fn get_commit_data_from_model(
         workflow,
         workflows,
         no_access_reason,
+        no_session_host,
         entries: entries_list,
         ignored_count,
         unmodified_count,
@@ -899,6 +907,18 @@ mod tests {
             assert_eq!(
                 data.namespace, "foo/bar",
                 "the page opened on cached lineage ({described})"
+            );
+            // The package's own origin, not whatever host the error carried:
+            // the page states a fact about the package in front of the user.
+            assert_eq!(
+                data.no_session_host.as_deref(),
+                Some("test.quilt.dev"),
+                "the page must name its own deployment so the commit action can \
+                 explain itself, instead of looking ready ({described})"
+            );
+            assert_eq!(
+                data.no_access_reason, None,
+                "an absent session is not a role denial ({described})"
             );
         }
         Ok(())

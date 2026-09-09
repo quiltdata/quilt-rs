@@ -314,9 +314,12 @@ fn CommitContent(
     // vanished button explains nothing) and both carry the same tooltip saying
     // why and what to do about it.
     let no_access_reason = data.no_access_reason.clone();
-    let commit_hint = util::commit_denied_hint(no_access_reason.as_deref());
+    let no_session_host = data.no_session_host.clone();
+    let commit_hint = util::commit_denied_hint(no_access_reason.as_deref())
+        .or_else(|| util::commit_no_session_hint(no_session_host.as_deref()));
+    let commit_blocked = commit_hint.is_some();
     let commit_is_disabled =
-        Signal::derive(move || commit_disabled(&message.get(), no_access_reason.as_deref()));
+        Signal::derive(move || commit_disabled(&message.get(), commit_blocked));
 
     let ns_for_action = namespace.clone();
     let uri_for_action = data.uri.clone();
@@ -834,16 +837,16 @@ fn CommitEntryRow(
 
 /// Whether the action bar's Commit / Commit and Push buttons must be inert.
 ///
-/// Two independent reasons, both of which make the click a guaranteed failure:
-/// an empty message (the manifest header requires one), and a role that cannot
-/// read the package's bucket. The second is the non-obvious one — committing
-/// looks like offline work, but the workflow quality gate reads the bucket's
-/// `.quilt/workflows/config.yml` before any manifest is written, so a denied
-/// role turns every commit into a 403. The buttons are disabled rather than
-/// hidden, and [`crate::util::commit_denied_hint`] supplies the tooltip that
-/// says why.
-fn commit_disabled(message: &str, no_access_reason: Option<&str>) -> bool {
-    message.trim().is_empty() || no_access_reason.is_some()
+/// An empty message (the manifest header requires one), or anything that makes
+/// the click a guaranteed failure — a role that cannot read the bucket, or no
+/// session for the deployment.
+///
+/// The non-obvious part: committing looks like offline work, but the workflow
+/// quality gate reads the bucket's `.quilt/workflows/config.yml` before any
+/// manifest is written. Disabled rather than hidden, with a hint saying which
+/// of the two it is and what fixes it.
+fn commit_disabled(message: &str, blocked: bool) -> bool {
+    message.trim().is_empty() || blocked
 }
 
 // ── Live-validation view model ──
@@ -1017,19 +1020,20 @@ mod tests {
         }
     }
 
-    /// A denied bucket makes both action-bar buttons inert, and — the contrast
-    /// that keeps this test honest — an otherwise identical package on a
-    /// readable bucket leaves them live. Same message on both sides, so the
-    /// only thing under test is the access term.
+    /// A blocked bucket makes both action-bar buttons inert, and — the contrast
+    /// that keeps this test honest — an otherwise identical unblocked package
+    /// leaves them live. Same message on both sides, so the only thing under
+    /// test is the blocked term.
     #[test]
-    fn a_denied_bucket_disables_the_commit_buttons_a_readable_one_does_not() {
-        assert!(commit_disabled("a message", Some(DENIED)));
-        assert!(!commit_disabled("a message", None));
+    fn a_blocked_bucket_disables_the_commit_buttons_an_open_one_does_not() {
+        assert!(commit_disabled("a message", true));
+        assert!(!commit_disabled("a message", false));
     }
 
-    /// The disabled buttons are not silent: the same denial supplies the
-    /// tooltip that names the role and the fix, and a readable bucket has no
-    /// tooltip to show.
+    /// The disabled buttons are not silent, and the two reasons do not borrow
+    /// each other's remedy: a denial says switch role, an absent session says
+    /// sign in. Telling someone to switch role when the role was never the
+    /// problem is the failure this pair exists to prevent.
     #[test]
     fn the_disabled_commit_buttons_explain_themselves() {
         assert_eq!(
@@ -1037,14 +1041,20 @@ mod tests {
             Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
         );
         assert_eq!(commit_denied_hint(None), None);
+
+        assert_eq!(
+            crate::util::commit_no_session_hint(Some("nightly.quilttest.com")).as_deref(),
+            Some("Not signed in to nightly.quilttest.com. Sign in to commit.")
+        );
+        assert_eq!(crate::util::commit_no_session_hint(None), None);
     }
 
-    /// The message gate is unchanged and independent of access: an empty
-    /// message still disables on a bucket the role can read.
+    /// The message gate is unchanged and independent of the rest: an empty
+    /// message still disables on an unblocked bucket.
     #[test]
     fn an_empty_message_still_disables_on_a_readable_bucket() {
-        assert!(commit_disabled("", None));
-        assert!(commit_disabled("   ", None));
+        assert!(commit_disabled("", false));
+        assert!(commit_disabled("   ", false));
     }
 
     #[test]

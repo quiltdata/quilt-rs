@@ -166,6 +166,13 @@ pub fn commit_denied_hint(no_access_reason: Option<&str>) -> Option<String> {
     Some(format!("{reason}. Switch role to commit."))
 }
 
+/// Why committing is blocked when there is no session, and what fixes it.
+/// A sign-in, never a role switch — the role was never the problem.
+pub fn commit_no_session_hint(no_session_host: Option<&str>) -> Option<String> {
+    let host = no_session_host.filter(|host| !host.is_empty())?;
+    Some(format!("Not signed in to {host}. Sign in to commit."))
+}
+
 pub fn format_size(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "kB", "MB", "GB", "TB", "PB", "EB"];
     if bytes == 0 {
