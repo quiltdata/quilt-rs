@@ -233,8 +233,12 @@ pub enum LoginError {
     #[error("No session{}", .0.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
     NoSession(Option<Host>),
 
-    #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]
-    RequiredRegistryUrl(Host),
+    /// The deployment answered, but its `config.json` names no registry URL —
+    /// so there is nothing to ask for credentials. A *misconfiguration of the
+    /// deployment*, not a fact about the caller's session: signing in cannot
+    /// change it, which is why it must not be reported as a missing session.
+    #[error("{0} does not advertise a registry URL in its config.json")]
+    NoRegistryUrl(Host),
 }
 
 #[derive(Error, Debug)]

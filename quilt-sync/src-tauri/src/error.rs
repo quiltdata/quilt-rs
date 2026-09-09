@@ -252,10 +252,20 @@ impl Error {
                 }
                 json.to_string()
             }
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(host))) => {
+            // Its own kind, and deliberately not `session_absent`: the
+            // deployment answered and named no registry, so there is no
+            // session to be missing and nothing a sign-in would change.
+            // Reported as an absent session it would send the user to `/login`
+            // over a broken `config.json` — a page that cannot help, for a
+            // problem only whoever runs the deployment can fix. Unrecognized
+            // by the router on purpose, which renders it in place.
+            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host))) => {
                 serde_json::json!({
-                    "kind": "session_absent",
-                    "message": self.to_string(),
+                    "kind": "registry_url_missing",
+                    "message": format!(
+                        "{host} is not configured as a Quilt deployment — its config.json \
+                         names no registry. Whoever administers it will need to fix that."
+                    ),
                     "host": host.to_string(),
                 })
                 .to_string()
@@ -349,14 +359,29 @@ mod tests {
     }
 
     #[test]
-    fn to_frontend_string_session_absent_registry_url() {
+    /// A deployment whose `config.json` names no registry is misconfigured, not
+    /// signed out. It must not borrow `session_absent`, which the router
+    /// answers by navigating to `/login` — a page that cannot fix a config
+    /// file, for a problem the user has no way to act on.
+    fn to_frontend_string_missing_registry_is_not_a_dead_session() {
         let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(
-            host,
-        )));
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host)));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "session_absent");
+        assert_eq!(json["kind"], "registry_url_missing");
+        assert_ne!(
+            json["kind"], "session_absent",
+            "a misconfiguration must not route the user to sign in"
+        );
         assert_eq!(json["host"], "catalog.dev");
+        let message = json["message"].as_str().unwrap();
+        assert!(
+            message.contains("catalog.dev"),
+            "must name the host: {message}"
+        );
+        assert!(
+            !message.contains("sign in"),
+            "there is nothing to sign in to: {message}"
+        );
     }
 
     #[test]

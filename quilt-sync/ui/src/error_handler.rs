@@ -13,7 +13,10 @@ use crate::components::{Layout, Notification};
 ///   target
 /// - `setup_required` → navigates to `/setup`
 /// - anything else → renders an error page inline (preserves the original URL
-///   so a browser reload retries the failed page)
+///   so a browser reload retries the failed page). This is the right answer for
+///   any state a sign-in cannot fix — `registry_url_missing`, say, where the
+///   deployment names no registry and only its administrator can help — so
+///   such kinds are deliberately left unmatched rather than given a route.
 ///
 /// **Navigating is this function's policy, not the error's instruction.** The
 /// backend reports a *state* (`session_absent`); routing away from it is only

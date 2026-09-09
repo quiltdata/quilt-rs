@@ -276,7 +276,7 @@ impl From<&crate::quilt::Error> for Failure {
                 | WorkflowValidationError::UnsupportedMetaSchema { .. }
                 | WorkflowValidationError::InvalidHandlePattern { .. },
             )
-            | E::Login(LoginError::RequiredRegistryUrl(_))
+            | E::Login(LoginError::NoRegistryUrl(_))
             | E::RemoteCatalog(
                 RemoteCatalogError::Workflow(_)
                 | RemoteCatalogError::InvalidWorkflowsConfig(_)

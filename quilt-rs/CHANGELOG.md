@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **Breaking:** `LoginError::RequiredRegistryUrl` is now `LoginError::NoRegistryUrl`, and renders as `<host> does not advertise a registry URL in its config.json`. It describes a *deployment* that is misconfigured, not a caller who is signed out — signing in cannot change it (<https://github.com/quiltdata/quilt-rs/pull/867>)
 - **Breaking:** `LoginError::Required` is now `LoginError::NoSession`, and renders as `No session for <host>` rather than `Login required`. The variant named a remedy, so every consumer inherited a decision it never made — the desktop navigated away from a half-typed commit because the *name* said an action was needed. Errors describe the state; the surface picks the response. New `Error::is_session_absent()` covers both routes to that state — a credential refused before it was issued, and one issued and then rejected — because a caller choosing what to show does not care which it got (<https://github.com/quiltdata/quilt-rs/pull/867>)
 
 ### Fixed

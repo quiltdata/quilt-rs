@@ -14,6 +14,7 @@
 ### Fixed
 
 - A host QuiltSync cannot get credentials for at all — rather than one whose credentials S3 rejects (v0.21.2) — no longer fails with a six-line Rust error chain. It now reports as the dead session it is, so the sign-in affordance appears and background sync stops retrying it in silence (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- A host that is not set up as a Quilt deployment — no registry in its `config.json` — no longer sends you to the sign-in screen, where nothing you can do would help. It says what is wrong and that an administrator needs to fix it (<https://github.com/quiltdata/quilt-rs/pull/867>)
 - The Commit page stays open when you are signed out, instead of bouncing you to the sign-in screen and discarding the message and metadata you had typed. It already worked this way for a role that cannot read the bucket; a dead session now gets the same treatment, and the Commit action is what refuses, naming the deployment to sign in to (<https://github.com/quiltdata/quilt-rs/pull/867>)
 
 ## [v0.22.0] - 2026-09-08
