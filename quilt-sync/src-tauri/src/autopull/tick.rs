@@ -15,6 +15,7 @@ use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
 use crate::autopull::reporter::clean_uptodate_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
+use crate::autopull::status::SyncTrayAggregator;
 use crate::commands::RoleCache;
 use crate::experimental_settings::resolve_sync_scope;
 use crate::model;
@@ -269,6 +270,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     pull_enabled: bool,
     push_enabled: bool,
     scope: SyncScope,
+    aggregator: &SyncTrayAggregator,
 ) -> Result<RefreshOutcome, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -355,7 +357,16 @@ pub(crate) async fn refresh_then_maybe_sync(
                 return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                return match model.package_pull(&installed, None, scope).await {
+                // Bracket only this call. The classify above reads — it
+                // resolves `latest` and fetches a manifest — so a flag that
+                // spanned the whole tick would report an apply when no working
+                // file is at risk, and the quit prompt reading it would become
+                // routine enough to dismiss unread.
+                let applied = {
+                    let _applying = aggregator.apply_guard();
+                    model.package_pull(&installed, None, scope).await
+                };
+                return match applied {
                     Ok(report) => {
                         info!("autosync: pulled namespace={namespace}");
                         // Kept work leaves a dirty tree: `UpToDate` +
@@ -549,6 +560,7 @@ pub(crate) async fn run_once(
             pull_enabled,
             push_enabled,
             resolve_sync_scope(lineage.sync_scope, &experimental),
+            &inner.aggregator,
         )
         .await
         {

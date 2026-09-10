@@ -886,6 +886,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         true,
         true,
         SyncScope::IndividualFiles,
+        &test_aggregator(),
     )
     .await;
 
@@ -1099,6 +1100,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         false,
         false,
         SyncScope::IndividualFiles,
+        &test_aggregator(),
     )
     .await
     .expect("no-action tick should be Ok");
@@ -1244,5 +1246,173 @@ fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
         login_episode(&blocked, None),
         LoginBlock::Began,
         "a failure that could not name its deployment is not that deployment's"
+    );
+}
+
+// ── The apply-in-flight flag ──
+//
+// The quit prompt is only as good as this flag. The tick's own
+// `tick_in_progress` spans the read-only classify and manifest fetch as well,
+// so a prompt keyed on it would fire when no working file is at risk.
+
+fn behind_clean_lineage() -> quilt::lineage::PackageLineage {
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string())
+}
+
+/// One `Behind` package with a clean tree — the read-only expectations every
+/// apply-flag test shares. Each test adds its own classify/pull arms.
+fn behind_clean_model() -> MockQuiltModel {
+    let lineage = behind_clean_lineage();
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model
+        .expect_get_installed_package_status()
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                BTreeMap::new(),
+            ))
+        });
+    model
+}
+
+fn applied() -> quilt::flow::PullReport {
+    pulled(quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h1".to_string(),
+        origin: None,
+    })
+}
+
+fn inner_with(aggregator: Arc<crate::autopull::status::SyncTrayAggregator>) -> WatcherInner {
+    WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: Arc::new(LogReporter),
+        aggregator,
+    }
+}
+
+#[tokio::test]
+async fn apply_flag_is_clear_while_the_tick_classifies() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(move |_| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
+            Ok(preview(PullOutcome::CleanUpdate))
+        });
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(false),
+        "classify reads only — the flag must be clear there"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_flag_is_set_while_the_pull_applies() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model.expect_package_pull().times(1).returning(move |_, _, _| {
+        *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
+        Ok(applied())
+    });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(true),
+        "the apply writes working files — the flag must be set there"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_flag_is_cleared_after_the_pull_returns() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert!(
+        !agg.apply_in_progress(),
+        "a flag left set would prompt on every quit thereafter"
+    );
+    Ok(())
+}
+
+// A flag left set is worse than one never set: the quit prompt would fire on
+// every quit thereafter, and the user would learn to click through it. So the
+// clear must survive an unwind, not merely a return.
+#[test]
+fn the_apply_guard_clears_the_flag_when_dropped_by_a_panic() {
+    let agg = test_aggregator();
+    let held = Arc::clone(&agg);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = held.apply_guard();
+        assert!(held.apply_in_progress(), "the guard sets the flag while held");
+        panic!("the apply blew up");
+    }));
+    assert!(result.is_err(), "the panic must propagate, not be swallowed");
+    assert!(
+        !agg.apply_in_progress(),
+        "an unwind past the guard must still clear the flag"
     );
 }

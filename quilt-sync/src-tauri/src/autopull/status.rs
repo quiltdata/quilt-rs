@@ -64,6 +64,22 @@ pub struct SyncTrayAggregator {
     /// True while a tick is in flight. Surfaced as `TrayMode::Syncing`
     /// when no errors / paused entries dominate.
     tick_in_progress: AtomicBool,
+    /// True only while a pull is applying — writing working files. Narrower
+    /// than `tick_in_progress`, which also spans the read-only classify and
+    /// manifest fetch, and deliberately absent from the tray mode: its reader
+    /// is the quit prompt, which must not fire when nothing is at risk.
+    apply_in_progress: AtomicBool,
+}
+
+/// Holds the apply flag set until dropped — on return, on `?`, or on unwind.
+pub struct ApplyGuard<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl Drop for ApplyGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::SeqCst);
+    }
 }
 
 #[derive(Default)]
@@ -80,7 +96,29 @@ impl SyncTrayAggregator {
             tx,
             state: Mutex::new(AggregatorState::default()),
             tick_in_progress: AtomicBool::new(false),
+            apply_in_progress: AtomicBool::new(false),
         }
+    }
+
+    /// Whether a pull is applying right now. Read synchronously, because its
+    /// caller is a menu/window event handler that cannot await.
+    // The only non-test reader is the quit prompt, which lands next.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn apply_in_progress(&self) -> bool {
+        self.apply_in_progress.load(Ordering::SeqCst)
+    }
+
+    /// Bracket the apply for as long as the guard lives. A guard rather than a
+    /// pair of calls because the clear has to survive an unwind: a flag left
+    /// set would prompt on every quit thereafter, which is a worse failure than
+    /// never prompting at all.
+    ///
+    /// No `publish()`: this flag is deliberately not part of the tray mode —
+    /// adding it would change what the icon shows for a reason that has nothing
+    /// to do with the icon.
+    pub fn apply_guard(&self) -> ApplyGuard<'_> {
+        self.apply_in_progress.store(true, Ordering::SeqCst);
+        ApplyGuard { flag: &self.apply_in_progress }
     }
 
     pub fn note_tick_started(&self) {
