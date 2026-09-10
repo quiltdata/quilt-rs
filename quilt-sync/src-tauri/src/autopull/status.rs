@@ -116,7 +116,9 @@ impl SyncTrayAggregator {
     /// to do with the icon.
     pub fn apply_guard(&self) -> ApplyGuard<'_> {
         self.apply_in_progress.store(true, Ordering::SeqCst);
-        ApplyGuard { flag: &self.apply_in_progress }
+        ApplyGuard {
+            flag: &self.apply_in_progress,
+        }
     }
 
     pub fn note_tick_started(&self) {

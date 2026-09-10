@@ -1361,10 +1361,13 @@ async fn apply_flag_is_set_while_the_pull_applies() -> Result<(), Error> {
 
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
-    model.expect_package_pull().times(1).returning(move |_, _, _| {
-        *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
-        Ok(applied())
-    });
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(move |_, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
+            Ok(applied())
+        });
 
     run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
 
@@ -1407,10 +1410,16 @@ fn the_apply_guard_clears_the_flag_when_dropped_by_a_panic() {
     let held = Arc::clone(&agg);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _guard = held.apply_guard();
-        assert!(held.apply_in_progress(), "the guard sets the flag while held");
+        assert!(
+            held.apply_in_progress(),
+            "the guard sets the flag while held"
+        );
         panic!("the apply blew up");
     }));
-    assert!(result.is_err(), "the panic must propagate, not be swallowed");
+    assert!(
+        result.is_err(),
+        "the panic must propagate, not be swallowed"
+    );
     assert!(
         !agg.apply_in_progress(),
         "an unwind past the guard must still clear the flag"

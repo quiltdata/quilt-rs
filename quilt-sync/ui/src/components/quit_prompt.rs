@@ -4,7 +4,6 @@
 //! the app's own popup idiom rather than an OS dialog — see the desktop spec's
 //! shared GUI chrome.
 
-
 use leptos::prelude::*;
 
 use crate::commands;
