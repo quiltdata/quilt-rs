@@ -844,16 +844,27 @@ pub(super) async fn refresh_main_page_package_from_model(
         .await
     {
         Ok(status) => Ok(MainPagePackageRefresh {
-            // Rank 2, applied here rather than at the top of the function: the
-            // access-denied arm below is rank 1 and must keep its chance to win.
-            state: match conflict_files(paused) {
-                Some(files) => PackageStateDto::PullConflict { files },
-                None => resolve_state(
+            // Ranks 2 and 3, applied here rather than at the top of the
+            // function: the access-denied arm below is rank 1 and must keep its
+            // chance to win.
+            //
+            // BOTH pause arms, in the light phase's order. A pause outranks what
+            // the tree says because it is why the tree is not being acted on —
+            // and without the second arm this phase measured straight past an
+            // unexplained pause and overwrote the light phase's answer, so the
+            // row showed `Sync paused` only until the first refresh landed
+            // (qhq-8mgw.36).
+            state: if let Some(files) = conflict_files(paused) {
+                PackageStateDto::PullConflict { files }
+            } else if unexplained_pause(paused) {
+                PackageStateDto::Paused
+            } else {
+                resolve_state(
                     status.upstream_state,
                     has_local_commit,
                     has_remote,
                     Some(status.changes.len()),
-                ),
+                )
             },
             // The refresh did not deny, so any pre-filter mark is cleared.
             role_switch_host: None,
@@ -1954,6 +1965,38 @@ mod tests {
                 "{reason:?} must leave the row's own state alone"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn the_heavy_phase_keeps_an_unexplained_pause_rather_than_measuring_past_it() {
+        // qhq-8mgw.36's other half, and the half that shipped broken. The light
+        // phase folded `Other` into `Paused`; the heavy phase had its own
+        // resolution and no branch for a pause, so `resolve_state` measured the
+        // working tree and overwrote it. On the running app the row read
+        // `Sync paused` for the fraction of a second before the first refresh
+        // answered, then reverted to `1 file changed` — found by the operator
+        // 2026-09-10, not by this suite, because every test for the fold
+        // exercised the light phase alone.
+        //
+        // The fixture's tree HAS a change on purpose: `1 file changed` is what
+        // `resolve_state` would report, so a clean tree would pass without the
+        // fix. `refresh_with_pause`'s own doc states the invariant — the two
+        // phases must reach the same answer.
+        let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 1)), None);
+        let refreshed = refresh_with_pause(
+            &m,
+            &RoleCache::default(),
+            Some(&PausedReason::Other(
+                "workflow rejected metadata".to_string(),
+            )),
+        )
+        .await;
+
+        assert_eq!(
+            refreshed.state,
+            PackageStateDto::Paused,
+            "the heavy phase must not measure past a pause"
+        );
     }
 
     #[tokio::test]
