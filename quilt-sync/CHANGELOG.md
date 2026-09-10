@@ -11,6 +11,10 @@
 
 ## [v0.22.1-alpha1] - 2026-09-09
 
+### Added
+
+- QuiltSync now asks before you quit it while a package is being written. Quitting used to interrupt the write silently, leaving that package part-way between two revisions with nothing running to finish it; you now get the choice to wait or go ahead. Nothing is asked when no package is being written (<https://github.com/quiltdata/quilt-rs/pull/905>)
+
 ### Fixed
 
 - QuiltSync no longer works continuously while you are not using it. Checking a package reads every file in it, and that reading looked to the folder watcher like you had changed something, so each check scheduled another one. Left idle with eleven installed packages, the watcher asked to re-read a package about 240 times a minute where the sync interval calls for 14 — constant CPU and disk, and 21 times the log volume, for an app that sits in the background all day (<https://github.com/quiltdata/quilt-rs/pull/886>)
