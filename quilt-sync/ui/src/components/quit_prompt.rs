@@ -18,24 +18,62 @@ const QUIT_PROMPT_EVENT: &str = "quit-prompt";
 /// tested — on its own.
 #[component]
 pub fn QuitPromptCard(
-    on_quit: impl Fn(leptos::ev::MouseEvent) + 'static,
-    on_stay: impl Fn(leptos::ev::MouseEvent) + 'static,
+    on_quit: impl Fn() + 'static,
+    on_stay: impl Fn() + Clone + 'static,
 ) -> impl IntoView {
+    // Focus lands on Stay — the safe answer — so a stray Return does not quit,
+    // and a keyboard user is put on the choice rather than left behind the
+    // overlay. Same idiom as the set-remote popup's input.
+    let stay_ref = NodeRef::<leptos::html::Div>::new();
+    Effect::new(move || {
+        if let Some(el) = stay_ref.get()
+            && let Some(button) = el.query_selector("button").ok().flatten()
+        {
+            use wasm_bindgen::JsCast;
+            if let Some(button) = button.dyn_ref::<web_sys::HtmlElement>() {
+                let _ = button.focus();
+            }
+        }
+    });
+
+    // Escape answers Stay: the keyboard route to the safe option, matching the
+    // other popups' Escape handling. It is not a dismiss — the quit is
+    // abandoned, which is one of the two real answers.
+    let on_keydown = {
+        let on_stay = on_stay.clone();
+        move |ev: leptos::ev::KeyboardEvent| {
+            if ev.key() == "Escape" {
+                on_stay();
+            }
+        }
+    };
+
     view! {
         // No click-outside dismiss: this is a question, and the ways out are
         // the two buttons. A stray click on the backdrop should not decide
         // whether the sync survives.
-        <div class="popup-overlay">
-            <div class="popup-content">
+        <div class="popup-overlay" on:keydown=on_keydown>
+            <div
+                class="popup-content"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="quit-prompt-title"
+                aria-describedby="quit-prompt-body"
+            >
                 <div class="quit-prompt">
-                    <h2 class="section-title">"Still syncing"</h2>
-                    <p>
+                    <h2 class="section-title" id="quit-prompt-title">"Still syncing"</h2>
+                    <p id="quit-prompt-body">
                         "QuiltSync is writing files right now. Quitting will interrupt it and "
                         "leave this package part-way between two revisions."
                     </p>
                     <div class="quit-prompt-actions">
-                        <buttons::FormPrimary on_click=on_stay>"Stay"</buttons::FormPrimary>
-                        <buttons::FormSecondary on_click=on_quit>
+                        <div node_ref=stay_ref>
+                            <buttons::FormPrimary on_click={
+                                let on_stay = on_stay.clone();
+                                move |_| on_stay()
+                            }>"Stay"</buttons::FormPrimary>
+                        </div>
+                        <buttons::FormSecondary on_click=move |_| on_quit()>
                             "Quit anyway"
                         </buttons::FormSecondary>
                     </div>
@@ -51,28 +89,28 @@ pub fn QuitPromptCard(
 pub fn QuitPrompt() -> impl IntoView {
     let visible = RwSignal::new(false);
 
-    let listener = tauri_bridge::listen::<()>(QUIT_PROMPT_EVENT, move |()| {
+    let listener = tauri_bridge::listen::<u64>(QUIT_PROMPT_EVENT, move |generation| {
         visible.set(true);
         // Report the prompt on screen at once. Until this lands the backend
         // treats the quit as unanswerable and lets it through after a short
         // grace period — which is the intended behavior when the window
         // cannot ask, and must not be the behavior when it can.
         leptos::task::spawn_local(async move {
-            if let Err(err) = commands::quit_prompt_shown().await {
+            if let Err(err) = commands::quit_prompt_shown(generation).await {
                 leptos::logging::error!("quit prompt ack failed: {err}");
             }
         });
     });
     on_cleanup(move || drop(listener));
 
-    let on_quit = move |_| {
+    let on_quit = move || {
         leptos::task::spawn_local(async move {
             if let Err(err) = commands::quit_confirm().await {
                 leptos::logging::error!("quit failed: {err}");
             }
         });
     };
-    let on_stay = move |_| {
+    let on_stay = move || {
         visible.set(false);
         leptos::task::spawn_local(async move {
             if let Err(err) = commands::quit_cancel().await {
@@ -119,10 +157,40 @@ mod tests {
     // Both ways out have to be on screen. A prompt offering only "quit anyway"
     // would be a warning, not a question, and one offering only "stay" would
     // trap the user in an app that will not close.
+    // A modal decision needs to announce itself as one. Without dialog
+    // semantics and an accessible name, a screen-reader user is told nothing
+    // about why the app stopped responding to the page behind it.
+    #[wasm_bindgen_test]
+    fn the_prompt_announces_itself_as_a_dialog() {
+        let el = mount(|| {
+            view! { <QuitPromptCard on_quit=|| {} on_stay=|| {} /> }
+        });
+        let dialog = el
+            .query_selector("[role='dialog']")
+            .unwrap()
+            .expect("the prompt must be a dialog");
+        assert_eq!(dialog.get_attribute("aria-modal").as_deref(), Some("true"));
+
+        // Its name and description must point at real elements, or they
+        // announce nothing.
+        for (attr, what) in [
+            ("aria-labelledby", "name"),
+            ("aria-describedby", "description"),
+        ] {
+            let id = dialog
+                .get_attribute(attr)
+                .unwrap_or_else(|| panic!("dialog has no {attr}"));
+            assert!(
+                el.query_selector(&format!("#{id}")).unwrap().is_some(),
+                "the dialog's {what} points at #{id}, which is not in the markup"
+            );
+        }
+    }
+
     #[wasm_bindgen_test]
     fn both_choices_are_offered() {
         let el = mount(|| {
-            view! { <QuitPromptCard on_quit=|_| {} on_stay=|_| {} /> }
+            view! { <QuitPromptCard on_quit=|| {} on_stay=|| {} /> }
         });
         let text = el.text_content().unwrap();
         assert!(text.contains("Quit anyway"), "markup was {text}");
@@ -137,8 +205,8 @@ mod tests {
         let el = mount(move || {
             view! {
                 <QuitPromptCard
-                    on_quit=move |_| q.set(true)
-                    on_stay=move |_| s.set(true)
+                    on_quit=move || q.set(true)
+                    on_stay=move || s.set(true)
                 />
             }
         });
@@ -154,7 +222,7 @@ mod tests {
         let quit = std::rc::Rc::new(std::cell::Cell::new(false));
         let q = quit.clone();
         let el = mount(move || {
-            view! { <QuitPromptCard on_quit=move |_| q.set(true) on_stay=|_| {} /> }
+            view! { <QuitPromptCard on_quit=move || q.set(true) on_stay=|| {} /> }
         });
 
         button_saying(&el, "Quit anyway").click();

@@ -185,7 +185,7 @@ fn request_quit(app: &AppHandle) {
     match gate.request(applying) {
         QuitAction::Exit => app.exit(0),
         QuitAction::AlreadyPrompting => {}
-        QuitAction::Prompt => prompt_before_quit(app),
+        QuitAction::Prompt(generation) => prompt_before_quit(app, generation),
     }
 }
 
@@ -197,9 +197,9 @@ fn request_quit(app: &AppHandle) {
 /// through. A Quit that appears to do nothing is a worse outcome than an
 /// interrupted apply — the apply is what the reconcile is being made to
 /// survive, whereas an app that will not close has no remedy at all.
-fn prompt_before_quit(app: &AppHandle) {
+fn prompt_before_quit(app: &AppHandle, generation: u64) {
     show_main_window(app);
-    if let Err(err) = app.emit(QUIT_PROMPT_EVENT, ()) {
+    if let Err(err) = app.emit(QUIT_PROMPT_EVENT, generation) {
         warn!("quit prompt could not be raised, quitting: {err}");
         app.exit(0);
         return;
@@ -209,7 +209,7 @@ fn prompt_before_quit(app: &AppHandle) {
         tokio::time::sleep(PROMPT_GRACE).await;
         if handle
             .try_state::<QuitGate>()
-            .is_some_and(|gate| gate.unanswerable())
+            .is_some_and(|gate| gate.unanswerable(generation))
         {
             warn!("quit prompt never reported itself on screen, quitting");
             handle.exit(0);

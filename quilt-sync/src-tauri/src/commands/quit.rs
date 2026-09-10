@@ -10,6 +10,9 @@ use crate::quit::QuitGate;
 
 /// The prompt is on screen. Until this lands the deferred quit is
 /// unanswerable, and the grace period in [`crate::tray`] lets it through.
+///
+/// Quotes the generation the prompt was raised with, so an ack from a prompt
+/// the user has since dismissed cannot vouch for the one now outstanding.
 #[tauri::command]
 #[allow(
     clippy::needless_pass_by_value,
@@ -18,8 +21,8 @@ use crate::quit::QuitGate;
               and an async command taking state would have to return a Result it could \
               never populate."
 )]
-pub fn quit_prompt_shown(gate: State<'_, QuitGate>) {
-    gate.note_shown();
+pub fn quit_prompt_shown(gate: State<'_, QuitGate>, generation: u64) {
+    gate.note_shown(generation);
 }
 
 /// *Quit anyway* — the user accepts interrupting the apply.

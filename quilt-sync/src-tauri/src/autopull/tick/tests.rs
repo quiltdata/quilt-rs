@@ -1453,3 +1453,33 @@ async fn the_quit_prompt_still_sees_any_apply() {
     }
     assert!(!agg.apply_in_progress(), "and stops when the write ends");
 }
+
+// A manual pull and the tick's can write the same package at once — nothing
+// serializes them. One entry per namespace cannot represent that: whichever
+// finishes first would clear the mark while the other is still writing, and a
+// quit would then exit without asking.
+#[tokio::test]
+async fn two_overlapping_writes_stay_marked_until_both_finish() {
+    let agg = test_aggregator();
+    let ns: Namespace = ("acme", "demo").into();
+
+    let first = agg.apply_guard(&ns);
+    let second = agg.apply_guard(&ns);
+    assert!(agg.is_applying(&ns));
+
+    drop(first);
+    assert!(
+        agg.is_applying(&ns),
+        "one write finishing must not clear the mark the other still needs"
+    );
+    assert!(
+        agg.apply_in_progress(),
+        "and the quit prompt must still see it"
+    );
+
+    drop(second);
+    assert!(
+        !agg.is_applying(&ns),
+        "cleared once the last write finishes"
+    );
+}

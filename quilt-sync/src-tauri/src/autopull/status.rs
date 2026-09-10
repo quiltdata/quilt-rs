@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -74,22 +73,29 @@ pub struct SyncTrayAggregator {
     /// Per-namespace rather than a flag, because the two readers ask different
     /// questions: the prompt asks whether *anything* is being written, the
     /// tick asks about the one package it just classified.
-    applying: Mutex<BTreeSet<Namespace>>,
+    ///
+    /// Counted, not a set: a manual pull and the tick's can write the same
+    /// package at once — nothing serializes them — and with one entry apiece
+    /// whichever finished first would clear a mark the other still needed.
+    applying: Mutex<BTreeMap<Namespace, usize>>,
 }
 
 /// Marks a namespace as being written until dropped — on return, on `?`, or on
 /// unwind.
 pub struct ApplyGuard<'a> {
-    applying: &'a Mutex<BTreeSet<Namespace>>,
+    applying: &'a Mutex<BTreeMap<Namespace, usize>>,
     namespace: Namespace,
 }
 
 impl Drop for ApplyGuard<'_> {
     fn drop(&mut self) {
-        self.applying
-            .lock()
-            .expect("aggregator lock")
-            .remove(&self.namespace);
+        let mut applying = self.applying.lock().expect("aggregator lock");
+        if let Some(count) = applying.get_mut(&self.namespace) {
+            *count -= 1;
+            if *count == 0 {
+                applying.remove(&self.namespace);
+            }
+        }
     }
 }
 
@@ -107,7 +113,7 @@ impl SyncTrayAggregator {
             tx,
             state: Mutex::new(AggregatorState::default()),
             tick_in_progress: AtomicBool::new(false),
-            applying: Mutex::new(BTreeSet::new()),
+            applying: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -126,7 +132,7 @@ impl SyncTrayAggregator {
         self.applying
             .lock()
             .expect("aggregator lock")
-            .contains(namespace)
+            .contains_key(namespace)
     }
 
     /// Bracket the apply for as long as the guard lives. A guard rather than a
@@ -138,10 +144,12 @@ impl SyncTrayAggregator {
     /// adding it would change what the icon shows for a reason that has nothing
     /// to do with the icon.
     pub fn apply_guard(&self, namespace: &Namespace) -> ApplyGuard<'_> {
-        self.applying
+        *self
+            .applying
             .lock()
             .expect("aggregator lock")
-            .insert(namespace.clone());
+            .entry(namespace.clone())
+            .or_insert(0) += 1;
         ApplyGuard {
             applying: &self.applying,
             namespace: namespace.clone(),
