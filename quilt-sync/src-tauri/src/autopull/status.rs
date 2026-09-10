@@ -126,8 +126,6 @@ impl SyncTrayAggregator {
 
     /// Whether *this* package is being written right now — the tick's
     /// question, asked of the namespace whose verdict it is about to act on.
-    // The only non-test reader is the tick's pause gate, which lands next.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn is_applying(&self, namespace: &Namespace) -> bool {
         self.applying
             .lock()

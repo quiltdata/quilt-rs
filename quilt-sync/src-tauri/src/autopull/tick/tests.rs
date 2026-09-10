@@ -1427,6 +1427,55 @@ fn the_apply_guard_clears_the_flag_when_dropped_by_a_panic() {
     );
 }
 
+// ── A verdict computed while the tree was being written ──
+//
+// Mid-apply the three sources disagree by design: the working tree carries the
+// paths written so far, the persisted lineage still names the old base, and the
+// installed manifest is already the new one. A walk in that window reports the
+// written paths as changed on both sides — a conflict that was never real — and
+// pausing on it stops background sync and tells the user something untrue.
+// Observed on a manual pull racing the tick: the conflict list was exactly the
+// manifest-order run of paths the apply had rewritten by that instant.
+
+#[tokio::test]
+async fn a_conflict_verdict_reached_while_that_package_was_applying_does_not_pause()
+-> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+    model.expect_package_pull_outcome().times(1).returning(|_| {
+        Ok(preview(PullOutcome::Blocked {
+            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+        }))
+    });
+    model.expect_package_pull().times(0);
+
+    let inner = inner_with(Arc::clone(&agg));
+    // Someone else — a hand-pressed pull — is writing this package right now.
+    let _applying = agg.apply_guard(&ns);
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "a verdict reached mid-apply must not pause the namespace"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn an_apply_on_one_package_does_not_speak_for_another() {
     let agg = test_aggregator();
