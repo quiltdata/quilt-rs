@@ -214,7 +214,14 @@ fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
         <Card title="Autosync">
             <ToggleRow
                 label="Get new revisions"
-                sublabel=format!("Every {pull_every}, when nothing is changed here")
+                // "keeping any local changes", not the old "when nothing is
+                // changed here": local work does NOT stop a pull. `tick.rs:349`
+                // routes on the `PullOutcome` rather than clean-versus-dirty, so
+                // a `Behind` tree with non-conflicting local work pulls and the
+                // work survives; only a real conflict pauses, and that is what
+                // the row's own `Sync paused` is for. The old clause described
+                // the behaviour the comment there records replacing.
+                sublabel=format!("Every {pull_every}, keeping any local changes")
                 checked=pull_checked
                 trailing=trailing(
                     &data.pull,
@@ -225,11 +232,19 @@ fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
             />
             <ToggleRow
                 label="Publish your changes"
-                sublabel=format!("{publish_after} after your last edit")
+                // A bare duration reads as a countdown someone is narrating;
+                // this is a rule. "Inactivity" names the condition in one word,
+                // and "After" rather than "Every" because it is not periodic —
+                // sitting idle for twenty minutes with changes pending yields
+                // one publish, not four.
+                sublabel=format!("After {publish_after} of inactivity")
                 checked=publish_checked
                 trailing=trailing(
                     &data.publish,
-                    format!("Publishes {publish_after} after your last edit"),
+                    // Matches the sublabel above rather than restating the rule a
+                    // second way: two phrasings of one condition is how they
+                    // drift apart.
+                    format!("Publishes after {publish_after} of inactivity"),
                     "nothing to publish",
                     false,
                 )
@@ -447,7 +462,7 @@ mod tests {
         assert!(text.contains("Get new revisions"), "got: {text}");
         assert!(text.contains("Publish your changes"), "got: {text}");
         assert!(text.contains("Every 30s"), "got: {text}");
-        assert!(text.contains("5 min after your last edit"), "got: {text}");
+        assert!(text.contains("After 5 min of inactivity"), "got: {text}");
     }
 
     #[wasm_bindgen_test]

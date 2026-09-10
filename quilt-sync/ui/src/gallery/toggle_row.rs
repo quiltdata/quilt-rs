@@ -54,7 +54,7 @@ fn TrailingStates() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=pull
                         trailing=view! { "0:23" }.into_any()
                     />
@@ -64,7 +64,7 @@ fn TrailingStates() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 min after your last edit"
+                        sublabel="After 5 min of inactivity"
                         checked=publish
                         trailing=view! { "nothing to publish" }.into_any()
                     />
@@ -74,7 +74,7 @@ fn TrailingStates() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 min after your last edit"
+                        sublabel="After 5 min of inactivity"
                         checked=paused
                         trailing=view! {
                             <StateLabel tone=StateTone::Attention>"Paused"</StateLabel>
@@ -111,7 +111,7 @@ fn Shapes() -> impl IntoView {
                 <Card title="State">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=on
                         trailing=view! { "0:23" }.into_any()
                     />
@@ -121,7 +121,7 @@ fn Shapes() -> impl IntoView {
                 <Card title="State">
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 min after your last edit"
+                        sublabel="After 5 min of inactivity"
                         checked=off
                         trailing=view! { "nothing to publish" }.into_any()
                     />
@@ -148,8 +148,8 @@ fn Shapes() -> impl IntoView {
                 <Card title="State">
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 minutes after your last edit, and only while the working \
-                                  tree has been quiet for that whole window"
+                        sublabel="After 5 minutes of inactivity, and only while nothing in \
+                                  the package has changed for that whole window"
                         checked=wrapping
                         trailing=view! { "4:12" }.into_any()
                     />
@@ -159,7 +159,7 @@ fn Shapes() -> impl IntoView {
                 <Card title="State">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=on
                     />
                 </Card>

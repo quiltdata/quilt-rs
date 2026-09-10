@@ -173,7 +173,7 @@ pub fn BannerScene() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=pull
                         trailing=view! { "0:23" }.into_any()
                     />

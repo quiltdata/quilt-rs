@@ -32,13 +32,13 @@ pub fn CardStories() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=a
                         trailing=view! { "0:23" }.into_any()
                     />
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 min after your last edit"
+                        sublabel="After 5 min of inactivity"
                         checked=b
                         trailing=view! { "nothing to publish" }.into_any()
                     />

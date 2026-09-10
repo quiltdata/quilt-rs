@@ -57,7 +57,7 @@ pub fn StateStripRegion() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=pull
                         trailing=view! {
                             <Countdown
@@ -71,7 +71,7 @@ pub fn StateStripRegion() -> impl IntoView {
                     />
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 min after your last edit"
+                        sublabel="After 5 min of inactivity"
                         checked=publish
                         trailing=view! { "nothing to publish" }.into_any()
                     />
@@ -158,7 +158,7 @@ fn PausedWithReason() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=pull
                         trailing=view! {
                             <Countdown
@@ -176,7 +176,7 @@ fn PausedWithReason() -> impl IntoView {
                     // user's only lever.
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 min after your last edit"
+                        sublabel="After 5 min of inactivity"
                         checked=publish
                         trailing=paused()
                     />
@@ -232,13 +232,13 @@ fn PausedStale() -> impl IntoView {
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
-                        sublabel="Every 30s, when nothing is changed here"
+                        sublabel="Every 30s, keeping any local changes"
                         checked=stale_pull
                         trailing=paused()
                     />
                     <ToggleRow
                         label="Publish your changes"
-                        sublabel="5 min after your last edit"
+                        sublabel="After 5 min of inactivity"
                         checked=stale_publish
                         trailing=paused()
                     />
