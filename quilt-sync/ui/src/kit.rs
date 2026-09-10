@@ -68,6 +68,7 @@ pub use icon_button::IconButtonVariant;
 pub use list_toolbar::ListToolbar;
 pub use package_row::PackageRow;
 pub use package_row::PackageRowSkeleton;
+pub use package_state::PackageAction;
 pub use package_state::PackageState;
 pub use package_state::Rendered;
 pub use package_state::Site;

@@ -17,6 +17,7 @@ use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CauseRow;
+use crate::kit::PackageAction;
 use crate::kit::PackageState;
 use crate::kit::QueueRow;
 use crate::kit::Site;
@@ -272,22 +273,24 @@ fn zero_line_text(total: usize) -> String {
     }
 }
 
-/// The one page that can act on a package row's `Rendered.action` label —
-/// every action is a navigation, never a mutation. `Get latest` and `Choose S3
+/// The one page that can act on a package row's `Rendered.action` — every
+/// action is a navigation, never a mutation. `Get latest` and `Choose S3
 /// bucket` have no page of their own: in v1 they are `buttons::Pull`
 /// (`pages/installed_package/status_banner.rs:138`) and `buttons::SetRemote`
 /// (`pages/installed_package/toolbar.rs:99`), both living on the package's own
 /// page, so landing there is the honest answer rather than inventing a command.
-/// Total over the labels `render` ever hands back for a state that has one —
-/// `RoleDenied`, `Unknown` and `Latest` never reach here because their action
-/// is `None`.
-fn action_href(label: &str, namespace: &str) -> String {
-    match label {
-        "Publish" => format!("/commit?namespace={namespace}"), // content.rs:195
-        "Resolve" => format!("/merge?namespace={namespace}"),  // components/buttons/merge.rs:10
+///
+/// Exhaustive over [`PackageAction`], so a verb added to the vocabulary file
+/// stops this build rather than reaching a wasm render path.
+fn action_href(action: PackageAction, namespace: &str) -> String {
+    match action {
+        PackageAction::Publish => format!("/commit?namespace={namespace}"), // content.rs:195
+        // components/buttons/merge.rs:10
+        PackageAction::Resolve => format!("/merge?namespace={namespace}"),
         // Shared with the list row's own link — `super::package_page_href`.
-        "Get latest" | "Choose S3 bucket" => super::package_page_href(namespace),
-        other => unreachable!("render() never offers the action {other:?}"),
+        PackageAction::GetLatest | PackageAction::ChooseS3Bucket => {
+            super::package_page_href(namespace)
+        }
     }
 }
 
@@ -301,17 +304,17 @@ fn action_href(label: &str, namespace: &str) -> String {
 /// attention, so the accent stays scarce. A cause's `[Sign in]` stays default:
 /// that one is host-scoped and explains the rows rather than resolving one.
 fn package_action(
-    label: &'static str,
+    action: PackageAction,
     namespace: &str,
     navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
 ) -> AnyView {
-    let target = action_href(label, namespace);
+    let target = action_href(action, namespace);
     view! {
         <Button
             variant=ButtonVariant::Primary
             on_click=move |_| navigate(&target, NavigateOptions::default())
         >
-            {label}
+            {action.label()}
         </Button>
     }
     .into_any()
@@ -512,11 +515,10 @@ pub fn QueueRegion(
                             }
                             QueueItem::Package { namespace, state } => {
                                 let rendered = render(&state, Site::QueueRow);
-                                // `Rendered.action` is `Option<&'static str>` — `None` renders
-                                // a row with no button, the honest answer for a state the app
-                                // has no operation to fix. Not invented here.
-                                if let Some(label) = rendered.action {
-                                    let action = package_action(label, &namespace, navigate.clone());
+                                // `None` renders a row with no button, the honest answer for a
+                                // state the app has no operation to fix. Not invented here.
+                                if let Some(verb) = rendered.action {
+                                    let action = package_action(verb, &namespace, navigate.clone());
                                     view! {
                                         <QueueRow
                                             namespace=namespace
@@ -1157,22 +1159,22 @@ mod tests {
     #[wasm_bindgen_test]
     fn action_href_names_the_right_page_and_carries_the_namespace() {
         // Swapping the Publish/Resolve arms, or returning an empty string for
-        // every label, must fail here — asserted as the whole string, since a
+        // every verb, must fail here — asserted as the whole string, since a
         // substring match cannot tell a missing namespace from a present one.
         assert_eq!(
-            action_href("Publish", "org/pkg"),
+            action_href(PackageAction::Publish, "org/pkg"),
             "/commit?namespace=org/pkg"
         );
         assert_eq!(
-            action_href("Resolve", "org/pkg"),
+            action_href(PackageAction::Resolve, "org/pkg"),
             "/merge?namespace=org/pkg"
         );
         assert_eq!(
-            action_href("Get latest", "org/pkg"),
+            action_href(PackageAction::GetLatest, "org/pkg"),
             "/installed-package?namespace=org/pkg&filter=unmodified"
         );
         assert_eq!(
-            action_href("Choose S3 bucket", "org/pkg"),
+            action_href(PackageAction::ChooseS3Bucket, "org/pkg"),
             "/installed-package?namespace=org/pkg&filter=unmodified"
         );
         // The fifth label ruling 5 names: `[Sign in]`, which `cause_trailing`

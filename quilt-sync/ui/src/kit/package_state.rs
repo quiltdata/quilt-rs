@@ -64,14 +64,44 @@ pub enum Site {
     QueueRow,
 }
 
+/// The operation a state offers, as a closed set.
+///
+/// An enum and not the label string: the queue turns each of these into a route
+/// (`pages/main_page/queue.rs`, `action_href`), and a string makes that mapping
+/// something the compiler cannot check. Adding a verb here fails every
+/// non-exhaustive match that consumes one, which is the whole point — the
+/// vocabulary and its routes live in different files owned by different work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackageAction {
+    GetLatest,
+    Publish,
+    /// `Resolve`, never `Merge`: no merge operation exists — resolving is a
+    /// package-level choice between Certify Latest and Reset Local.
+    Resolve,
+    ChooseS3Bucket,
+}
+
+impl PackageAction {
+    /// The button's words. Still the vocabulary's and not the caller's — this
+    /// file is the only place they are chosen.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::GetLatest => "Get latest",
+            Self::Publish => "Publish",
+            Self::Resolve => "Resolve",
+            Self::ChooseS3Bucket => "Choose S3 bucket",
+        }
+    }
+}
+
 /// What to draw for one state at one site.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rendered {
     pub words: String,
     pub tone: StateTone,
-    /// The action's label, or `None` when the app has no operation that fixes it.
-    /// A `&'static str` because the verbs are the vocabulary's, not the caller's.
-    pub action: Option<&'static str>,
+    /// The operation that fixes this state, or `None` when the app has none.
+    pub action: Option<PackageAction>,
 }
 
 /// The vocabulary, in one place.
@@ -87,37 +117,35 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
         (PackageState::Behind, Site::ListRow) => (
             "Not the latest".to_string(),
             StateTone::Attention,
-            Some("Get latest"),
+            Some(PackageAction::GetLatest),
         ),
         (PackageState::Behind, Site::QueueRow) => (
             "Newer revision available".to_string(),
             StateTone::Attention,
-            Some("Get latest"),
+            Some(PackageAction::GetLatest),
         ),
 
         (PackageState::PendingChanges { files: 1 }, _) => (
             "1 file changed".to_string(),
             StateTone::Neutral,
-            Some("Publish"),
+            Some(PackageAction::Publish),
         ),
         (PackageState::PendingChanges { files }, _) => (
             format!("{files} files changed"),
             StateTone::Neutral,
-            Some("Publish"),
+            Some(PackageAction::Publish),
         ),
 
         (PackageState::PendingCommit, _) => (
             "Revision not published".to_string(),
             StateTone::Attention,
-            Some("Publish"),
+            Some(PackageAction::Publish),
         ),
 
-        // `Resolve`, never `Merge`: no merge operation exists — resolving is a
-        // package-level choice between Certify Latest and Reset Local.
         (PackageState::Diverged, _) => (
             "Changed in both places".to_string(),
             StateTone::Danger,
-            Some("Resolve"),
+            Some(PackageAction::Resolve),
         ),
 
         // `Publish`, not `Resolve`: the merge page cannot resolve a conflict until
@@ -125,12 +153,12 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
         (PackageState::PullConflict { files }, _) if files.len() == 1 => (
             "conflict in 1 file".to_string(),
             StateTone::Danger,
-            Some("Publish"),
+            Some(PackageAction::Publish),
         ),
         (PackageState::PullConflict { files }, _) => (
             format!("conflicts in {} files", files.len()),
             StateTone::Danger,
-            Some("Publish"),
+            Some(PackageAction::Publish),
         ),
 
         // The list never names the role, and the queue can't when the role query
@@ -147,13 +175,13 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
         (PackageState::NoRemote, _) => (
             "No S3 bucket yet".to_string(),
             StateTone::Attention,
-            Some("Choose S3 bucket"),
+            Some(PackageAction::ChooseS3Bucket),
         ),
 
         (PackageState::Unpublished, _) => (
             "Not published yet".to_string(),
             StateTone::Attention,
-            Some("Publish"),
+            Some(PackageAction::Publish),
         ),
 
         // Fixed words, never the backend's message as the label: the vocabulary
@@ -233,7 +261,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn diverged_offers_resolve_and_never_merge() {
         let r = render(&PackageState::Diverged, Site::QueueRow);
-        assert_eq!(r.action, Some("Resolve"));
+        assert_eq!(r.action, Some(PackageAction::Resolve));
     }
 
     #[wasm_bindgen_test]
@@ -244,7 +272,7 @@ mod tests {
         );
         assert_eq!(
             r.action,
-            Some("Publish"),
+            Some(PackageAction::Publish),
             "the merge page cannot resolve it until the changes are committed"
         );
     }
@@ -368,42 +396,42 @@ mod tests {
                 Site::ListRow,
                 "Not the latest",
                 StateTone::Attention,
-                Some("Get latest"),
+                Some(PackageAction::GetLatest),
             ),
             (
                 PackageState::Behind,
                 Site::QueueRow,
                 "Newer revision available",
                 StateTone::Attention,
-                Some("Get latest"),
+                Some(PackageAction::GetLatest),
             ),
             (
                 PackageState::PendingChanges { files: 1 },
                 Site::ListRow,
                 "1 file changed",
                 StateTone::Neutral,
-                Some("Publish"),
+                Some(PackageAction::Publish),
             ),
             (
                 PackageState::PendingChanges { files: 2 },
                 Site::ListRow,
                 "2 files changed",
                 StateTone::Neutral,
-                Some("Publish"),
+                Some(PackageAction::Publish),
             ),
             (
                 PackageState::PendingCommit,
                 Site::ListRow,
                 "Revision not published",
                 StateTone::Attention,
-                Some("Publish"),
+                Some(PackageAction::Publish),
             ),
             (
                 PackageState::Diverged,
                 Site::ListRow,
                 "Changed in both places",
                 StateTone::Danger,
-                Some("Resolve"),
+                Some(PackageAction::Resolve),
             ),
             (
                 PackageState::PullConflict {
@@ -412,7 +440,7 @@ mod tests {
                 Site::ListRow,
                 "conflict in 1 file",
                 StateTone::Danger,
-                Some("Publish"),
+                Some(PackageAction::Publish),
             ),
             (
                 PackageState::PullConflict {
@@ -421,7 +449,7 @@ mod tests {
                 Site::ListRow,
                 "conflicts in 2 files",
                 StateTone::Danger,
-                Some("Publish"),
+                Some(PackageAction::Publish),
             ),
             (
                 PackageState::RoleDenied {
@@ -460,14 +488,14 @@ mod tests {
                 Site::ListRow,
                 "No S3 bucket yet",
                 StateTone::Attention,
-                Some("Choose S3 bucket"),
+                Some(PackageAction::ChooseS3Bucket),
             ),
             (
                 PackageState::Unpublished,
                 Site::ListRow,
                 "Not published yet",
                 StateTone::Attention,
-                Some("Publish"),
+                Some(PackageAction::Publish),
             ),
             (
                 PackageState::Unknown,
