@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -64,21 +65,31 @@ pub struct SyncTrayAggregator {
     /// True while a tick is in flight. Surfaced as `TrayMode::Syncing`
     /// when no errors / paused entries dominate.
     tick_in_progress: AtomicBool,
-    /// True only while a pull is applying — writing working files. Narrower
-    /// than `tick_in_progress`, which also spans the read-only classify and
-    /// manifest fetch, and deliberately absent from the tray mode: its reader
-    /// is the quit prompt, which must not fire when nothing is at risk.
-    apply_in_progress: AtomicBool,
+    /// Namespaces with a pull applying — writing working files — right now.
+    /// Narrower than `tick_in_progress`, which also spans the read-only
+    /// classify and manifest fetch, and deliberately absent from the tray
+    /// mode: its readers are the quit prompt and the tick's pause gate, and
+    /// neither should act when nothing is at risk.
+    ///
+    /// Per-namespace rather than a flag, because the two readers ask different
+    /// questions: the prompt asks whether *anything* is being written, the
+    /// tick asks about the one package it just classified.
+    applying: Mutex<BTreeSet<Namespace>>,
 }
 
-/// Holds the apply flag set until dropped — on return, on `?`, or on unwind.
+/// Marks a namespace as being written until dropped — on return, on `?`, or on
+/// unwind.
 pub struct ApplyGuard<'a> {
-    flag: &'a AtomicBool,
+    applying: &'a Mutex<BTreeSet<Namespace>>,
+    namespace: Namespace,
 }
 
 impl Drop for ApplyGuard<'_> {
     fn drop(&mut self) {
-        self.flag.store(false, Ordering::SeqCst);
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .remove(&self.namespace);
     }
 }
 
@@ -96,14 +107,26 @@ impl SyncTrayAggregator {
             tx,
             state: Mutex::new(AggregatorState::default()),
             tick_in_progress: AtomicBool::new(false),
-            apply_in_progress: AtomicBool::new(false),
+            applying: Mutex::new(BTreeSet::new()),
         }
     }
 
-    /// Whether a pull is applying right now. Read synchronously, because its
-    /// caller is a menu/window event handler that cannot await.
+    /// Whether *any* package is being written right now — the quit prompt's
+    /// question. Synchronous, because its caller is a menu/window event
+    /// handler that cannot await.
     pub fn apply_in_progress(&self) -> bool {
-        self.apply_in_progress.load(Ordering::SeqCst)
+        !self.applying.lock().expect("aggregator lock").is_empty()
+    }
+
+    /// Whether *this* package is being written right now — the tick's
+    /// question, asked of the namespace whose verdict it is about to act on.
+    // The only non-test reader is the tick's pause gate, which lands next.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn is_applying(&self, namespace: &Namespace) -> bool {
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .contains(namespace)
     }
 
     /// Bracket the apply for as long as the guard lives. A guard rather than a
@@ -114,10 +137,14 @@ impl SyncTrayAggregator {
     /// No `publish()`: this flag is deliberately not part of the tray mode —
     /// adding it would change what the icon shows for a reason that has nothing
     /// to do with the icon.
-    pub fn apply_guard(&self) -> ApplyGuard<'_> {
-        self.apply_in_progress.store(true, Ordering::SeqCst);
+    pub fn apply_guard(&self, namespace: &Namespace) -> ApplyGuard<'_> {
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .insert(namespace.clone());
         ApplyGuard {
-            flag: &self.apply_in_progress,
+            applying: &self.applying,
+            namespace: namespace.clone(),
         }
     }
 

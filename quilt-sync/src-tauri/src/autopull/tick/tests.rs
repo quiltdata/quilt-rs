@@ -1408,8 +1408,9 @@ async fn apply_flag_is_cleared_after_the_pull_returns() -> Result<(), Error> {
 fn the_apply_guard_clears_the_flag_when_dropped_by_a_panic() {
     let agg = test_aggregator();
     let held = Arc::clone(&agg);
+    let ns: Namespace = ("acme", "demo").into();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = held.apply_guard();
+        let _guard = held.apply_guard(&ns);
         assert!(
             held.apply_in_progress(),
             "the guard sets the flag while held"
@@ -1424,4 +1425,31 @@ fn the_apply_guard_clears_the_flag_when_dropped_by_a_panic() {
         !agg.apply_in_progress(),
         "an unwind past the guard must still clear the flag"
     );
+}
+
+#[tokio::test]
+async fn an_apply_on_one_package_does_not_speak_for_another() {
+    let agg = test_aggregator();
+    let a: Namespace = ("acme", "demo").into();
+    let b: Namespace = ("acme", "other").into();
+    let _applying = agg.apply_guard(&a);
+    assert!(agg.is_applying(&a));
+    assert!(
+        !agg.is_applying(&b),
+        "a write to one package says nothing about another"
+    );
+}
+
+// The quit prompt asks a different question — is ANYTHING being written — so it
+// still reads across all namespaces.
+#[tokio::test]
+async fn the_quit_prompt_still_sees_any_apply() {
+    let agg = test_aggregator();
+    let ns: Namespace = ("acme", "demo").into();
+    assert!(!agg.apply_in_progress());
+    {
+        let _applying = agg.apply_guard(&ns);
+        assert!(agg.apply_in_progress());
+    }
+    assert!(!agg.apply_in_progress(), "and stops when the write ends");
 }

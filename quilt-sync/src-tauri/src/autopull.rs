@@ -113,8 +113,8 @@ impl Watcher {
     /// raises the same question a background one does. The tick takes its own
     /// guard further down, at the call it brackets.
     #[must_use]
-    pub fn apply_guard(&self) -> crate::autopull::status::ApplyGuard<'_> {
-        self.inner.aggregator.apply_guard()
+    pub fn apply_guard(&self, namespace: &Namespace) -> crate::autopull::status::ApplyGuard<'_> {
+        self.inner.aggregator.apply_guard(namespace)
     }
 
     /// Whether a pull is applying — writing working files — right now.
@@ -482,10 +482,11 @@ mod tests {
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
         let watcher =
             Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
+        let ns: Namespace = ("acme", "demo").into();
 
         assert!(!aggregator.apply_in_progress(), "nothing applying yet");
         {
-            let _applying = watcher.apply_guard();
+            let _applying = watcher.apply_guard(&ns);
             assert!(
                 aggregator.apply_in_progress(),
                 "a pull driven from the command layer must raise the same flag"

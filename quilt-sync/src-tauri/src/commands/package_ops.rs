@@ -134,7 +134,9 @@ pub async fn reset_local(
     // individual paths only adds files, and a commit writes `.quilt` rather
     // than the working tree.
     let result = {
-        let _applying = watcher.apply_guard();
+        let _applying = watcher.apply_guard(
+            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
+        );
         reset_local_command(&m, &namespace).await
     };
     if let Ok(ns) = &result {
@@ -434,7 +436,9 @@ pub async fn package_pull(
     // it raises the same in-flight flag — otherwise quitting during one would
     // interrupt it without asking.
     let result = {
-        let _applying = watcher.apply_guard();
+        let _applying = watcher.apply_guard(
+            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
+        );
         package_pull_command(&m, &namespace, &experimental).await
     };
     let mut reported = false;

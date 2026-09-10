@@ -363,7 +363,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                 // file is at risk, and the quit prompt reading it would become
                 // routine enough to dismiss unread.
                 let applied = {
-                    let _applying = aggregator.apply_guard();
+                    let _applying = aggregator.apply_guard(namespace);
                     model.package_pull(&installed, None, scope).await
                 };
                 return match applied {
