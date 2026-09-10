@@ -1,7 +1,9 @@
 use super::*;
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
+use chrono::DateTime;
 use chrono::Utc;
 use tokio::sync::RwLock;
 
@@ -1322,4 +1324,102 @@ async fn nothing_is_armed_before_the_loop_runs() {
     // "armed for a moment in the past".
     let inner = make_inner(enabled());
     assert!(inner.clocks.next_pull_at.read().await.is_none());
+}
+
+/// A local status with `n` changed files and an mtime the caller sets — the two
+/// fields `publish_arm_from_status` reads. `status_with` in `commands/main_page`
+/// is a different module's fixture; this is the tick's own.
+fn local_status(files: usize, mtime: Option<SystemTime>) -> quilt::lineage::InstalledPackageStatus {
+    let mut changes = quilt::lineage::ChangeSet::new();
+    for i in 0..files {
+        changes.insert(
+            std::path::PathBuf::from(format!("f{i}.csv")),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+    }
+    let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
+    status.most_recent_mtime = mtime;
+    status
+}
+
+#[tokio::test]
+async fn a_local_edit_arms_the_publish_deadline_without_waiting_for_a_tick() {
+    // qhq-8mgw.54. The arm map was written only by the tick, so the countdown
+    // lagged the working tree by a whole cadence — and the cadence is longest
+    // exactly when it matters, because editing a file means the window is
+    // unfocused (120s) or closed (600s), not focused (30s). The list meanwhile
+    // updates within the file watcher's debounce, so the two panels disagreed
+    // on screen: "Nothing to publish" beside "1 file changed".
+    //
+    // The tree is deliberately NOT quiet: a quiet one publishes on the next
+    // tick rather than at a future moment, which is the `None` case below.
+    let inner = make_inner(enabled());
+    let ns: Namespace = ("acme", "demo").into();
+    let edited_at = SystemTime::now();
+    let status = local_status(1, Some(edited_at));
+
+    crate::autopull::arm_publish_from_status(&inner, &ns, &status).await;
+
+    let armed = inner.clocks.publish_arm.read().await;
+    let at = armed
+        .get(&ns)
+        .copied()
+        .expect("an edit must arm a deadline");
+    // `enabled()` takes `PushSettings::default()`, whose `idle_timeout_secs` is
+    // 300 — so the deadline is five minutes after the edit. Absolute bounds and
+    // a literal, not `at - edited == window`: the latter holds for any window,
+    // including one read from the wrong setting, which is exactly the mistake
+    // this arithmetic could make.
+    let expected: DateTime<Utc> = (edited_at + Duration::from_secs(300)).into();
+    assert!(
+        at >= expected - Duration::from_secs(2) && at <= expected + Duration::from_secs(2),
+        "expected ~{expected}, got {at}"
+    );
+}
+
+#[tokio::test]
+async fn a_tree_with_nothing_in_it_clears_any_deadline() {
+    // The other half, and the one that keeps a stale countdown off the card:
+    // reverting a file leaves no changes, so there is nothing to publish and
+    // nothing to count down to. The operator saw exactly this survive a revert.
+    let inner = make_inner(enabled());
+    let ns: Namespace = ("acme", "demo").into();
+    let dirty = local_status(1, Some(SystemTime::now()));
+    crate::autopull::arm_publish_from_status(&inner, &ns, &dirty).await;
+    assert!(
+        inner.clocks.publish_arm.read().await.contains_key(&ns),
+        "precondition: armed"
+    );
+
+    let clean = local_status(0, None);
+    crate::autopull::arm_publish_from_status(&inner, &ns, &clean).await;
+
+    assert!(
+        !inner.clocks.publish_arm.read().await.contains_key(&ns),
+        "a tree with no changes must not leave a countdown behind"
+    );
+}
+
+#[test]
+fn an_already_quiet_tree_has_no_future_moment_to_count_to() {
+    // Quiet means the window has already elapsed, so the next tick publishes
+    // rather than waiting — a deadline here would count down to the past. The
+    // same reason `tick.rs` arms only from its deferral arm.
+    let status = local_status(1, Some(SystemTime::now() - Duration::from_secs(3600)));
+
+    assert_eq!(
+        crate::autopull::publish_arm_from_status(&status, true, Duration::from_secs(30)),
+        None
+    );
+}
+
+#[test]
+fn publishing_switched_off_counts_down_to_nothing() {
+    let status = local_status(1, Some(SystemTime::now()));
+
+    assert_eq!(
+        crate::autopull::publish_arm_from_status(&status, false, Duration::from_secs(30)),
+        None,
+        "a deadline for an operation that will not run is a lie"
+    );
 }

@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 use crate::autopull::PackageStatusEvent;
 use crate::autopull::StatusReporter;
+use crate::autopull::Watcher;
 use crate::autopull::reporter::SubscriberErrorEvent;
 use crate::fswatcher::settings::SharedFsWatcherSettings;
 use crate::fswatcher::subscriber::MappingSignal;
@@ -67,7 +68,19 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                     continue;
                 }
                 let model = app_handle.state::<Model>();
-                process_signal(&*model, state.reporter.as_ref(), signal).await;
+                // The watcher's clocks, so an edit moves the publish countdown
+                // now rather than at the next tick — which is 30s focused but
+                // 120s unfocused and 600s closed, and editing a file means the
+                // window is not focused (qhq-8mgw.54).
+                let watcher = app_handle.state::<Watcher>();
+                process_signal(
+                    &*model,
+                    state.reporter.as_ref(),
+                    // `State::inner()` unwraps the guard; `shared()` is the Watcher's own.
+                    Some(watcher.inner().shared()),
+                    signal,
+                )
+                .await;
             }
             else => break,
         }
@@ -77,6 +90,9 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
 pub(crate) async fn process_signal(
     model: &impl QuiltModel,
     reporter: &dyn StatusReporter,
+    // The watcher's shared state, when there is one. `None` in tests that are
+    // only about the event this emits.
+    clocks: Option<&crate::autopull::WatcherInner>,
     signal: MappingSignal,
 ) {
     let pkg = match model.get_installed_package(&signal.namespace).await {
@@ -110,6 +126,13 @@ pub(crate) async fn process_signal(
         &signal.namespace,
         PackageStatusEvent::from_status(&signal.namespace, &status),
     );
+
+    // The same observation, told to the clock. The event above moves the list,
+    // which measures the tree; without this the card's countdown still waited
+    // for a tick, and the two disagreed on screen (qhq-8mgw.54).
+    if let Some(inner) = clocks {
+        crate::autopull::arm_publish_from_status(inner, &signal.namespace, &status).await;
+    }
 }
 
 /// Snapshot the current installed-packages list and resolve each one's
@@ -203,6 +226,7 @@ mod tests {
         process_signal(
             &model,
             reporter.as_ref(),
+            None,
             MappingSignal {
                 namespace: ("acme", "demo").into(),
             },
@@ -229,6 +253,7 @@ mod tests {
         process_signal(
             &model,
             reporter.as_ref(),
+            None,
             MappingSignal {
                 namespace: ns.clone(),
             },
@@ -270,8 +295,8 @@ mod tests {
             namespace: ns.clone(),
         };
 
-        process_signal(&model, reporter.as_ref(), signal.clone()).await;
-        process_signal(&model, reporter.as_ref(), signal).await;
+        process_signal(&model, reporter.as_ref(), None, signal.clone()).await;
+        process_signal(&model, reporter.as_ref(), None, signal).await;
 
         let statuses = reporter.statuses.lock().unwrap();
         assert_eq!(
@@ -318,9 +343,53 @@ mod tests {
             namespace: ns.clone(),
         };
 
-        process_signal(&model, reporter.as_ref(), signal.clone()).await;
-        process_signal(&model, reporter.as_ref(), signal).await;
+        process_signal(&model, reporter.as_ref(), None, signal.clone()).await;
+        process_signal(&model, reporter.as_ref(), None, signal).await;
 
         assert_eq!(reporter.statuses.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_edit_moves_the_publish_countdown_without_waiting_for_a_tick() {
+        // qhq-8mgw.54's wiring, which is the half that was missing rather than
+        // the half that was wrong: `arm_publish_from_status` is tested on its
+        // own in `autopull`, and the defect was that nothing called it from
+        // here. The tick wrote the arm map alone, so the countdown lagged the
+        // tree by a cadence — 120s while the window is unfocused, which is what
+        // editing a file makes it.
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(fresh_pkg())));
+        model.expect_recompute_local_status().returning(|_, _| {
+            let mut status = quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::UpToDate,
+                changes_with_one_file("added"),
+            );
+            // Just edited, so the quiet window has not elapsed and there IS a
+            // future moment to count to.
+            status.most_recent_mtime = Some(std::time::SystemTime::now());
+            Ok(status)
+        });
+        let reporter = Arc::new(RecordingReporter::default());
+        let mut settings = crate::autopull::AutosyncSettings::default();
+        settings.push.enabled = true;
+        let inner = crate::autopull::inner_for_tests(settings);
+
+        process_signal(
+            &model,
+            reporter.as_ref(),
+            Some(&inner),
+            MappingSignal {
+                namespace: ns.clone(),
+            },
+        )
+        .await;
+
+        assert!(
+            inner.clocks.publish_arm.read().await.contains_key(&ns),
+            "the file watcher heard the edit and the clock did not"
+        );
     }
 }

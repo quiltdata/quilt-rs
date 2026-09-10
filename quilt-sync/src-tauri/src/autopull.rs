@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use chrono::DateTime;
 use chrono::Utc;
@@ -399,6 +400,16 @@ impl Watcher {
             .insert(namespace, host);
     }
 
+    /// The shared state, for the file watcher — which observes an edit within
+    /// its debounce where this loop can be a whole cadence behind.
+    ///
+    /// Not `inner`: a `tauri::State<Watcher>` has an inherent `inner()` of its
+    /// own, and the call site holds one, so that name resolves to the guard's
+    /// method rather than this.
+    pub(crate) fn shared(&self) -> &WatcherInner {
+        &self.inner
+    }
+
     #[cfg(test)]
     async fn paused_count(&self) -> usize {
         self.inner.paused.read().await.len()
@@ -412,6 +423,88 @@ impl Watcher {
 /// rule is a rule that survives only as prose.
 pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
     *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
+}
+
+/// Record what a freshly observed tree means for this namespace's publish
+/// deadline.
+///
+/// For the file watcher, which hears about an edit within its debounce where the
+/// tick can be a whole cadence behind — 30s focused, 120s unfocused, 600s
+/// closed, and editing means unfocused. The tick stays authoritative: it sees
+/// the upstream state, which a local recompute cannot, and clears an arm that
+/// turns out not to apply.
+pub(crate) async fn arm_publish_from_status(
+    inner: &WatcherInner,
+    namespace: &Namespace,
+    status: &crate::quilt::lineage::InstalledPackageStatus,
+) {
+    let (push_enabled, quiet_window) = {
+        let settings = inner.settings.read().await;
+        (
+            settings.push.enabled,
+            Duration::from_secs(settings.push.idle_timeout_secs),
+        )
+    };
+    let mut arm = inner.clocks.publish_arm.write().await;
+    match publish_arm_from_status(status, push_enabled, quiet_window) {
+        Some(at) => {
+            arm.insert(namespace.clone(), at.into());
+        }
+        // Cleared, not left alone: a revert leaves a tree with nothing in it,
+        // and a countdown that outlives the changes it was counting for is the
+        // stale deadline the operator watched survive one.
+        None => {
+            arm.remove(namespace);
+        }
+    }
+}
+
+/// When a package with local changes will publish, if nothing else touches it.
+///
+/// The one place that turns an observed tree into an arm time, so the autopull
+/// tick and the file watcher cannot drift about it. Mirrors the deferral in
+/// `tick.rs`: a publish waits until the working tree has been quiet for the
+/// window, so the moment it becomes possible is the last edit plus that window.
+///
+/// `None` means there is nothing to count down to, which covers three different
+/// situations on purpose: publishing is off, the tree has no changes, and the
+/// tree is ALREADY quiet — that last one publishes on the next tick rather than
+/// at some future moment, so a deadline would be counting to the past.
+pub(crate) fn publish_arm_from_status(
+    status: &crate::quilt::lineage::InstalledPackageStatus,
+    push_enabled: bool,
+    quiet_window: Duration,
+) -> Option<SystemTime> {
+    if !push_enabled || status.changes.is_empty() {
+        return None;
+    }
+    if status.working_tree_quiet(SystemTime::now(), quiet_window) {
+        return None;
+    }
+    status.most_recent_mtime.map(|at| at + quiet_window)
+}
+
+/// A `WatcherInner` for a test, shared so the two modules that need one do not
+/// keep their own copies in step by hand.
+#[cfg(test)]
+pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
+    let (tx, _rx) = tokio::sync::watch::channel(status::SyncTrayStatus::default());
+    WatcherInner {
+        settings: Arc::new(RwLock::new(settings)),
+        experimental: Arc::new(RwLock::new(
+            crate::experimental_settings::ExperimentalSettings::default(),
+        )),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(
+            crate::publish_settings::PublishSettings::default(),
+        )),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: Arc::new(reporter::LogReporter),
+        aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
+        clocks: Clocks::default(),
+    }
 }
 
 pub fn cadence_for_mode(pull: &PullSettings, mode: WindowMode) -> Duration {
