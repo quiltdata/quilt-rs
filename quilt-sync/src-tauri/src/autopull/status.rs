@@ -100,8 +100,9 @@ impl Drop for ApplyGuard<'_> {
             state.active = state.active.saturating_sub(1);
         }
         // The entry stays: its epoch is the record that a write happened, which
-        // a reader judging earlier work still needs. Bounded by the number of
-        // tracked packages.
+        // a reader judging earlier work still needs. It is swept when the
+        // package stops being tracked — see `retain_namespaces` — so the map
+        // follows the installed set rather than every namespace ever written.
     }
 }
 
@@ -264,6 +265,16 @@ impl SyncTrayAggregator {
             state.errors.retain(|ns, _| keep.contains(ns));
             state.dirty.retain(|ns, _| keep.contains(ns));
         }
+        // Apply history goes the same way, except never while a write is in
+        // flight: an entry is kept past its guard so the epoch survives, but a
+        // package the user has uninstalled has no reader left. A pruned epoch
+        // reads as 0, which fails any comparison against a sampled non-zero
+        // one — so the sweep can only ever make a reader distrust a verdict,
+        // never trust a stale one.
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .retain(|ns, state| state.active > 0 || keep.contains(ns));
         self.publish();
     }
 
@@ -467,6 +478,39 @@ mod tests {
         assert_eq!(
             after.pending_changes, 1,
             "dirty bit must survive a clear_error call",
+        );
+    }
+
+    // The apply epoch has to outlive the guard that bumped it, so entries are
+    // not removed when a write finishes. That is not a licence to keep them
+    // forever: a package the user uninstalls should take its entry with it,
+    // the same way its error and dirty entries go.
+    #[test]
+    fn retain_namespaces_drops_a_finished_apply_but_keeps_one_still_writing() {
+        use std::collections::BTreeSet;
+
+        let (agg, _rx) = new_aggregator();
+        let gone: Namespace = ("acme", "uninstalled").into();
+        let writing: Namespace = ("acme", "mid-write").into();
+
+        drop(agg.apply_guard(&gone));
+        let _in_flight = agg.apply_guard(&writing);
+        assert_ne!(
+            agg.apply_epoch(&gone),
+            0,
+            "the finished write left its epoch"
+        );
+
+        agg.retain_namespaces(&BTreeSet::from([writing.clone()]));
+
+        assert_eq!(
+            agg.apply_epoch(&gone),
+            0,
+            "an uninstalled package must not keep its apply history"
+        );
+        assert!(
+            agg.is_applying(&writing),
+            "a write still in flight must survive the sweep"
         );
     }
 
