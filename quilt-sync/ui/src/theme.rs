@@ -61,6 +61,34 @@ pub fn follow_os() {
     on_change.forget();
 }
 
+/// The class marking that the reader has opted into v2's design system.
+///
+/// Not "the v2 page is showing": the toast layer is mounted outside the router
+/// (`main.rs`), so it is a sibling of every page and cannot be scoped by one.
+/// Only an ancestor of both can carry this, and the root is the ancestor of
+/// everything.
+pub const V2_CLASS: &str = "qui-v2";
+
+/// Record whether `main_page_v2` is on, for the chrome that sits outside every
+/// page and therefore cannot ask.
+///
+/// v1's stylesheets read only their own `--q-ui-*` tokens, which no theme
+/// switches, so v1 stays light whatever the OS says. Anything shared between
+/// the two — the toast layer is the only such thing today — must follow the
+/// theme for a v2 reader and stay put for a v1 one, and this is what lets a
+/// stylesheet tell them apart.
+pub fn set_v2(on: bool) {
+    if let Some(root) = document().document_element() {
+        let list = root.class_list();
+        let result = if on {
+            list.add_1(V2_CLASS)
+        } else {
+            list.remove_1(V2_CLASS)
+        };
+        drop(result);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,6 +98,24 @@ mod tests {
     /// own doc for why anywhere else is inert. Reading it back off
     /// `document_element` is what makes that part of the assertion: a version
     /// that wrote to `body` would leave this `None`.
+    #[wasm_bindgen_test]
+    fn the_v2_marker_goes_on_and_comes_off_the_root() {
+        // Same element as the theme, and for a related reason: what reads this
+        // is the toast layer, which is a sibling of every page rather than a
+        // descendant of one. Toggling BOTH ways matters — a reader who turns
+        // the flag off must stop getting v2's palette on shared chrome.
+        let root = document().document_element().expect("a root element");
+
+        set_v2(true);
+        assert!(root.class_list().contains(V2_CLASS));
+
+        set_v2(false);
+        assert!(
+            !root.class_list().contains(V2_CLASS),
+            "turning the flag off must take the marker with it"
+        );
+    }
+
     #[wasm_bindgen_test]
     fn the_theme_lands_on_the_root_where_the_tokens_can_see_it() {
         let root = document().document_element().expect("a root element");

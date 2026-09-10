@@ -12,10 +12,16 @@
   display: flex;
   gap: var(--q-space-3);
   flex-wrap: wrap;
-  /* Each card is as tall as its own contents. The default `stretch` pads the
-   * shorter card to the taller one's height, and one host is the common case —
-   * so Accounts would hold a row of text above an empty half-card. */
-  align-items: flex-start;
+  /* Both cards take the taller one's height, so the strip has one bottom edge.
+   *
+   * `flex-start` shipped at `c57d94b` for the opposite reason — a one-host
+   * Accounts card padded to Autosync's height is a row of text above empty
+   * space — and the operator's verdict on it was "not sure it is substantially
+   * better", because sizing each card to its contents trades the empty half for
+   * a ragged edge. qhq-8mgw.33 records both and settles neither.
+   *
+   * Chosen on the operator's judgement seeing it at one host, 2026-09-10. */
+  align-items: stretch;
 
   > * {
     flex: 1 1 300px;

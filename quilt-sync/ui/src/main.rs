@@ -65,7 +65,14 @@ fn Home() -> impl IntoView {
         <Suspense fallback=loading>
             {move || Suspend::new(async move {
                 let settings = settings.await;
-                if wants_v2(settings.as_ref().map_err(String::as_str)) {
+                let v2 = wants_v2(settings.as_ref().map_err(String::as_str));
+                // Recorded on the root here rather than fetched again out in
+                // `App`: this is the one read of the flag the app already makes,
+                // and `/` is where every session starts, so the marker is set
+                // before any other route can be reached and updated whenever the
+                // reader comes back having changed it.
+                quilt_sync_ui::theme::set_v2(v2);
+                if v2 {
                     view! { <pages::MainPage /> }.into_any()
                 } else {
                     view! { <pages::InstalledPackagesList /> }.into_any()
