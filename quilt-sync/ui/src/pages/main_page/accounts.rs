@@ -20,6 +20,7 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::commands::AccountHostData;
 use crate::commands::MainPageAccountsData;
+use crate::kit::Blankslate;
 use crate::kit::Card;
 use crate::kit::HostRow;
 
@@ -48,6 +49,22 @@ pub(super) fn AccountsBody(
     /// more than this card — see [`AccountRow`].
     refresh: Trigger,
 ) -> impl IntoView {
+    if data.hosts.is_empty() {
+        // No action, and that is the statement rather than an omission: a host
+        // is signed in to by name, and a name arrives by giving a package an S3
+        // bucket. Nothing here can be acted on, so nothing here offers to be —
+        // the rule the search blankslate follows for its own reason.
+        return view! {
+            <Card title="Accounts">
+                <Blankslate
+                    heading="No accounts yet"
+                    description="Accounts appear here for each Quilt catalog your packages point at, showing the role you are using on it. Give a package an S3 bucket to connect it to one."
+                />
+            </Card>
+        }
+        .into_any();
+    }
+
     view! {
         <Card title="Accounts">
             {data
@@ -57,6 +74,7 @@ pub(super) fn AccountsBody(
                 .collect_view()}
         </Card>
     }
+    .into_any()
 }
 
 /// One host, with its own heavy-phase settle — the shape `PackageListRow` uses:
@@ -434,5 +452,36 @@ mod tests {
             sign_in_href("custom.registry.io"),
             "/login?host=custom.registry.io&back=/main"
         );
+    }
+    #[wasm_bindgen_test]
+    fn a_card_with_no_hosts_says_so_rather_than_drawing_an_empty_box() {
+        // qhq-8mgw.57, found by the operator on a profile with no auth and no
+        // packages: the card drew its chrome around nothing. The host set is the
+        // union of the catalogs the roster points at and the hosts you have
+        // signed into (`account_hosts`), so with neither it is empty — and an
+        // empty box is the blank cell the other two regions already refuse.
+        //
+        // NO ACTION, and the absence is the point: signing in needs a host
+        // named, and a host is named by giving a package an S3 bucket. There is
+        // genuinely nothing to press from here, so a button would be a lie about
+        // what this card can do. The same rule the search blankslate follows.
+        let el = mount_body(MainPageAccountsData { hosts: Vec::new() });
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(text.contains("No accounts yet"), "got: {text}");
+        assert!(
+            el.query_selector("button").unwrap().is_none(),
+            "nothing here can be acted on, so nothing may look like it can"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_card_with_hosts_draws_them_and_not_the_empty_state() {
+        // The absence half, paired: an empty state rendered over real rows would
+        // pass any assertion that only ever looked at the empty case.
+        let el = mount_body(two_hosts());
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(!text.contains("No accounts yet"), "got: {text}");
     }
 }
