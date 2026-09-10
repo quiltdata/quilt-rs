@@ -77,26 +77,40 @@ pub struct SyncTrayAggregator {
     /// Counted, not a set: a manual pull and the tick's can write the same
     /// package at once — nothing serializes them — and with one entry apiece
     /// whichever finished first would clear a mark the other still needed.
-    applying: Mutex<BTreeMap<Namespace, usize>>,
+    ///
+    /// Each entry also carries an **epoch**, bumped whenever a write starts,
+    /// and the entry outlives the writes it counted. "Is one running now?" is
+    /// not enough for a reader that has to judge work it did *earlier*: a
+    /// short apply can overlap that work and finish before the question is
+    /// asked. Comparing epochs across the span answers "did one happen?".
+    applying: Mutex<BTreeMap<Namespace, ApplyState>>,
 }
 
 /// Marks a namespace as being written until dropped — on return, on `?`, or on
 /// unwind.
 pub struct ApplyGuard<'a> {
-    applying: &'a Mutex<BTreeMap<Namespace, usize>>,
+    applying: &'a Mutex<BTreeMap<Namespace, ApplyState>>,
     namespace: Namespace,
 }
 
 impl Drop for ApplyGuard<'_> {
     fn drop(&mut self) {
         let mut applying = self.applying.lock().expect("aggregator lock");
-        if let Some(count) = applying.get_mut(&self.namespace) {
-            *count -= 1;
-            if *count == 0 {
-                applying.remove(&self.namespace);
-            }
+        if let Some(state) = applying.get_mut(&self.namespace) {
+            state.active = state.active.saturating_sub(1);
         }
+        // The entry stays: its epoch is the record that a write happened, which
+        // a reader judging earlier work still needs. Bounded by the number of
+        // tracked packages.
     }
+}
+
+/// Per-namespace write tracking: how many writes are in flight, and how many
+/// have ever started.
+#[derive(Default)]
+struct ApplyState {
+    active: usize,
+    epoch: u64,
 }
 
 #[derive(Default)]
@@ -121,7 +135,11 @@ impl SyncTrayAggregator {
     /// question. Synchronous, because its caller is a menu/window event
     /// handler that cannot await.
     pub fn apply_in_progress(&self) -> bool {
-        !self.applying.lock().expect("aggregator lock").is_empty()
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .values()
+            .any(|state| state.active > 0)
     }
 
     /// Whether *this* package is being written right now — the tick's
@@ -130,7 +148,20 @@ impl SyncTrayAggregator {
         self.applying
             .lock()
             .expect("aggregator lock")
-            .contains_key(namespace)
+            .get(namespace)
+            .is_some_and(|state| state.active > 0)
+    }
+
+    /// How many writes to this package have ever started. Sample it before the
+    /// work whose result depends on a still tree, compare it after: unchanged
+    /// *and* nothing running now is the only case where nothing wrote
+    /// underneath you.
+    pub fn apply_epoch(&self, namespace: &Namespace) -> u64 {
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .get(namespace)
+            .map_or(0, |state| state.epoch)
     }
 
     /// Bracket the apply for as long as the guard lives. A guard rather than a
@@ -142,12 +173,12 @@ impl SyncTrayAggregator {
     /// adding it would change what the icon shows for a reason that has nothing
     /// to do with the icon.
     pub fn apply_guard(&self, namespace: &Namespace) -> ApplyGuard<'_> {
-        *self
-            .applying
-            .lock()
-            .expect("aggregator lock")
-            .entry(namespace.clone())
-            .or_insert(0) += 1;
+        {
+            let mut applying = self.applying.lock().expect("aggregator lock");
+            let state = applying.entry(namespace.clone()).or_default();
+            state.active += 1;
+            state.epoch += 1;
+        }
         ApplyGuard {
             applying: &self.applying,
             namespace: namespace.clone(),

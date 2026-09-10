@@ -1532,3 +1532,53 @@ async fn two_overlapping_writes_stay_marked_until_both_finish() {
         "cleared once the last write finishes"
     );
 }
+
+// Sampling "is an apply running?" *after* the verdict is computed only catches
+// an apply still in flight at that instant. A short apply that overlapped the
+// walk and finished before the sample is invisible to it — and that is the
+// worse case, because the pull's own success path has already cleared its
+// pause, so the fictitious one the tick then installs does not self-heal.
+#[tokio::test]
+async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() -> Result<(), Error>
+{
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+
+    // The apply runs and completes while the verdict is being computed.
+    let agg_in_verdict = Arc::clone(&agg);
+    let ns_in_verdict = ns.clone();
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(move |_| {
+            drop(agg_in_verdict.apply_guard(&ns_in_verdict));
+            Ok(preview(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            }))
+        });
+    model.expect_package_pull().times(0);
+
+    let inner = inner_with(Arc::clone(&agg));
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "an apply that overlapped the verdict must suppress the pause even though \
+         it had finished by the time the gate looked"
+    );
+    Ok(())
+}

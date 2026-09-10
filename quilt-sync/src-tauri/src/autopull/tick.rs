@@ -265,13 +265,28 @@ fn role_denied_summary(role: &str) -> String {
 /// untrue, so a verdict reached while the package was being written is
 /// discarded and the next tick judges a settled tree instead.
 ///
+/// Asking only "is a write running *now*" is not enough: a short apply can
+/// overlap the walk and finish before the question is asked, and that case is
+/// the worse one — the pull's own success path has already cleared its pause,
+/// so the fictitious one installed after it does not self-heal. So the epoch is
+/// sampled before the walk and compared here: a verdict is trusted only if no
+/// write is running *and* none started across the span.
+///
 /// Observed as a hand-pressed pull racing the tick: the conflict list was the
 /// contiguous manifest-order run of paths the apply had rewritten by that
 /// instant, minus the one row that had not changed between the two revisions
 /// and so was never rewritten.
-fn verdict_held_still(aggregator: &SyncTrayAggregator, namespace: &Namespace) -> bool {
+fn verdict_held_still(
+    aggregator: &SyncTrayAggregator,
+    namespace: &Namespace,
+    epoch_before: u64,
+) -> bool {
     if aggregator.is_applying(namespace) {
-        debug!("autosync: {namespace} was being written — discarding the conflict verdict");
+        debug!("autosync: {namespace} is being written — discarding the conflict verdict");
+        return false;
+    }
+    if aggregator.apply_epoch(namespace) != epoch_before {
+        debug!("autosync: {namespace} was written while the verdict was computed — discarding it");
         return false;
     }
     true
@@ -302,6 +317,11 @@ pub(crate) async fn refresh_then_maybe_sync(
                 namespace.clone(),
             )))
         })?;
+
+    // Sampled before the walk, compared at the conflict gate: a write that
+    // starts and finishes inside the span below is invisible to a "running
+    // now?" question asked afterwards.
+    let epoch_before = aggregator.apply_epoch(namespace);
 
     // `status` does the cheap tag refresh; an expired token surfaces here.
     let status = model
@@ -374,7 +394,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         };
         match outcome {
             PullOutcome::Blocked { conflicts } => {
-                if !verdict_held_still(aggregator, namespace) {
+                if !verdict_held_still(aggregator, namespace, epoch_before) {
                     return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
                 }
                 let files = conflicts.iter().map(|p| p.display().to_string()).collect();
