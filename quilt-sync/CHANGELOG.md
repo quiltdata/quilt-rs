@@ -13,7 +13,7 @@
 
 ### Added
 
-- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It lists your packages with each one's state and when it last changed, on a page built to hold everything that needs you in one place. It also shows you whether background syncing is running and when it will next run, and lets you turn either direction on or off from the page. The rest of that page — the attention queue, the Accounts card, recent files, and filtering — arrives in later releases, so it is sparse for now. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It opens with what needs you: packages that are out of date, hold unpublished changes, or whose state could not be confirmed, each beside the one thing to do about it — and where a whole catalog or bucket is the cause, it is said once with a count instead of on every package. When nothing needs you, it says so in one line. Below are your packages with each one's state and when it last changed, searchable and groupable, or switched to a feed of recently changed files. Alongside: whether background syncing is running and when it will next run, switchable per direction, and the catalogs you are signed into with the role each is using. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
 
 ## [v0.22.0] - 2026-09-08
 
