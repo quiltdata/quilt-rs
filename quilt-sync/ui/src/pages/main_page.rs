@@ -77,6 +77,7 @@ use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
+use crate::kit::FileRowSkeleton;
 use crate::kit::GroupHeading;
 use crate::kit::IconButton;
 use crate::kit::ListToolbar;
@@ -89,6 +90,7 @@ use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::Site;
+use crate::kit::ZeroLineSkeleton;
 use crate::kit::render;
 
 /// The fixed sentence shown when the fetch fails. The backend's error text is
@@ -582,7 +584,20 @@ fn files_view(
     group_files_by: RwSignal<String>,
 ) -> AnyView {
     view! {
-        <Transition fallback=|| ()>
+        // Three skeleton rows, as the packages view shows in the same position.
+        // `()` left the region EMPTY while the feed was read, and again on a
+        // Refresh taken during one — the rebuilt `Transition` has no previous
+        // body to hold, so it behaves like a `Suspense` for that resolve
+        // (qhq-8mgw.44). §6 exempts chrome from skeletons; a list is not chrome.
+        <Transition fallback=|| {
+            view! {
+                <Card>
+                    <FileRowSkeleton />
+                    <FileRowSkeleton />
+                    <FileRowSkeleton />
+                </Card>
+            }
+        }>
             {move || Suspend::new(async move {
                 match recent_files.await {
                     Ok(data) => {
@@ -766,6 +781,13 @@ fn MainPageRegions(
         // supposed to reset (R6).
         <Transition fallback=move || {
             view! {
+                // The queue's line, held open. Without it the list starts
+                // where the queue will be and drops when the queue arrives —
+                // and the region always renders SOMETHING once it knows, even
+                // when that is the one-line all-clear, so the shift came
+                // entirely from rendering nothing while it did not
+                // (qhq-8mgw.55).
+                <ZeroLineSkeleton />
                 // The toolbar, from the same helper the resolved arm calls: it is
                 // on screen with the appbar and the strip, and is never itself a
                 // skeleton. The skeletons below it are the packages view's,
@@ -4002,6 +4024,67 @@ mod tests {
         assert!(
             !text.contains("No packages yet"),
             "and not both at once: {text}"
+        );
+    }
+    #[wasm_bindgen_test]
+    async fn the_feed_shows_its_shape_while_it_is_being_read() {
+        // qhq-8mgw.44. The feed's boundary had `fallback=|| ()`, so switching to
+        // Recent files showed an EMPTY region until the read answered — and
+        // again on a Refresh taken while reading it, since the rebuilt
+        // `Transition` has no previous body to hold. The packages view shows
+        // three skeletons in the same position; §6 exempts chrome from
+        // skeletons and the two lists are not chrome.
+        //
+        // A read that never answers, the idiom `mount_regions_pending` uses, so
+        // the fallback is what the assertion looks at for as long as it looks.
+        let el = mount(|| {
+            let recent_files = LocalResource::new(|| {
+                std::future::pending::<Result<MainPageRecentFilesData, String>>()
+            });
+            files_view(
+                recent_files,
+                RwSignal::new(String::new()),
+                RwSignal::new(GROUP_NONE.to_string()),
+            )
+        });
+        leptos::task::tick().await;
+
+        let boxes = el.query_selector_all("[class*=skeleton]").unwrap();
+        assert!(
+            boxes.length() > 0,
+            "a region being read must show its shape, not nothing"
+        );
+    }
+    #[wasm_bindgen_test]
+    async fn the_queue_reserves_its_line_while_the_page_is_read() {
+        // qhq-8mgw.55. The shared fallback drew the toolbar and three row
+        // skeletons but nothing where the queue goes, so the list sat high and
+        // jumped down when the queue arrived. Operator, watching a cold load:
+        // "reserve the space with skeleton. We always render SOMETHING - even
+        // when Everything is Latest."
+        //
+        // `[class*=placeholder]` is the zero line's own class, chosen so this
+        // can name it: `skeleton` is already `PackageRow`'s and `FileRow`'s, and
+        // a selector that matched those would pass without the queue's.
+        let el = mount_regions_pending();
+        leptos::task::tick().await;
+
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_some(),
+            "a page still being read must hold the queue's line open"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_reserved_line_gives_way_to_the_real_queue() {
+        // The absence half. A placeholder that outlived the read would be worse
+        // than the shift it prevents — two lines where the page has one.
+        let el = mount_regions(Ok(two_packages_all_latest()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_none(),
+            "the placeholder must not survive the answer"
         );
     }
 }

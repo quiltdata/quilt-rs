@@ -11,6 +11,7 @@
 
 use leptos::prelude::*;
 
+use super::SkeletonBox;
 use super::state_label::StateTone;
 
 stylance::import_crate_style!(style, "src/kit/zero_line.module.scss");
@@ -31,6 +32,25 @@ pub fn ZeroLine(
             // silhouette stops being a signal.
             {StateTone::Success.glyph()}
             <span class=style::text>{text}</span>
+        </p>
+    }
+}
+
+/// The zero line's geometry, while the page is still being read.
+///
+/// The queue had no placeholder in the shared fallback, so the list started high
+/// and jumped down when the queue arrived. Shaped on the zero line rather than a
+/// cause card: the all-clear is what most loads resolve to, and reserving a
+/// card's height would trade this shift for an upward one on every healthy day
+/// (qhq-8mgw.55).
+#[component]
+pub fn ZeroLineSkeleton() -> impl IntoView {
+    view! {
+        <p class=style::placeholder>
+            <SkeletonBox width="14px" height="14px" />
+            <span class=style::text>
+                <SkeletonBox width="240px" />
+            </span>
         </p>
     }
 }

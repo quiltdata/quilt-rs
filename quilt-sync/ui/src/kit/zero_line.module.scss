@@ -35,3 +35,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The line's geometry while the page is still being read, so the list below does
+ * not start high and jump down when the queue arrives (qhq-8mgw.55).
+ *
+ * Shaped on the ZERO LINE and not on a cause card, because the all-clear is what
+ * most days resolve to: reserving a card's height would trade the shift for an
+ * upward one on every healthy load. A day that does need attention still shifts,
+ * by less, and it shifts to show something worth seeing.
+ *
+ * Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
+ * already use — a test looking for this one has to be able to say so. */
+.placeholder {
+  composes: root;
+}

@@ -105,3 +105,14 @@
   flex: none;
   gap: 1px;
 }
+
+/* The skeleton variant, sharing `.root` for its geometry and switching off the two
+ * things that would lie about it: a pointer cursor and a hover tint on something
+ * inert. `PackageRow`'s own skeleton makes the same pair of exceptions. */
+.skeleton {
+  cursor: default;
+}
+
+.skeleton:hover {
+  background: none;
+}

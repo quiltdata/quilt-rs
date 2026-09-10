@@ -18,6 +18,7 @@ use wasm_bindgen::JsCast;
 use super::IconButton;
 use super::IconButtonVariant;
 use super::RelativeTime;
+use super::SkeletonBox;
 use super::countdown::EpochMillis;
 
 stylance::import_crate_style!(style, "src/kit/file_row.module.scss");
@@ -171,6 +172,34 @@ pub fn FileRow(
                         />
                     }
                 })}
+            </span>
+        </div>
+    }
+}
+
+/// A file row's shape while the feed is being read.
+///
+/// The feed's boundary rendered nothing at all, so switching to Recent files
+/// showed an empty region until the read answered — where the packages view
+/// shows three of its own skeletons in the same place. §6 exempts chrome from
+/// skeletons; the two lists are not chrome (qhq-8mgw.44).
+///
+/// Three boxes, not four: the path, the package tag and the time are what a row
+/// is mostly made of, and the actions are a fixed trio of glyphs whose absence
+/// for a moment reads as nothing missing.
+#[component]
+pub fn FileRowSkeleton() -> impl IntoView {
+    view! {
+        <div class=format!("{} {}", style::root, style::skeleton)>
+            <span class=style::path>
+                <SkeletonBox width="52%" />
+            </span>
+            // Fixed widths, like `PackageRowSkeleton`'s state label: a tag is as
+            // wide as the package it names and the time as wide as its words, so
+            // a percentage of the row would be describing the wrong thing.
+            <SkeletonBox width="96px" height="18px" />
+            <span class=style::time>
+                <SkeletonBox width="100%" />
             </span>
         </div>
     }
