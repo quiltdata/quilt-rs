@@ -53,4 +53,5 @@ pub mod kit;
 pub mod pages;
 pub mod panic_report;
 pub mod tauri;
+pub mod theme;
 pub mod util;

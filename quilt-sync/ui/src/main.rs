@@ -18,6 +18,9 @@ fn main() {
     console_error_panic_hook::set_once();
     // After the console hook, so it chains onto it rather than being replaced by it.
     panic_report::install();
+    // Before the mount, so the first paint is already in the right palette
+    // rather than flashing light and correcting itself (qhq-8mgw.56).
+    quilt_sync_ui::theme::follow_os();
     mount_to_body(App);
 }
 

@@ -97,25 +97,14 @@ fn main() {
     mount_to_body(Gallery);
 }
 
-/// Sets `data-theme` on the **root element**, which is the only place it works.
-///
-/// Tier-2 tokens are declared on `:root` as `var()` references to tier 1, and a
-/// custom property's `var()` is resolved where the *declaration* sits — not
-/// where it is used. So `--q-fgColor-default` is computed once against whichever
-/// tier-1 values `:root` sees, and descendants inherit that already-resolved
-/// colour. Putting `.dark` on a wrapper element therefore changes nothing.
-fn set_theme(dark: bool) {
-    if let Some(root) = document().document_element() {
-        let value = if dark { "dark" } else { "light" };
-        drop(root.set_attribute("data-theme", value));
-    }
-}
-
 #[component]
 fn Gallery() -> impl IntoView {
     let dark = RwSignal::new(false);
 
-    Effect::new(move |_| set_theme(dark.get()));
+    // The app's own switch, shared: the gallery drives it from a button and
+    // the app from the OS, and one of them getting the root element wrong is
+    // exactly the bug the shared version's doc explains.
+    Effect::new(move |_| quilt_sync_ui::theme::set(dark.get()));
 
     // One list, used twice: the index reads the labels, the page consumes the
     // views. A second hardcoded list of section names would drift from this one
