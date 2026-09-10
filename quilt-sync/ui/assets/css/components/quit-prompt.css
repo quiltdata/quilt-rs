@@ -1,0 +1,19 @@
+.quit-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-ui-size-2);
+  padding: var(--q-ui-size-3);
+  max-width: 30rem;
+}
+
+.quit-prompt p {
+  margin: 0;
+  font-size: var(--q-ui-font-size-normal);
+  line-height: 1.45;
+}
+
+.quit-prompt .quit-prompt-actions {
+  display: flex;
+  gap: var(--q-ui-size-2);
+  margin-top: var(--q-ui-size-2);
+}

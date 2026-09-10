@@ -127,7 +127,18 @@ pub async fn reset_local(
     let msg_ok = format!("Successfully reset local for {namespace}");
     let msg_err = |err: &Error| format!("Failed to reset local: {err}");
 
-    let result = reset_local_command(&m, &namespace).await;
+    // Reset re-installs every tracked path, so it is the most destructive
+    // write to interrupt — and it reaches the working tree through the same
+    // primitive a pull does. The boundary is deliberate: this and pull are the
+    // two writes that can leave the tree between revisions. Installing
+    // individual paths only adds files, and a commit writes `.quilt` rather
+    // than the working tree.
+    let result = {
+        let _applying = watcher.apply_guard(
+            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
+        );
+        reset_local_command(&m, &namespace).await
+    };
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
@@ -421,7 +432,15 @@ pub async fn package_pull(
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
     let experimental = experimental.read().await.clone();
-    let result = package_pull_command(&m, &namespace, &experimental).await;
+    // A hand-pressed pull writes working files exactly as the tick's does, so
+    // it raises the same in-flight flag — otherwise quitting during one would
+    // interrupt it without asking.
+    let result = {
+        let _applying = watcher.apply_guard(
+            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
+        );
+        package_pull_command(&m, &namespace, &experimental).await
+    };
     let mut reported = false;
     if let Ok((ns, report)) = &result {
         watcher.clear_paused(ns).await;
