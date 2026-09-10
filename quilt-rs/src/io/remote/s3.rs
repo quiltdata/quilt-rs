@@ -63,22 +63,34 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     Ok(region.to_str()?.into())
 }
 
-/// Map an AWS error onto a typed kind. Keyed on the *code* wherever there is
-/// one, never on the HTTP status alone: `ExpiredToken` and
-/// `InvalidAccessKeyId` are also 403 but call for a credential re-vend, not a
-/// role switch.
+/// Map an AWS error onto a typed kind.
 ///
-/// The one exception is a 403 that names no code at all. `HeadObject` is why
-/// that case exists: a HEAD response carries no body, so S3 has nowhere to
-/// put the `<Code>AccessDenied</Code>` document every other operation
-/// returns, and the SDK has no code to hand us. Reading the status is safe
-/// *because* the code is absent — a 403 that did name itself never reaches
-/// that arm.
+/// The codes that must NOT read as a role denial are named first, because the
+/// arm below them treats any remaining 403 as one. `ExpiredToken` and
+/// `InvalidAccessKeyId` are 403 too and call for a credential re-vend, not a
+/// role switch, so their arm has to win.
 ///
-/// Only a genuine denial changes the kind. Everything else is handed to
-/// `fallback`, so a call site keeps the operation-specific kind it would
-/// have produced anyway — a failed put stays [`S3ErrorKind::PutObject`]
-/// rather than collapsing into an undiagnosable [`S3ErrorKind::Raw`].
+/// After those, a 403 is a refusal whatever it called itself. `AccessDenied`
+/// is the common shape but not the only one — `KMS.AccessDeniedException` for
+/// an object encrypted under a key the role cannot use, `AllAccessDisabled`
+/// for an account-level block — and a bodyless 403 names nothing at all
+/// (`HeadObject`: a HEAD response carries no payload, so S3 has nowhere to put
+/// the `<Code>AccessDenied</Code>` document every other operation returns).
+/// Keying on the code alone left every one of those untyped, and an untyped
+/// denial reaches the user as "sign in again", whose re-vend hands back the
+/// same denied role — the unrecoverable loop `RoleDenied` exists to prevent
+/// (`commands/package_list.rs`, `commands/main_page.rs`).
+///
+/// The trade this makes: a 403 that is not really about access — a badly
+/// skewed clock answers `RequestTimeTooSkewed` — is now named as a denial
+/// rather than as a generic failure. Both are wrong about the cause; only one
+/// of them sends the user round the re-login loop.
+///
+/// Only a denial, a credential failure or a missing object changes the kind.
+/// Everything else is handed to `fallback`, so a call site keeps the
+/// operation-specific kind it would have produced anyway — a failed put stays
+/// [`S3ErrorKind::PutObject`] rather than collapsing into an undiagnosable
+/// [`S3ErrorKind::Raw`].
 pub(super) fn classify_s3_error(
     code: Option<&str>,
     status: Option<u16>,
@@ -86,8 +98,6 @@ pub(super) fn classify_s3_error(
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
     match code {
-        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
-        None if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
         Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
             S3ErrorKind::InvalidCredentials(described.to_string())
         }
@@ -96,6 +106,8 @@ pub(super) fn classify_s3_error(
         // this is a first push" (flow/push.rs), so a code that means a missing
         // bucket would send it to write into one that does not exist.
         Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
+        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+        _ if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
         _ => fallback(described.to_string()),
     }
 }
@@ -977,8 +989,54 @@ mod tests {
         );
     }
 
-    /// The status arm is narrow on purpose: only 403, and only when nothing
-    /// named itself. A bodyless 404 or 500 keeps the call site's own kind.
+    /// A refusal that names a code we do not recognise is still a refusal.
+    ///
+    /// `AccessDenied` is not the only 403 S3 sends for "this role cannot have
+    /// it": a bucket whose objects are encrypted under a key the role cannot
+    /// use answers `KMS.AccessDeniedException`, and an account-level block
+    /// answers `AllAccessDisabled`. Both used to fall through to the caller's
+    /// fallback kind, which `is_access_denied` reads as false — so v1 drops the
+    /// row to `UpstreamState::Error` ("sign in again"), and re-vending hands
+    /// back the same denied role. That is the loop `RoleDenied` exists to stop.
+    #[test]
+    fn a_403_naming_an_unrecognised_code_classifies_as_access_denied() {
+        for code in [
+            "KMS.AccessDeniedException",
+            "AllAccessDisabled",
+            "AccountProblem",
+            "InvalidPayer",
+        ] {
+            let described = format!("{code}: forbidden");
+            let err =
+                classify_s3_error(Some(code), Some(403), &described, S3ErrorKind::ListObjects);
+            assert_eq!(
+                err,
+                S3ErrorKind::AccessDenied(described.clone()),
+                "{code} is a refusal, not a generic {:?} failure",
+                S3ErrorKind::ListObjects(String::new())
+            );
+        }
+    }
+
+    /// The widening stops at the credential codes: those are 403 too, and they
+    /// are the ones a re-vend does fix, so they must not be swept into a role
+    /// denial by the status arm sitting below them.
+    #[test]
+    fn a_credential_code_outranks_the_403_status_arm() {
+        for code in [
+            "ExpiredToken",
+            "InvalidAccessKeyId",
+            "InvalidToken",
+            "InvalidClientTokenId",
+        ] {
+            let described = format!("{code}: nope");
+            let err = classify_s3_error(Some(code), Some(403), &described, S3ErrorKind::Raw);
+            assert_eq!(err, S3ErrorKind::InvalidCredentials(described));
+        }
+    }
+
+    /// The status arm is narrow on purpose: only 403. A 404 or 500 keeps the
+    /// call site's own kind whether or not it named a code.
     #[test]
     fn other_bodyless_statuses_keep_the_callers_fallback_kind() {
         for status in [404u16, 500, 503] {
