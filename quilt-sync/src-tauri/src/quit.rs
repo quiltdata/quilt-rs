@@ -9,9 +9,7 @@
 //! Deliberately free of Tauri types: the decision and the pending state are
 //! testable on their own, and the window handling stays in [`crate::tray`].
 
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 
 /// What a quit request should do.
 #[derive(Debug, PartialEq, Eq)]
@@ -30,57 +28,74 @@ pub enum QuitAction {
 }
 
 /// The pending-quit state behind the prompt.
+///
+/// One lock rather than a field per flag. The generation alone was not enough:
+/// checking it and then acting on `pending` / `shown` as separate atomics
+/// leaves a window in which a cancellation and a fresh request can land
+/// between the check and the act — so an acknowledgement from a dismissed
+/// prompt could mark the replacement as shown, and a dismissed prompt's timer
+/// could read the replacement as unanswerable and exit. These three fields are
+/// one logical state and only move together.
 #[derive(Default)]
 pub struct QuitGate {
+    state: Mutex<GateState>,
+}
+
+#[derive(Default)]
+struct GateState {
     /// A quit was requested and deferred to the prompt.
-    pending: AtomicBool,
-    /// The window reported the prompt is on screen. Until then the quit is
+    pending: bool,
+    /// The window reported the prompt on screen. Until then the quit is
     /// unanswerable — nobody has been asked — which is what separates a wedged
     /// webview from a user who is still deciding.
-    shown: AtomicBool,
+    shown: bool,
     /// Bumped on every request and every cancellation. Nothing cancels an
     /// armed fallback timer, so a timer or an acknowledgement from a dismissed
     /// prompt is still in flight; quoting the generation is how it is told
     /// apart from the request now outstanding.
-    generation: AtomicU64,
+    generation: u64,
 }
 
 impl QuitGate {
     #[must_use]
     pub fn request(&self, apply_in_progress: bool) -> QuitAction {
-        if self.pending.load(Ordering::SeqCst) {
+        let mut state = self.state.lock().expect("quit gate lock");
+        if state.pending {
             return QuitAction::AlreadyPrompting;
         }
         if !apply_in_progress {
             return QuitAction::Exit;
         }
-        self.pending.store(true, Ordering::SeqCst);
-        self.shown.store(false, Ordering::SeqCst);
-        QuitAction::Prompt(self.generation.fetch_add(1, Ordering::SeqCst) + 1)
+        state.pending = true;
+        state.shown = false;
+        state.generation += 1;
+        QuitAction::Prompt(state.generation)
     }
 
     /// The window says the prompt is up. Ignored unless it names the request
     /// still outstanding — a late ack from a dismissed prompt would otherwise
     /// suppress the fallback for a window that genuinely cannot ask.
     pub fn note_shown(&self, generation: u64) {
-        if self.generation.load(Ordering::SeqCst) == generation {
-            self.shown.store(true, Ordering::SeqCst);
+        let mut state = self.state.lock().expect("quit gate lock");
+        if state.generation == generation {
+            state.shown = true;
         }
     }
 
     /// The user chose to stay. Bumps the generation, which is what retires the
     /// dismissed prompt's timer and any acknowledgement still on its way.
     pub fn cancel(&self) {
-        self.pending.store(false, Ordering::SeqCst);
-        self.shown.store(false, Ordering::SeqCst);
-        self.generation.fetch_add(1, Ordering::SeqCst);
+        let mut state = self.state.lock().expect("quit gate lock");
+        state.pending = false;
+        state.shown = false;
+        state.generation += 1;
     }
 
     /// The generation now outstanding. For tests and diagnostics — the live
     /// callers always quote the generation their own request handed them.
     #[cfg(test)]
     pub fn current_generation(&self) -> u64 {
-        self.generation.load(Ordering::SeqCst)
+        self.state.lock().expect("quit gate lock").generation
     }
 
     /// Is *this* request deferred with **nobody asked** — the prompt never came
@@ -89,12 +104,12 @@ impl QuitGate {
     /// request that has since been dismissed.
     #[must_use]
     pub fn unanswerable(&self, generation: u64) -> bool {
-        self.generation.load(Ordering::SeqCst) == generation
-            && self.pending.load(Ordering::SeqCst)
-            && !self.shown.load(Ordering::SeqCst)
+        let state = self.state.lock().expect("quit gate lock");
+        state.generation == generation && state.pending && !state.shown
     }
 }
 
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;
