@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- A package you are pulling no longer briefly reports conflicts in files that are simply being downloaded for it, and no longer stops syncing in the background as a result. Checking a package while it was being written compared the files already written against the revision they came from, and read every one of them as changed on both sides (<https://github.com/quiltdata/quilt-rs/pull/907>)
 - QuiltSync no longer works continuously while you are not using it. Checking a package reads every file in it, and that reading looked to the folder watcher like you had changed something, so each check scheduled another one. Left idle with eleven installed packages, the watcher asked to re-read a package about 240 times a minute where the sync interval calls for 14 — constant CPU and disk, and 21 times the log volume, for an app that sits in the background all day (<https://github.com/quiltdata/quilt-rs/pull/886>)
 - Files you have excluded in `.quiltignore` no longer cause a package to be re-read. A tool churning a cache directory inside a package cost a full read of that package, which then skipped the very directory it had been woken for (<https://github.com/quiltdata/quilt-rs/pull/886>)
 - A host QuiltSync cannot get credentials for at all — rather than one whose credentials S3 rejects (v0.21.2) — no longer fails with a six-line Rust error chain. It now reports as the dead session it is, so the sign-in affordance appears and background sync stops retrying it in silence (<https://github.com/quiltdata/quilt-rs/pull/867>)
