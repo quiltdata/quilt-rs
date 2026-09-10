@@ -102,8 +102,6 @@ impl SyncTrayAggregator {
 
     /// Whether a pull is applying right now. Read synchronously, because its
     /// caller is a menu/window event handler that cannot await.
-    // The only non-test reader is the quit prompt, which lands next.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn apply_in_progress(&self) -> bool {
         self.apply_in_progress.load(Ordering::SeqCst)
     }

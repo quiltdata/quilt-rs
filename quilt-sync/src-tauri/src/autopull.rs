@@ -108,6 +108,14 @@ pub fn create_window_mode() -> SharedWindowMode {
 }
 
 impl Watcher {
+    /// Whether a pull is applying — writing working files — right now.
+    /// Synchronous, because its caller is a menu/window event handler that
+    /// cannot await.
+    #[must_use]
+    pub fn apply_in_progress(&self) -> bool {
+        self.inner.aggregator.apply_in_progress()
+    }
+
     /// Spawn the background tick task and return a handle.
     ///
     /// The task pulls `Model` from `app_handle.state::<Model>()` each

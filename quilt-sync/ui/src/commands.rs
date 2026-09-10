@@ -1497,3 +1497,15 @@ pub async fn dismiss_toast(id: u64) -> Result<(), String> {
     }
     tauri::invoke("dismiss_toast", &Args { id }).await
 }
+
+pub async fn quit_prompt_shown() -> Result<(), String> {
+    tauri::invoke_unit("quit_prompt_shown").await
+}
+
+pub async fn quit_confirm() -> Result<(), String> {
+    tauri::invoke_unit("quit_confirm").await
+}
+
+pub async fn quit_cancel() -> Result<(), String> {
+    tauri::invoke_unit("quit_cancel").await
+}
