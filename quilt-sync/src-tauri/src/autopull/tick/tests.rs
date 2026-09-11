@@ -131,7 +131,7 @@ fn classify_sync_already_up_to_date_is_ok() {
 #[test]
 fn classify_sync_login_required() {
     let host: Host = "catalog.dev".parse().unwrap();
-    let err = Error::from(quilt::Error::Login(quilt::LoginError::Required(Some(
+    let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
         host.clone(),
     ))));
     match classify_sync_err(err) {
@@ -922,7 +922,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         .times(1)
         .returning(move |_| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_dry_run.clone())),
+                quilt::LoginError::NoSession(Some(host_for_dry_run.clone())),
             )))
         });
 
@@ -935,6 +935,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         true,
         true,
         SyncScope::IndividualFiles,
+        &test_aggregator(),
     )
     .await;
 
@@ -1065,7 +1066,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         .expect_get_installed_package_status()
         .returning(move |_, _| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_status.clone())),
+                quilt::LoginError::NoSession(Some(host_for_status.clone())),
             )))
         });
 
@@ -1150,6 +1151,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         false,
         false,
         SyncScope::IndividualFiles,
+        &test_aggregator(),
     )
     .await
     .expect("no-action tick should be Ok");
@@ -1422,4 +1424,338 @@ fn publishing_switched_off_counts_down_to_nothing() {
         None,
         "a deadline for an operation that will not run is a lie"
     );
+}
+
+// ── The apply-in-flight flag ──
+//
+// The quit prompt is only as good as this flag. The tick's own
+// `tick_in_progress` spans the read-only classify and manifest fetch as well,
+// so a prompt keyed on it would fire when no working file is at risk.
+
+fn behind_clean_lineage() -> quilt::lineage::PackageLineage {
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string())
+}
+
+/// One `Behind` package with a clean tree — the read-only expectations every
+/// apply-flag test shares. Each test adds its own classify/pull arms.
+fn behind_clean_model() -> MockQuiltModel {
+    let lineage = behind_clean_lineage();
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model
+        .expect_get_installed_package_status()
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                BTreeMap::new(),
+            ))
+        });
+    model
+}
+
+fn applied() -> quilt::flow::PullReport {
+    pulled(quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h1".to_string(),
+        origin: None,
+    })
+}
+
+/// [`make_inner`] with the caller's aggregator, which is the one field these
+/// tests care about.
+///
+/// Built FROM `make_inner` rather than beside it: the two were written on
+/// different branches and were identical but for this field, so the merge that
+/// brought them together broke the copy that had not heard about `clocks`.
+/// Spelling the difference is what stops the next field from doing it again.
+fn inner_with(aggregator: Arc<crate::autopull::status::SyncTrayAggregator>) -> WatcherInner {
+    WatcherInner {
+        aggregator,
+        ..make_inner(enabled())
+    }
+}
+
+#[tokio::test]
+async fn apply_flag_is_clear_while_the_tick_classifies() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(move |_| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
+            Ok(preview(PullOutcome::CleanUpdate))
+        });
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(false),
+        "classify reads only — the flag must be clear there"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_flag_is_set_while_the_pull_applies() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(move |_, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
+            Ok(applied())
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(true),
+        "the apply writes working files — the flag must be set there"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_flag_is_cleared_after_the_pull_returns() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert!(
+        !agg.apply_in_progress(),
+        "a flag left set would prompt on every quit thereafter"
+    );
+    Ok(())
+}
+
+// A flag left set is worse than one never set: the quit prompt would fire on
+// every quit thereafter, and the user would learn to click through it. So the
+// clear must survive an unwind, not merely a return.
+#[test]
+fn the_apply_guard_clears_the_flag_when_dropped_by_a_panic() {
+    let agg = test_aggregator();
+    let held = Arc::clone(&agg);
+    let ns: Namespace = ("acme", "demo").into();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = held.apply_guard(&ns);
+        assert!(
+            held.apply_in_progress(),
+            "the guard sets the flag while held"
+        );
+        panic!("the apply blew up");
+    }));
+    assert!(
+        result.is_err(),
+        "the panic must propagate, not be swallowed"
+    );
+    assert!(
+        !agg.apply_in_progress(),
+        "an unwind past the guard must still clear the flag"
+    );
+}
+
+// ── A verdict computed while the tree was being written ──
+//
+// Mid-apply the three sources disagree by design: the working tree carries the
+// paths written so far, the persisted lineage still names the old base, and the
+// installed manifest is already the new one. A walk in that window reports the
+// written paths as changed on both sides — a conflict that was never real — and
+// pausing on it stops background sync and tells the user something untrue.
+// Observed on a manual pull racing the tick: the conflict list was exactly the
+// manifest-order run of paths the apply had rewritten by that instant.
+
+#[tokio::test]
+async fn a_conflict_verdict_reached_while_that_package_was_applying_does_not_pause()
+-> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+    model.expect_package_pull_outcome().times(1).returning(|_| {
+        Ok(preview(PullOutcome::Blocked {
+            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+        }))
+    });
+    model.expect_package_pull().times(0);
+
+    let inner = inner_with(Arc::clone(&agg));
+    // Someone else — a hand-pressed pull — is writing this package right now.
+    let _applying = agg.apply_guard(&ns);
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "a verdict reached mid-apply must not pause the namespace"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_apply_on_one_package_does_not_speak_for_another() {
+    let agg = test_aggregator();
+    let a: Namespace = ("acme", "demo").into();
+    let b: Namespace = ("acme", "other").into();
+    let _applying = agg.apply_guard(&a);
+    assert!(agg.is_applying(&a));
+    assert!(
+        !agg.is_applying(&b),
+        "a write to one package says nothing about another"
+    );
+}
+
+// The quit prompt asks a different question — is ANYTHING being written — so it
+// still reads across all namespaces.
+#[tokio::test]
+async fn the_quit_prompt_still_sees_any_apply() {
+    let agg = test_aggregator();
+    let ns: Namespace = ("acme", "demo").into();
+    assert!(!agg.apply_in_progress());
+    {
+        let _applying = agg.apply_guard(&ns);
+        assert!(agg.apply_in_progress());
+    }
+    assert!(!agg.apply_in_progress(), "and stops when the write ends");
+}
+
+// A manual pull and the tick's can write the same package at once — nothing
+// serializes them. One entry per namespace cannot represent that: whichever
+// finishes first would clear the mark while the other is still writing, and a
+// quit would then exit without asking.
+#[tokio::test]
+async fn two_overlapping_writes_stay_marked_until_both_finish() {
+    let agg = test_aggregator();
+    let ns: Namespace = ("acme", "demo").into();
+
+    let first = agg.apply_guard(&ns);
+    let second = agg.apply_guard(&ns);
+    assert!(agg.is_applying(&ns));
+
+    drop(first);
+    assert!(
+        agg.is_applying(&ns),
+        "one write finishing must not clear the mark the other still needs"
+    );
+    assert!(
+        agg.apply_in_progress(),
+        "and the quit prompt must still see it"
+    );
+
+    drop(second);
+    assert!(
+        !agg.is_applying(&ns),
+        "cleared once the last write finishes"
+    );
+}
+
+// Sampling "is an apply running?" *after* the verdict is computed only catches
+// an apply still in flight at that instant. A short apply that overlapped the
+// walk and finished before the sample is invisible to it — and that is the
+// worse case, because the pull's own success path has already cleared its
+// pause, so the fictitious one the tick then installs does not self-heal.
+#[tokio::test]
+async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() -> Result<(), Error>
+{
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_get_installed_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+
+    // The apply runs and completes while the verdict is being computed.
+    let agg_in_verdict = Arc::clone(&agg);
+    let ns_in_verdict = ns.clone();
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(move |_| {
+            drop(agg_in_verdict.apply_guard(&ns_in_verdict));
+            Ok(preview(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            }))
+        });
+    model.expect_package_pull().times(0);
+
+    let inner = inner_with(Arc::clone(&agg));
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "an apply that overlapped the verdict must suppress the pause even though \
+         it had finished by the time the gate looked"
+    );
+    Ok(())
 }

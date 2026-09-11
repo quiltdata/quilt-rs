@@ -4,6 +4,8 @@ use std::time::Duration;
 use tauri::Manager;
 use tokio::sync::mpsc;
 
+use crate::autopull::SharedAutosyncSettings;
+use crate::autopull::SharedWindowMode;
 use crate::autopull::StatusReporter;
 use crate::model::Model;
 use crate::telemetry::prelude::*;
@@ -34,6 +36,8 @@ const SIGNAL_CHANNEL_CAPACITY: usize = 128;
 pub fn spawn(
     app_handle: &tauri::AppHandle,
     settings: SharedFsWatcherSettings,
+    autosync: SharedAutosyncSettings,
+    window_mode: SharedWindowMode,
     reporter: &Arc<dyn StatusReporter>,
 ) {
     let (signal_tx, signal_rx) = mpsc::channel::<MappingSignal>(SIGNAL_CHANNEL_CAPACITY);
@@ -57,9 +61,12 @@ pub fn spawn(
 
     let mut state = ReactorState {
         settings,
+        autosync,
+        window_mode,
         reporter: reporter.clone(),
         signal_rx,
         subscription,
+        last_signalled: std::collections::BTreeMap::new(),
         last_reconcile_error_kind: None,
     };
 

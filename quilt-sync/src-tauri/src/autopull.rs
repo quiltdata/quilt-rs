@@ -161,6 +161,23 @@ pub fn create_window_mode() -> SharedWindowMode {
 }
 
 impl Watcher {
+    /// Hold the apply flag for as long as the guard lives — the command
+    /// layer's way in, so a hand-pressed [pull](crate::commands::package_pull)
+    /// raises the same question a background one does. The tick takes its own
+    /// guard further down, at the call it brackets.
+    #[must_use]
+    pub fn apply_guard(&self, namespace: &Namespace) -> crate::autopull::status::ApplyGuard<'_> {
+        self.inner.aggregator.apply_guard(namespace)
+    }
+
+    /// Whether a pull is applying — writing working files — right now.
+    /// Synchronous, because its caller is a menu/window event handler that
+    /// cannot await.
+    #[must_use]
+    pub fn apply_in_progress(&self) -> bool {
+        self.inner.aggregator.apply_in_progress()
+    }
+
     /// Spawn the background tick task and return a handle.
     ///
     /// The task pulls `Model` from `app_handle.state::<Model>()` each
@@ -653,6 +670,32 @@ mod tests {
         let status = rx.borrow().clone();
         assert_eq!(status.mode, TrayMode::Idle);
         assert!(watcher.login_blocked_for_test().await.is_empty());
+    }
+
+    // A hand-pressed Pull applies the same delta the tick does, so a quit
+    // during one must ask the same question. The command layer reaches the flag
+    // through the watcher it already holds, so the guard has to be available
+    // there and not only inside the tick.
+    #[tokio::test]
+    async fn the_watcher_lends_its_apply_guard_to_a_hand_pressed_pull() {
+        let (tx, _rx) = watch::channel(SyncTrayStatus::default());
+        let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let watcher =
+            Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
+        let ns: Namespace = ("acme", "demo").into();
+
+        assert!(!aggregator.apply_in_progress(), "nothing applying yet");
+        {
+            let _applying = watcher.apply_guard(&ns);
+            assert!(
+                aggregator.apply_in_progress(),
+                "a pull driven from the command layer must raise the same flag"
+            );
+        }
+        assert!(
+            !aggregator.apply_in_progress(),
+            "and drop it when the pull returns"
+        );
     }
 
     #[tokio::test]

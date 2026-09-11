@@ -15,6 +15,7 @@ use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
 use crate::autopull::reporter::clean_uptodate_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
+use crate::autopull::status::SyncTrayAggregator;
 use crate::commands::RoleCache;
 use crate::experimental_settings::resolve_sync_scope;
 use crate::model;
@@ -209,7 +210,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             Err(WatchError::LoginRequired(host.clone()))
         }
         _ => Err(WatchError::Conflict(PausedReason::Other(err.to_string()))),
@@ -222,7 +223,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 // `Transient`.
 fn classify_transient_or_login(err: Error) -> WatchError {
     match &err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             WatchError::LoginRequired(host.clone())
         }
         // A denial is neither a broken session nor a blip: the credentials
@@ -282,10 +283,61 @@ fn role_denied_summary(role: &str) -> String {
     }
 }
 
+/// Was this verdict computed over a tree that held still?
+///
+/// Mid-apply the working tree carries the paths written so far while the
+/// persisted lineage still names the old base, so a walk reports exactly those
+/// paths as changed on **both** sides — conflicts that were never real. Pausing
+/// on one stops background sync for the package and tells the user something
+/// untrue, so a verdict reached while the package was being written is
+/// discarded and the next tick judges a settled tree instead.
+///
+/// Asking only "is a write running *now*" is not enough: a short apply can
+/// overlap the walk and finish before the question is asked, and that case is
+/// the worse one — the pull's own success path has already cleared its pause,
+/// so the fictitious one installed after it does not self-heal. So the epoch is
+/// sampled before the walk and compared here: a verdict is trusted only if no
+/// write is running *and* none started across the span.
+///
+/// Observed as a hand-pressed pull racing the tick: the conflict list was the
+/// contiguous manifest-order run of paths the apply had rewritten by that
+/// instant, minus the one row that had not changed between the two revisions
+/// and so was never rewritten.
+fn verdict_held_still(
+    aggregator: &SyncTrayAggregator,
+    namespace: &Namespace,
+    epoch_before: u64,
+) -> bool {
+    if aggregator.is_applying(namespace) {
+        debug!("autosync: {namespace} is being written — discarding the conflict verdict");
+        return false;
+    }
+    if aggregator.apply_epoch(namespace) != epoch_before {
+        debug!("autosync: {namespace} was written while the verdict was computed — discarding it");
+        return false;
+    }
+    true
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one tick's inputs, each read from a different source; bundling them \
               would invent a struct that exists only to satisfy the count"
+)]
+// 106 lines, and it crossed the limit in the merge that brought
+// `feat/main-page-v2-tokens` together with main: this branch added the publish
+// deferral's arm time, main added the apply-epoch sampling and the verdict gate,
+// and neither alone was over.
+//
+// Not split, because the split is worse than the length. The body is two
+// mutually exclusive branches over ONE observation — `status`, `upstream`,
+// `has_changes`, `fingerprint` — so a helper for either branch takes ten
+// parameters where the parent takes nine, and trades this lint for
+// `too_many_arguments`. The honest fix is to give that observation a type and
+// pass one value; that is a design change and does not belong in a merge.
+#[allow(
+    clippy::too_many_lines,
+    reason = "two exclusive branches over one observation; see the note above"
 )]
 pub(crate) async fn refresh_then_maybe_sync(
     model: &impl QuiltModel,
@@ -296,6 +348,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     pull_enabled: bool,
     push_enabled: bool,
     scope: SyncScope,
+    aggregator: &SyncTrayAggregator,
 ) -> Result<RefreshOutcome, WatchError> {
     let installed = model
         .get_installed_package(namespace)
@@ -306,6 +359,11 @@ pub(crate) async fn refresh_then_maybe_sync(
                 namespace.clone(),
             )))
         })?;
+
+    // Sampled before the walk, compared at the conflict gate: a write that
+    // starts and finishes inside the span below is invisible to a "running
+    // now?" question asked afterwards.
+    let epoch_before = aggregator.apply_epoch(namespace);
 
     // `status` does the cheap tag refresh; an expired token surfaces here.
     let status = model
@@ -378,11 +436,23 @@ pub(crate) async fn refresh_then_maybe_sync(
         };
         match outcome {
             PullOutcome::Blocked { conflicts } => {
+                if !verdict_held_still(aggregator, namespace, epoch_before) {
+                    return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
+                }
                 let files = conflicts.iter().map(|p| p.display().to_string()).collect();
                 return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                return match model.package_pull(&installed, None, scope).await {
+                // Bracket only this call. The classify above reads — it
+                // resolves `latest` and fetches a manifest — so a flag that
+                // spanned the whole tick would report an apply when no working
+                // file is at risk, and the quit prompt reading it would become
+                // routine enough to dismiss unread.
+                let applied = {
+                    let _applying = aggregator.apply_guard(namespace);
+                    model.package_pull(&installed, None, scope).await
+                };
+                return match applied {
                     Ok(report) => {
                         info!("autosync: pulled namespace={namespace}");
                         // Kept work leaves a dirty tree: `UpToDate` +
@@ -616,6 +686,7 @@ pub(crate) async fn run_once(
             pull_enabled,
             push_enabled,
             resolve_sync_scope(lineage.sync_scope, &experimental),
+            &inner.aggregator,
         )
         .await;
 

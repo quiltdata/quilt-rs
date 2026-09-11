@@ -38,6 +38,7 @@ use crate::io::remote::describe_sdk_error;
 use crate::io::remote::host::fetch_host_config;
 use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
 use crate::io::remote::object::put_and_request_checksum;
+use crate::io::remote::recover_absent_session;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::auth::OAuthClient;
 use crate::object_hash::ObjectHash;
@@ -112,6 +113,34 @@ pub(super) fn classify_s3_error(
     }
 }
 
+/// Our error for a failed AWS call: a refused vend re-raised as `NoSession`
+/// (see [`recover_absent_session`]), anything else classified as S3 trouble.
+/// The wrap chain goes to the log, not the message.
+///
+/// Every vending path uses this — unlike a denial, a missing session means the
+/// same thing on all of them.
+pub(super) fn s3_error_or_session_loss<E>(
+    err: SdkError<E>,
+    host: Option<&Host>,
+    fallback: fn(String) -> S3ErrorKind,
+) -> Error
+where
+    E: ProvideErrorMetadata + std::error::Error + Send + Sync + 'static,
+{
+    if let Some(login) = recover_absent_session(&err) {
+        warn!(
+            host = ?host,
+            "❌ Signed out — the credential provider refused: {}",
+            describe_sdk_error(err)
+        );
+        return login;
+    }
+    Error::S3(S3Error {
+        host: host.cloned(),
+        kind: classify_sdk_error(err, fallback),
+    })
+}
+
 /// Classify an `SdkError` straight off an AWS call.
 ///
 /// [`describe_sdk_error`] consumes the error, so the code and status have to
@@ -151,10 +180,7 @@ async fn get_object_stream(
         // The host separates a deployment session, whose remedy is signing in,
         // from ambient `~/.aws` credentials, whose remedy is the file. A `None`
         // here is read downstream as the latter.
-        _ => Error::S3(S3Error {
-            host: host.cloned(),
-            kind: classify_sdk_error(err, S3ErrorKind::Raw),
-        }),
+        _ => s3_error_or_session_loss(err, host, S3ErrorKind::Raw),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -393,7 +419,7 @@ impl RemoteS3 {
 
                 // Check if we have valid credentials
                 if config.credentials_provider().is_none() {
-                    return Err(Error::Login(LoginError::Required(None)));
+                    return Err(Error::Login(LoginError::NoSession(None)));
                 }
                 config
             }
@@ -494,7 +520,7 @@ impl RemoteS3 {
         self.get_client_for_region(host, region)
             .await
             .map_err(|e| match e {
-                Error::Login(LoginError::Required(_)) | Error::S3(_) => e,
+                Error::Login(LoginError::NoSession(_)) | Error::S3(_) => e,
                 _ => Error::S3(S3Error {
                     host: host.cloned(),
                     kind: S3ErrorKind::Client(e.to_string()),
@@ -531,10 +557,7 @@ impl Remote for RemoteS3 {
             // Anything else stays a plain existence failure.
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(Error::S3(S3Error {
-                    host: host.cloned(),
-                    kind: classify_sdk_error(err, S3ErrorKind::Exists),
-                }))
+                Err(s3_error_or_session_loss(err, host, S3ErrorKind::Exists))
             }
         }
     }
@@ -569,7 +592,7 @@ impl Remote for RemoteS3 {
             // read failed: autosync raises the login affordance on it rather
             // than backing off. Re-wrapped, it is indistinguishable from a
             // network fault.
-            Err(e) if e.is_invalid_credentials() => {
+            Err(e) if e.is_session_absent() => {
                 warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
                 Err(e)
             }
@@ -599,12 +622,7 @@ impl Remote for RemoteS3 {
             .await
             // A denial is typed distinctly so the push path can say "this role
             // cannot write here"; anything else stays a plain put failure.
-            .map_err(|err| {
-                Error::S3(S3Error {
-                    host: host.cloned(),
-                    kind: classify_sdk_error(err, S3ErrorKind::PutObject),
-                })
-            })?;
+            .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::PutObject))?;
 
         Ok(())
     }
@@ -623,10 +641,7 @@ impl Remote for RemoteS3 {
             }),
             // Same reasoning as [`Remote::exists`]: only a genuine denial
             // changes the kind, everything else stays a resolve failure.
-            Err(err) => Err(Error::S3(S3Error {
-                host: host.cloned(),
-                kind: classify_sdk_error(err, S3ErrorKind::ResolveUrl),
-            })),
+            Err(err) => Err(s3_error_or_session_loss(err, host, S3ErrorKind::ResolveUrl)),
         }
     }
 
@@ -1599,6 +1614,109 @@ mod tests {
         assert_eq!(sdk_creds.access_key_id(), "REFRESHED");
         assert_eq!(sdk_creds.secret_access_key(), "refreshed-secret");
         assert_eq!(sdk_creds.session_token(), Some("refreshed-session"));
+        Ok(())
+    }
+
+    /// Behavioural on purpose: what the recovery depends on is the SDK keeping
+    /// our boxed error reachable through `source()`, which only a real call can
+    /// show. A shape assertion would pass over a severed chain.
+    #[test(tokio::test)]
+    async fn an_absent_session_survives_the_sdk_wrap() -> Res<()> {
+        use std::str::FromStr;
+
+        use tempfile::TempDir;
+
+        // An empty domain: no tokens on disk, so the provider has nothing to
+        // refresh from and refuses with `LoginError::NoSession`.
+        let temp = TempDir::new()?;
+        let paths = DomainPaths::new(temp.path().to_path_buf());
+        let storage = Arc::new(LocalStorage::new());
+        let host = Host::from_str("catalog.example.com").unwrap();
+
+        let provider = QuiltCredentialsProvider {
+            auth: auth::Auth::new(paths, storage),
+            http: crate::io::remote::client::ReqwestClient::new(),
+            host: host.clone(),
+        };
+
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(provider)
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+
+        let err = client
+            .head_object()
+            .bucket("bucket")
+            .key("key")
+            .send()
+            .await
+            .expect_err("an unauthenticated vend cannot produce a response");
+
+        let recovered =
+            recover_absent_session(&err).expect("the absent session must survive the SDK wrap");
+        assert_eq!(
+            recovered.to_string(),
+            format!("No session for {host}"),
+            "recovered the wrong error out of the chain"
+        );
+
+        // And the call-site helper must hand back the typed error rather than
+        // classifying it as storage trouble — the whole point of the fix.
+        assert!(
+            matches!(
+                s3_error_or_session_loss(err, Some(&host), S3ErrorKind::Exists),
+                Error::Login(LoginError::NoSession(Some(h))) if h == host
+            ),
+            "the call-site helper classified a signed-out session as an S3 error"
+        );
+        Ok(())
+    }
+
+    /// The negative half: a dispatch failure with no absent session behind it
+    /// must keep its operation-specific S3 kind. Without this, the recovery
+    /// could type every transport fault as "signed out" and pass the test
+    /// above while making the classification strictly worse.
+    #[test(tokio::test)]
+    async fn a_plain_transport_failure_stays_an_s3_error() -> Res<()> {
+        use std::str::FromStr;
+
+        let host = Host::from_str("catalog.example.com").unwrap();
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::for_tests())
+            // A port nothing listens on: the request is dispatched with valid
+            // credentials and fails in transport, so the chain carries no
+            // error of ours.
+            .endpoint_url("http://127.0.0.1:1")
+            .retry_config(aws_config::retry::RetryConfig::disabled())
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+
+        let err = client
+            .head_object()
+            .bucket("bucket")
+            .key("key")
+            .send()
+            .await
+            .expect_err("nothing is listening on that port");
+
+        assert!(
+            recover_absent_session(&err).is_none(),
+            "a transport fault was mistaken for an absent session"
+        );
+        assert!(
+            matches!(
+                s3_error_or_session_loss(err, Some(&host), S3ErrorKind::Exists),
+                Error::S3(S3Error {
+                    kind: S3ErrorKind::Exists(_),
+                    ..
+                })
+            ),
+            "a transport fault lost its operation-specific kind"
+        );
         Ok(())
     }
 }

@@ -500,6 +500,36 @@ publish quiet window.
 
 ---
 
+### Quit Confirmation
+
+Shown when quitting would interrupt a package being written — the tray's
+**Quit**, or closing the window when close-to-tray is off. Not shown when
+nothing is being written, which is the common case.
+
+```text
++---------------------------------------------------------+
+|                                                         |
+|   Still syncing                                         |
+|                                                         |
+|   QuiltSync is writing files right now. Quitting will    |
+|   interrupt it and leave this package part-way between   |
+|   two revisions.                                        |
+|                                                         |
+|   [Stay]  [Quit anyway]                                 |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- Raised over whatever page is open; the tray path shows the window first
+- No click-outside dismiss — the two buttons are the only ways out
+- [Stay] -> abandons the quit; a later quit asks again
+- [Quit anyway] -> exits, interrupting the write
+- It asks, it never waits for the write to finish
+- If the prompt cannot be shown or does not report itself on screen, the quit
+  proceeds rather than appearing to be ignored
+
+---
+
 ### Settings
 
 Application settings and diagnostics.

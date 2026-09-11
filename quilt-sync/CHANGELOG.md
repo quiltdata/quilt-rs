@@ -15,6 +15,25 @@
 
 - A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It opens with what needs you: packages that are out of date, hold unpublished changes, or whose state could not be confirmed, each beside the one thing to do about it — and where a whole catalog or bucket is the cause, it is said once with a count instead of on every package. When nothing needs you, it says so in one line. Below are your packages with each one's state and when it last changed, searchable and groupable, or switched to a feed of recently changed files. Alongside: whether background syncing is running and when it will next run, switchable per direction, and the catalogs you are signed into with the role each is using. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
 
+## [v0.22.1-alpha1] - 2026-09-09
+
+### Added
+
+- QuiltSync now asks before you quit it while a package is being written. Quitting used to interrupt the write silently, leaving that package part-way between two revisions with nothing running to finish it; you now get the choice to wait or go ahead. Nothing is asked when no package is being written (<https://github.com/quiltdata/quilt-rs/pull/905>)
+
+### Fixed
+
+- A package you are pulling no longer briefly reports conflicts in files that are simply being downloaded for it, and no longer stops syncing in the background as a result. Checking a package while it was being written compared the files already written against the revision they came from, and read every one of them as changed on both sides (<https://github.com/quiltdata/quilt-rs/pull/907>)
+- QuiltSync no longer works continuously while you are not using it. Checking a package reads every file in it, and that reading looked to the folder watcher like you had changed something, so each check scheduled another one. Left idle with eleven installed packages, the watcher asked to re-read a package about 240 times a minute where the sync interval calls for 14 — constant CPU and disk, and 21 times the log volume, for an app that sits in the background all day (<https://github.com/quiltdata/quilt-rs/pull/886>)
+- Files you have excluded in `.quiltignore` no longer cause a package to be re-read. A tool churning a cache directory inside a package cost a full read of that package, which then skipped the very directory it had been woken for (<https://github.com/quiltdata/quilt-rs/pull/886>)
+- A host QuiltSync cannot get credentials for at all — rather than one whose credentials S3 rejects (v0.21.2) — no longer fails with a six-line Rust error chain. It now reports as the dead session it is, so the sign-in affordance appears and background sync stops retrying it in silence (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- A host that is not set up as a Quilt deployment — no registry in its `config.json` — no longer sends you to the sign-in screen, where nothing you can do would help. It says what is wrong and that an administrator needs to fix it (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- The Commit page stays open when you are signed out, instead of bouncing you to the sign-in screen and discarding the message and metadata you had typed. It already worked this way for a role that cannot read the bucket; a dead session now gets the same treatment, and the Commit action is what refuses, naming the deployment to sign in to (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+### Changed
+
+- While you are actively saving files, the packages list can now be up to one sync interval behind. A save brings the next check forward rather than adding one, so a burst of edits no longer means a burst of re-reads. Opening or moving to a page still reads fresh, and nothing is published until the folder has been quiet for the configured window either way (<https://github.com/quiltdata/quilt-rs/pull/886>)
+
 ## [v0.22.0] - 2026-09-08
 
 ### Added

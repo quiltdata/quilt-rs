@@ -238,6 +238,9 @@ pub(crate) fn entry_view(row: &ManifestRow) -> EntryView<'_> {
 /// [`crate::Error::WorkflowValidation`] — a distinct typed error the sync
 /// watcher classifies as a conflict (pause the namespace), not a transient
 /// (retry) — while a failed *fetch* stays an `Error::S3` and remains transient.
+/// The one fetch failure that does not: an unauthenticated one, which the S3
+/// boundary now recovers as [`crate::error::LoginError::NoSession`] rather than
+/// letting a signed-out session retry forever as storage trouble.
 pub(crate) async fn validate_workflow<R: Remote>(
     remote: &R,
     host: Option<&Host>,
@@ -344,7 +347,8 @@ pub(crate) async fn validate_workflow_with_config<R: Remote>(
 /// A rule failure surfaces as [`crate::Error::WorkflowValidation`] and a
 /// missing/unknown workflow as [`crate::Error::RemoteCatalog`] — both
 /// classified as conflicts by the sync watcher — while a failed *fetch* stays
-/// an `Error::S3` and remains transient.
+/// an `Error::S3` and remains transient, except an unauthenticated one, which
+/// arrives typed as [`crate::error::LoginError::NoSession`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn validate_workflow_against_current_config<R: Remote>(
     remote: &R,
@@ -448,9 +452,89 @@ pub(crate) async fn resolve_workflow_from_config<R: Remote>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LoginError;
+    use crate::io::remote::HostConfig;
+    use crate::io::remote::RemoteObjectStream;
     use crate::io::remote::mocks::MockRemote;
     use crate::workflow::WorkflowInfo;
     use test_log::test;
+
+    /// Reports no session on `exists` and panics on everything else — the gate
+    /// reaching past `exists` is itself the failure.
+    struct SignedOutRemote {
+        host: Host,
+    }
+
+    // Written as plain `fn`s returning ready futures rather than `async fn`s.
+    // The trait's methods return `impl Future`, so this satisfies it either
+    // way — but a stub that awaits nothing is exactly what
+    // `clippy::unused_async_trait_impl` fires on, and spelling the future out
+    // sidesteps the lint without naming it in an `allow` that older
+    // toolchains would not recognize.
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "a stub that awaits nothing by design: `exists` refuses immediately and every other method must never be called. `async fn` keeps it consistent with the trait's real impls, and the alternatives each trip a different lint — `fn -> impl Future` with an async block trips `manual_async_fn`, and `std::future::ready(unreachable!(..))` trips `unreachable_code`."
+    )]
+    impl Remote for SignedOutRemote {
+        async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
+            Err(Error::Login(LoginError::NoSession(Some(self.host.clone()))))
+        }
+        async fn get_object_stream(
+            &self,
+            _host: Option<&Host>,
+            _s3_uri: &S3Uri,
+        ) -> Res<RemoteObjectStream> {
+            unreachable!("the gate must not fetch after an absent session")
+        }
+        async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+            unreachable!("not part of the gate")
+        }
+        async fn put_object(
+            &self,
+            _host: Option<&Host>,
+            _s3_uri: &S3Uri,
+            _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+        ) -> Res {
+            unreachable!("not part of the gate")
+        }
+        async fn upload_file(
+            &self,
+            _host_config: &HostConfig,
+            _source_path: impl AsRef<std::path::Path>,
+            _dest_uri: &S3Uri,
+            _size: u64,
+        ) -> Res<(S3Uri, crate::object_hash::ObjectHash)> {
+            unreachable!("not part of the gate")
+        }
+        async fn host_config(&self, _host: Option<&Host>) -> Res<HostConfig> {
+            unreachable!("not part of the gate")
+        }
+        async fn verify_bucket(&self, _bucket: &str) -> Res {
+            unreachable!("not part of the gate")
+        }
+    }
+
+    /// The seam above the recovery: the gate makes the commit path's first S3
+    /// call, so it must hand the typed error on unchanged.
+    #[test(tokio::test)]
+    async fn the_gate_propagates_an_absent_session_untouched() -> Res<()> {
+        use std::str::FromStr;
+
+        let host = Host::from_str("nightly.quilttest.com").unwrap();
+        let remote = SignedOutRemote { host: host.clone() };
+        let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
+
+        let err = fetch_workflows_config(&remote, Some(&host), &uri)
+            .await
+            .expect_err("a signed-out session cannot produce a workflows config");
+
+        assert!(
+            matches!(&err, Error::Login(LoginError::NoSession(Some(h))) if *h == host),
+            "the gate re-wrapped an absent session into {err:?} — the watcher would \
+             classify this as storage trouble and retry it in silence"
+        );
+        Ok(())
+    }
 
     #[test(tokio::test)]
     async fn test_missing_schemas_section() -> Res<()> {

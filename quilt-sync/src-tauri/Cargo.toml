@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.22.0"
+version = "0.22.1-alpha1"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -19,6 +19,9 @@ tauri-build = { version = "2.6.3", features = [] }
 chrono.workspace = true
 dotenv = "0.15"
 dunce = "1"
+# Named only to hold quilt-rs's `.quiltignore` matcher in the watched-root map;
+# quilt-rs owns the loading and matching (`quilt::quiltignore`).
+ignore.workspace = true
 mockall = "0.15.0"
 opener = { version = "0.8.5", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }

@@ -6,17 +6,20 @@ use crate::commands;
 use crate::components::buttons;
 use crate::components::{Layout, Notification};
 
-/// Handle a command error by either navigating to an error/login/setup page
-/// or rendering an inline error page.
+/// Handle a command error that left the surface with nothing to render.
 ///
-/// - `login_required` → navigates to `/login`
-/// - `setup_required` → navigates to `/setup`
-/// - anything else → renders an error page inline (preserves the original URL
-///   so a browser reload retries the failed page)
+/// - `session_absent` → `/login`, carrying the host and a `back` target
+/// - `setup_required` → `/setup`
+/// - anything else → inline error page (keeps the URL, so reload retries)
+///
+/// Navigating is this function's policy, not the error's instruction: every
+/// caller here has already failed to load. A surface with a local fallback
+/// handles the state there and never arrives. Kinds a sign-in cannot fix —
+/// `registry_url_missing` — are left unmatched on purpose.
 pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification>>) -> AnyView {
     if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(error) {
         match parsed.kind.as_str() {
-            "login_required" => {
+            "session_absent" => {
                 let host = parsed.host.filter(|h| !h.is_empty());
                 match host {
                     Some(host) => {

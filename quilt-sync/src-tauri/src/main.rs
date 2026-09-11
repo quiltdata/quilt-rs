@@ -27,6 +27,7 @@ mod notify;
 mod oauth;
 mod publish_settings;
 mod quilt;
+mod quit;
 mod routes;
 mod telemetry;
 mod toast;
@@ -161,13 +162,20 @@ fn main() {
                 experimental_settings.clone(),
                 reporter.clone(),
             );
-            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
+            fswatcher::spawn(
+                app.handle(),
+                fswatcher_settings.clone(),
+                autosync_settings.clone(),
+                window_mode.clone(),
+                &reporter,
+            );
             app.manage(publish_settings);
             app.manage(autosync_settings);
             app.manage(fswatcher_settings);
             app.manage(experimental_settings);
             app.manage(window_mode);
             app.manage(watcher);
+            app.manage(quit::QuitGate::default());
 
             // The tray controller needs the autosync settings (for
             // close_to_tray) and the window-mode state — both are now
@@ -271,6 +279,9 @@ fn main() {
             commands::check_for_update,
             commands::download_and_install_update,
             commands::report_ui_panic,
+            commands::quit_prompt_shown,
+            commands::quit_confirm,
+            commands::quit_cancel,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

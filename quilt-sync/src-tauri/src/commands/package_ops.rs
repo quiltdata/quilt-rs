@@ -59,7 +59,11 @@ pub async fn package_commit(
 ) -> Result<String, String> {
     let msg_init = format!("Committing package {namespace}");
     let msg_ok = format!("Successfully committed {namespace}");
-    let msg_err = |err: &Error| format!("Failed to commit: {err}");
+    // Committing is not offline (the workflow gate reads the bucket's config),
+    // so a dead session lands here, where the user's typed work is.
+    let msg_err = |err: &Error| {
+        auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
+    };
 
     let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
     if let Ok(ns) = &result {
@@ -123,7 +127,18 @@ pub async fn reset_local(
     let msg_ok = format!("Successfully reset local for {namespace}");
     let msg_err = |err: &Error| format!("Failed to reset local: {err}");
 
-    let result = reset_local_command(&m, &namespace).await;
+    // Reset re-installs every tracked path, so it is the most destructive
+    // write to interrupt — and it reaches the working tree through the same
+    // primitive a pull does. The boundary is deliberate: this and pull are the
+    // two writes that can leave the tree between revisions. Installing
+    // individual paths only adds files, and a commit writes `.quilt` rather
+    // than the working tree.
+    let result = {
+        let _applying = watcher.apply_guard(
+            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
+        );
+        reset_local_command(&m, &namespace).await
+    };
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
@@ -148,17 +163,30 @@ pub async fn reset_local(
 fn write_failure_message(action: &str, err: &Error) -> String {
     if err.is_access_denied() {
         "Current role can't write here — switch role".to_string()
-    } else if err.is_invalid_credentials() {
-        // This path reports through a toast, not the error page
-        // `to_frontend_string` feeds, so it cannot navigate to `/login`. The
-        // message carries the remedy instead.
-        match err.s3_host() {
-            Some(host) => format!("Your session for {host} has expired — sign in again"),
-            None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
-        }
+    } else if let Some(message) = auth_failure_message(err) {
+        message
     } else {
         format!("Failed to {action}: {err}")
     }
+}
+
+/// Remedy sentence for "there is no session to act with", or `None` otherwise.
+///
+/// A toast cannot navigate, so the message carries the remedy itself. Keyed on
+/// whether there is a deployment: one can be signed into, ambient credentials
+/// can only be fixed in the file.
+fn auth_failure_message(err: &Error) -> Option<String> {
+    if !err.is_session_absent() {
+        return None;
+    }
+    let host = match err {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => host.as_ref(),
+        _ => err.s3_host(),
+    };
+    Some(match host {
+        Some(host) => format!("Not signed in to {host} — sign in again"),
+        None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
+    })
 }
 
 async fn package_push_command(
@@ -404,7 +432,15 @@ pub async fn package_pull(
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
     let experimental = experimental.read().await.clone();
-    let result = package_pull_command(&m, &namespace, &experimental).await;
+    // A hand-pressed pull writes working files exactly as the tick's does, so
+    // it raises the same in-flight flag — otherwise quitting during one would
+    // interrupt it without asking.
+    let result = {
+        let _applying = watcher.apply_guard(
+            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
+        );
+        package_pull_command(&m, &namespace, &experimental).await
+    };
     let mut reported = false;
     if let Ok((ns, report)) = &result {
         watcher.clear_paused(ns).await;
@@ -919,6 +955,54 @@ mod tests {
         );
         assert!(!msg.contains("ExpiredToken"), "raw SDK text leaked: {msg}");
         assert!(!msg.contains("S3 error"), "got: {msg}");
+    }
+
+    /// The screenshot case: a commit, not a push. Committing reads the bucket's
+    /// workflow config before writing anything, so a dead session fails here —
+    /// and this path did not share the push path's remedy text.
+    #[test]
+    fn commit_while_signed_out_names_signing_in() {
+        let host: quilt_uri::Host = "nightly.quilttest.com".parse().unwrap();
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+            host.clone(),
+        ))));
+        let msg =
+            super::auth_failure_message(&err).unwrap_or_else(|| format!("Failed to commit: {err}"));
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(
+            msg.contains("nightly.quilttest.com"),
+            "must name the host: {msg}"
+        );
+        assert!(!msg.contains("Failed to commit"), "fell through: {msg}");
+    }
+
+    /// Anything that is not an auth failure must keep its existing text, so the
+    /// new branch narrows the message set rather than replacing it.
+    #[test]
+    fn auth_message_declines_a_non_auth_error() {
+        let err = Error::Commit("Message is required".to_string());
+        assert!(super::auth_failure_message(&err).is_none());
+    }
+
+    /// A refused vend is the same dead end as a rejected credential, one step
+    /// earlier, so the toast must carry the same remedy rather than falling
+    /// through to `Failed to push package: …` and a bare error label.
+    #[test]
+    fn push_while_signed_out_names_signing_in() {
+        let host: quilt_uri::Host = "demo.quiltdata.com".parse().unwrap();
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+            host.clone(),
+        ))));
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(
+            msg.contains("demo.quiltdata.com"),
+            "must name the host: {msg}"
+        );
+        assert!(!msg.contains("Failed to push"), "fell through: {msg}");
+        assert!(!msg.contains("No session"), "raw label leaked: {msg}");
     }
 
     /// Ambient credentials have no deployment to sign in to, so the remedy is

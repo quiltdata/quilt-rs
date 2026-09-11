@@ -218,11 +218,17 @@ pub enum RemoteCatalogError {
 
 #[derive(Error, Debug, PartialEq)]
 pub enum LoginError {
-    #[error("Login required{}", .0.as_ref().map_or(String::new(), |h| format!(": {h}")))]
-    Required(Option<Host>),
+    /// No usable session for this deployment; `None` when the call carried no
+    /// deployment — a bare bucket on ambient AWS credentials.
+    ///
+    /// Names the state, not a remedy: each surface answers it differently.
+    #[error("No session{}", .0.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
+    NoSession(Option<Host>),
 
-    #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]
-    RequiredRegistryUrl(Host),
+    /// The deployment answered but its `config.json` names no registry. A
+    /// misconfiguration, not a missing session: signing in cannot change it.
+    #[error("{0} does not advertise a registry URL in its config.json")]
+    NoRegistryUrl(Host),
 }
 
 #[derive(Error, Debug)]
@@ -419,6 +425,15 @@ impl Error {
     #[must_use]
     pub fn is_invalid_credentials(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
+    }
+
+    /// No usable session, by either route — refused before issue
+    /// ([`LoginError::NoSession`]) or issued and rejected
+    /// ([`S3ErrorKind::InvalidCredentials`]). One predicate because callers act
+    /// on the state; which route it took is where the failure was noticed.
+    #[must_use]
+    pub fn is_session_absent(&self) -> bool {
+        self.is_invalid_credentials() || matches!(self, Error::Login(LoginError::NoSession(_)))
     }
 
     /// The deployment this request was for, if any.

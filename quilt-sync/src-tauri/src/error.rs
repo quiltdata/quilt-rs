@@ -227,6 +227,16 @@ impl Error {
         matches!(self, Error::Quilt(err) if err.is_invalid_credentials())
     }
 
+    /// True when there is no usable session, by either route — see
+    /// [`quilt::Error::is_session_absent`]. This is the predicate a surface
+    /// should branch on when deciding what to show; the narrower
+    /// [`Error::is_invalid_credentials`] exists for the watcher, which counts
+    /// episodes and wants only the rejected-credential route.
+    #[must_use]
+    pub fn is_session_absent(&self) -> bool {
+        matches!(self, Error::Quilt(err) if err.is_session_absent())
+    }
+
     /// The deployment this request was for, if any. `None` for a bare S3
     /// bucket reached with ambient credentials, and for non-S3 errors.
     #[must_use]
@@ -237,14 +247,16 @@ impl Error {
         }
     }
 
-    /// Serialize actionable errors as JSON so the frontend can parse and react
-    /// (e.g. redirect to `/login` or `/setup`). Falls back to `Display` for
-    /// all other errors.
+    /// Serialize a recognized state as JSON for the frontend; `Display`
+    /// otherwise.
+    ///
+    /// Kinds name the state, never the action — which response it deserves is
+    /// the receiving surface's call.
     pub fn to_frontend_string(&self) -> String {
         match self {
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
                 let mut json = serde_json::json!({
-                    "kind": "login_required",
+                    "kind": "session_absent",
                     "message": self.to_string(),
                 });
                 if let Some(h) = host {
@@ -252,10 +264,16 @@ impl Error {
                 }
                 json.to_string()
             }
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(host))) => {
+            // Not `session_absent`: the deployment answered, so no session is
+            // missing and a sign-in cannot help. Unmatched by the router,
+            // which renders it in place.
+            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host))) => {
                 serde_json::json!({
-                    "kind": "login_required",
-                    "message": self.to_string(),
+                    "kind": "registry_url_missing",
+                    "message": format!(
+                        "{host} is not configured as a Quilt deployment — its config.json \
+                         names no registry. Whoever administers it will need to fix that."
+                    ),
                     "host": host.to_string(),
                 })
                 .to_string()
@@ -280,14 +298,10 @@ fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
             "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
                 .to_string(),
         ),
-        // A stale session on a Quilt deployment is the same dead end as a
-        // refused vend, so it takes the same `login_required` route rather than
-        // a second kind: the frontend already navigates to `/login?host=…&back=…`
-        // for that, which turns "sign in again" from a sentence into somewhere
-        // to go. Only user-initiated commands reach this — autosync reports a
-        // login episode on its own event channel and never navigates.
+        // Same state as a refused vend, so the same kind. Only user-initiated
+        // commands reach this; autosync reports on its own event channel.
         quilt::S3ErrorKind::InvalidCredentials(_) => (
-            "login_required",
+            "session_absent",
             format!(
                 "Your session for {} has expired. Please sign in again.",
                 error.host.as_ref().expect("host checked above")
@@ -364,20 +378,22 @@ mod tests {
     }
 
     #[test]
-    fn to_frontend_string_login_required_with_host() {
+    fn to_frontend_string_session_absent_with_host() {
         let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(Some(host))));
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+            host,
+        ))));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
         assert_eq!(json["host"], "catalog.dev");
-        assert!(json["message"].as_str().unwrap().contains("Login required"));
+        assert!(json["message"].as_str().unwrap().contains("No session"));
     }
 
     #[test]
-    fn to_frontend_string_login_required_no_host() {
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(None)));
+    fn to_frontend_string_session_absent_no_host() {
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(None)));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
         assert!(
             json.get("host").is_none(),
             "host should be absent when None"
@@ -385,14 +401,29 @@ mod tests {
     }
 
     #[test]
-    fn to_frontend_string_login_required_registry_url() {
+    /// A deployment whose `config.json` names no registry is misconfigured, not
+    /// signed out. It must not borrow `session_absent`, which the router
+    /// answers by navigating to `/login` — a page that cannot fix a config
+    /// file, for a problem the user has no way to act on.
+    fn to_frontend_string_missing_registry_is_not_a_dead_session() {
         let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(
-            host,
-        )));
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host)));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "registry_url_missing");
+        assert_ne!(
+            json["kind"], "session_absent",
+            "a misconfiguration must not route the user to sign in"
+        );
         assert_eq!(json["host"], "catalog.dev");
+        let message = json["message"].as_str().unwrap();
+        assert!(
+            message.contains("catalog.dev"),
+            "must name the host: {message}"
+        );
+        assert!(
+            !message.contains("sign in"),
+            "there is nothing to sign in to: {message}"
+        );
     }
 
     #[test]
@@ -445,7 +476,7 @@ mod tests {
         }));
 
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
         assert_eq!(json["host"], host.to_string());
         assert_eq!(
             json["message"],

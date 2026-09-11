@@ -307,6 +307,7 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
         false,
         true,
         SyncScope::default(),
+        &test_aggregator(),
     )
     .await
     .expect("a deferral is an Ok outcome");
@@ -354,6 +355,7 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
         false,
         true,
         SyncScope::default(),
+        &test_aggregator(),
     )
     .await
     .expect("a quiet tree publishes");
@@ -877,7 +879,7 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_publish.clone())),
+                quilt::LoginError::NoSession(Some(host_for_publish.clone())),
             )))
         });
 

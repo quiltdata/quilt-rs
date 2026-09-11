@@ -10,7 +10,7 @@ use crate::Res;
 use crate::error::ChecksumError;
 use crate::error::S3Error;
 use crate::error::S3ErrorKind;
-use crate::io::remote::s3::classify_sdk_error;
+use crate::io::remote::s3::s3_error_or_session_loss;
 use crate::object_hash::ObjectHash;
 use crate::object_hash::Sha256ChunkedHash;
 use crate::object_hash::chunksize_and_parts;
@@ -31,10 +31,7 @@ pub async fn multipart_upload_and_sha256_chunksum(
         .checksum_algorithm(ChecksumAlgorithm::Sha256)
         .send()
         .await
-        .map_err(|err| S3Error {
-            host: host.cloned(),
-            kind: classify_sdk_error(err, S3ErrorKind::Raw),
-        })?
+        .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::Raw))?
         .upload_id
         .ok_or(S3Error::new(S3ErrorKind::UploadId(
             "failed to get an UploadId".to_string(),
@@ -64,10 +61,7 @@ pub async fn multipart_upload_and_sha256_chunksum(
             .body(chunk_body)
             .send()
             .await
-            .map_err(|err| S3Error {
-                host: host.cloned(),
-                kind: classify_sdk_error(err, S3ErrorKind::Raw),
-            })?;
+            .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::Raw))?;
         parts.push(
             CompletedPart::builder()
                 .part_number(part_number)
@@ -89,10 +83,7 @@ pub async fn multipart_upload_and_sha256_chunksum(
         )
         .send()
         .await
-        .map_err(|err| S3Error {
-            host: host.cloned(),
-            kind: classify_sdk_error(err, S3ErrorKind::Raw),
-        })?;
+        .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::Raw))?;
 
     let s3_checksum = response
         .checksum_sha256

@@ -27,9 +27,15 @@ This project uses `just` as a task runner for common development tasks.
 ```bash
 cargo install just
 cargo install cargo-nextest --locked   # the test runner CI uses
+cargo install rumdl                    # the markdown linter CI uses
 
 just -l
 ```
+
+`just lint` reports, and writes nothing: `cargo fmt --check` over the workspace,
+`rumdl check` over the tracked markdown, then clippy for the host and wasm
+targets. CI checks all three, so a clean `just lint` leaves nothing for it to
+reject. `just fmt` is the half that writes, over the same file set.
 
 All cargo commands work on the entire workspace by default. Use the `-p` flag to
 target specific packages:

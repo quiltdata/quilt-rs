@@ -73,6 +73,12 @@ pub struct CommitData {
     /// work (the workflow gate reads the bucket's config first), so this
     /// disables the commit affordances and supplies their tooltip.
     pub no_access_reason: Option<String>,
+    /// There is no session to commit with. Disables the commit affordances
+    /// like a denial, but the remedy is a sign-in.
+    pub no_session: bool,
+    /// The deployment to sign in to, when there is one; `None` for ambient
+    /// AWS credentials, whose remedy is the file.
+    pub no_session_host: Option<String>,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -1956,4 +1962,22 @@ pub async fn dismiss_toast(id: u64) -> Result<(), String> {
         id: u64,
     }
     tauri::invoke("dismiss_toast", &Args { id }).await
+}
+
+pub async fn quit_prompt_shown(generation: u64) -> Result<(), String> {
+    tauri::invoke("quit_prompt_shown", &QuitPromptShownArgs { generation }).await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QuitPromptShownArgs {
+    generation: u64,
+}
+
+pub async fn quit_confirm() -> Result<(), String> {
+    tauri::invoke_unit("quit_confirm").await
+}
+
+pub async fn quit_cancel() -> Result<(), String> {
+    tauri::invoke_unit("quit_cancel").await
 }
