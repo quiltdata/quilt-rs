@@ -852,11 +852,18 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn role_denied_sorts_before_signed_out() {
-        // M5: no test built a payload holding both kinds of cause at once, so
-        // nothing pinned that §5's cause rank (role-denied row 1, signed-out
-        // row 4) — not the causes' own text — decides the order when both
-        // appear together. Swapping the rank literals 0 and 4 must fail here.
+    fn cause_rank_decides_the_order_and_not_the_causes_own_text() {
+        // M5: no test built a payload holding more than one kind of cause at
+        // once, so nothing pinned that §5's cause rank decides the order.
+        //
+        // All THREE kinds, because two could not tell the claim apart from its
+        // negation: the ranks are role-denied 0, signed-out 4, unchecked 5,
+        // while the fixed text prefixes sort "Couldn't check…" < "No access…" <
+        // "Signed out…". With only the first two, rank order and text order
+        // agree, and the `(rank, text)` tiebreak makes an equal-ranks mutation
+        // survive — no host name can flip that, since both prefixes are
+        // constants (qhq-8mgw.38). Adding the unchecked cause puts the orders in
+        // opposition: it ranks last and sorts first.
         let items = derive_queue(
             &[
                 pkg("a/one", PackageState::Unknown, Some("gone.io")),
@@ -870,7 +877,7 @@ mod tests {
                 ),
             ],
             &[host("gone.io", false), host("h.io", true)],
-            &[],
+            &[pkg("c/three", PackageState::Latest, Some("dark.io"))],
         );
         let causes: Vec<&str> = items
             .iter()
@@ -884,8 +891,9 @@ mod tests {
             vec![
                 "No access as analyst on h.io in s3://team-bucket",
                 "Signed out from gone.io",
+                "Couldn't check for new revisions on dark.io",
             ],
-            "role-denied (§5 row 1) sorts before signed-out (§5 row 4)"
+            "§5's rank orders these; alphabetically they are the other way round"
         );
     }
 

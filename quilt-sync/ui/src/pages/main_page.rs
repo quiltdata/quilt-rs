@@ -1131,6 +1131,13 @@ pub fn MainPage() -> impl IntoView {
     // Held here rather than inside the Accounts card, which is where it used to
     // live: the queue joins against these same host facts (§4.3, R3), and a second
     // resource for them would be a second read of one question.
+    //
+    // Pinned by `the_queue_is_drawn_from_the_same_payloads_as_the_cards`, and only
+    // by it. A strip that built its own resource would call the real command,
+    // which has no Tauri host under test, so the strip goes empty and that test
+    // reddens — verified by making the change and watching it. Counting this
+    // fetcher's calls does NOT pin it: the count would be of the test's own
+    // fetcher, which the regression routes around (qhq-8mgw.38).
     let accounts = LocalResource::new(move || {
         reload.track();
         commands::get_main_page_accounts()
@@ -2837,55 +2844,6 @@ mod tests {
                 .as_deref(),
             Some("false"),
             "a refetch rebuilds the region, which re-collapses the group"
-        );
-    }
-
-    #[wasm_bindgen_test]
-    async fn the_accounts_resource_is_fetched_once_per_load_and_once_per_reload() {
-        // Finding I4: the plan's one structural judgement — one accounts
-        // `LocalResource` awaited in both the strip's `Transition` and the
-        // queue's `Suspend` — is untested. `mount_regions_reloading` already
-        // constructs the resources inside the test, so a fetcher that
-        // increments a shared counter pins the invocation count directly: 1
-        // on mount, however many places read the resolved value, and one
-        // more per `reload.notify()`, never one per boundary that awaits it.
-        let calls = std::rc::Rc::new(std::cell::Cell::new(0usize));
-        let reload = Trigger::new();
-        let fetch_calls = calls.clone();
-        let _el = mount(move || {
-            let packages = LocalResource::new(move || {
-                reload.track();
-                async move { Ok::<_, String>(a_package_needing_attention()) }
-            });
-            let accounts_data = one_signed_out_host();
-            let accounts = LocalResource::new(move || {
-                reload.track();
-                let fetch_calls = fetch_calls.clone();
-                let accounts_data = accounts_data.clone();
-                async move {
-                    fetch_calls.set(fetch_calls.get() + 1);
-                    Ok::<_, String>(accounts_data)
-                }
-            });
-            view! {
-                <leptos_router::components::Router>
-                    <MainPageRegions packages=packages accounts=accounts reload=reload />
-                </leptos_router::components::Router>
-            }
-        });
-        sleep_ms(50).await;
-        assert_eq!(
-            calls.get(),
-            1,
-            "one fetch on mount, however many boundaries await it"
-        );
-
-        reload.notify();
-        sleep_ms(50).await;
-        assert_eq!(
-            calls.get(),
-            2,
-            "one more fetch per reload, not one per Transition/Suspend that reads it"
         );
     }
 
