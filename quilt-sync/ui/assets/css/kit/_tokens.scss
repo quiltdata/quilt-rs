@@ -389,6 +389,29 @@
   --q-overlay-selected: var(--gray-a4);
   --q-overlay-accent-hover: var(--blue-a3);
 
+  /* BRAND. The appbar's ground, and the one surface in the kit that is not a
+   * step on the page's ladder.
+   *
+   * A literal, and the SAME literal in both themes — which is why it is not in
+   * the override block below and does not go through a Radix scale. A brand
+   * colour is a brand colour; `--blue-9` would have been the tempting shortcut
+   * and is wrong, because it is `#282b50` in light and `#3d63dd` in dark, so
+   * the bar would change hue with the theme. The value is v1's
+   * `--q-ui-palette-primary`, unchanged, so the two appbars agree for as long
+   * as both exist.
+   *
+   * `onBrand` is white at 11.9:1 over it — the ink v1's `quilt.png` is already
+   * drawn in. Measured, not assumed. */
+  --q-bgColor-brand: #2d306d;
+  --q-fgColor-onBrand: #fff;
+
+  /* Overlays for controls sitting on the brand ground. The grey alphas above
+   * are dark ink and vanish on it; these cannot simply be the dark theme's
+   * alphas either, because the brand ground does not change with the theme —
+   * so they are stated once, as white, like the ground they are for. */
+  --q-overlay-onBrand-hover: rgb(255 255 255 / 0.14);
+  --q-overlay-onBrand-active: rgb(255 255 255 / 0.22);
+
   /* lines. `muted` separates rows; `default` outlines controls. */
   --q-borderColor-muted: var(--gray-4);
   --q-borderColor-default: var(--gray-7);

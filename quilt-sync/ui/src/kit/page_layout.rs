@@ -60,14 +60,16 @@ pub fn PageLayout(
             <header class=style::appbar>
                 <div class=style::bar>
                     <a class=style::logo href="/">
-                        // `quilt-mark.png`, not v1's `quilt.png`: that one is white ink
-                        // for v1's inverted appbar and is invisible on this one, which is
-                        // `--q-bgColor-default`. This mark carries its own dark ground, so
-                        // it reads on either. v1 keeps its own asset — it is frozen.
+                        // v1's own asset, on a bar that is now v1's own colour. It is
+                        // the only logo in the repo with an alpha channel, which is the
+                        // whole of qhq-8mgw.22: `quilt-mark.png` was PNG colour-type 2
+                        // with no alpha at all, so it carried an opaque square that was
+                        // merely INVISIBLE while the bar was white, and showed its
+                        // corners the moment dark theme landed.
                         //
                         // Alt text, not `aria-hidden`: it is the only content of a link,
                         // so hiding it would leave the link unnamed.
-                        <img src="/assets/img/quilt-mark.png" alt="QuiltSync home" />
+                        <img src="/assets/img/quilt.png" alt="QuiltSync home" />
                     </a>
                     {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}
                 </div>
@@ -78,5 +80,49 @@ pub fn PageLayout(
                 })}
             <main class=style::main>{children()}</main>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + Send + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// qhq-8mgw.22. The appbar's ground is the brand colour in both themes, so
+    /// its mark has to be the one asset in the repo that can sit on a coloured
+    /// ground — `quilt.png`, which is PNG colour-type 6 and half transparent.
+    ///
+    /// `quilt-mark.png`, which this replaced, was colour-type 2: no alpha at
+    /// all, so it carried an opaque square. That was invisible for as long as
+    /// the square's white happened to match the bar, and no test could see the
+    /// difference — which is how it survived until dark theme made the corners
+    /// show. Pinning the filename is what a test CAN hold: the asset's own
+    /// format is checked where assets are, not here.
+    #[wasm_bindgen_test]
+    fn the_appbar_mark_is_the_asset_with_an_alpha_channel() {
+        let el = mount(|| view! { <PageLayout>"body"</PageLayout> });
+        let img = el
+            .query_selector("header img")
+            .unwrap()
+            .expect("the appbar draws a mark");
+        let src = img.get_attribute("src").expect("the mark has a src");
+        assert!(
+            src.ends_with("/quilt.png"),
+            "the bar is brand-coloured, so the mark must be the RGBA asset: {src}"
+        );
+        assert!(
+            !img.get_attribute("alt").unwrap_or_default().is_empty(),
+            "the mark is the only content of a link, so it has to name it"
+        );
     }
 }

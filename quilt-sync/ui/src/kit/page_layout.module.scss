@@ -32,10 +32,23 @@
   color: var(--q-fgColor-default);
 }
 
+/* The one surface in the kit that is not a step on the page's ladder.
+ *
+ * Every other raised surface is LIGHTER than the page; this one is the brand
+ * ground in both themes, which is a deliberate exception and not an oversight —
+ * the appbar is chrome, not content, and v1's bar has been this colour all
+ * along. It also settles the logo: `quilt.png` is white ink, so it needs a dark
+ * ground rather than a fourth brand asset (qhq-8mgw.22).
+ *
+ * No bottom rule. It separated a white bar from a near-white page; against the
+ * brand ground the colour change is the separation, and a grey line over it
+ * reads as a seam. */
 .appbar {
-  /* Lighter than the page, like every other raised surface in the kit. */
-  background: var(--q-bgColor-default);
-  border-bottom: 1px solid var(--q-borderColor-muted);
+  background: var(--q-bgColor-brand);
+  /* Stated, not inherited: `.root` sets the page's ink, and without this the
+   * bar's contents would draw dark-on-navy — the same mistake, one level up,
+   * that qhq-8mgw.56 found in `.root` itself. */
+  color: var(--q-fgColor-onBrand);
   /* Its own height, never a share of the leftover. */
   flex: none;
 }
@@ -83,8 +96,10 @@
   text-decoration: none;
 }
 
-/* 22px keeps the appbar's height where it was. The mark is square, so this is a
- * 22x22 tile rather than v1's 230x48 wordmark. */
+/* 22px keeps the appbar's height where it was. The asset is v1's 230x48
+ * wordmark, so this draws about 105px wide — height is the dimension the bar
+ * cares about, and `width: auto` keeps the aspect from the file rather than
+ * restating it here. */
 .logo img {
   height: 22px;
   width: auto;
@@ -95,6 +110,30 @@
   display: flex;
   flex: none;
   gap: var(--q-space-2);
+}
+
+/* The bar's own chrome, on the brand ground.
+ *
+ * `IconButton`'s framed variant is a raised white pill — right on a
+ * page-coloured surface, and two white blobs on this one. So the frame comes
+ * off and the glyph takes the bar's ink, which is what v1 does for the same
+ * two buttons and the same reason (`.link` in `assets/css/components/button.css`).
+ * Scoped to the bar rather than pushed into the kit: the component is correct
+ * everywhere else it is used, and it is the GROUND that is unusual here. */
+.actions button {
+  background: transparent;
+  border-color: transparent;
+  color: inherit;
+}
+
+.actions button:hover:not(:disabled) {
+  background: var(--q-overlay-onBrand-hover);
+  border-color: transparent;
+  color: inherit;
+}
+
+.actions button:active:not(:disabled) {
+  background: var(--q-overlay-onBrand-active);
 }
 
 /* The banner's own row: width-capped like the appbar's contents and the page column,
