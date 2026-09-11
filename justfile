@@ -13,10 +13,16 @@ lint:
     cargo clippy --workspace --all-targets --all-features
     cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets --all-features
 
-# Every crate that tests on the host. `quilt-uri` is not a default member and
-# `quilt-sync-ui` is wasm-only (see `test-frontend`), so neither `cargo test`
-# nor a bare `cargo nextest run` covers the workspace on its own.
-scope := "--workspace --all-targets --exclude quilt-sync-ui"
+# Every crate that tests on the host — `quilt-uri` is not a default member, so a
+# bare `cargo test` does not cover the workspace on its own.
+#
+# `quilt-sync-ui` is IN. It is not wasm-only, whatever this line used to say: the
+# crate has two test flavours on two targets and neither harness sees the other,
+# so its 124 `#[test]` functions run here and its `#[wasm_bindgen_test]` ones run
+# in `test-frontend`. Excluding it meant a green `just test` said nothing about
+# any of them — qhq-8mgw.27, the same hole CI had until the `Test (host target)`
+# step closed it.
+scope := "--workspace --all-targets"
 
 # Run every test (the live_* fixture tests need AWS credentials)
 test:
