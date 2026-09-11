@@ -48,11 +48,10 @@ pub fn PackageRow(
     /// struct: the caller maps a DTO status to this pair in one place, and a struct
     /// would only move the pairing without checking it.
     ///
-    /// Both are `Signal`s, not plain values. With plain values the only producer of
-    /// a new one is `MainPage`'s `LocalResource`, so settling a row would mean
-    /// re-running `PackageList`, which re-constructs `PackageListRow`, which
-    /// re-fires its `spawn_local` refresh — a loop. A `Signal` here is what lets a
-    /// row settle without anything upstream re-running.
+    /// Both are `Signal`s, not plain values: a row settles by writing its own
+    /// state, and with plain values the only producer of a new one is `MainPage`'s
+    /// `LocalResource` — so every settle would re-run `PackageList` and rebuild
+    /// every row to move one of them.
     #[prop(into)]
     state: Signal<String>,
     #[prop(into)] tone: Signal<StateTone>,
