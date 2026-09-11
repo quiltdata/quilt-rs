@@ -9,7 +9,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.1-alpha1] - 2026-09-09
+## [v0.22.1] - 2026-09-11
 
 ### Added
 
@@ -33,6 +33,10 @@
 
 - Opening QuiltSync, and returning to the package list from a package, now takes a moment to check which main page you have switched on. It used to go straight there. Nothing is lost by it and the check falls back to the current page if it fails, but there is a brief spinner where there was none (<https://github.com/quiltdata/quilt-rs/pull/881>)
 - While you are actively saving files, the packages list can now be up to one sync interval behind. A save brings the next check forward rather than adding one, so a burst of edits no longer means a burst of re-reads. Opening or moving to a page still reads fresh, and nothing is published until the folder has been quiet for the configured window either way (<https://github.com/quiltdata/quilt-rs/pull/886>)
+
+### quilt-rs
+
+- Updated [from v0.37.0 to v0.38.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.37.0...quilt-rs/v0.38.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.0] - 2026-09-08
 
