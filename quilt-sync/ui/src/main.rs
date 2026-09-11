@@ -94,8 +94,13 @@ fn Home() -> impl IntoView {
 /// No appbar around it. Drawing one page's chrome and then swapping it for the
 /// other's is the flicker this route exists to avoid.
 fn loading() -> AnyView {
-    view! { <kit::Spinner variant=kit::SpinnerVariant::Region aria_label="Loading QuiltSync" /> }
-        .into_any()
+    // `data-home-frame`: a v2 reader's ground for this frame, see `_base.scss`.
+    view! {
+        <div data-home-frame>
+            <kit::Spinner variant=kit::SpinnerVariant::Region aria_label="Loading QuiltSync" />
+        </div>
+    }
+    .into_any()
 }
 
 /// Whether `/` renders v2, given the settings fetch's outcome.
@@ -153,10 +158,12 @@ mod tests {
         leptos::mount::mount_to(host.clone(), loading).forget();
 
         let el: web_sys::Element = host.into();
+        // Inside the frame `_base.scss` grounds for a v2 reader — the two are
+        // pinned together because the frame is what a stylesheet can see.
         let status = el
-            .query_selector("[role=status]")
+            .query_selector("[data-home-frame] [role=status]")
             .unwrap()
-            .expect("the loading frame is a live region");
+            .expect("the loading frame is a live region inside the grounded frame");
         assert_eq!(
             status.text_content().unwrap().trim(),
             "Loading QuiltSync",

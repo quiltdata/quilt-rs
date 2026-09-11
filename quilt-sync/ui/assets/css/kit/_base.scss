@@ -13,13 +13,24 @@
  * business belongs in that component's module.
  */
 
-/* Document baseline in our tokens; overrides normalize's `html` floors. */
+/* Document baseline in our tokens; overrides normalize's `html` floors.
+ * No ground here: v1 loads this bundle too and `data-theme` follows the OS
+ * whatever the flag, so a themed body would sit under v1's unswitched black
+ * ink. `_chrome.scss` paints the gallery's. */
 body {
-  background: var(--q-bgColor-page);
   color: var(--q-fgColor-default);
   font-family: var(--q-font-sans);
   font-size: var(--q-text-body);
   line-height: var(--q-line-body);
+}
+
+/* The frame `/` shows while it reads the flag has no page to paint its ground,
+ * and only a reader carrying `theme::set_v2`'s root marker wants one — `body`
+ * itself must stay bare, since a v2 reader visits v1's pages too. An attribute,
+ * like `[data-sr-only]`: it marks a role, on an element outside any module. */
+:root.qui-v2 [data-home-frame] {
+  min-height: 100vh;
+  background: var(--q-bgColor-page);
 }
 
 /* Every button here is styled, so strip native chrome: one that forgets its
