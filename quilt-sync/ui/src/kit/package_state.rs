@@ -21,7 +21,9 @@ use super::StateTone;
 /// from failing the whole payload — and it carries no data because
 /// `#[serde(other)]` accepts only unit variants, and does not need to: the message
 /// for an unexplained pause travels on the watcher payload's `paused` list, not in here.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+/// `Hash`, so a queue row can be keyed on the state that draws it — see
+/// `QueueItem::key` in `pages/main_page/queue.rs`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PackageState {
     Latest,

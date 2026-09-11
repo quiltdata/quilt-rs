@@ -26,7 +26,7 @@ use crate::kit::render;
 
 /// One row in the queue, in draw order: a cause shared by several packages,
 /// or a package needing its own decision.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum QueueItem {
     /// Several packages collapsed under one explanation (R2, R3). `members`
     /// is the namespaces of the packages the cause holds, in the input's own
@@ -49,8 +49,30 @@ pub enum QueueItem {
     },
 }
 
+impl QueueItem {
+    /// This row's key for the diff in [`QueueRegion`]: its identity AND the
+    /// content that draws it, which is the whole item.
+    ///
+    /// Identity alone — the namespace, the cause's text — reads like the right
+    /// answer and is not. `<For>` builds a child view once per key and never
+    /// calls the children function again for a key it already holds, so a
+    /// package settling from `Behind` into `PullConflict` would keep the words
+    /// and the button it had. (Making the children reactive instead would buy
+    /// only this: a row that changed its own words keeping its own node.)
+    ///
+    /// Content alone would be wrong the other way — two rows are told apart by
+    /// which package they speak for. Together they give qhq-8mgw.42 what it
+    /// asks for: a row whose content did not change keeps its node and is
+    /// MOVED when the order changes, and only a row that actually changed is
+    /// rebuilt. Unique by construction: one row per namespace, one cause per
+    /// grouping key.
+    fn key(&self) -> Self {
+        self.clone()
+    }
+}
+
 /// What a cause's trailing slot offers.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CauseAction {
     /// `[Sign in]`, targeting this host.
     SignIn { host: String },
@@ -406,16 +428,27 @@ pub fn QueueRegion(
     let owner = Owner::current().expect("a view always renders inside an owner");
     let navigate = use_navigate();
 
-    move || {
-        let packages = packages.get();
-        let unchecked = unchecked.get();
-        // `view!` moves its children into closures of their own, so a handle
-        // captured by this closure cannot merely be borrowed out of it and leave
-        // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
-        // cloned again at each use below.
-        let navigate = navigate.clone();
-        let owner = owner.clone();
-        if packages.is_empty() && unchecked.is_empty() {
+    // The rows. Read by the keyed `<For>` and by `shape`, and deliberately NOT
+    // by the closure that wraps them — see [`Shape`].
+    let items = Signal::derive(move || derive_queue(&packages.get(), &hosts, &unchecked.get()));
+
+    // Derived from the rows rendered, never written by hand — a `Cause`'s count
+    // is its members, a `Package` is one of itself. A signal, so the card can
+    // take a new count without being rebuilt.
+    let count = Signal::derive(move || {
+        items.with(|items| {
+            items
+                .iter()
+                .map(|item| match item {
+                    QueueItem::Cause { members, .. } => members.len(),
+                    QueueItem::Package { .. } => 1,
+                })
+                .sum::<usize>()
+        })
+    });
+
+    let shape = Memo::new(move |_| {
+        if packages.with(Vec::is_empty) && unchecked.with(Vec::is_empty) {
             // Nothing to speak for. Two ways to get here: a fresh install with
             // no packages at all, and — since the caller began handing in the
             // resolved list — every page load, until the first row settles.
@@ -428,12 +461,10 @@ pub fn QueueRegion(
             // with every call failed the settled list is empty too, and bailing on
             // that alone left the region ABSENT — no card, no heading, no zero
             // line — over a page of rows the app could not read.
-            return ().into_any();
+            return Shape::Nothing;
         }
-
-        let items = derive_queue(&packages, &hosts, &unchecked);
-        if items.is_empty() {
-            if in_flight.get() || packages.len() < total.get() {
+        if items.with(Vec::is_empty) {
+            if in_flight.get() || packages.with(Vec::len) < total.get() {
                 // Nothing known, and the page is not entitled to say so. Two
                 // doors reach this: a call still outstanding, and a call that
                 // answered with an error. `outstanding` decrements on failure by
@@ -449,35 +480,44 @@ pub fn QueueRegion(
                 // the settling rows in the list below are the activity signal it
                 // points at — which is also where "we could not tell" belongs,
                 // as a row that stays dashed.
-                return ().into_any();
+                return Shape::Silent;
             }
-            // Acceptance criterion 8, unchanged. The count is the light total,
-            // not `packages.len()`: the sentence speaks for every package the
-            // list draws. The guard above makes the two equal wherever this
-            // line is reached, and naming the one the sentence means keeps it
-            // that way.
-            return view! { <ZeroLine text=zero_line_text(total.get()) /> }.into_any();
+            return Shape::Zero;
         }
+        Shape::Queue
+    });
 
-        // Derived from the rows rendered, never written by hand — a `Cause`'s count
-        // is its members, a `Package` is one of itself.
-        let count: usize = items
-            .iter()
-            .map(|item| match item {
-                QueueItem::Cause { members, .. } => members.len(),
-                QueueItem::Package { .. } => 1,
-            })
-            .sum();
-
-        view! {
+    move || match shape.get() {
+        Shape::Nothing | Shape::Silent => ().into_any(),
+        // Acceptance criterion 8, unchanged. The count is the light total,
+        // not `packages.len()`: the sentence speaks for every package the
+        // list draws. `shape`'s guard makes the two equal wherever this line is
+        // reached, and naming the one the sentence means keeps it that way.
+        Shape::Zero => view! { <ZeroLine text=zero_line_text(total.get()) /> }.into_any(),
+        // `view!` moves its children into closures of their own, so a handle
+        // captured by this closure cannot merely be borrowed out of it and leave
+        // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
+        // cloned again at each use below.
+        Shape::Queue => {
+            let navigate = navigate.clone();
+            let owner = owner.clone();
+            view! {
             // One wrapper child, so `Card`'s between-children hairline does not
             // fire: a queue is a list of decisions, and dividing every row would
             // make it read as a table.
             <Card title="Needs your attention" count=count>
                 <div>
-                    {items
-                        .into_iter()
-                        .map(|item| match item {
+                    // Keyed, not `Vec`'s positional diff. `derive_queue` sorts
+                    // by precedence, so one package settling into a higher rank
+                    // inserts at the top and shifts every row below it — and an
+                    // unkeyed diff rebuilds the node at index i into a
+                    // DIFFERENT logical row. The text comes out right either
+                    // way; what moves is the node under a focused control or a
+                    // mouse-down in flight, up to 43 times on one page load.
+                    <For
+                        each=move || items.get()
+                        key=QueueItem::key
+                        children=move |item| match item {
                             QueueItem::Cause { text, action, members } => {
                                 // Looked up, not built: the map outlives this
                                 // render, so a group the user opened stays open
@@ -535,13 +575,35 @@ pub fn QueueRegion(
                                         .into_any()
                                 }
                             }
-                        })
-                        .collect_view()}
-                </div>
-            </Card>
+                        }
+                    />
+                    </div>
+                </Card>
+            }
+            .into_any()
         }
-        .into_any()
     }
+}
+
+/// What the region draws at all — and, being a [`Memo`], the ONLY thing that
+/// re-renders it.
+///
+/// A settle changes the rows, not the shape, and the closure keyed on this one
+/// therefore stands still while the keyed `<For>` beneath it diffs. That is
+/// load-bearing: a reactive closure's `rebuild` throws its whole subtree away
+/// and builds a new one (`tachys/src/reactive_graph/mod.rs`), so a `<For>`
+/// wrapped in a closure that re-runs per settle is destroyed before its key can
+/// do anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shape {
+    /// No region: nothing to speak for.
+    Nothing,
+    /// No region: something to speak for, and no right to speak yet.
+    Silent,
+    /// One line, no card.
+    Zero,
+    /// The card and its rows.
+    Queue,
 }
 
 #[cfg(test)]
@@ -941,6 +1003,20 @@ mod tests {
                 />
             }
         })
+    }
+
+    /// The row element drawing `namespace` — the `<div>` holding the `<span>`
+    /// whose whole text is that namespace. Used to ask whether a row is still
+    /// the same DOM node it was before a settle.
+    fn row_of(el: &web_sys::Element, namespace: &str) -> web_sys::Element {
+        let spans = el.query_selector_all("span").unwrap();
+        for i in 0..spans.length() {
+            let span: web_sys::Element = spans.item(i).unwrap().dyn_into().unwrap();
+            if span.text_content().as_deref() == Some(namespace) {
+                return span.parent_element().expect("a row span has a row");
+            }
+        }
+        panic!("no row draws {namespace}: {}", el.text_content().unwrap());
     }
 
     /// The first cause row's disclosure control. `aria-expanded` is the state
@@ -1407,6 +1483,95 @@ mod tests {
         assert_eq!(
             expander(&el).get_attribute("aria-expanded").unwrap(),
             "true"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_reorder_leaves_every_row_on_the_dom_node_it_started_on() {
+        // qhq-8mgw.42. The settle itself is safe — `AnyView::rebuild` diffs in
+        // place and most settles leave the order alone — but `derive_queue`
+        // sorts by precedence, so one settling into a higher rank inserts at the
+        // top and shifts everything below it. Under an unkeyed positional diff
+        // the node at index i is then rebuilt into a DIFFERENT logical row: same
+        // element, new label, new handler. Nothing clicks the wrong target
+        // (listeners are re-attached), but a keyboard user's focused control and
+        // a mouse-down in flight both land on a row that became someone else's,
+        // up to 43 times on one page load.
+        //
+        // Stamping the nodes and re-finding them by name is the only way to see
+        // this: the rendered TEXT is identical either way.
+        let packages = RwSignal::new(vec![
+            pkg("a/one", PackageState::Behind, Some("h.io")),
+            pkg("b/two", PackageState::Unpublished, Some("h.io")),
+        ]);
+        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        row_of(&el, "a/one")
+            .set_attribute("data-node", "a")
+            .unwrap();
+        row_of(&el, "b/two")
+            .set_attribute("data-node", "b")
+            .unwrap();
+
+        // A third package settles into a conflict, which outranks both — so it
+        // takes index 0 and pushes the other two down one place each.
+        packages.update(|p| {
+            p.push(pkg(
+                "c/three",
+                PackageState::PullConflict {
+                    files: vec!["x.csv".to_string()],
+                },
+                Some("h.io"),
+            ));
+        });
+        leptos::task::tick().await;
+
+        assert!(
+            el.text_content().unwrap().contains("conflict in 1 file"),
+            "the settle landed: {}",
+            el.text_content().unwrap()
+        );
+        assert_eq!(
+            row_of(&el, "a/one").get_attribute("data-node").as_deref(),
+            Some("a"),
+            "a/one moved from index 0 to index 1 and took a different node with it"
+        );
+        assert_eq!(
+            row_of(&el, "b/two").get_attribute("data-node").as_deref(),
+            Some("b"),
+            "b/two moved from index 1 to index 2 and took a different node with it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_that_settles_in_place_says_the_new_words() {
+        // The other half of the keyed diff, and the failure an identity-only key
+        // would have shipped: `<For>` builds a child once per key and never
+        // calls the children function again for a key it already holds, so a
+        // row keyed on its namespace alone would still be saying "Newer
+        // revision available" over a package that has since conflicted — with
+        // the `[Get latest]` button that goes with it.
+        let packages = RwSignal::new(vec![pkg("a/one", PackageState::Behind, Some("h.io"))]);
+        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        assert!(
+            el.text_content()
+                .unwrap()
+                .contains("Newer revision available"),
+            "before: {}",
+            el.text_content().unwrap()
+        );
+
+        packages.update(|p| {
+            p[0].state = PackageState::PullConflict {
+                files: vec!["x.csv".to_string()],
+            };
+        });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("conflict in 1 file"), "after: {text}");
+        assert!(
+            !text.contains("Newer revision available"),
+            "the old words are gone, not merely joined: {text}"
         );
     }
 

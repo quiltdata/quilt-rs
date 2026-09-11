@@ -20,8 +20,11 @@ pub fn Card(
     /// rows rendered, never written — the design mock labels its queue `(17)` above
     /// 11 + 3 + 5 = 19 rows, which is what a hand-written count does the moment the
     /// rows change.
-    #[prop(optional)]
-    count: Option<usize>,
+    /// Reactive, so the queue can update its count without rebuilding the card
+    /// — and with it the keyed row list underneath, whose whole purpose is to
+    /// survive a settle (`pages/main_page/queue.rs`).
+    #[prop(optional, into)]
+    count: MaybeProp<usize>,
     /// Rows. The card draws a hairline between any two of them, so children need not
     /// know they are in a list — pass a single wrapper element to opt out, as the queue
     /// does, where dividers would make a list of decisions read as a table.
@@ -37,10 +40,15 @@ pub fn Card(
                     view! {
                         <h2 class=style::title>
                             {title}
-                            {count
-                                .map(|count| {
-                                    view! { <span class=style::count>{format!("({count})")}</span> }
-                                })}
+                            {move || {
+                                count
+                                    .get()
+                                    .map(|count| {
+                                        view! {
+                                            <span class=style::count>{format!("({count})")}</span>
+                                        }
+                                    })
+                            }}
                         </h2>
                     }
                 })}
