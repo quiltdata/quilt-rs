@@ -11,7 +11,8 @@ use chrono::Utc;
 use serde::Serialize;
 use tauri::Manager;
 use tokio::sync;
-use tokio::time::timeout;
+use tokio::time::Instant;
+use tokio::time::timeout_at;
 
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
@@ -326,8 +327,8 @@ fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
     }
 }
 
-/// How long the roster waits on one host's readable-bucket query before giving
-/// up on it.
+/// How long the roster waits on one host — the readable-bucket query and the
+/// role query behind a denial together — before giving up on it.
 ///
 /// COPIED from `package_list.rs:160` per `qhq-8mgw.1`, not shared: v1 is frozen
 /// and deleted wholesale. Mirror fixes in both until then.
@@ -340,6 +341,12 @@ fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
 /// path (reactive-only marking), so the budget is deliberately short:
 /// undershooting on a slow-but-working link costs only the hint; overshooting
 /// costs the first paint.
+///
+/// It bounds the host's WHOLE pass. The role query once sat outside any budget
+/// at all (qhq-8mgw.24), so a host that answered the first call and hung on the
+/// second held the main screen blank exactly as before this constant existed.
+/// One deadline shared across both calls rather than a second budget in series,
+/// which would have doubled the wait this exists to cap.
 const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// Whether the active role can reach a row's bucket, and what to say about it.
@@ -431,7 +438,9 @@ async fn mark_unreadable_buckets(m: &impl model::QuiltModel, roles: &RoleCache, 
     }
 
     for host in hosts {
-        let query = timeout(BUCKET_LIST_BUDGET, m.readable_buckets(&host));
+        // One deadline for the host, shared by both calls below.
+        let deadline = Instant::now() + BUCKET_LIST_BUDGET;
+        let query = timeout_at(deadline, m.readable_buckets(&host));
         let readable: HashSet<String> = match query.await {
             Ok(Ok(buckets)) => buckets.into_iter().collect(),
             Ok(Err(err)) => {
@@ -460,7 +469,17 @@ async fn mark_unreadable_buckets(m: &impl model::QuiltModel, roles: &RoleCache, 
             continue;
         }
 
-        let mark = denied_mark(m, roles, Some(&host)).await;
+        // Whatever is left of the host's budget. The name is the cosmetic
+        // half — the bucket already said no — so a denial with no role is the
+        // right answer here, and the vocabulary has words for exactly that
+        // (`PackageState::RoleDenied { role: None }`). Dropping the denial to
+        // keep the name would trade a certain fact for a label.
+        let mark = timeout_at(deadline, denied_mark(m, roles, Some(&host)))
+            .await
+            .unwrap_or_else(|_| {
+                tracing::debug!("Role query for {host} timed out");
+                AccessMark::denied(Some(&host), None)
+            });
         for index in unreadable {
             let row = &mut rows[index];
             row.package.state = mark.state();
@@ -2321,6 +2340,89 @@ mod tests {
         assert!(
             started.elapsed() <= BUCKET_LIST_BUDGET,
             "the roster waited {:?} on a host that never answers",
+            started.elapsed(),
+        );
+    }
+
+    /// A host that answers the readable-bucket query and then says nothing to
+    /// `/me` — the half of the same shape `SilentHost` does not cover, and the
+    /// one that reaches the role query behind a denial.
+    ///
+    /// Hand-written for `SilentHost`'s reason: a mockall expectation resolves
+    /// synchronously, so it cannot model a call that hangs.
+    struct SilentRole {
+        domain: tokio::sync::Mutex<quilt::LocalDomain>,
+    }
+
+    impl Default for SilentRole {
+        fn default() -> Self {
+            Self {
+                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(std::path::PathBuf::new())),
+            }
+        }
+    }
+
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "`refresh_roles` awaits; the others do not — see `SilentHost`."
+    )]
+    impl model::QuiltModel for SilentRole {
+        fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
+            &self.domain
+        }
+
+        async fn get_installed_packages_list(&self) -> Result<Vec<quilt::InstalledPackage>, Error> {
+            Ok(vec![make_installed_package(("team", "locked"))])
+        }
+
+        async fn get_installed_package_lineage(
+            &self,
+            package: &quilt::InstalledPackage,
+        ) -> Result<quilt::lineage::PackageLineage, Error> {
+            let ns = package.namespace.to_string();
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri_in_bucket("locked", &ns),
+                "abcdef".to_string(),
+            ))
+        }
+
+        async fn readable_buckets(&self, _host: &Host) -> Result<Vec<String>, Error> {
+            // Answers at once, and does not name `locked` — so the row is
+            // denied and the role query behind the wording is reached.
+            Ok(vec!["reachable".to_string()])
+        }
+
+        async fn refresh_roles(&self, _host: &Host) -> Result<quilt::auth::RoleInfo, Error> {
+            // Absolute, for the reason `SilentHost::readable_buckets` gives.
+            tokio::time::sleep(Duration::from_secs(200)).await;
+            unreachable!("the budget above cuts this off")
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_role_query_that_never_answers_does_not_hold_the_roster() {
+        // qhq-8mgw.24. `BUCKET_LIST_BUDGET` bounded the bucket query and nothing
+        // else, so a host that answered that one and then hung on `/me` held the
+        // main screen blank for as long as the HTTP stack allowed — the same
+        // blank-screen class the budget was added to close, reached through the
+        // second call instead of the first.
+        //
+        // The degrade is the one the vocabulary already names: `RoleDenied`
+        // with no role. The bucket said no, so the denial is certain; only the
+        // word for it is missing, and dropping the denial to keep the name
+        // would lose the larger fact.
+        let m = SilentRole::default();
+        let started = tokio::time::Instant::now();
+        let rows = roster(&m, &RoleCache::default()).await;
+
+        assert_eq!(
+            row(&rows, "team/locked").state,
+            PackageStateDto::RoleDenied { role: None },
+            "the denial stands; the role query is what failed"
+        );
+        assert!(
+            started.elapsed() <= BUCKET_LIST_BUDGET,
+            "the roster waited {:?} on a role query that never answers",
             started.elapsed(),
         );
     }

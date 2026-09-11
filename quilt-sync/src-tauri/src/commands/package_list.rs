@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::time::timeout;
+use tokio::time::Instant;
+use tokio::time::timeout_at;
 
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
@@ -157,6 +158,13 @@ pub(super) async fn denied_mark(
 /// authoritative per-row status call marks the denied rows a moment later.
 /// So the budget is deliberately short. Undershooting on a slow-but-working
 /// link costs only the hint; overshooting costs the first paint.
+///
+/// It bounds the host's WHOLE pass, not just the bucket query — the role query
+/// behind a denial has the same two shapes of failure and once sat outside any
+/// budget at all (qhq-8mgw.24), so a host that answered the first call and hung
+/// on the second held the main screen blank exactly as before. One deadline
+/// shared across both calls rather than a second budget in series, which would
+/// have doubled the wait this constant exists to cap.
 const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// A message-bearing autosync pause for a namespace: the stable reason
@@ -242,7 +250,9 @@ async fn mark_unreadable_buckets(
     }
 
     for host in hosts {
-        let query = timeout(BUCKET_LIST_BUDGET, m.readable_buckets(&host));
+        // One deadline for the host, shared by both calls below.
+        let deadline = Instant::now() + BUCKET_LIST_BUDGET;
+        let query = timeout_at(deadline, m.readable_buckets(&host));
         let readable: HashSet<String> = match query.await {
             Ok(Ok(buckets)) => buckets.into_iter().collect(),
             Ok(Err(err)) => {
@@ -271,7 +281,14 @@ async fn mark_unreadable_buckets(
             continue;
         }
 
-        let mark = denied_mark(m, roles, Some(&host)).await;
+        // Whatever is left of the host's budget — see the v2 copy in
+        // `main_page.rs` for why a denial with no role is the right degrade.
+        let mark = timeout_at(deadline, denied_mark(m, roles, Some(&host)))
+            .await
+            .unwrap_or_else(|_| {
+                tracing::debug!("Role query for {host} timed out");
+                AccessMark::denied(Some(&host), None)
+            });
         for index in unreadable {
             let item = &mut packages[index];
             item.no_access = mark.no_access;
@@ -977,6 +994,87 @@ mod tests {
             tokio::time::sleep(BUCKET_LIST_BUDGET * 100).await;
             Ok(Vec::new())
         }
+    }
+
+    /// A host that answers the bucket query and then says nothing to `/me`.
+    /// `SilentHost` covers the first call; this covers the second, which is
+    /// where the roster reached before qhq-8mgw.24.
+    struct SilentRole {
+        domain: tokio::sync::Mutex<quilt::LocalDomain>,
+    }
+
+    impl Default for SilentRole {
+        fn default() -> Self {
+            Self {
+                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(std::path::PathBuf::new())),
+            }
+        }
+    }
+
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "`refresh_roles` awaits; the others do not — see `SilentHost`."
+    )]
+    impl model::QuiltModel for SilentRole {
+        fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
+            &self.domain
+        }
+
+        async fn get_installed_packages_list(&self) -> Result<Vec<quilt::InstalledPackage>, Error> {
+            Ok(vec![make_installed_package(("team", "locked"))])
+        }
+
+        async fn get_installed_package_lineage(
+            &self,
+            package: &quilt::InstalledPackage,
+        ) -> Result<quilt::lineage::PackageLineage, Error> {
+            let ns = package.namespace.to_string();
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri_in_bucket("locked", &ns),
+                "abcdef".to_string(),
+            ))
+        }
+
+        async fn readable_buckets(&self, _host: &Host) -> Result<Vec<String>, Error> {
+            // Answers at once, and does not name `locked` — so the row is
+            // denied and the role query behind the reason is reached.
+            Ok(vec!["reachable".to_string()])
+        }
+
+        async fn refresh_roles(&self, _host: &Host) -> Result<quilt::auth::RoleInfo, Error> {
+            tokio::time::sleep(BUCKET_LIST_BUDGET * 100).await;
+            unreachable!("the budget above cuts this off")
+        }
+    }
+
+    /// qhq-8mgw.24, the v1 copy. The budget bounded the bucket query and
+    /// nothing else, so a host that answered it and hung on `/me` held the main
+    /// screen blank for as long as the HTTP stack allowed. The row still comes
+    /// back denied — the bucket said no — with no role named.
+    #[tokio::test(start_paused = true)]
+    async fn a_role_query_that_never_answers_does_not_hold_the_roster() {
+        let m = SilentRole::default();
+
+        let started = tokio::time::Instant::now();
+        let data = get_installed_packages_list_data_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+
+        let row = &data.packages[0];
+        assert!(
+            row.no_access,
+            "the denial stands; the role query is what failed"
+        );
+        assert!(
+            started.elapsed() <= BUCKET_LIST_BUDGET,
+            "the roster waited {:?} on a role query that never answers",
+            started.elapsed(),
+        );
     }
 
     /// The roster is local data; the bucket query is an optimistic hint on
