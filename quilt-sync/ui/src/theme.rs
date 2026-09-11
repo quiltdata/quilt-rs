@@ -132,12 +132,13 @@ mod tests {
     }
 
     /// The reset in `app.scss` reaches v1's pages, whose ink no theme switches,
-    /// and `follow_os` cannot see the flag — so a themed ground on a bare `body`
-    /// would go dark under v1's black text. The ground belongs behind
-    /// `V2_CLASS`, where only a v2 reader gets it. Pinned on the stylesheet,
-    /// where the bare rule was added once already.
+    /// and `follow_os` cannot see the flag — so a themed ground on `body` would
+    /// go dark under v1's black text, for a v2 reader on Settings as much as for
+    /// a v1 one at home. The one ground it may paint is the frame `/` shows
+    /// before it knows its page, and only behind `V2_CLASS`. Pinned on the
+    /// stylesheet, where the bare rule was added once already.
     #[test]
-    fn the_shared_reset_paints_a_ground_only_for_a_v2_reader() {
+    fn the_shared_reset_paints_a_ground_only_for_a_v2_reader_s_home_frame() {
         const BASE: &str = include_str!("../assets/css/kit/_base.scss");
         let rule = |selector: &str| {
             BASE.split(selector)
@@ -151,10 +152,14 @@ mod tests {
             !bare.contains("background"),
             "the bare body rule must not paint a ground: {bare}"
         );
-        let v2 = rule(&format!("\n:root.{V2_CLASS} body {{"));
         assert!(
-            v2.contains("background: var(--q-bgColor-page)"),
-            "the v2 reader's ground must be there: {v2}"
+            !BASE.contains(&format!(":root.{V2_CLASS} body")),
+            "no rule may put a ground on body for a v2 reader either"
+        );
+        let frame = rule(&format!("\n:root.{V2_CLASS} [data-home-frame] {{"));
+        assert!(
+            frame.contains("background: var(--q-bgColor-page)"),
+            "the v2 reader's home frame must have its ground: {frame}"
         );
     }
 }
