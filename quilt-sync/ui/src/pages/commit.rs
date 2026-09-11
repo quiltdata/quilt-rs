@@ -65,7 +65,7 @@ pub fn Commit() -> impl IntoView {
                         );
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "/installed-packages-list".to_string(),
+                                href: "/".to_string(),
                                 title: String::new(),
                             }),
                             BreadcrumbItem::Link(BreadcrumbLink {
@@ -626,7 +626,7 @@ fn build_toolbar_actions(
                 match commands::package_uninstall(ns, uri).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
-                        navigate("/installed-packages-list", NavigateOptions::default());
+                        navigate("/", NavigateOptions::default());
                     }
                     Err(e) => {
                         ui_locked.set(false);

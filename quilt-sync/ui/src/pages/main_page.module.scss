@@ -1,0 +1,68 @@
+/* The state strip's two-card row: Autosync beside Accounts.
+ *
+ * No breakpoint and no media query — the strip is one row while both cards fit
+ * and two rows when they do not, which `flex-wrap` decides from the space it has.
+ *
+ * `flex: 1 1 300px` belongs here rather than on `Card`, where it would be the
+ * parent's layout living in the child — and wrong the moment a card enters the
+ * page's flex column, since there `flex-basis` sizes the height and every card
+ * would ask to be 300px tall. `min-width: 0` lets a card shrink below 300px
+ * rather than overflowing a narrow window. */
+.strip {
+  display: flex;
+  gap: var(--q-space-3);
+  flex-wrap: wrap;
+  /* Both cards take the taller one's height, so the strip has one bottom edge.
+   *
+   * `flex-start` shipped at `c57d94b` for the opposite reason — a one-host
+   * Accounts card padded to Autosync's height is a row of text above empty
+   * space — and the operator's verdict on it was "not sure it is substantially
+   * better", because sizing each card to its contents trades the empty half for
+   * a ragged edge. qhq-8mgw.33 records both and settles neither.
+   *
+   * Chosen on the operator's judgement seeing it at one host, 2026-09-10. */
+  align-items: stretch;
+
+  > * {
+    flex: 1 1 300px;
+    min-width: 0;
+  }
+}
+
+/* Region 4 is one region. Its toolbar names the view directly below it, so the
+ * pair is a single child of `PageLayout`'s column — `.main`'s gap separates
+ * REGIONS, and letting it fall between the toolbar and its own list drew them as
+ * two, spaced further apart than the toolbar was from the queue above it.
+ *
+ * No gap here: `ListToolbar`'s own `padding-bottom` is the internal spacing, and
+ * having it in one place is what keeps the toolbar sitting on its list in every
+ * arm of the read. */
+.list_region {
+  display: flex;
+  flex-direction: column;
+  /* Region 4 takes whatever height the regions above it leave, and its list
+   * scrolls inside — so the strip and the queue stay on screen with a long
+   * roster instead of being pushed off the top. */
+  flex: 1 1 auto;
+  min-height: 0;
+
+  /* A floor, so the list is still a list when the window is at its shortest.
+   * At the 560px window floor the regions above spend roughly 400px between
+   * them, which leaves about this much; below that `PageLayout`'s own
+   * `overflow-y` takes over and the whole page scrolls, which is worse than
+   * scrolling the list but much better than a list two rows tall. */
+  min-height: 160px;
+
+  /* The card is the scroller: the toolbar above it keeps its own height, and the
+   * rows move under it. Its flex behaviour belongs to this column rather than to
+   * `Card`, for the same reason `.strip`'s does — a card that sized itself would
+   * be the parent's layout living in the child.
+   *
+   * `:last-child` is safe because this region has exactly two element children in
+   * every arm of the read, toolbar then card, which
+   * `the_toolbar_and_its_list_share_one_parent` pins. */
+  > :last-child {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}

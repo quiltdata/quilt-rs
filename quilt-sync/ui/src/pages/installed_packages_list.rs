@@ -722,7 +722,7 @@ fn build_package_menu(
     let current_bucket_for_popup = current_bucket.clone();
     let has_local_commit_for_popup = data.has_local_commit;
     let login_href = origin_host.as_ref().map(|host| {
-        let back_encoded = urlencoding::encode("/installed-packages-list");
+        let back_encoded = urlencoding::encode("/");
         format!("/login?host={host}&back={back_encoded}")
     });
 

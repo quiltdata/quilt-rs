@@ -16,6 +16,7 @@
 
 mod auth;
 mod commit_data;
+mod main_page;
 mod package_data;
 mod package_list;
 mod package_ops;
@@ -26,6 +27,7 @@ mod toast;
 
 pub use auth::*;
 pub use commit_data::*;
+pub use main_page::*;
 pub use package_data::*;
 pub use package_list::*;
 pub use package_ops::*;

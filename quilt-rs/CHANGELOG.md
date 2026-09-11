@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- `Error::is_access_denied` now answers true for any 403 that is not a credential failure, not only for the `AccessDenied` code. S3 refuses under several codes — `KMS.AccessDeniedException` for an object whose key the role cannot use, `AllAccessDisabled` for an account-level block — and every one but `AccessDenied` fell through to the caller's operation kind, where a consumer reads it as a transport fault rather than a refusal. `InvalidAccessKeyId`, `ExpiredToken`, `InvalidToken` and `InvalidClientTokenId` still classify as credential failures, so a re-vend is still offered where it helps. The trade is stated at `classify_s3_error`: a 403 that is not about access, such as `RequestTimeTooSkewed`, is now named a denial rather than a generic failure — both are wrong about the cause, and only one sends a caller round the re-login loop (<https://github.com/quiltdata/quilt-rs/pull/881>)
 - A vend that never happens is now reported as a dead session too. `InvalidCredentials` (v0.36.0) covers a credential S3 *rejects*, which names a code in its response; a provider that refuses to vend at all fails before any request is signed, so it comes back as a code-less dispatch failure that no caller could tell from a transport fault. Recovered at every vending call site — existence checks, object reads, URL resolution, and the four upload legs (<https://github.com/quiltdata/quilt-rs/pull/867>)
 
 ## [v0.37.0] - 2026-09-08

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuiltSync design system — gallery</title>
+
+  <!--
+    Debug harness. Its own Trunk target so it mounts `Gallery`, never `App` —
+    `App` invokes on mount and the Tauri bridge has no `catch`, so in a plain
+    browser it traps the wasm module. Run: `trunk serve gallery.html`.
+
+    No fonts are linked: the system stack lives in tokens.css. v1's index.html
+    pulls 1.2 MB of Roboto; none of it is wanted here.
+  -->
+  <!--
+    ONE stylesheet, compiled at build time: Trunk runs dart-sass over
+    `gallery.scss`, which pulls the tokens, the generated CSS-Module bundle, and
+    the gallery's own chrome.
+
+    Adding a component never touches this file, and never touches an index
+    either: a component declares its own stylesheet in Rust via
+    `import_crate_style!`, and `stylance-cli` discovers every
+    `src/kit/*.module.scss` and concatenates them.
+  -->
+  <link data-trunk rel="scss" href="assets/css/kit/gallery.scss" />
+
+  <link data-trunk rel="rust" data-bin="gallery" data-wasm-opt="z" />
+</head>
+<body></body>
+</html>

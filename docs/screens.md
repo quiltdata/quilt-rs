@@ -56,9 +56,65 @@ After login -> redirect to `back` URL (the page user came from)
 
 ---
 
-### Installed Packages List (Home)
+### Main Page
 
-Main screen. Lists all locally installed packages.
+The main screen when Settings → Experimental → **New main page** is on. Off by
+default; `/` renders this or the Installed Packages List below according to that
+setting, and both stay reachable at `/main` and `/installed-packages-list`.
+
+Four regions, in reading order. The queue is absent — not empty — when nothing
+needs a decision, and says so in one line instead.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                 [refresh] [gear] |
++---------------------------------------------------------+
+|  +--[Autosync]--------+  +--[Accounts]-----------------+ |
+|  | Pulling      [x]   |  | open.quiltdata.com          | |
+|  | Publishing   [x]   |  |   as ReadWriteQuiltBucket   | |
+|  | Next check in 0:28 |  | demo.quiltdata.com          | |
+|  +--------------------+  |   Signed out    [Sign in]   | |
+|                          +-----------------------------+ |
++---------------------------------------------------------+
+|  Needs your attention (4)                               |
+|  +---------------------------------------------------+  |
+|  | • Signed out from demo.quiltdata.com — 2 packages  |  |
+|  |                                        [Sign in]   |  |
+|  | • user/pkg-a      Newer revision available         |  |
+|  |                                     [Get latest]   |  |
+|  | • user/pkg-b      2 files changed      [Publish]   |  |
+|  +---------------------------------------------------+  |
++--[toolbar]----------------------------------------------+
+| [Packages|Recent files]  [Search…] [Group:Bucket]        |
+|                          [Sort:Changed] [Create package] |
++---------------------------------------------------------+
+|  +---------------------------------------------------+  |
+|  | user/package-a          Latest       2 hours ago   |  |
+|  | user/package-b          2 files changed   just now |  |
+|  +---------------------------------------------------+  |
++---------------------------------------------------------+
+```
+
+- **Autosync card** — whether background pulling and publishing are running,
+  each switchable on its own, and when the next check is due.
+- **Accounts card** — every catalog your packages point at plus every host you
+  have signed into, with the role each is using.
+- **Attention queue** — one row per package needing a decision, beside the one
+  thing to do about it. Where a whole catalog or bucket is the cause, it is
+  said once with a count rather than repeated per package. When nothing needs
+  you: `Everything is Latest — N packages`.
+- **List** — your packages with each one's state and when it last changed,
+  searchable, groupable by Bucket / Prefix / None and sortable by Changed /
+  Name; or switched to a feed of recently changed files.
+
+Grouping options differ per view: packages group by Bucket, Prefix or None;
+recent files group by Package or None.
+
+### Installed Packages List
+
+Lists all locally installed packages. The main screen unless Settings →
+Experimental → **New main page** is on, in which case that page takes `/` and
+this one stays at `/installed-packages-list`.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -569,6 +625,11 @@ Application settings and diagnostics.
 |                                                         |
 |  Experimental                                           |
 |  ------------                                           |
+|  New main page                 [ ]                      |
+|  hint: replaces the packages list with a page that      |
+|        opens with what needs your attention. Switching  |
+|        it off returns you to the current page.          |
+|                                                         |
 |  Enable entire-package sync    [ ]                      |
 |  hint: adds a per-package choice — sync the entire      |
 |        package, including files added later, instead    |
@@ -625,7 +686,8 @@ auth-related).
                             |
                             v
   +---------------------------------------------------+
-  |          Installed Packages List (Home)            |<---------+
+  |   Home  (Main Page or Installed Packages List,     |<---------+
+  |          per Settings -> Experimental)             |
   +---+-------+------------+---------------+----------+           |
       |       |            |               |                      |
       |       | [Create]   | [Commit and   | [gear]               |

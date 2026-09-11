@@ -235,7 +235,7 @@ pub fn InstalledPackage() -> impl IntoView {
                             let ns = d.namespace.clone();
                             let breadcrumbs = vec![
                                 BreadcrumbItem::Link(BreadcrumbLink {
-                                    href: "/installed-packages-list".to_string(),
+                                    href: "/".to_string(),
                                     title: String::new(),
                                 }),
                                 BreadcrumbItem::Current(ns),

@@ -1,0 +1,1880 @@
+//! §4.3: the attention queue, derived and drawn. It has no payload of its own —
+//! given the resolved package list and the host facts, the grouping, the
+//! counts and the order are all computed here, and [`QueueRegion`] draws what
+//! that computation produces.
+
+use std::collections::HashMap;
+use std::collections::HashSet;
+
+use leptos::prelude::*;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::use_navigate;
+
+use super::accounts::sign_in_href;
+use crate::commands::AccountHostData;
+use crate::commands::MainPagePackageData;
+use crate::kit::Button;
+use crate::kit::ButtonVariant;
+use crate::kit::Card;
+use crate::kit::CauseRow;
+use crate::kit::PackageAction;
+use crate::kit::PackageState;
+use crate::kit::QueueRow;
+use crate::kit::Site;
+use crate::kit::ZeroLine;
+use crate::kit::render;
+
+/// One row in the queue, in draw order: a cause shared by several packages,
+/// or a package needing its own decision.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum QueueItem {
+    /// Several packages collapsed under one explanation (R2, R3). `members`
+    /// is the namespaces of the packages the cause holds, in the input's own
+    /// order — its length is the count `CauseRow` renders; no count is ever
+    /// passed in or written separately.
+    Cause {
+        text: String,
+        action: CauseAction,
+        members: Vec<String>,
+    },
+    /// A package needing its own decision. Carries the `PackageState` itself,
+    /// not its words: Task 3 renders it with `render(&state, Site::QueueRow)`,
+    /// the one exception being a cause's own composed text (see
+    /// [`derive_queue`]).
+    Package {
+        namespace: String,
+        // Read by `QueueRegion` to render — the one exception being a cause's
+        // own composed text (see [`derive_queue`]).
+        state: PackageState,
+    },
+}
+
+impl QueueItem {
+    /// This row's key for the diff in [`QueueRegion`]: its identity AND the
+    /// content that draws it, which is the whole item.
+    ///
+    /// Identity alone — the namespace, the cause's text — reads like the right
+    /// answer and is not. `<For>` builds a child view once per key and never
+    /// calls the children function again for a key it already holds, so a
+    /// package settling from `Behind` into `PullConflict` would keep the words
+    /// and the button it had. (Making the children reactive instead would buy
+    /// only this: a row that changed its own words keeping its own node.)
+    ///
+    /// Content alone would be wrong the other way — two rows are told apart by
+    /// which package they speak for. Together they give qhq-8mgw.42 what it
+    /// asks for: a row whose content did not change keeps its node and is
+    /// MOVED when the order changes, and only a row that actually changed is
+    /// rebuilt. Unique by construction: one row per namespace, one cause per
+    /// grouping key.
+    fn key(&self) -> Self {
+        self.clone()
+    }
+}
+
+/// What a cause's trailing slot offers.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CauseAction {
+    /// `[Sign in]`, targeting this host.
+    SignIn { host: String },
+    /// No control here — switching role is host-scoped, so it belongs to the
+    /// host row in the Accounts card; the trailing slot points at it instead
+    /// of duplicating it.
+    ///
+    /// A unit variant, carrying no host: the slot is a fixed sentence rather
+    /// than a control, and the host a denial names is already in the cause's
+    /// own `text` (see [`role_denied_text`]). A field nothing renders would be
+    /// the same fact stored twice, told apart only by which copy a later
+    /// change forgot.
+    SwitchRole,
+    /// `[Try again]`, re-checking only this cause's own packages — which is the
+    /// one thing the appbar's Refresh cannot do, since it reloads the page.
+    ///
+    /// Carries no members for `SwitchRole`'s reason: the cause already holds
+    /// them, and [`cause_trailing`] is handed them beside the action. The host
+    /// is not carried either — it is already in the cause's `text`.
+    TryAgain,
+}
+
+/// The queue, derived. Section 4.3: it has no payload — given the resolved
+/// package list and the host facts, everything below is computed here.
+/// `unchecked` is the packages whose heavy-phase call FAILED — not the ones still
+/// waiting, which are not news (R3). They arrive separately because `packages` is
+/// the *settled* list and R2 drops them before the queue could see them: without a
+/// third input the region on a page where every check failed is not merely quiet
+/// but absent, since it returns nothing twice over. Same move as `be124d0` made
+/// for `PullConflict` — turn an absence into a fact the page carries.
+pub fn derive_queue(
+    packages: &[MainPagePackageData],
+    hosts: &[AccountHostData],
+    unchecked: &[MainPagePackageData],
+) -> Vec<QueueItem> {
+    let signed_out: HashSet<&str> = hosts
+        .iter()
+        .filter(|h| !h.signed_in)
+        .map(|h| h.host.as_str())
+        .collect();
+
+    let mut signed_out_groups: HashMap<&str, Vec<&MainPagePackageData>> = HashMap::new();
+    let mut role_denied_groups: HashMap<&str, Vec<&MainPagePackageData>> = HashMap::new();
+    let mut rows: Vec<&MainPagePackageData> = Vec::new();
+
+    // Two passes rather than one: a package's membership of a shared cause is
+    // decided by the join, and only what the join rejects becomes its own row.
+    for package in packages {
+        // R3: Unknown alone is not enough — it is serde's catch-all for a
+        // state this build could not read, of which a signed-out host is only
+        // one cause. The join against `signed_out` is the other half.
+        let is_signed_out = package.state == PackageState::Unknown
+            && package
+                .host
+                .as_deref()
+                .is_some_and(|host| signed_out.contains(host));
+        if is_signed_out {
+            let host = package
+                .host
+                .as_deref()
+                .expect("checked by is_some_and above");
+            signed_out_groups.entry(host).or_default().push(package);
+            continue;
+        }
+
+        // R2: grouped by bucket, never by host — one host can hold both
+        // readable and unreadable buckets. A denial with no bucket to name
+        // becomes its own row instead (ruling 3): a cause keyed on a bucket
+        // cannot name one that is absent.
+        if matches!(package.state, PackageState::RoleDenied { .. })
+            && let Some(bucket) = package.bucket.as_deref()
+        {
+            role_denied_groups.entry(bucket).or_default().push(package);
+            continue;
+        }
+
+        if package.state != PackageState::Latest {
+            rows.push(package);
+        }
+    }
+
+    // (rank, text, item) so the final sort is by §5's cause rank first and
+    // the cause text second — never hash-iteration order, which is all a
+    // `HashMap`'s own order would give us.
+    let mut ranked_causes: Vec<(u8, String, QueueItem)> = Vec::new();
+
+    for (bucket, members) in role_denied_groups {
+        // One bucket is one denial: every member shares the same bucket by
+        // construction, and the role and host it names come from the group's
+        // first member in the input's own order. A difference among members
+        // here would be a backend inconsistency, not a case to render twice.
+        let first = members[0];
+        let PackageState::RoleDenied { .. } = &first.state else {
+            unreachable!("role_denied_groups only ever collects RoleDenied packages")
+        };
+        let text = role_denied_text(&first.state, first.host.as_deref(), bucket);
+        ranked_causes.push((
+            0, // §5 row 1: role-denied sorts before signed-out.
+            text.clone(),
+            QueueItem::Cause {
+                text,
+                action: CauseAction::SwitchRole,
+                members: members.iter().map(|p| p.namespace.clone()).collect(),
+            },
+        ));
+    }
+
+    for (host, members) in signed_out_groups {
+        let text = format!("Signed out from {host}");
+        ranked_causes.push((
+            4, // §5 row 4: signed-out is the attributable half of "error".
+            text.clone(),
+            QueueItem::Cause {
+                text,
+                action: CauseAction::SignIn {
+                    host: host.to_string(),
+                },
+                members: members.iter().map(|p| p.namespace.clone()).collect(),
+            },
+        ));
+    }
+
+    // Host-grouped, so the sentence and its remedy share a scope, exactly as the
+    // signed-out cause does. A package with no host to name is skipped rather than
+    // given a row: "unchecked" is not a state, so `QueueItem::Package` has nothing
+    // to render it with, and a cause keyed on a host cannot name one that is
+    // absent — the same ruling `role_denied_groups` follows for a missing bucket.
+    // Such a row stays dashed and dimmed in the list, as it does today.
+    let mut unchecked_groups: HashMap<&str, Vec<&MainPagePackageData>> = HashMap::new();
+    for package in unchecked {
+        if let Some(host) = package.host.as_deref() {
+            unchecked_groups.entry(host).or_default().push(package);
+        }
+    }
+    for (host, members) in unchecked_groups {
+        // `new revisions` is the phrase the page already uses for this operation,
+        // on the autosync toggle. Not `Couldn't reach {host}`: the call can fail in
+        // credential vending, in the role query or in the hash walk, none of which
+        // establishes a network fact, and this epic has already paid twice for a
+        // state it manufactured. Not `changes` either — on this page that word
+        // means local file changes.
+        let text = format!("Couldn't check for new revisions on {host}");
+        ranked_causes.push((
+            // After signed-out, which is the *attributable* half of error: an
+            // unattributable failure is weaker information, so the page says what
+            // it knows before what it could not determine.
+            5,
+            text.clone(),
+            QueueItem::Cause {
+                text,
+                action: CauseAction::TryAgain,
+                members: members.iter().map(|p| p.namespace.clone()).collect(),
+            },
+        ));
+    }
+
+    ranked_causes.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let causes = ranked_causes.into_iter().map(|(_, _, item)| item);
+
+    rows.sort_by_key(|p| precedence(&p.state));
+    let rows = rows.into_iter().map(|p| QueueItem::Package {
+        namespace: p.namespace.clone(),
+        state: p.state.clone(),
+    });
+
+    causes.chain(rows).collect()
+}
+
+/// Ruling 5's cause text. Every word for the denial itself comes from
+/// `render(&state, Site::QueueRow)` — `"No access as {role}"` or, when the
+/// role query behind the wording failed, `"No access"` — the same words
+/// `kit/package_state.rs` gives a per-package `RoleDenied` row. The host and
+/// bucket clauses appended here are the one exception: composed from a host
+/// or bucket name, which the vocabulary never names. Drops the ` on {host}`
+/// clause when the package has no host; ` in s3://{bucket}` never drops,
+/// since every member of a `role_denied_groups` entry is keyed on a bucket
+/// that is present. The count is never part of this string — `CauseRow`
+/// renders `— N packages` itself from `members.len()`.
+fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> String {
+    let words = render(state, Site::QueueRow).words;
+    match host {
+        Some(host) => format!("{words} on {host} in s3://{bucket}"),
+        None => format!("{words} in s3://{bucket}"),
+    }
+}
+
+/// Section 5's lattice, as a sort key. Lower sorts first: pull-conflict above
+/// error above diverged above behind above "has changes" above no-remote
+/// above unpublished. `Unknown` takes the "error" rank — of which the
+/// signed-out group is the attributable half, so what reaches this function
+/// as `Unknown` is a state this build could not otherwise explain.
+/// `RoleDenied` sorts last only to keep this match total: R2 groups every
+/// denial by bucket, so a `RoleDenied` package never reaches `rows` unless
+/// its bucket is absent, and a denial is not unimportant.
+fn precedence(state: &PackageState) -> u8 {
+    match state {
+        PackageState::PullConflict { .. } => 0,
+        // §5's row 3: below a conflict, above the unread state at its row 4. A
+        // conflict names its files and is the more specific fact about the same
+        // disk; a stopped sync is a fact, where `Unknown` is the absence of one.
+        PackageState::Paused => 1,
+        PackageState::Unknown => 2,
+        PackageState::Diverged => 3,
+        PackageState::Behind => 4,
+        PackageState::PendingChanges { .. } | PackageState::PendingCommit => 5,
+        PackageState::NoRemote => 6,
+        PackageState::Unpublished => 7,
+        PackageState::RoleDenied { .. } => 8,
+        PackageState::Latest => unreachable!("Latest never enters either collection"),
+    }
+}
+
+/// `Everything is Latest — 43 packages`. One string, because the singular case
+/// is not a plural rule `ZeroLine` can apply.
+fn zero_line_text(total: usize) -> String {
+    if total == 1 {
+        "Everything is Latest — 1 package".to_string()
+    } else {
+        format!("Everything is Latest — {total} packages")
+    }
+}
+
+/// The one page that can act on a package row's `Rendered.action` — every
+/// action is a navigation, never a mutation. `Get latest` and `Choose S3
+/// bucket` have no page of their own: in v1 they are `buttons::Pull`
+/// (`pages/installed_package/status_banner.rs:138`) and `buttons::SetRemote`
+/// (`pages/installed_package/toolbar.rs:99`), both living on the package's own
+/// page, so landing there is the honest answer rather than inventing a command.
+///
+/// Exhaustive over [`PackageAction`], so a verb added to the vocabulary file
+/// stops this build rather than reaching a wasm render path.
+fn action_href(action: PackageAction, namespace: &str) -> String {
+    match action {
+        PackageAction::Publish => format!("/commit?namespace={namespace}"), // content.rs:195
+        // components/buttons/merge.rs:10
+        PackageAction::Resolve => format!("/merge?namespace={namespace}"),
+        // Shared with the list row's own link — `super::package_page_href`.
+        PackageAction::GetLatest | PackageAction::ChooseS3Bucket => {
+            super::package_page_href(namespace)
+        }
+    }
+}
+
+/// A package row's `[Publish]` / `[Resolve]` / `[Get latest]` / `[Choose S3
+/// bucket]` — whichever `render`'s `Rendered.action` names. The click
+/// navigates; there is no mutation here.
+///
+/// Primary, and it is the one place on this page that is. A queue row exists
+/// BECAUSE the package needs this action, so the button and the row are the same
+/// fact — and the queue is bounded by definition, holding only what needs
+/// attention, so the accent stays scarce. A cause's `[Sign in]` stays default:
+/// that one is host-scoped and explains the rows rather than resolving one.
+fn package_action(
+    action: PackageAction,
+    namespace: &str,
+    navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
+) -> AnyView {
+    let target = action_href(action, namespace);
+    view! {
+        <Button
+            variant=ButtonVariant::Primary
+            on_click=move |_| navigate(&target, NavigateOptions::default())
+        >
+            {action.label()}
+        </Button>
+    }
+    .into_any()
+}
+
+/// A cause's trailing slot: `[Sign in]` for a signed-out host, or the pointer
+/// line for a role denial — never both, and never a `[Switch role]` (ruling 3):
+/// that control is host-scoped and lives on the Accounts card's host row.
+fn cause_trailing(
+    action: &CauseAction,
+    // The namespaces this cause holds, for an action scoped to exactly them.
+    // Passed beside the action rather than inside it — the cause already owns
+    // them, and a second copy would be told apart only by which one a later
+    // change forgot.
+    members: &[String],
+    navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
+    retry: Callback<Vec<String>>,
+) -> AnyView {
+    match action {
+        CauseAction::SignIn { host } => {
+            let target = sign_in_href(host);
+            view! {
+                <Button on_click=move |_| navigate(&target, NavigateOptions::default())>
+                    "Sign in"
+                </Button>
+            }
+            .into_any()
+        }
+        CauseAction::SwitchRole => view! { "Change your role in Accounts, above." }.into_any(),
+        CauseAction::TryAgain => {
+            let members = members.to_vec();
+            view! {
+                <Button on_click=move |_| retry.run(members.clone())>"Try again"</Button>
+            }
+            .into_any()
+        }
+    }
+}
+
+/// §4.3, drawn: shared causes first, each with its count and an expander, then
+/// one row per package in precedence order, each beside the one thing to do
+/// about it — and a single line when nothing needs a decision. No payload of
+/// its own (global constraint): the caller resolves both lists and hands them
+/// in.
+#[component]
+// Owned, not borrowed, matching `components/buttons/merge.rs`'s own `Merge`:
+// a prop only borrowed inside the body still has to be owned by the caller,
+// since a component's arguments outlive the call that builds them.
+#[allow(clippy::needless_pass_by_value)]
+pub fn QueueRegion(
+    /// The packages the page can account for — the resolved list, which drops
+    /// every row the heavy phase has not confirmed (R2).
+    packages: Signal<Vec<MainPagePackageData>>,
+    hosts: Vec<AccountHostData>,
+    in_flight: Signal<bool>,
+    /// How many packages the page holds altogether, confirmed or not. The zero
+    /// line speaks for all of them, so it may not be drawn until `packages`
+    /// accounts for all of them — see the guard below.
+    total: Signal<usize>,
+    /// The packages whose check failed — see [`derive_queue`]. Reactive for the
+    /// same reason `packages` is: a retry that answers must move the region
+    /// without anything upstream re-running.
+    unchecked: Signal<Vec<MainPagePackageData>>,
+    /// Re-check exactly these namespaces. The page owns the store and the call;
+    /// the queue only knows which packages a cause speaks for.
+    retry: Callback<Vec<String>>,
+) -> impl IntoView {
+    // Created ONCE per construction, outside the closure below — that placement
+    // is R4 and R6 in one line. A settle re-runs the closure and finds the
+    // signal a group already has; a refetch builds a new `QueueRegion` and with
+    // it a new, empty map, so every group re-collapses. R6 rides on that
+    // freshness alone — nothing here disposes the old signals, and it does not
+    // need to.
+    //
+    // Nothing evicts, either: a cause whose text stops being derived keeps its
+    // `true`, so if that same text is derived again within one region's life the
+    // group comes back open. Intended — that is what keying on a cause's
+    // identity means — and the key space is bounded by hosts × buckets.
+    let expanders: StoredValue<HashMap<String, RwSignal<bool>>> = StoredValue::new(HashMap::new());
+    // The map survives the closure's re-runs; a signal created *inside* the
+    // closure would not. Leptos re-runs a render effect under `with_cleanup`,
+    // disposing everything the previous run registered, so the next read panics
+    // with "already been disposed".
+    //
+    // This is the enclosing view's owner, not one of the region's own: a
+    // non-island `#[component]` body is given no owner (`leptos_macro` wraps
+    // only islands in `Owner::new()`). It outlives the render effect, which is
+    // all R4 asks of it.
+    let owner = Owner::current().expect("a view always renders inside an owner");
+    let navigate = use_navigate();
+
+    // The rows. Read by the keyed `<For>` and by `shape`, and deliberately NOT
+    // by the closure that wraps them — see [`Shape`].
+    let items = Signal::derive(move || derive_queue(&packages.get(), &hosts, &unchecked.get()));
+
+    // Derived from the rows rendered, never written by hand — a `Cause`'s count
+    // is its members, a `Package` is one of itself. A signal, so the card can
+    // take a new count without being rebuilt.
+    let count = Signal::derive(move || {
+        items.with(|items| {
+            items
+                .iter()
+                .map(|item| match item {
+                    QueueItem::Cause { members, .. } => members.len(),
+                    QueueItem::Package { .. } => 1,
+                })
+                .sum::<usize>()
+        })
+    });
+
+    let shape = Memo::new(move |_| {
+        if packages.with(Vec::is_empty) && unchecked.with(Vec::is_empty) {
+            // Nothing to speak for. Two ways to get here: a fresh install with
+            // no packages at all, and — since the caller began handing in the
+            // resolved list — every page load, until the first row settles.
+            // "Everything is Latest — 0 packages" is a non-sequitur in both
+            // cases; it invents copy for a case the zero line was never meant to
+            // speak for. The empty-install story belongs to the list's own
+            // blankslate, which a later plan owns.
+            //
+            // `unchecked` is what keeps the offline case out of here (qhq-8mgw.51):
+            // with every call failed the settled list is empty too, and bailing on
+            // that alone left the region ABSENT — no card, no heading, no zero
+            // line — over a page of rows the app could not read.
+            return Shape::Nothing;
+        }
+        if items.with(Vec::is_empty) {
+            if in_flight.get() || packages.with(Vec::len) < total.get() {
+                // Nothing known, and the page is not entitled to say so. Two
+                // doors reach this: a call still outstanding, and a call that
+                // answered with an error. `outstanding` decrements on failure by
+                // design (R3: a queue that waited on a failed refresh would go
+                // silent forever), and a failed row stays provisional, so R2
+                // drops it from `packages` — which is why "no call outstanding"
+                // was never the same question as "every package accounted for".
+                // A signed-out host is the ordinary way to reach the second
+                // door, and announcing an all-clear over three packages the app
+                // could not read is qhq-8mgw.35 by another route.
+                //
+                // Not a skeleton either: see `kit/skeleton_box.rs`'s own doc, and
+                // the settling rows in the list below are the activity signal it
+                // points at — which is also where "we could not tell" belongs,
+                // as a row that stays dashed.
+                return Shape::Silent;
+            }
+            return Shape::Zero;
+        }
+        Shape::Queue
+    });
+
+    move || match shape.get() {
+        Shape::Nothing | Shape::Silent => ().into_any(),
+        // Acceptance criterion 8, unchanged. The count is the light total,
+        // not `packages.len()`: the sentence speaks for every package the
+        // list draws. `shape`'s guard makes the two equal wherever this line is
+        // reached, and naming the one the sentence means keeps it that way.
+        Shape::Zero => view! { <ZeroLine text=zero_line_text(total.get()) /> }.into_any(),
+        // `view!` moves its children into closures of their own, so a handle
+        // captured by this closure cannot merely be borrowed out of it and leave
+        // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
+        // cloned again at each use below.
+        Shape::Queue => {
+            let navigate = navigate.clone();
+            let owner = owner.clone();
+            view! {
+            // One wrapper child, so `Card`'s between-children hairline does not
+            // fire: a queue is a list of decisions, and dividing every row would
+            // make it read as a table.
+            <Card title="Needs your attention" count=count>
+                <div>
+                    // Keyed, not `Vec`'s positional diff. `derive_queue` sorts
+                    // by precedence, so one package settling into a higher rank
+                    // inserts at the top and shifts every row below it — and an
+                    // unkeyed diff rebuilds the node at index i into a
+                    // DIFFERENT logical row. The text comes out right either
+                    // way; what moves is the node under a focused control or a
+                    // mouse-down in flight, up to 43 times on one page load.
+                    <For
+                        each=move || items.get()
+                        key=QueueItem::key
+                        children=move |item| match item {
+                            QueueItem::Cause { text, action, members } => {
+                                // Looked up, not built: the map outlives this
+                                // render, so a group the user opened stays open
+                                // across every settle that follows.
+                                let expanded = expanders
+                                    .with_value(|map| map.get(&text).copied())
+                                    .unwrap_or_else(|| {
+                                        let signal = owner.with(|| RwSignal::new(false));
+                                        expanders
+                                            .update_value(|map| {
+                                                map.insert(text.clone(), signal);
+                                            });
+                                        signal
+                                    });
+                                let member_count = members.len();
+                                let trailing =
+                                    cause_trailing(&action, &members, navigate.clone(), retry);
+                                view! {
+                                    <CauseRow
+                                        text=text
+                                        count=member_count
+                                        expanded=expanded
+                                        trailing=trailing
+                                    />
+                                    <Show when=move || expanded.get()>
+                                        {members
+                                            .iter()
+                                            .map(|namespace| {
+                                                view! { <QueueRow namespace=namespace.clone() sub=true /> }
+                                            })
+                                            .collect_view()}
+                                    </Show>
+                                }
+                                    .into_any()
+                            }
+                            QueueItem::Package { namespace, state } => {
+                                let rendered = render(&state, Site::QueueRow);
+                                // `None` renders a row with no button, the honest answer for a
+                                // state the app has no operation to fix. Not invented here.
+                                if let Some(verb) = rendered.action {
+                                    let action = package_action(verb, &namespace, navigate.clone());
+                                    view! {
+                                        <QueueRow
+                                            namespace=namespace
+                                            state=rendered.words
+                                            tone=rendered.tone
+                                            action=action
+                                        />
+                                    }
+                                        .into_any()
+                                } else {
+                                    view! {
+                                        <QueueRow namespace=namespace state=rendered.words tone=rendered.tone />
+                                    }
+                                        .into_any()
+                                }
+                            }
+                        }
+                    />
+                    </div>
+                </Card>
+            }
+            .into_any()
+        }
+    }
+}
+
+/// What the region draws at all — and, being a [`Memo`], the ONLY thing that
+/// re-renders it.
+///
+/// A settle changes the rows, not the shape, and the closure keyed on this one
+/// therefore stands still while the keyed `<For>` beneath it diffs. That is
+/// load-bearing: a reactive closure's `rebuild` throws its whole subtree away
+/// and builds a new one (`tachys/src/reactive_graph/mod.rs`), so a `<For>`
+/// wrapped in a closure that re-runs per settle is destroyed before its key can
+/// do anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shape {
+    /// No region: nothing to speak for.
+    Nothing,
+    /// No region: something to speak for, and no right to speak yet.
+    Silent,
+    /// One line, no card.
+    Zero,
+    /// The card and its rows.
+    Queue,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::AccountHostData;
+    use crate::commands::MainPagePackageData;
+    use crate::kit::PackageState;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn pkg(namespace: &str, state: PackageState, host: Option<&str>) -> MainPagePackageData {
+        MainPagePackageData {
+            namespace: namespace.to_string(),
+            state,
+            changed_at: None,
+            bucket: None,
+            host: host.map(str::to_string),
+            provisional: false,
+            role_switch_host: None,
+        }
+    }
+
+    fn pkg_in_bucket(
+        namespace: &str,
+        state: PackageState,
+        host: &str,
+        bucket: &str,
+    ) -> MainPagePackageData {
+        MainPagePackageData {
+            namespace: namespace.to_string(),
+            state,
+            changed_at: None,
+            bucket: Some(bucket.to_string()),
+            host: Some(host.to_string()),
+            provisional: false,
+            role_switch_host: None,
+        }
+    }
+
+    fn host(name: &str, signed_in: bool) -> AccountHostData {
+        AccountHostData {
+            host: name.to_string(),
+            signed_in,
+            current_role: None,
+            roles: Vec::new(),
+            provisional: false,
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn a_latest_package_never_reaches_the_queue() {
+        // The queue is what needs a decision. Everything else is the list's job.
+        let items = derive_queue(
+            &[pkg("a/b", PackageState::Latest, Some("h.io"))],
+            &[host("h.io", true)],
+            &[],
+        );
+        assert!(items.is_empty());
+    }
+
+    #[wasm_bindgen_test]
+    fn signed_out_packages_collapse_into_one_cause_naming_the_host() {
+        // R3. Unknown state AND a host the accounts payload says is signed out.
+        // Without the grouping, a signed-out host with 11 packages buries the three
+        // problems that need individual decisions.
+        let items = derive_queue(
+            &[
+                pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+                pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+                pkg("b/three", PackageState::Behind, Some("custom.registry.io")),
+            ],
+            &[host("custom.registry.io", false)],
+            &[],
+        );
+
+        match &items[0] {
+            QueueItem::Cause {
+                text,
+                action,
+                members,
+            } => {
+                assert_eq!(text, "Signed out from custom.registry.io");
+                assert_eq!(members.len(), 2, "the two Unknown ones, not the Behind one");
+                assert!(
+                    matches!(action, CauseAction::SignIn { host } if host == "custom.registry.io"),
+                    "a wrong host wired into [Sign in] must fail this: {action:?}"
+                );
+            }
+            other @ QueueItem::Package { .. } => panic!("expected a cause first, got {other:?}"),
+        }
+        assert!(
+            matches!(&items[1], QueueItem::Package { namespace, .. } if namespace == "b/three"),
+            "a package with its own state is not swept into the cause"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn an_unknown_package_on_a_signed_in_host_is_not_signed_out() {
+        // R3's other half, and the one that would tell a signed-in user to sign in.
+        // Unknown is also serde's catch-all, so it means "we could not tell" — of
+        // which a logout is one cause among several.
+        let items = derive_queue(
+            &[pkg("a/one", PackageState::Unknown, Some("h.io"))],
+            &[host("h.io", true)],
+            &[],
+        );
+        assert!(
+            items.iter().all(|i| !matches!(i, QueueItem::Cause { .. })),
+            "no cause: the session is fine"
+        );
+        assert_eq!(
+            items.len(),
+            1,
+            "it is still a row — we could not tell, and that is worth saying"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn role_denied_groups_by_bucket_not_by_host() {
+        // R2. One host can hold both readable and unreadable buckets, so grouping
+        // this by host would put packages the user CAN read inside a group saying
+        // they cannot.
+        let items = derive_queue(
+            &[
+                pkg_in_bucket(
+                    "a/one",
+                    PackageState::RoleDenied {
+                        role: Some("analyst".into()),
+                    },
+                    "h.io",
+                    "team-bucket",
+                ),
+                pkg_in_bucket(
+                    "a/two",
+                    PackageState::RoleDenied {
+                        role: Some("analyst".into()),
+                    },
+                    "h.io",
+                    "team-bucket",
+                ),
+                pkg_in_bucket(
+                    "a/three",
+                    PackageState::RoleDenied {
+                        role: Some("analyst".into()),
+                    },
+                    "h.io",
+                    "other-bucket",
+                ),
+            ],
+            &[host("h.io", true)],
+            &[],
+        );
+        let causes: Vec<_> = items
+            .iter()
+            .filter(|i| matches!(i, QueueItem::Cause { .. }))
+            .collect();
+        assert_eq!(causes.len(), 2, "two buckets, two causes, one host");
+        for cause in causes {
+            let QueueItem::Cause { text, .. } = cause else {
+                unreachable!("filtered to causes above")
+            };
+            // The host is named in the cause's own words, which is where a user
+            // reads it: the trailing slot is a fixed sentence pointing at the
+            // Accounts card, so nothing else in the row can carry it.
+            assert!(
+                text.contains("on h.io"),
+                "a denial has to name the host it is on: {text}"
+            );
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn a_pause_outranks_a_signed_out_host() {
+        // R4. The backend already resolved this into the state, so a conflicted
+        // package on a signed-out host arrives as PullConflict, never Unknown, and
+        // the signed-out join cannot see it. This test pins that it stays true.
+        let items = derive_queue(
+            &[pkg(
+                "a/one",
+                PackageState::PullConflict {
+                    files: vec!["f.csv".into()],
+                },
+                Some("h.io"),
+            )],
+            &[host("h.io", false)],
+            &[],
+        );
+        assert_eq!(items.len(), 1);
+        assert!(
+            matches!(&items[0], QueueItem::Package { .. }),
+            "its own row, not inside the signed-out group"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_cause_of_one_is_still_a_cause() {
+        // CauseRow renders "1 package" singular deliberately: a cause affecting one
+        // package is still worth stating once rather than twice.
+        let items = derive_queue(
+            &[pkg("a/one", PackageState::Unknown, Some("h.io"))],
+            &[host("h.io", false)],
+            &[],
+        );
+        assert!(matches!(&items[0], QueueItem::Cause { members, .. } if members.len() == 1));
+    }
+
+    #[wasm_bindgen_test]
+    fn causes_come_before_packages_and_packages_follow_the_lattice() {
+        // Section 5's order: shared causes first, then per-package rows in
+        // precedence order. Danger before Attention before Neutral.
+        let items = derive_queue(
+            &[
+                pkg("a/behind", PackageState::Behind, Some("h.io")),
+                pkg(
+                    "a/conflict",
+                    PackageState::PullConflict {
+                        files: vec!["f".into()],
+                    },
+                    Some("h.io"),
+                ),
+                pkg("a/out", PackageState::Unknown, Some("gone.io")),
+            ],
+            &[host("h.io", true), host("gone.io", false)],
+            &[],
+        );
+        let shape: Vec<&str> = items
+            .iter()
+            .map(|i| match i {
+                QueueItem::Cause { .. } => "cause",
+                QueueItem::Package { namespace, .. } => namespace.as_str(),
+            })
+            .collect();
+        assert_eq!(shape, vec!["cause", "a/conflict", "a/behind"]);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_local_only_package_is_never_grouped_by_host() {
+        // Task 1's `host: None`. Without this it would group under a host named "".
+        let items = derive_queue(
+            &[pkg("local/thing", PackageState::Unpublished, None)],
+            &[host("h.io", false)],
+            &[],
+        );
+        assert!(matches!(&items[0], QueueItem::Package { .. }));
+    }
+
+    #[wasm_bindgen_test]
+    fn cause_rank_decides_the_order_and_not_the_causes_own_text() {
+        // M5: no test built a payload holding more than one kind of cause at
+        // once, so nothing pinned that §5's cause rank decides the order.
+        //
+        // All THREE kinds, because two could not tell the claim apart from its
+        // negation: the ranks are role-denied 0, signed-out 4, unchecked 5,
+        // while the fixed text prefixes sort "Couldn't check…" < "No access…" <
+        // "Signed out…". With only the first two, rank order and text order
+        // agree, and the `(rank, text)` tiebreak makes an equal-ranks mutation
+        // survive — no host name can flip that, since both prefixes are
+        // constants (qhq-8mgw.38). Adding the unchecked cause puts the orders in
+        // opposition: it ranks last and sorts first.
+        let items = derive_queue(
+            &[
+                pkg("a/one", PackageState::Unknown, Some("gone.io")),
+                pkg_in_bucket(
+                    "b/two",
+                    PackageState::RoleDenied {
+                        role: Some("analyst".into()),
+                    },
+                    "h.io",
+                    "team-bucket",
+                ),
+            ],
+            &[host("gone.io", false), host("h.io", true)],
+            &[pkg("c/three", PackageState::Latest, Some("dark.io"))],
+        );
+        let causes: Vec<&str> = items
+            .iter()
+            .filter_map(|i| match i {
+                QueueItem::Cause { text, .. } => Some(text.as_str()),
+                QueueItem::Package { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            causes,
+            vec![
+                "No access as analyst on h.io in s3://team-bucket",
+                "Signed out from gone.io",
+                "Couldn't check for new revisions on dark.io",
+            ],
+            "§5's rank orders these; alphabetically they are the other way round"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_role_denied_package_with_no_bucket_is_its_own_row() {
+        // M5 / ruling F12: a cause keyed on a bucket cannot name one that is
+        // absent, so a `RoleDenied` package with `bucket: None` must fall
+        // through to its own row rather than being dropped or grouped under
+        // a fallback key. `pkg` always sets `bucket: None`, which is exactly
+        // the case `role_denied_groups`'s `if let Some(bucket) = ...` guard
+        // rejects.
+        let items = derive_queue(
+            &[pkg(
+                "a/one",
+                PackageState::RoleDenied {
+                    role: Some("analyst".into()),
+                },
+                Some("h.io"),
+            )],
+            &[host("h.io", true)],
+            &[],
+        );
+        assert_eq!(items.len(), 1, "not dropped, and not folded into a cause");
+        assert!(
+            matches!(&items[0], QueueItem::Package { namespace, .. } if namespace == "a/one"),
+            "a bucket-less denial cannot be named by a cause keyed on the bucket: {:?}",
+            items[0]
+        );
+    }
+
+    // §§ QueueRegion — the drawn region, mounted inside a `Router` because the
+    // actions navigate.
+
+    // `Router`'s children are `TypedChildren`, which boxes as `dyn FnOnce() -> _
+    // + Send` — harmless on wasm's single thread, but it means `f` must carry
+    // the bound even though nothing here is ever sent across one.
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + Send + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), move || {
+            view! { <leptos_router::components::Router>{f()}</leptos_router::components::Router> }
+        })
+        .forget();
+        container.into()
+    }
+
+    /// `autosync.rs`'s pattern: `dyn_into` to the concrete element, then the
+    /// DOM's own `.click()` — a real click, not a synthesized event.
+    fn click(el: &web_sys::Element) {
+        let el: web_sys::HtmlElement = el.clone().dyn_into().unwrap();
+        el.click();
+    }
+
+    /// One mounted `QueueRegion`, with the props it now takes. `mount` supplies
+    /// the `Router` the actions navigate through.
+    fn mount_region(
+        packages: Signal<Vec<MainPagePackageData>>,
+        hosts: Vec<AccountHostData>,
+        in_flight: Signal<bool>,
+    ) -> web_sys::Element {
+        // Every test using this helper hands in a fully-accounted payload, so
+        // the light total is what it holds. The case where it is not is
+        // `main_page.rs`'s `a_package_the_page_could_not_read_holds_back_the_all_clear`.
+        mount_region_of(
+            packages,
+            hosts,
+            in_flight,
+            Signal::derive(move || packages.get().len()),
+            Signal::stored(Vec::new()),
+            Callback::new(|_| ()),
+        )
+    }
+
+    /// [`mount_region`] plus the packages whose check failed, for the cause only
+    /// they produce. `retry` is handed in so a test can count what a click asks
+    /// for — the call is the only observable the affordance has.
+    fn mount_region_unchecked(
+        packages: Signal<Vec<MainPagePackageData>>,
+        hosts: Vec<AccountHostData>,
+        unchecked: Vec<MainPagePackageData>,
+        retry: Callback<Vec<String>>,
+    ) -> web_sys::Element {
+        let total = unchecked.len() + packages.get_untracked().len();
+        mount_region_of(
+            packages,
+            hosts,
+            Signal::stored(false),
+            Signal::stored(total),
+            Signal::stored(unchecked),
+            retry,
+        )
+    }
+
+    /// [`mount_region`] with the light total stated separately, for the case
+    /// where the page holds more packages than it can account for.
+    fn mount_region_of(
+        packages: Signal<Vec<MainPagePackageData>>,
+        hosts: Vec<AccountHostData>,
+        in_flight: Signal<bool>,
+        total: Signal<usize>,
+        unchecked: Signal<Vec<MainPagePackageData>>,
+        retry: Callback<Vec<String>>,
+    ) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <QueueRegion
+                    packages=packages
+                    hosts=hosts
+                    in_flight=in_flight
+                    total=total
+                    unchecked=unchecked
+                    retry=retry
+                />
+            }
+        })
+    }
+
+    /// The row element drawing `namespace` — the `<div>` holding the `<span>`
+    /// whose whole text is that namespace. Used to ask whether a row is still
+    /// the same DOM node it was before a settle.
+    fn row_of(el: &web_sys::Element, namespace: &str) -> web_sys::Element {
+        let spans = el.query_selector_all("span").unwrap();
+        for i in 0..spans.length() {
+            let span: web_sys::Element = spans.item(i).unwrap().dyn_into().unwrap();
+            if span.text_content().as_deref() == Some(namespace) {
+                return span.parent_element().expect("a row span has a row");
+            }
+        }
+        panic!("no row draws {namespace}: {}", el.text_content().unwrap());
+    }
+
+    /// The first cause row's disclosure control. `aria-expanded` is the state
+    /// `CauseRow` writes; the chevron's rotation is decoration.
+    fn expander(el: &web_sys::Element) -> web_sys::Element {
+        el.query_selector("[aria-expanded]").unwrap().unwrap()
+    }
+
+    fn all_latest(n: usize) -> Vec<MainPagePackageData> {
+        (0..n)
+            .map(|i| pkg(&format!("pkg/{i}"), PackageState::Latest, Some("h.io")))
+            .collect()
+    }
+
+    fn one_signed_in() -> Vec<AccountHostData> {
+        vec![host("h.io", true)]
+    }
+
+    fn two_signed_out() -> Vec<MainPagePackageData> {
+        vec![
+            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+        ]
+    }
+
+    fn one_signed_out() -> Vec<AccountHostData> {
+        vec![host("custom.registry.io", false)]
+    }
+
+    fn one_role_denied() -> Vec<MainPagePackageData> {
+        vec![pkg_in_bucket(
+            "a/one",
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+            "custom.registry.io",
+            "team-bucket",
+        )]
+    }
+
+    fn one_behind() -> Vec<MainPagePackageData> {
+        vec![pkg("a/one", PackageState::Behind, Some("h.io"))]
+    }
+
+    /// `Unknown` on a signed-in host: R3's other half, so it is its own row
+    /// rather than swept into a signed-out cause — and `render` gives it no
+    /// action, unlike `one_behind`.
+    fn one_unknown_signed_in() -> Vec<MainPagePackageData> {
+        vec![pkg("a/one", PackageState::Unknown, Some("h.io"))]
+    }
+
+    #[wasm_bindgen_test]
+    fn a_healthy_queue_is_one_line_and_not_a_region() {
+        // Acceptance criterion 8, and ZeroLine's own doc: with autosync working
+        // this is the common case, and a full-height empty state here would push
+        // the package list below the fold to announce that nothing is wrong.
+        let el = mount_region(
+            Signal::stored(all_latest(43)),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Everything is Latest"), "got: {text}");
+        assert!(
+            text.contains("43 packages"),
+            "the count is derived from the rows: {text}"
+        );
+        assert!(
+            !text.contains("Needs your attention"),
+            "a bare ZeroLine, not a Card wrapping it — a heading above a line \
+             that says nothing is wrong would be a falsehood in its own chrome: {text}"
+        );
+        assert_eq!(el.query_selector_all("button").unwrap().length(), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_healthy_queue_of_a_different_size_states_its_own_count() {
+        // A second N, never 43 again: a hard-coded "43 packages" string would
+        // pass the test above and only fail here, where the fixture's count
+        // actually varies.
+        let el = mount_region(
+            Signal::stored(all_latest(7)),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        assert!(
+            el.text_content().unwrap().contains("7 packages"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_healthy_queue_of_one_is_singular() {
+        // `zero_line_text`'s `total == 1` branch is real code, not a case ever
+        // proven by the plural fixtures above — deleting it and always taking
+        // the plural arm must fail exactly here.
+        let el = mount_region(
+            Signal::stored(all_latest(1)),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("1 package"), "got: {text}");
+        assert!(
+            !text.contains("1 packages"),
+            "singular, not the plural branch: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn no_packages_at_all_renders_nothing() {
+        // Finding 1: a fresh install has no packages, so "Everything is
+        // Latest — 0 packages" above an empty Packages card is a
+        // non-sequitur that invents copy for a case the zero line was never
+        // meant to speak for. Render nothing — the empty-install story
+        // belongs to the list's own blankslate.
+        let el = mount_region(
+            Signal::stored(vec![]),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        assert_eq!(
+            el.text_content().unwrap().trim(),
+            "",
+            "nothing, not a zero-package announcement"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn nothing_known_yet_is_silence_and_never_an_all_clear() {
+        // R3, and the heart of qhq-8mgw.35: "Everything is Latest" before the heavy
+        // phase has answered is a claim the page has not earned. A slower false
+        // all-clear is not a fix.
+        let el = mount_region(
+            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            one_signed_in(),
+            Signal::stored(true),
+        );
+        assert_eq!(
+            el.text_content().unwrap().trim(),
+            "",
+            "the region says nothing while a call is outstanding"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn what_is_already_known_is_shown_while_the_rest_is_still_being_decided() {
+        // Rows the heavy phase HAS answered are decisions the user can act on now.
+        // Holding them back until the slowest package answers would make the region
+        // as slow as its worst row, which is the spinner §7 rejected.
+        let el = mount_region(
+            Signal::stored(vec![pkg("a/one", PackageState::Diverged, Some("h.io"))]),
+            one_signed_in(),
+            Signal::stored(true),
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Changed in both places"), "got: {text}");
+        assert!(text.contains("Resolve"), "got: {text}");
+        assert!(
+            !text.contains("Everything is Latest"),
+            "known rows, but still no all-clear: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_all_clear_arrives_only_when_nothing_is_outstanding() {
+        let in_flight = RwSignal::new(true);
+        let el = mount_region(
+            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            one_signed_in(),
+            in_flight.into(),
+        );
+        assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+
+        in_flight.set(false);
+        leptos::task::tick().await;
+
+        assert!(
+            el.text_content()
+                .unwrap()
+                .contains("Everything is Latest — 1 package"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_cards_count_is_every_package_not_every_row() {
+        // M6: `Card.count`'s own doc reads as "how many rows the card
+        // holds", which is the natural mistake here — the queue's count is
+        // every package represented, not every row drawn. A cause of 2
+        // collapses to one row but must still count as 2, so a payload with
+        // one cause AND one package row pins the count as their SUM, not
+        // `items.len()` (which would read 2, not 3).
+        let el = mount_region(
+            Signal::stored(vec![
+                pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+                pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+                pkg("c/three", PackageState::Behind, Some("h.io")),
+            ]),
+            vec![host("custom.registry.io", false), host("h.io", true)],
+            Signal::stored(false),
+        );
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("(3)"),
+            "2 grouped into one cause + 1 own row = 3 packages: {text}"
+        );
+        assert!(
+            !text.contains("(2)"),
+            "not the row count (one cause row + one package row): {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn action_href_names_the_right_page_and_carries_the_namespace() {
+        // Swapping the Publish/Resolve arms, or returning an empty string for
+        // every verb, must fail here — asserted as the whole string, since a
+        // substring match cannot tell a missing namespace from a present one.
+        assert_eq!(
+            action_href(PackageAction::Publish, "org/pkg"),
+            "/commit?namespace=org/pkg"
+        );
+        assert_eq!(
+            action_href(PackageAction::Resolve, "org/pkg"),
+            "/merge?namespace=org/pkg"
+        );
+        assert_eq!(
+            action_href(PackageAction::GetLatest, "org/pkg"),
+            "/installed-package?namespace=org/pkg&filter=unmodified"
+        );
+        assert_eq!(
+            action_href(PackageAction::ChooseS3Bucket, "org/pkg"),
+            "/installed-package?namespace=org/pkg&filter=unmodified"
+        );
+        // The fifth label ruling 5 names: `[Sign in]`, which `cause_trailing`
+        // builds from `sign_in_href` directly rather than through this match.
+        assert_eq!(
+            sign_in_href("custom.registry.io"),
+            "/login?host=custom.registry.io&back=/main"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_package_row_action_is_primary_and_a_cause_action_is_not() {
+        // The one accent on this page. A queue row exists because the package
+        // needs its action, so that button is the page's point; a cause's
+        // `[Sign in]` is host-scoped and explains rows rather than resolving one,
+        // so it stays default. The pair is the unit — either alone would pass
+        // against a variant applied to every button or to none.
+        let denied = mount_region(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            Signal::stored(false),
+        );
+        // `:not([aria-expanded])` skips the cause row's expander, which is also a
+        // button and is also default — selecting the first button here tests the
+        // expander instead and passes however the action is styled.
+        let sign_in = denied
+            .query_selector("button:not([aria-expanded])")
+            .unwrap()
+            .expect("the cause's own action");
+        assert!(
+            !sign_in
+                .get_attribute("class")
+                .unwrap_or_default()
+                .contains("primary"),
+            "a cause action is default"
+        );
+
+        let publishable = mount_region(
+            Signal::stored(one_behind()),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        let action = publishable
+            .query_selector("button")
+            .unwrap()
+            .expect("the package's own action");
+        assert!(
+            action
+                .get_attribute("class")
+                .unwrap_or_default()
+                .contains("primary"),
+            "a package action is primary"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn an_unknown_package_on_a_signed_in_host_has_no_button_to_press() {
+        // `render(&Unknown, Site::QueueRow).action` is `None` — the honest
+        // answer for a state the app has no operation to fix. Dropping
+        // `tone=rendered.tone` from the `None` branch still compiles and
+        // still passes every OTHER test; this is the one that must catch it.
+        let el = mount_region(
+            Signal::stored(one_unknown_signed_in()),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Sync stopped"), "render's own words: {text}");
+        assert_eq!(
+            el.query_selector_all("button").unwrap().length(),
+            0,
+            "no cause here (signed in) and no action on this state — no button at all"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_shared_cause_states_its_count_and_offers_the_one_fix() {
+        let el = mount_region(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            Signal::stored(false),
+        );
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Signed out from custom.registry.io"),
+            "got: {text}"
+        );
+        assert!(text.contains("2 packages"), "got: {text}");
+        assert!(
+            text.contains("Sign in"),
+            "host-scoped, so the cause owns the control: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn role_denied_points_at_the_fix_rather_than_duplicating_the_control() {
+        // Section 5.3: a link may be duplicated across scopes, a control may not.
+        // Switching role is host-scoped, so the control belongs to the Accounts
+        // card and this row points at it.
+        let el = mount_region(
+            Signal::stored(one_role_denied()),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("No access as analyst"), "got: {text}");
+        assert!(text.contains("s3://team-bucket"), "got: {text}");
+        assert!(
+            text.contains("Change your role in Accounts, above."),
+            "the pointer line, verbatim: {text}"
+        );
+        assert_eq!(
+            el.query_selector_all("button:not([aria-expanded])")
+                .unwrap()
+                .length(),
+            0,
+            "no [Switch role] here — that control lives in the Accounts card"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn expanding_a_cause_reveals_its_packages_and_they_do_not_repeat_the_cause() {
+        // QueueRow's doc: expanding "Signed out — 11 packages" answers WHICH
+        // packages, and repeating "Signed out" on all eleven is exactly the
+        // redundancy the cause row exists to remove.
+        let el = mount_region(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            Signal::stored(false),
+        );
+        assert!(
+            !el.text_content().unwrap().contains("a/one"),
+            "collapsed by default"
+        );
+
+        click(&expander(&el));
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("a/one") && text.contains("a/two"),
+            "got: {text}"
+        );
+        assert_eq!(
+            text.matches("Signed out from").count(),
+            1,
+            "the cause is stated once, not once per member"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_per_package_row_uses_the_queues_wording_not_the_lists() {
+        // `render(state, Site::QueueRow)` exists precisely because two states word
+        // themselves differently by site: the list says "Not the latest", the queue
+        // says "Newer revision available" because it sits beside its action.
+        let el = mount_region(
+            Signal::stored(one_behind()),
+            one_signed_in(),
+            Signal::stored(false),
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Newer revision available"), "got: {text}");
+        assert!(
+            !text.contains("Not the latest"),
+            "that is the list's wording: {text}"
+        );
+    }
+
+    // §§ The region as a function of inputs that change under it.
+
+    #[wasm_bindgen_test]
+    async fn a_settling_package_appears_in_the_queue_without_a_refetch() {
+        // qhq-8mgw.35, from the region's side: the light phase cannot see the working
+        // tree, so the package arrives Latest and the queue must pick up the heavy
+        // phase's answer when it lands.
+        let packages = RwSignal::new(vec![pkg(
+            "user/plate-07",
+            PackageState::Latest,
+            Some("h.io"),
+        )]);
+        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        assert!(
+            !el.text_content().unwrap().contains("1 file changed"),
+            "nothing to say yet"
+        );
+
+        packages.set(vec![pkg(
+            "user/plate-07",
+            PackageState::PendingChanges { files: 1 },
+            Some("h.io"),
+        )]);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("1 file changed"), "got: {text}");
+        assert!(
+            text.contains("Publish"),
+            "beside the one thing to do: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_settle_does_not_collapse_a_group_the_user_opened() {
+        // R4. The region now re-renders on every settle — up to once per package on
+        // one page load — and rebuilding the expander signals each time would close a
+        // group under the user's hands.
+        let packages = RwSignal::new(vec![
+            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("b/three", PackageState::Latest, Some("custom.registry.io")),
+        ]);
+        let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
+        click(&expander(&el));
+        leptos::task::tick().await;
+        assert!(el.text_content().unwrap().contains("a/one"), "opened");
+
+        // A third package settles into a state of its own — the cause is untouched.
+        packages.update(|p| p[2].state = PackageState::Behind);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Newer revision available"),
+            "the settle landed: {text}"
+        );
+        assert!(
+            text.contains("a/one") && text.contains("a/two"),
+            "the group the user opened is still open: {text}"
+        );
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "true"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_reorder_leaves_every_row_on_the_dom_node_it_started_on() {
+        // qhq-8mgw.42. The settle itself is safe — `AnyView::rebuild` diffs in
+        // place and most settles leave the order alone — but `derive_queue`
+        // sorts by precedence, so one settling into a higher rank inserts at the
+        // top and shifts everything below it. Under an unkeyed positional diff
+        // the node at index i is then rebuilt into a DIFFERENT logical row: same
+        // element, new label, new handler. Nothing clicks the wrong target
+        // (listeners are re-attached), but a keyboard user's focused control and
+        // a mouse-down in flight both land on a row that became someone else's,
+        // up to 43 times on one page load.
+        //
+        // Stamping the nodes and re-finding them by name is the only way to see
+        // this: the rendered TEXT is identical either way.
+        let packages = RwSignal::new(vec![
+            pkg("a/one", PackageState::Behind, Some("h.io")),
+            pkg("b/two", PackageState::Unpublished, Some("h.io")),
+        ]);
+        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        row_of(&el, "a/one")
+            .set_attribute("data-node", "a")
+            .unwrap();
+        row_of(&el, "b/two")
+            .set_attribute("data-node", "b")
+            .unwrap();
+
+        // A third package settles into a conflict, which outranks both — so it
+        // takes index 0 and pushes the other two down one place each.
+        packages.update(|p| {
+            p.push(pkg(
+                "c/three",
+                PackageState::PullConflict {
+                    files: vec!["x.csv".to_string()],
+                },
+                Some("h.io"),
+            ));
+        });
+        leptos::task::tick().await;
+
+        assert!(
+            el.text_content().unwrap().contains("conflict in 1 file"),
+            "the settle landed: {}",
+            el.text_content().unwrap()
+        );
+        assert_eq!(
+            row_of(&el, "a/one").get_attribute("data-node").as_deref(),
+            Some("a"),
+            "a/one moved from index 0 to index 1 and took a different node with it"
+        );
+        assert_eq!(
+            row_of(&el, "b/two").get_attribute("data-node").as_deref(),
+            Some("b"),
+            "b/two moved from index 1 to index 2 and took a different node with it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_that_settles_in_place_says_the_new_words() {
+        // The other half of the keyed diff, and the failure an identity-only key
+        // would have shipped: `<For>` builds a child once per key and never
+        // calls the children function again for a key it already holds, so a
+        // row keyed on its namespace alone would still be saying "Newer
+        // revision available" over a package that has since conflicted — with
+        // the `[Get latest]` button that goes with it.
+        let packages = RwSignal::new(vec![pkg("a/one", PackageState::Behind, Some("h.io"))]);
+        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        assert!(
+            el.text_content()
+                .unwrap()
+                .contains("Newer revision available"),
+            "before: {}",
+            el.text_content().unwrap()
+        );
+
+        packages.update(|p| {
+            p[0].state = PackageState::PullConflict {
+                files: vec!["x.csv".to_string()],
+            };
+        });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("conflict in 1 file"), "after: {text}");
+        assert!(
+            !text.contains("Newer revision available"),
+            "the old words are gone, not merely joined: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_group_that_gains_a_member_keeps_its_expansion_and_its_count_grows() {
+        // The count is derived from the members, so it must move; the expansion is
+        // keyed on the cause's identity, which did not change.
+        let packages = RwSignal::new(vec![pkg(
+            "a/one",
+            PackageState::Unknown,
+            Some("custom.registry.io"),
+        )]);
+        let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
+        click(&expander(&el));
+        leptos::task::tick().await;
+        assert!(
+            el.text_content().unwrap().contains("1 package"),
+            "one member, stated singular, before the second arrives: {}",
+            el.text_content().unwrap()
+        );
+
+        packages.update(|p| {
+            p.push(pkg(
+                "a/two",
+                PackageState::Unknown,
+                Some("custom.registry.io"),
+            ));
+        });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("2 packages"), "got: {text}");
+        assert!(
+            text.contains("a/two"),
+            "the new member is revealed too: {text}"
+        );
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "true"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_rebuilt_region_starts_collapsed() {
+        // R6's half, which must survive R4: a refetch constructs a new `QueueRegion`,
+        // and the expansion the user opened was about a set that no longer exists.
+        let packages = RwSignal::new(vec![
+            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+        ]);
+        let show = RwSignal::new(true);
+        let hosts = one_signed_out();
+        let el = mount(move || {
+            view! {
+                <Show when=move || show.get()>
+                    <QueueRegion
+                        packages=packages.into()
+                        hosts=hosts.clone()
+                        in_flight=Signal::stored(false)
+                        total=Signal::derive(move || packages.get().len())
+                        unchecked=Signal::stored(Vec::new())
+                        retry=Callback::new(|_| ())
+                    />
+                </Show>
+            }
+        });
+        click(&expander(&el));
+        leptos::task::tick().await;
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "true"
+        );
+
+        // Unmount and remount: the shape a resolved refetch produces.
+        show.set(false);
+        leptos::task::tick().await;
+        show.set(true);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            expander(&el).get_attribute("aria-expanded").unwrap(),
+            "false",
+            "a new region collapses every group"
+        );
+    }
+    #[wasm_bindgen_test]
+    fn a_failed_check_becomes_one_cause_grouped_by_host() {
+        // qhq-8mgw.51. Host-grouped, so the sentence and its remedy share a
+        // scope, exactly as the signed-out cause does. The cached states differ
+        // on purpose: the failure is not a state, and a fixture where every row
+        // said the same thing would not show that.
+        let items = derive_queue(
+            &[],
+            &[host("open.quiltdata.com", true)],
+            &[
+                pkg("a/one", PackageState::Latest, Some("open.quiltdata.com")),
+                pkg("a/two", PackageState::Behind, Some("open.quiltdata.com")),
+            ],
+        );
+
+        assert_eq!(items.len(), 1, "one host, one cause");
+        match &items[0] {
+            QueueItem::Cause {
+                text,
+                action,
+                members,
+            } => {
+                assert_eq!(
+                    text,
+                    "Couldn't check for new revisions on open.quiltdata.com"
+                );
+                assert_eq!(members.len(), 2, "the count CauseRow renders is these");
+                assert!(matches!(action, CauseAction::TryAgain), "got {action:?}");
+            }
+            other @ QueueItem::Package { .. } => panic!("expected a cause, got {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn failed_checks_on_two_hosts_are_two_causes() {
+        // One remedy per host, because [Try again] re-checks the packages its own
+        // cause names — a single cause over two hosts would offer one control for
+        // two scopes.
+        let items = derive_queue(
+            &[],
+            &[],
+            &[
+                pkg("a/one", PackageState::Latest, Some("one.example.com")),
+                pkg("b/two", PackageState::Latest, Some("two.example.com")),
+            ],
+        );
+
+        assert_eq!(items.len(), 2, "a cause each");
+        let texts: Vec<&str> = items
+            .iter()
+            .map(|item| match item {
+                QueueItem::Cause { text, .. } => text.as_str(),
+                other @ QueueItem::Package { .. } => {
+                    panic!("expected causes, got {other:?}")
+                }
+            })
+            .collect();
+        assert!(texts.iter().any(|t| t.ends_with("one.example.com")));
+        assert!(texts.iter().any(|t| t.ends_with("two.example.com")));
+    }
+
+    #[wasm_bindgen_test]
+    fn a_failed_check_with_no_host_is_left_to_its_row() {
+        // A cause keyed on a host cannot name one that is absent — the ruling
+        // `role_denied_groups` already follows for a missing bucket. "Unchecked"
+        // is not a state either, so there is no per-package row to fall back to:
+        // it stays dashed and dimmed in the list, and the queue says nothing.
+        let items = derive_queue(&[], &[], &[pkg("a/one", PackageState::Latest, None)]);
+
+        assert!(
+            items.is_empty(),
+            "nothing nameable, so nothing claimed: {items:?}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_unchecked_cause_sorts_after_signed_out() {
+        // Signed-out is the attributable half of error and carries a specific
+        // remedy; a failed check is weaker information. The page says what it
+        // knows before what it could not determine.
+        let items = derive_queue(
+            &two_signed_out(),
+            &one_signed_out(),
+            &[pkg(
+                "z/failed",
+                PackageState::Latest,
+                Some("open.quiltdata.com"),
+            )],
+        );
+
+        let texts: Vec<&str> = items
+            .iter()
+            .filter_map(|item| match item {
+                QueueItem::Cause { text, .. } => Some(text.as_str()),
+                QueueItem::Package { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Signed out from custom.registry.io",
+                "Couldn't check for new revisions on open.quiltdata.com",
+            ],
+            "a rank swap must fail this"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_region_speaks_when_every_check_failed() {
+        // The case this cause exists for. With every call failed the settled list
+        // is empty too, so the region used to return nothing TWICE over and was
+        // absent — no card, no heading, no zero line — over a page of rows the
+        // app could not read.
+        let el = mount_region_unchecked(
+            Signal::stored(Vec::new()),
+            vec![host("open.quiltdata.com", true)],
+            vec![pkg(
+                "a/one",
+                PackageState::Latest,
+                Some("open.quiltdata.com"),
+            )],
+            Callback::new(|_| ()),
+        );
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(
+            text.contains("Couldn't check for new revisions on open.quiltdata.com"),
+            "the region must speak rather than vanish; got {text:?}"
+        );
+        assert!(
+            !text.contains("Everything is Latest"),
+            "and must not post an all-clear over packages it could not read"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn try_again_asks_for_only_this_causes_packages() {
+        // The affordance the appbar's Refresh cannot offer: that reloads every
+        // payload. The call is its only observable, so this counts what a click
+        // asks for, and asserts WHICH packages — a retry that re-checked the
+        // whole roster would pass a bare call-count assertion.
+        let asked: RwSignal<Vec<Vec<String>>> = RwSignal::new(Vec::new());
+        let el = mount_region_unchecked(
+            Signal::stored(Vec::new()),
+            vec![host("open.quiltdata.com", true)],
+            vec![
+                pkg("a/one", PackageState::Latest, Some("open.quiltdata.com")),
+                pkg("a/two", PackageState::Latest, Some("open.quiltdata.com")),
+            ],
+            Callback::new(move |names: Vec<String>| asked.update(|log| log.push(names))),
+        );
+
+        let button = el
+            .query_selector("button:not([aria-expanded])")
+            .unwrap()
+            .expect("the cause's own control")
+            .dyn_into::<web_sys::HtmlButtonElement>()
+            .unwrap();
+        assert_eq!(
+            button.text_content().unwrap_or_default().trim(),
+            "Try again"
+        );
+        button.click();
+        leptos::task::tick().await;
+
+        assert_eq!(
+            asked.get_untracked(),
+            vec![vec!["a/one".to_string(), "a/two".to_string()]],
+            "exactly the cause's own members, once"
+        );
+    }
+    #[wasm_bindgen_test]
+    fn an_unexplained_pause_gets_its_own_row_below_a_conflict() {
+        // qhq-8mgw.36, and §5's row 3 rendered for the first time. Nothing groups
+        // a pause — it is not shared by a host or a bucket — so it falls to a
+        // per-package row, and its precedence puts it under a conflict (which
+        // names its files, and is the more specific fact about the same disk) and
+        // over an unread state.
+        //
+        // The fixture is in the reverse of the expected order, so a `precedence`
+        // that ignored these states entirely would not pass by luck.
+        let items = derive_queue(
+            &[
+                pkg("a/unread", PackageState::Unknown, Some("h.io")),
+                pkg("a/paused", PackageState::Paused, Some("h.io")),
+                pkg(
+                    "a/conflict",
+                    PackageState::PullConflict {
+                        files: vec!["x.csv".to_string()],
+                    },
+                    Some("h.io"),
+                ),
+            ],
+            // Signed IN, or the unread one joins a signed-out cause instead of
+            // being the row this test compares against.
+            &[host("h.io", true)],
+            &[],
+        );
+
+        let order: Vec<&str> = items
+            .iter()
+            .filter_map(|item| match item {
+                QueueItem::Package { namespace, .. } => Some(namespace.as_str()),
+                QueueItem::Cause { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            order,
+            vec!["a/conflict", "a/paused", "a/unread"],
+            "a pause must be named, and named in its lattice position"
+        );
+    }
+}

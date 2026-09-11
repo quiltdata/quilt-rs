@@ -81,7 +81,7 @@ fn SetupContent(default_home: String) -> impl IntoView {
         leptos::task::spawn_local(async move {
             match commands::setup(directory.get_untracked()).await {
                 Ok(_) => {
-                    navigate("/installed-packages-list", NavigateOptions::default());
+                    navigate("/", NavigateOptions::default());
                 }
                 Err(e) => {
                     hint.set(e);

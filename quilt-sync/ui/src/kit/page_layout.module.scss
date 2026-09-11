@@ -1,0 +1,161 @@
+/*
+ * Page frame. The appbar is full-bleed and its contents are not — the rule under it
+ * has to reach both window edges or it reads as a box rather than as the top of the
+ * page, while what sits on it must line up with the regions below.
+ */
+
+/* The frame owns the window height, and the list inside it takes the leftover and
+ * scrolls itself — so the appbar, the strip, the queue and the toolbar stay on
+ * screen however long the roster is.
+ *
+ * It has to own the height rather than let the document scroll: `body` carries
+ * `overflow: hidden` from v1's global layout (`assets/css/layout.css`), which
+ * `index.html` loads after this bundle, so a page taller than the window is
+ * clipped with no scrollbar anywhere. v1 never noticed because its own wrapper
+ * scrolls itself the same way.
+ *
+ * `overflow-y: auto` stays as the fallback: below the window floor the regions
+ * above the list cannot all fit, and then this scrolls rather than crushing the
+ * list to nothing. See `.list_region`'s own floor. */
+.root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--q-bgColor-page);
+  /* The page paints its own ground, so it must state its own ink beside it.
+   * Without this the whole v2 subtree inherits `body`'s colour, which is v1's
+   * `--q-ui-palette-text-primary` — a hardcoded `rgb(0 0 0 / 87%)` that no
+   * theme switches. Every element that does not set a colour of its own was
+   * therefore black, which is invisible on the dark ground above
+   * (qhq-8mgw.56). Descendants that do set one still win. */
+  color: var(--q-fgColor-default);
+}
+
+/* The one surface in the kit that is not a step on the page's ladder.
+ *
+ * Every other raised surface is LIGHTER than the page; this one is the brand
+ * ground in both themes, which is a deliberate exception and not an oversight —
+ * the appbar is chrome, not content, and v1's bar has been this colour all
+ * along. It also settles the logo: `quilt.png` is white ink, so it needs a dark
+ * ground rather than a fourth brand asset (qhq-8mgw.22).
+ *
+ * No bottom rule. It separated a white bar from a near-white page; against the
+ * brand ground the colour change is the separation, and a grey line over it
+ * reads as a seam. */
+.appbar {
+  background: var(--q-bgColor-brand);
+  /* Stated, not inherited: `.root` sets the page's ink, and without this the
+   * bar's contents would draw dark-on-navy — the same mistake, one level up,
+   * that qhq-8mgw.56 found in `.root` itself. */
+  color: var(--q-fgColor-onBrand);
+  /* Its own height, never a share of the leftover. */
+  flex: none;
+}
+
+/* The page container, declared once for everything that has to line up with it.
+ *
+ * The appbar is full-bleed and its CONTENTS are not: the rule under it has to
+ * reach both window edges or it reads as a box rather than as the top of the
+ * page, while the logo and the actions sitting on it must line up with the
+ * regions below. Same for a banner. Three rules repeating the same three
+ * declarations is how that alignment drifts, so they share one.
+ *
+ * Only the inline padding is here — each row's own vertical rhythm is its own. */
+.bar,
+.notice,
+.main {
+  /* `width: 100%` is load-bearing, not belt-and-braces. `.notice` and `.main` are
+   * flex items of `.root`, and auto margins on a flex item's cross axis suppress
+   * the `stretch` that would otherwise size it — leaving it shrink-to-fit around
+   * its widest child, so `max-width` never binds and the column ends up as narrow
+   * as its content instead of as wide as the container. A definite width restores
+   * it: the cap applies, and the auto margins centre what is left. */
+  width: 100%;
+  max-width: var(--q-container);
+  margin-inline: auto;
+  padding-inline: var(--q-space-4);
+}
+
+/* Not `position: sticky`. It would be defensible — the refresh control is useful from
+ * anywhere in a long list — but a sticky bar costs vertical space permanently in
+ * exchange for two buttons, and this page is already spending its height on a queue.
+ * Worth reconsidering once the real page is scrolled with 43 rows in it. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  padding-block: var(--q-space-2);
+  min-height: 44px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  /* An anchor, so the underline has to be switched off explicitly. */
+  text-decoration: none;
+}
+
+/* 22px keeps the appbar's height where it was. The asset is v1's 230x48
+ * wordmark, so this draws about 105px wide — height is the dimension the bar
+ * cares about, and `width: auto` keeps the aspect from the file rather than
+ * restating it here. */
+.logo img {
+  height: 22px;
+  width: auto;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  flex: none;
+  gap: var(--q-space-2);
+}
+
+/* The bar's own chrome, on the brand ground.
+ *
+ * `IconButton`'s framed variant is a raised white pill — right on a
+ * page-coloured surface, and two white blobs on this one. So the frame comes
+ * off and the glyph takes the bar's ink, which is what v1 does for the same
+ * two buttons and the same reason (`.link` in `assets/css/components/button.css`).
+ * Scoped to the bar rather than pushed into the kit: the component is correct
+ * everywhere else it is used, and it is the GROUND that is unusual here. */
+.actions button {
+  background: transparent;
+  border-color: transparent;
+  color: inherit;
+}
+
+.actions button:hover:not(:disabled) {
+  background: var(--q-overlay-onBrand-hover);
+  border-color: transparent;
+  color: inherit;
+}
+
+.actions button:active:not(:disabled) {
+  background: var(--q-overlay-onBrand-active);
+}
+
+/* The banner's own row: width-capped like the appbar's contents and the page column,
+ * so a bar lines up with the regions rather than with the window. Only the top padding is
+ * the row's — the bottom gap belongs to whatever follows, and `.main`'s padding already
+ * provides it. */
+.notice {
+  padding-block: var(--q-space-4) 0;
+  flex: none;
+}
+
+/* The page column, and the one place the gap between regions is set. Regions carry no
+ * outer margin of their own: one of them spacing itself would look right alone and
+ * wrong beside the others, and there would be no single place to change the rhythm. */
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-6);
+  padding-block: var(--q-space-5) var(--q-space-8);
+  /* Takes the height the appbar leaves, and `min-height: 0` is what lets it be
+   * shorter than its own content — without it a flex item refuses to shrink past
+   * its intrinsic height and the child scroller never gets a chance to scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+}

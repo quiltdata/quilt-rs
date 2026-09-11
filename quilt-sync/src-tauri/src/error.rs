@@ -195,6 +195,26 @@ impl Error {
         matches!(self, Error::Quilt(err) if err.is_access_denied())
     }
 
+    /// This error in the words a user should read: the domain error's own
+    /// message, without the `Quilt error:` wrapper that [`Display`] adds.
+    ///
+    /// The wrapper says which of this crate's error variants the failure
+    /// arrived in, which is a fact about the codebase rather than about what
+    /// went wrong, and it reads as noise in front of a sentence the domain
+    /// already worded. The autosync pause path drops it by binding the inner
+    /// error per arm (`autopull/tick.rs`) and asserts it never reaches the
+    /// tray; this is the same removal for a caller holding only the outer
+    /// error.
+    ///
+    /// [`Display`]: std::fmt::Display
+    #[must_use]
+    pub fn user_facing(&self) -> String {
+        match self {
+            Error::Quilt(inner) => inner.to_string(),
+            other => other.to_string(),
+        }
+    }
+
     /// True when S3 rejected the credentials themselves.
     ///
     /// The counterpart to [`Error::is_access_denied`]: that one says the
@@ -319,6 +339,43 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+
+    #[test]
+    fn user_facing_drops_the_quilt_wrapper_and_keeps_the_sentence() {
+        // qhq-8mgw.59. The dialog read "Failed to create package: Quilt error:
+        // The package proj/process is already installed." — three clauses, one
+        // of which informs.
+        let err = Error::Quilt(quilt::Error::InstallPackage(
+            quilt::InstallPackageError::AlreadyInstalled(quilt_uri::Namespace::from((
+                "proj", "process",
+            ))),
+        ));
+        let inner = "The package proj/process is already installed";
+        assert!(
+            err.to_string().starts_with("Quilt error:"),
+            "the wrapper is what Display adds: {err}"
+        );
+        assert!(
+            !err.user_facing().contains("Quilt error:"),
+            "and what this drops: {}",
+            err.user_facing()
+        );
+        assert!(
+            err.user_facing().contains(inner),
+            "the sentence survives: {}",
+            err.user_facing()
+        );
+    }
+
+    #[test]
+    fn user_facing_leaves_a_non_quilt_error_alone() {
+        // Only the `Quilt` wrapper is framing. The others name a foreign error's
+        // domain — "Filesystem error:" in front of an `io::Error` is the context
+        // that says which subsystem failed, and dropping it would lose it.
+        let err = Error::FS(std::io::Error::other("disk fell off"));
+        assert_eq!(err.user_facing(), err.to_string());
+        assert!(err.user_facing().starts_with("Filesystem error:"));
+    }
 
     #[test]
     fn to_frontend_string_session_absent_with_host() {

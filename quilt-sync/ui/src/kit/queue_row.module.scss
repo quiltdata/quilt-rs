@@ -1,0 +1,77 @@
+/*
+ * Queue row. Namespace, state, one action.
+ *
+ * No hover tint and no pointer cursor, unlike the list rows: nothing here responds
+ * to a click on the row, and a tint that promises otherwise is a lie. The button
+ * has its own hover.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  /* Same reason as the list rows: a flex item's automatic minimum size is its
+   * max-content width, so without a definite width a long namespace pushes the row
+   * past its container instead of ellipsising. */
+  width: 100%;
+  gap: var(--q-space-2);
+  padding: 4px 2px;
+  min-height: 30px;
+}
+
+/* The disclosure column, occupied by a bullet rather than left empty. Same 24px as
+ * `CauseRow`'s expander, so a cause and a package start their text at the same x and
+ * the parent is not indented past its own children.
+ *
+ * A bullet rather than blank space because the column is structural: with it, the
+ * region reads as one list whose items either expand or do not. Blank space read as a
+ * missing element. */
+.bullet {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  align-self: stretch;
+}
+
+.bullet::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--q-borderColor-emphasis);
+}
+
+/* Truncates right. The namespace is the row's subject, so it yields space to the
+ * state and the action rather than the other way round — those two are why the row
+ * is here at all, and a clipped verb is worse than a clipped name. */
+.namespace {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A fixed column, unlike `PackageRow`'s ragged one, and for the opposite reason.
+ * There the labels repeat and the odd one out should break the pattern; here every
+ * row differs and the buttons are what the eye travels down.
+ *
+ * No fixed width: the action hugs its label and sits at the region's right edge, so
+ * the RIGHT edges form the straight line and the left edges follow the verb's length.
+ * A fixed column would align the left edges too, at the cost of padding every short
+ * verb out to the width of `Choose S3 bucket` — which buys tidiness with space, and
+ * makes the state labels sit further from the namespace they describe. */
+.action {
+  flex: none;
+  display: flex;
+}
+
+/* An expanded cause's packages, indented by exactly one column — the disclosure width
+ * plus its gap — so a sub-row's own bullet sits where the parent's text starts. One
+ * indent step, the same unit a tree uses, rather than a number chosen to look right.
+ * Quieter too, because it is evidence and not a decision of its own. */
+.sub {
+  padding-left: calc(24px + var(--q-space-2));
+  color: var(--q-fgColor-muted);
+}

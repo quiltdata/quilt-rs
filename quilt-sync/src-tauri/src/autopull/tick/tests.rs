@@ -1,10 +1,14 @@
 use super::*;
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
+use chrono::DateTime;
+use chrono::Utc;
 use tokio::sync::RwLock;
 
 use crate::autopull::AutosyncSettings;
+use crate::autopull::Clocks;
 use crate::autopull::PullSettings;
 use crate::autopull::PushSettings;
 use crate::autopull::WindowMode;
@@ -65,6 +69,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: Arc::new(LogReporter),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     }
 }
 
@@ -383,6 +388,43 @@ async fn run_once_disabled_is_a_noop() -> Result<(), Error> {
 }
 
 #[tokio::test]
+async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> Result<(), Error> {
+    // qhq-8mgw.30. The spawn loop arms `now + cadence` and then sleeps exactly
+    // `cadence`, so by the time the tick begins the deadline IS now — and stays
+    // in the past for the tick's whole duration, which on a large install is a
+    // network round trip per package. The v2 card then reads a past deadline,
+    // waits its due-floor, refetches, reads the same past deadline back, and
+    // rebuilds its ring from zero every 10s instead of letting it sit full.
+    //
+    // Armed here rather than in the loop because the loop needs a Tauri runtime
+    // and cannot be driven from a test — `arm_next_pull`'s own doc gives that as
+    // the reason it is a free function, and the same reasoning applies to when it
+    // is called. The cadence arithmetic is pinned separately, by
+    // `arming_the_pull_records_a_deadline_one_cadence_out`.
+    let model = MockQuiltModel::new();
+    let inner = make_inner(AutosyncSettings::default());
+    assert!(
+        inner.clocks.next_pull_at.read().await.is_none(),
+        "precondition: a cold start has nothing armed"
+    );
+
+    let before = Utc::now();
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let at = inner
+        .clocks
+        .next_pull_at
+        .read()
+        .await
+        .expect("a tick must arm the tick that follows it");
+    assert!(
+        at > before,
+        "a running tick must not advertise a deadline already past: {at} vs {before}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
     let host: Host = "catalog.dev".parse().unwrap();
@@ -446,6 +488,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -539,6 +582,9 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        // Branch-only field (plan 3's `next_pull_at`), so `main`'s own test could
+        // not have set it.
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -633,6 +679,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -729,6 +776,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -818,6 +866,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -961,6 +1010,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1031,6 +1081,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1179,6 +1230,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         login_blocked: RwLock::new(BTreeMap::new()),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1249,6 +1301,131 @@ fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
     );
 }
 
+#[tokio::test]
+async fn arming_the_pull_records_a_deadline_one_cadence_out() {
+    let inner = make_inner(enabled());
+    let before = Utc::now();
+    crate::autopull::arm_next_pull(&inner, Duration::from_secs(30)).await;
+    let at = inner
+        .clocks
+        .next_pull_at
+        .read()
+        .await
+        .expect("arming must record a deadline");
+    // Absolute bounds. A test that asserted `at - before == cadence` would pass
+    // for any cadence, including a wrong one read from the wrong setting.
+    assert!(
+        at >= before + Duration::from_secs(29) && at <= before + Duration::from_secs(31),
+        "expected ~30s out, got {at} from {before}"
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_armed_before_the_loop_runs() {
+    // Cold start: `main_page_facts` must be able to tell "not armed yet" from
+    // "armed for a moment in the past".
+    let inner = make_inner(enabled());
+    assert!(inner.clocks.next_pull_at.read().await.is_none());
+}
+
+/// A local status with `n` changed files and an mtime the caller sets — the two
+/// fields `publish_arm_from_status` reads. `status_with` in `commands/main_page`
+/// is a different module's fixture; this is the tick's own.
+fn local_status(files: usize, mtime: Option<SystemTime>) -> quilt::lineage::InstalledPackageStatus {
+    let mut changes = quilt::lineage::ChangeSet::new();
+    for i in 0..files {
+        changes.insert(
+            std::path::PathBuf::from(format!("f{i}.csv")),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+    }
+    let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
+    status.most_recent_mtime = mtime;
+    status
+}
+
+#[tokio::test]
+async fn a_local_edit_arms_the_publish_deadline_without_waiting_for_a_tick() {
+    // qhq-8mgw.54. The arm map was written only by the tick, so the countdown
+    // lagged the working tree by a whole cadence — and the cadence is longest
+    // exactly when it matters, because editing a file means the window is
+    // unfocused (120s) or closed (600s), not focused (30s). The list meanwhile
+    // updates within the file watcher's debounce, so the two panels disagreed
+    // on screen: "Nothing to publish" beside "1 file changed".
+    //
+    // The tree is deliberately NOT quiet: a quiet one publishes on the next
+    // tick rather than at a future moment, which is the `None` case below.
+    let inner = make_inner(enabled());
+    let ns: Namespace = ("acme", "demo").into();
+    let edited_at = SystemTime::now();
+    let status = local_status(1, Some(edited_at));
+
+    crate::autopull::arm_publish_from_status(&inner, &ns, &status).await;
+
+    let armed = inner.clocks.publish_arm.read().await;
+    let at = armed
+        .get(&ns)
+        .copied()
+        .expect("an edit must arm a deadline");
+    // `enabled()` takes `PushSettings::default()`, whose `idle_timeout_secs` is
+    // 300 — so the deadline is five minutes after the edit. Absolute bounds and
+    // a literal, not `at - edited == window`: the latter holds for any window,
+    // including one read from the wrong setting, which is exactly the mistake
+    // this arithmetic could make.
+    let expected: DateTime<Utc> = (edited_at + Duration::from_secs(300)).into();
+    assert!(
+        at >= expected - Duration::from_secs(2) && at <= expected + Duration::from_secs(2),
+        "expected ~{expected}, got {at}"
+    );
+}
+
+#[tokio::test]
+async fn a_tree_with_nothing_in_it_clears_any_deadline() {
+    // The other half, and the one that keeps a stale countdown off the card:
+    // reverting a file leaves no changes, so there is nothing to publish and
+    // nothing to count down to. The operator saw exactly this survive a revert.
+    let inner = make_inner(enabled());
+    let ns: Namespace = ("acme", "demo").into();
+    let dirty = local_status(1, Some(SystemTime::now()));
+    crate::autopull::arm_publish_from_status(&inner, &ns, &dirty).await;
+    assert!(
+        inner.clocks.publish_arm.read().await.contains_key(&ns),
+        "precondition: armed"
+    );
+
+    let clean = local_status(0, None);
+    crate::autopull::arm_publish_from_status(&inner, &ns, &clean).await;
+
+    assert!(
+        !inner.clocks.publish_arm.read().await.contains_key(&ns),
+        "a tree with no changes must not leave a countdown behind"
+    );
+}
+
+#[test]
+fn an_already_quiet_tree_has_no_future_moment_to_count_to() {
+    // Quiet means the window has already elapsed, so the next tick publishes
+    // rather than waiting — a deadline here would count down to the past. The
+    // same reason `tick.rs` arms only from its deferral arm.
+    let status = local_status(1, Some(SystemTime::now() - Duration::from_secs(3600)));
+
+    assert_eq!(
+        crate::autopull::publish_arm_from_status(&status, true, Duration::from_secs(30)),
+        None
+    );
+}
+
+#[test]
+fn publishing_switched_off_counts_down_to_nothing() {
+    let status = local_status(1, Some(SystemTime::now()));
+
+    assert_eq!(
+        crate::autopull::publish_arm_from_status(&status, false, Duration::from_secs(30)),
+        None,
+        "a deadline for an operation that will not run is a lie"
+    );
+}
+
 // ── The apply-in-flight flag ──
 //
 // The quit prompt is only as good as this flag. The tick's own
@@ -1306,17 +1483,17 @@ fn applied() -> quilt::flow::PullReport {
     })
 }
 
+/// [`make_inner`] with the caller's aggregator, which is the one field these
+/// tests care about.
+///
+/// Built FROM `make_inner` rather than beside it: the two were written on
+/// different branches and were identical but for this field, so the merge that
+/// brought them together broke the copy that had not heard about `clocks`.
+/// Spelling the difference is what stops the next field from doing it again.
 fn inner_with(aggregator: Arc<crate::autopull::status::SyncTrayAggregator>) -> WatcherInner {
     WatcherInner {
-        settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
-        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
-        paused: RwLock::new(BTreeMap::new()),
-        backoff: RwLock::new(BTreeMap::new()),
-        login_blocked: RwLock::new(BTreeMap::new()),
-        reporter: Arc::new(LogReporter),
         aggregator,
+        ..make_inner(enabled())
     }
 }
 

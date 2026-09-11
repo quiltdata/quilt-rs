@@ -45,6 +45,11 @@ pub(crate) struct RefreshOutcome {
     /// consumer. Set from the observed status, except the mutation-success
     /// paths, which reach a settled `UpToDate` tree (`clean_uptodate_fingerprint`).
     pub fingerprint: String,
+    /// When this package's quiet window expires, set **only** by the deferral
+    /// branch. Every other outcome leaves it `None`, and `run_once` reads that
+    /// as "not waiting" and clears any recorded arm time — so one decision
+    /// covers both directions.
+    pub publish_arm_at: Option<SystemTime>,
 }
 
 impl RefreshOutcome {
@@ -60,6 +65,28 @@ impl RefreshOutcome {
             published: None,
             pulled: None,
             fingerprint,
+            publish_arm_at: None,
+        }
+    }
+
+    /// An outcome that reports the observed tree and says when publishing will
+    /// become possible.
+    fn deferred(
+        upstream: quilt::lineage::UpstreamState,
+        has_changes: bool,
+        fingerprint: String,
+        arm_at: SystemTime,
+    ) -> Self {
+        Self {
+            upstream,
+            has_changes,
+            published: None,
+            // Nothing was pulled: this arm reports a tree it only observed, and
+            // says when publishing becomes possible. `main` added the field in
+            // `e4cd6ea` while this constructor lived only on this branch.
+            pulled: None,
+            fingerprint,
+            publish_arm_at: Some(arm_at),
         }
     }
 }
@@ -297,6 +324,21 @@ fn verdict_held_still(
     reason = "one tick's inputs, each read from a different source; bundling them \
               would invent a struct that exists only to satisfy the count"
 )]
+// 106 lines, and it crossed the limit in the merge that brought
+// `feat/main-page-v2-tokens` together with main: this branch added the publish
+// deferral's arm time, main added the apply-epoch sampling and the verdict gate,
+// and neither alone was over.
+//
+// Not split, because the split is worse than the length. The body is two
+// mutually exclusive branches over ONE observation — `status`, `upstream`,
+// `has_changes`, `fingerprint` — so a helper for either branch takes ten
+// parameters where the parent takes nine, and trades this lint for
+// `too_many_arguments`. The honest fix is to give that observation a type and
+// pass one value; that is a design change and does not belong in a merge.
+#[allow(
+    clippy::too_many_lines,
+    reason = "two exclusive branches over one observation; see the note above"
+)]
 pub(crate) async fn refresh_then_maybe_sync(
     model: &impl QuiltModel,
     namespace: &Namespace,
@@ -450,7 +492,16 @@ pub(crate) async fn refresh_then_maybe_sync(
         let now = SystemTime::now();
         if !status.working_tree_quiet(now, quiet_window) {
             info!("autosync: namespace={namespace} working tree not quiet, deferring");
-            return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
+            // `working_tree_quiet` returns true when `most_recent_mtime` is
+            // `None`, so reaching here means it is `Some` — the `unwrap_or(now)`
+            // is a total function's shape, not a guess.
+            let edited_at = status.most_recent_mtime.unwrap_or(now);
+            return Ok(RefreshOutcome::deferred(
+                upstream,
+                has_changes,
+                fingerprint,
+                edited_at + quiet_window,
+            ));
         }
         // `publish_with_settings` is shared with the manual one-click
         // Publish command in `commands.rs`, so a change to publish
@@ -465,6 +516,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                     published: Some(message),
                     pulled: None,
                     fingerprint: clean_uptodate_fingerprint(),
+                    publish_arm_at: None,
                 })
             }
             Err(err) => classify_sync_err(err)
@@ -514,6 +566,30 @@ pub(crate) async fn run_once(
     roles: &RoleCache,
     inner: &WatcherInner,
 ) -> Result<(), Error> {
+    // Re-arm before doing any work, so a running tick advertises the tick that
+    // FOLLOWS it rather than the one it is serving (qhq-8mgw.30). The loop arms
+    // `now + cadence` and then sleeps exactly `cadence`, so on arrival here the
+    // deadline is already now, and it stays in the past for however long this
+    // tick takes — a network round trip per package on a large install. A card
+    // reading that refetches on its due-floor, reads the same past deadline, and
+    // rebuilds its ring from zero on a loop.
+    //
+    // The deadline this writes is early by this tick's own duration, which
+    // `kit/countdown.rs` sanctions outright: a ring that sits full for a few
+    // seconds is truthful, where one that restarts from zero is not.
+    //
+    // Before the cheap pre-check below, not after: the loop arms unconditionally
+    // today, and whether a disabled direction should advertise a deadline at all
+    // is a different question from when the arming happens.
+    {
+        let cadence = {
+            let settings = inner.settings.read().await;
+            let mode = *inner.window_mode.read().await;
+            crate::autopull::cadence_for_mode(&settings.pull, mode)
+        };
+        crate::autopull::arm_next_pull(inner, cadence).await;
+    }
+
     // Cheap pre-check: if both directions are off we have nothing to
     // do. Per-direction gating lives inside `refresh_then_maybe_sync`
     // so a single-direction config (pull only / push only) still
@@ -540,6 +616,12 @@ pub(crate) async fn run_once(
         .retain(|ns, _| current.contains(ns));
     inner
         .login_blocked
+        .write()
+        .await
+        .retain(|ns, _| current.contains(ns));
+    inner
+        .clocks
+        .publish_arm
         .write()
         .await
         .retain(|ns, _| current.contains(ns));
@@ -595,7 +677,7 @@ pub(crate) async fn run_once(
             continue;
         }
 
-        match refresh_then_maybe_sync(
+        let result = refresh_then_maybe_sync(
             model,
             &namespace,
             &lineage,
@@ -606,8 +688,22 @@ pub(crate) async fn run_once(
             resolve_sync_scope(lineage.sync_scope, &experimental),
             &inner.aggregator,
         )
-        .await
+        .await;
+
+        // One place decides this namespace's arm time. It is armed only by a
+        // quiet-window deferral; a publish, a pull, a pause, a login block and a
+        // transient failure all mean it is not waiting, and a stale deadline
+        // would have the card count down to a moment with no meaning.
         {
+            let mut arm = inner.clocks.publish_arm.write().await;
+            if let Some(at) = result.as_ref().ok().and_then(|o| o.publish_arm_at) {
+                arm.insert(namespace.clone(), at.into());
+            } else {
+                arm.remove(&namespace);
+            }
+        }
+
+        match result {
             Ok(outcome) => {
                 inner.backoff.write().await.remove(&namespace);
                 inner.login_blocked.write().await.remove(&namespace);

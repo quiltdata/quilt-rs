@@ -254,6 +254,8 @@ impl Default for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
+    #[serde(default)]
+    pub main_page_v2: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -502,6 +504,229 @@ pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListD
     tauri::invoke_unit("get_installed_packages_list_data").await
 }
 
+/// v2's package list, light phase. Every row arrives `provisional`.
+pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
+    tauri::invoke_unit("get_main_page_packages").await
+}
+
+/// v2's package list, heavy phase. One invocation per row, fired by the
+/// page's resolve; `pages::main_page::record_refresh` applies the answer.
+pub async fn refresh_main_page_package(
+    namespace: String,
+) -> Result<MainPagePackageRefreshData, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("refresh_main_page_package", &Args { namespace }).await
+}
+
+/// What the heavy phase corrects on a row. Mirrors `MainPagePackageRefresh` on
+/// the Tauri side; the fields the light phase already delivered are not resent.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackageRefreshData {
+    pub state: crate::kit::PackageState,
+    pub role_switch_host: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackagesData {
+    pub packages: Vec<MainPagePackageData>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPagePackageData {
+    pub namespace: String,
+    pub state: crate::kit::PackageState,
+    /// Epoch milliseconds, from the last commit or the last installed path — see
+    /// `last_changed` on the Tauri side. `None` only when nothing has ever been
+    /// written to the package.
+    pub changed_at: Option<f64>,
+    /// The queue's group key for `RoleDenied` (§4.3, R2): one host can hold
+    /// both readable and unreadable buckets, so `derive_queue` groups a
+    /// denial by this rather than by `host`.
+    pub bucket: Option<String>,
+    /// The catalog this package points at, as the queue's join key: R3 groups
+    /// an `Unknown` package under its host's `Signed out from {host}` cause
+    /// only when the accounts payload agrees that host is signed out.
+    pub host: Option<String>,
+    /// Whether the state is a cached guess awaiting the heavy phase. Almost
+    /// always true — a `PullConflict` is the exception, coming from the watcher's
+    /// paused map rather than from cached lineage, and it arrives settled.
+    /// `pages::main_page::PackageStore::seed` reads this per row; assuming it
+    /// instead is what took conflicts out of the queue offline (qhq-8mgw.40).
+    pub provisional: bool,
+    /// The host whose role selector the row's switch affordance opens. The page
+    /// carries it into `RowSignals` and settles it on refresh; the switch
+    /// control itself is the queue's (Plan 4), so no `#[expect(dead_code)]`
+    /// here — the field is carried and settled, never read.
+    pub role_switch_host: Option<String>,
+}
+
+/// Whether a direction's machinery is counting down, waiting, or stopped.
+///
+/// A closed set with **no catch-all**, unlike [`PausedReasonData`]: these three
+/// are the whole vocabulary of the toggle's trailing slot (§4.2), a fourth would
+/// be a design change rather than a wire addition, and `#[serde(other)]` does
+/// not apply to a plainly-serialized unit enum anyway. Drift is caught by
+/// `main_page_watcher_data_wire_form_is_verbatim`.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToggleActivityData {
+    Armed,
+    Idle,
+    Paused,
+}
+
+/// UI-side mirror of the backend's `ToggleState`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleStateData {
+    pub enabled: bool,
+    pub activity: ToggleActivityData,
+    /// Epoch milliseconds. `Some` exactly when `activity` is `Armed` — the
+    /// backend derives both from one expression.
+    pub deadline: Option<f64>,
+    pub interval_ms: f64,
+}
+
+/// Why the watcher stopped syncing one package. UI-side mirror of the backend's
+/// `PausedDto`.
+///
+/// `Unrecognised` is `#[serde(other)]`: a reason added to the backend without an
+/// arm here degrades to one variant instead of failing the whole payload and
+/// taking the card with it. It carries no data, because `#[serde(other)]`
+/// accepts only unit variants — and does not need to, since the fixed words for
+/// an unexplained pause are the UI's anyway.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PausedReasonData {
+    PendingChanges,
+    PendingCommit,
+    Diverged,
+    PullConflict {
+        files: Vec<String>,
+    },
+    RoleDenied {
+        role: Option<String>,
+    },
+    Other {
+        message: String,
+    },
+    #[serde(other)]
+    Unrecognised,
+}
+
+/// The Autosync card carries this list but renders nothing from it. The queue
+/// (`pages::main_page::queue`) does not read it either — it derives from the
+/// resolved package state, never from a pause map — so nothing in this build
+/// reads a pause's namespace or reason; hence the suppression. Surfacing an
+/// autosync pause that resolves to no state of its own is filed as
+/// qhq-8mgw.36.
+///
+/// No suppression any more: this is a library module, and `dead_code` does not
+/// flag an unused `pub` item in one, because its callers are outside it
+/// (qhq-8mgw.20). It carried a `cfg_attr`-guarded `expect` until then.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PausedPackageData {
+    pub namespace: String,
+    pub reason: PausedReasonData,
+}
+
+/// Payload 3: the watcher's own state. Returned by `get_main_page_watcher`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageWatcherData {
+    pub pull: ToggleStateData,
+    pub publish: ToggleStateData,
+    /// The queue reads the resolved package state, never this pause map — R4
+    /// retired that reader before it was ever written. Carried and pinned here
+    /// regardless, and still read by nothing but the wire-form test.
+    ///
+    /// §5's lattice row 3, "Paused — other", was the case this list looked like
+    /// the answer to. It was settled instead by the LIGHT PHASE folding an
+    /// unexplained pause into `PackageState::Paused` (qhq-8mgw.36), so the queue
+    /// still derives from one resolved state and this list still has no reader —
+    /// which is the outcome R4 argued for, reached the other way round.
+    pub paused: Vec<PausedPackageData>,
+}
+
+/// v2's watcher state: both toggles and the pause list. Drawn by
+/// `pages::main_page::autosync::AutosyncCard`.
+pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
+    tauri::invoke_unit("get_main_page_watcher").await
+}
+
+/// One host in the Accounts card, as it arrives.
+///
+/// Mirrors `quilt_sync::commands::main_page::AccountHost`. `currentRole` is
+/// `null` both before the role is resolved and when the query failed — the two
+/// are told apart by `provisional`, not by the role.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountHostData {
+    pub host: String,
+    pub signed_in: bool,
+    pub current_role: Option<String>,
+    pub roles: Vec<String>,
+    pub provisional: bool,
+}
+
+/// Payload of `get_main_page_accounts`: the Accounts card's light phase.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageAccountsData {
+    pub hosts: Vec<AccountHostData>,
+}
+
+/// v2's accounts list, light phase: one row per host, `signedIn` only.
+pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
+    tauri::invoke_unit("get_main_page_accounts").await
+}
+
+/// v2's accounts list, heavy phase: fills in the given host's role.
+pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        host: String,
+    }
+    tauri::invoke("refresh_main_page_account", &Args { host }).await
+}
+
+/// One installed or published file, flat across every package. Mirrors the
+/// backend's `MainPageFile`; the owning package travels with the row rather
+/// than grouping it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageFileData {
+    pub path: String,
+    pub namespace: String,
+    /// Epoch milliseconds. Never re-sorted or re-capped on this side — see
+    /// `pages::main_page::recent_files::RecentFilesRegion`.
+    pub changed_at: f64,
+}
+
+/// Payload of `get_main_page_recent_files`: §3.2's flat feed, already newest
+/// first and already bounded by the backend (§4.5).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageRecentFilesData {
+    pub files: Vec<MainPageFileData>,
+}
+
+/// v2's recent files feed, single-phase: drawn by
+/// `pages::main_page::recent_files::RecentFilesRegion`, and read by the main
+/// page's own resource only once the reader asks for that view.
+pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, String> {
+    tauri::invoke_unit("get_main_page_recent_files").await
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshedPackageStatus {
@@ -747,6 +972,20 @@ pub async fn update_autosync_settings(settings: AutosyncSettingsData) -> Result<
     tauri::invoke("update_autosync_settings", &Args { settings }).await
 }
 
+/// Flip one direction of autosync. `None` leaves a direction alone — the v2 main
+/// page knows two booleans, and `update_autosync_settings` takes all five settings
+/// fields, so writing through that one would mean fetching a payload this page has
+/// no other use for.
+pub async fn set_autosync_direction(pull: Option<bool>, push: Option<bool>) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        pull: Option<bool>,
+        push: Option<bool>,
+    }
+    tauri::invoke("set_autosync_direction", &Args { pull, push }).await
+}
+
 pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -756,18 +995,23 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
     tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
 }
 
-/// Turn the entire-package sync experiment on or off. Reveals the per-package
-/// scope control; downloads nothing by itself.
-pub async fn update_experimental_settings(entire_package_sync: bool) -> Result<(), String> {
+/// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
+/// knows about one experiment must not reset another.
+pub async fn update_experimental_settings(
+    entire_package_sync: Option<bool>,
+    main_page_v2: Option<bool>,
+) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
-        entire_package_sync: bool,
+        entire_package_sync: Option<bool>,
+        main_page_v2: Option<bool>,
     }
     tauri::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
+            main_page_v2,
         },
     )
     .await
@@ -1235,6 +1479,7 @@ mod tests {
         CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, RolesData, ViolationField,
         WorkflowInfo, WorkflowIntent,
     };
+    use wasm_bindgen_test::*;
 
     /// The mirror struct must deserialize the exact JSON the backend
     /// (`quilt_sync::commands::package_list::InstalledPackageListItem`)
@@ -1415,6 +1660,82 @@ mod tests {
         );
     }
 
+    /// The mirror struct must deserialize the exact JSON the backend's light-phase
+    /// wire-shape test
+    /// (`quilt_sync::commands::main_page::get_main_page_packages_from_model_serializes_the_wire_shape`)
+    /// pins for one row. If the two drift, a light-phase row silently fails to
+    /// deserialize at the Tauri boundary.
+    #[wasm_bindgen_test]
+    fn main_page_packages_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPagePackagesData>(
+            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","host":"test.quilt.dev","provisional":true,"roleSwitchHost":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.packages.len(), 1);
+        let pkg = &data.packages[0];
+        assert_eq!(pkg.namespace, "team/latest");
+        assert_eq!(pkg.state, crate::kit::PackageState::Latest);
+        assert_eq!(pkg.changed_at, None);
+        assert_eq!(pkg.host.as_deref(), Some("test.quilt.dev"));
+        assert!(pkg.provisional);
+        assert_eq!(pkg.role_switch_host, None);
+    }
+
+    /// The mirror struct must deserialize the exact camelCase JSON the
+    /// backend's `MainPageFile`/`MainPageRecentFiles`
+    /// (`#[serde(rename_all = "camelCase")]`, both plain `Serialize`) produce.
+    /// If the two drift, the feed silently fails to deserialize at the Tauri
+    /// boundary.
+    #[wasm_bindgen_test]
+    fn main_page_recent_files_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPageRecentFilesData>(
+            r#"{"files":[{"path":"a/one.csv","namespace":"user/alpha","changedAt":1000.0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.files.len(), 1);
+        let file = &data.files[0];
+        assert_eq!(file.path, "a/one.csv");
+        assert_eq!(file.namespace, "user/alpha");
+        assert!((file.changed_at - 1000.0).abs() < f64::EPSILON);
+    }
+
+    /// The mirror struct must deserialize the heavy phase's two never-before-seen
+    /// kinds. UI-side mirror of the backend
+    /// `quilt_sync::commands::main_page::MainPagePackageRefresh`; these two
+    /// literals never crossed the wire before the heavy phase existed, because the
+    /// light phase could not produce either. Deserializing to `PackageState::Unknown`
+    /// is `#[serde(other)]`'s silent-drift failure mode — that is what this pins
+    /// against, not just "it parses".
+    #[test]
+    fn main_page_package_refresh_data_wire_form_is_verbatim() {
+        let pending = serde_json::from_str::<super::MainPagePackageRefreshData>(
+            r#"{"state":{"kind":"pending_changes","files":3},"roleSwitchHost":null}"#,
+        )
+        .unwrap();
+        assert!(
+            !matches!(pending.state, crate::kit::PackageState::Unknown),
+            "a kind drift would silently land here, via #[serde(other)]"
+        );
+        assert_eq!(
+            pending.state,
+            crate::kit::PackageState::PendingChanges { files: 3 }
+        );
+
+        let denied = serde_json::from_str::<super::MainPagePackageRefreshData>(
+            r#"{"state":{"kind":"role_denied","role":null},"roleSwitchHost":"h"}"#,
+        )
+        .unwrap();
+        assert!(
+            !matches!(denied.state, crate::kit::PackageState::Unknown),
+            "a kind drift would silently land here, via #[serde(other)]"
+        );
+        assert_eq!(
+            denied.state,
+            crate::kit::PackageState::RoleDenied { role: None }
+        );
+        assert_eq!(denied.role_switch_host.as_deref(), Some("h"));
+    }
+
     /// The mirror enum must serialize to the exact tagged JSON the backend
     /// (`quilt_rs::io::remote::WorkflowIntent`) deserializes, and round-trip
     /// back. If these strings drift, the Tauri commit boundary breaks silently.
@@ -1438,6 +1759,151 @@ mod tests {
                 intent
             );
         }
+    }
+
+    /// The mirror struct must deserialize the exact JSON the backend's
+    /// `quilt_sync::commands::main_page::the_watcher_payload_serializes_the_wire_shape`
+    /// pins. Character-for-character: a literal the backend does not emit looks like
+    /// a guard and proves nothing (plan 2's Fix 2).
+    #[wasm_bindgen_test]
+    fn main_page_watcher_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPageWatcherData>(
+            r#"{"pull":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":30000.0},"publish":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":300000.0},"paused":[{"namespace":"team/plate-07","reason":{"kind":"pull_conflict","files":["a.csv","b.csv"]}}]}"#,
+        )
+        .unwrap();
+        assert!(data.pull.enabled);
+        assert_eq!(data.pull.activity, super::ToggleActivityData::Paused);
+        assert_eq!(data.pull.deadline, None);
+        assert!((data.pull.interval_ms - 30_000.0).abs() < f64::EPSILON);
+        assert!((data.publish.interval_ms - 300_000.0).abs() < f64::EPSILON);
+        assert_eq!(data.paused.len(), 1);
+        assert_eq!(data.paused[0].namespace, "team/plate-07");
+        match &data.paused[0].reason {
+            super::PausedReasonData::PullConflict { files } => {
+                assert_eq!(files, &["a.csv".to_string(), "b.csv".to_string()]);
+            }
+            other => panic!("expected a pull conflict with two paths, got {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn an_armed_toggle_arrives_with_its_deadline() {
+        let data = serde_json::from_str::<super::MainPageWatcherData>(
+            r#"{"pull":{"enabled":true,"activity":"armed","deadline":1754500030000.0,"intervalMs":30000.0},"publish":{"enabled":false,"activity":"idle","deadline":null,"intervalMs":300000.0},"paused":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.pull.activity, super::ToggleActivityData::Armed);
+        assert_eq!(data.pull.deadline, Some(1_754_500_030_000.0));
+        assert_eq!(data.publish.activity, super::ToggleActivityData::Idle);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_conflict_arrives_as_a_list_with_its_commas_intact() {
+        // `qhq-8mgw.9`'s whole point, asserted at the boundary that used to flatten
+        // it: a filename containing ", " must not become two paths.
+        let data = serde_json::from_str::<super::PausedReasonData>(
+            r#"{"kind":"pull_conflict","files":["plate, run 3.csv","b.csv"]}"#,
+        )
+        .unwrap();
+        match data {
+            super::PausedReasonData::PullConflict { files } => {
+                assert_eq!(files.len(), 2);
+                assert_eq!(files[0], "plate, run 3.csv");
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn a_reason_this_build_has_never_heard_of_degrades_instead_of_failing_the_payload() {
+        // A reason added to the backend without an arm here would otherwise fail the
+        // WHOLE payload and the card would vanish. Same treatment
+        // `PackageState::Unknown` gets, for the same reason.
+        assert_eq!(
+            serde_json::from_str::<super::PausedReasonData>(r#"{"kind":"some_future_reason"}"#)
+                .unwrap(),
+            super::PausedReasonData::Unrecognised
+        );
+        // And the guard against `#[serde(other)]`'s silent-drift failure mode: a
+        // kind we DO know must not land in the catch-all.
+        assert_ne!(
+            serde_json::from_str::<super::PausedReasonData>(r#"{"kind":"diverged"}"#).unwrap(),
+            super::PausedReasonData::Unrecognised
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_three_named_fields_arrive_separately() {
+        for (json, expected) in [
+            (
+                r#"{"kind":"other","message":"workflow rejected metadata"}"#,
+                super::PausedReasonData::Other {
+                    message: "workflow rejected metadata".to_string(),
+                },
+            ),
+            (
+                r#"{"kind":"role_denied","role":"analyst"}"#,
+                super::PausedReasonData::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+            ),
+            (
+                r#"{"kind":"role_denied","role":null}"#,
+                super::PausedReasonData::RoleDenied { role: None },
+            ),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<super::PausedReasonData>(json).unwrap(),
+                expected
+            );
+        }
+    }
+
+    /// The mirror must deserialize the exact JSON the backend's
+    /// `the_accounts_payload_serializes_the_wire_shape` pins. Character-for-character:
+    /// a literal the backend does not emit looks like a guard and proves nothing.
+    #[wasm_bindgen_test]
+    fn main_page_accounts_data_wire_form_is_verbatim() {
+        let data = serde_json::from_str::<super::MainPageAccountsData>(
+            r#"{"hosts":[{"host":"open.quiltdata.com","signedIn":true,"currentRole":null,"roles":[],"provisional":true},{"host":"solo.registry.io","signedIn":false,"currentRole":null,"roles":[],"provisional":false}]}"#,
+        )
+        .unwrap();
+        assert_eq!(data.hosts.len(), 2);
+        assert!(data.hosts[0].signed_in);
+        assert!(
+            data.hosts[0].provisional,
+            "a signed-in host waits for its role"
+        );
+        assert_eq!(data.hosts[0].current_role, None);
+        assert!(!data.hosts[1].signed_in);
+        assert!(
+            !data.hosts[1].provisional,
+            "a signed-out host is already final"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_settled_account_arrives_with_its_role_and_alternatives() {
+        let host = serde_json::from_str::<super::AccountHostData>(
+            r#"{"host":"open.quiltdata.com","signedIn":true,"currentRole":"analyst","roles":["analyst","admin"],"provisional":false}"#,
+        )
+        .unwrap();
+        assert_eq!(host.current_role.as_deref(), Some("analyst"));
+        assert_eq!(host.roles, vec!["analyst".to_string(), "admin".to_string()]);
+        assert!(!host.provisional);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_nameless_role_is_null_not_an_empty_string() {
+        // R5's wire form. `HostRow` maps this to "Role unavailable"; an empty string
+        // would be indistinguishable from a role literally named "".
+        let host = serde_json::from_str::<super::AccountHostData>(
+            r#"{"host":"open.quiltdata.com","signedIn":true,"currentRole":null,"roles":[],"provisional":false}"#,
+        )
+        .unwrap();
+        assert!(host.signed_in);
+        assert_eq!(host.current_role, None);
+        assert!(!host.provisional);
     }
 }
 

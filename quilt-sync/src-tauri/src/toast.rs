@@ -25,7 +25,6 @@ use tokio::sync::RwLock;
 use crate::telemetry::prelude::*;
 
 /// Event name. Kept in lockstep with the UI's `listen(...)` call.
-#[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
 pub const TOAST_EVENT: &str = "toast";
 
 /// How many undismissed toasts the centre holds before the oldest is dropped.
@@ -33,14 +32,12 @@ pub const TOAST_EVENT: &str = "toast";
 /// A bound rather than a queue that grows forever: an app left in the tray over
 /// a weekend of agent pushes would otherwise accumulate without limit, and a
 /// user who has not read the oldest of fifty is not served by the fifty-first.
-#[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
 const CAPACITY: usize = 50;
 
 /// A list under a heading — a group of paths, say — carried as data so the
 /// client can render a real list. Indentation in `body` would not survive a
 /// wrap: a long path's second half lands at the left margin, reading as an
 /// item of its own.
-#[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ToastGroup {
@@ -71,7 +68,16 @@ pub struct Toast {
     pub timeout_ms: Option<u32>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
+/// `Warning` and `Error` have no producer: everything posted so far is a report
+/// about something that worked. Kept because the client already draws all four
+/// (`components/toasts.rs` maps each to its own border) and a kind added to one
+/// side alone is how the two drift.
+///
+/// The narrowed remnant of a suppression that once covered seven items in this
+/// file, all reading "no producer until the revision report lands". That report
+/// landed with `main` in `e4cd6ea` and gave six of them producers; this is the
+/// one that is still true.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ToastKind {
@@ -86,7 +92,6 @@ pub enum ToastKind {
 /// Tauri runtime, the same reason [`StatusReporter`](crate::autopull::StatusReporter)
 /// is one.
 pub trait ToastEmitter: Send + Sync + 'static {
-    #[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
     fn emit(&self, toast: &Toast);
 }
 
@@ -111,7 +116,6 @@ impl ToastEmitter for TauriToastEmitter {
 }
 
 /// A toast before the centre gives it an id — what a caller composes.
-#[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ToastDraft {
     pub kind: ToastKind,
@@ -144,7 +148,6 @@ impl ToastCenter {
     /// window between the two sees the toast once rather than not at all —
     /// a duplicate is a render concern the client already de-duplicates by id,
     /// while a miss is unrecoverable.
-    #[cfg_attr(not(test), allow(dead_code))] // no producer until the revision report lands
     pub async fn post(&self, draft: ToastDraft) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let ToastDraft {

@@ -1,0 +1,103 @@
+/*
+ * Outcome bar. Tone fill, tone edge, the tone's own glyph, and a dismiss.
+ *
+ * Reads the same four tone properties `StateLabel` does, so a warning here and a warning
+ * on a row cannot disagree about what amber means. Alpha fills, so the bar composites
+ * over whatever surface it lands on.
+ */
+
+.root {
+  display: flex;
+  /* `flex-start`, because the message wraps: a centred glyph would drift to the middle of
+   * a three-line paragraph, the same problem `CauseRow` has. */
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) var(--q-space-3);
+  border: 1px solid var(--tone-edge);
+  border-radius: var(--q-radius);
+  background: var(--tone-fill);
+  color: var(--tone-text);
+  animation: banner-in 160ms ease-out;
+}
+
+.success {
+  --tone-fill: var(--q-bgColor-success-muted);
+  --tone-edge: var(--q-borderColor-success-muted);
+  --tone-text: var(--q-fgColor-success-onMuted);
+  --tone-mark: var(--q-fgColor-success);
+}
+
+.warning {
+  --tone-fill: var(--q-bgColor-attention-muted);
+  --tone-edge: var(--q-borderColor-attention-muted);
+  --tone-text: var(--q-fgColor-attention-onMuted);
+  --tone-mark: var(--q-fgColor-attention);
+}
+
+.critical {
+  --tone-fill: var(--q-bgColor-danger-muted);
+  --tone-edge: var(--q-borderColor-danger-muted);
+  --tone-text: var(--q-fgColor-danger-onMuted);
+  --tone-mark: var(--q-fgColor-danger);
+}
+
+/* `.root > svg`, or this would also catch the dismiss button's cross — which is a control
+ * and must not take the tone's colour. 16px against a state label's 12px: a page-level
+ * announcement, not a row's annotation. */
+.root > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--tone-mark);
+}
+
+/* Prose, so it wraps. `margin: 0` because it is a `p` and the reset leaves paragraph
+ * margins alone — a bar with the browser's default 1em above and below would be twice the
+ * height it needs. */
+.message {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  line-height: var(--q-line-body);
+}
+
+/* Inherits the tone's text colour rather than going muted. On a tinted fill a grey
+ * control reads as disabled, and this one is the only way out of the bar. */
+.dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--q-radius);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.dismiss:hover {
+  background: var(--q-overlay-hover);
+}
+
+.dismiss svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Slides down from under the appbar and fades, which is the direction it arrives from.
+ * In only — see the module doc on why there is no exit. */
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* The bar appearing is the signal; the slide is decoration. A user who has asked for less
+ * motion still gets the banner, instantly. */
+@media (prefers-reduced-motion: reduce) {
+  .root { animation: none; }
+}

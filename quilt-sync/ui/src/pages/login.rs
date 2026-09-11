@@ -79,7 +79,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     let target = if back.is_empty() {
-                        "/installed-packages-list".to_string()
+                        "/".to_string()
                     } else {
                         back
                     };

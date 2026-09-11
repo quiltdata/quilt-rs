@@ -1,0 +1,147 @@
+/*
+ * Gallery chrome only — never shipped. Reads tier-2 tokens like everything
+ * else, so if the gallery looks wrong the tokens are wrong.
+ */
+
+/* Gallery-only padding. Everything else about `body` is in the reset, which
+ * the application bundle shares. */
+body {
+  padding: var(--q-space-7);
+}
+
+/* Sticky index beside one long scroll, rather than tabs.
+ *
+ * The shell is wider than the page cap ON PURPOSE: the index and its gap are
+ * added to `--q-container`, not taken out of it. Otherwise the nav eats ~200px of
+ * the content column and every scene renders ~1000px wide while claiming to show a
+ * region at the width the real page gives it — which is the one thing a scene
+ * exists to be honest about. */
+.g-shell {
+  display: flex;
+  gap: var(--q-space-6);
+  max-width: calc(var(--q-container) + 170px + var(--q-space-6));
+  margin: 0 auto;
+  align-items: flex-start;
+}
+
+.g-nav {
+  position: sticky;
+  top: var(--q-space-7);
+  flex: none;
+  width: 170px;
+}
+
+.g-nav ul {
+  list-style: none;
+  margin: var(--q-space-4) 0 0;
+  padding: 0;
+  border-left: 1px solid var(--q-borderColor-muted);
+}
+
+.g-nav li a {
+  display: block;
+  padding: 4px var(--q-space-3);
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  color: var(--q-fgColor-muted);
+  text-decoration: none;
+}
+
+.g-nav li a:hover {
+  color: var(--q-fgColor-default);
+  border-left-color: var(--q-borderColor-emphasis);
+  background: var(--q-overlay-hover);
+}
+
+.g-main { flex: 1 1 auto; min-width: 0; max-width: var(--q-container); }
+
+/* Jumping to a section should not put its heading flush against the top. */
+.g-anchor { scroll-margin-top: var(--q-space-6); }
+.g-head { margin-bottom: var(--q-space-8); }
+
+.g-head h1 { font-size: var(--q-text-title); margin: 0 0 4px; font-weight: 600; }
+.g-head p { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 60ch; }
+
+.g-section { margin-bottom: var(--q-space-8); }
+.g-section h2 {
+  font-size: var(--q-text-body);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--q-fgColor-muted);
+  margin: 0 0 3px;
+}
+.g-note { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 80ch; }
+
+.g-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--q-space-2);
+}
+
+/* Composed scenes are not grid cells: a simulation of a real region has to be
+ * the width the region actually gets, not a column. */
+.g-scene {
+  border: 1px dashed var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-page);
+  padding: var(--q-space-3);
+}
+
+/* Wider cells for components that are themselves containers. A card at 260px
+ * misrepresents it: the state strip gives each one roughly half the window. */
+.g-cell--wide { grid-column: span 2; }
+
+/* Full width, for LIST ROWS at the width the page actually gives them. Rows are
+ * reviewed at BOTH widths: a two-column cell is roughly the narrow-window case, and
+ * a row that only works at page width is broken.
+ *
+ * No override of `.g-cell__body` here. It deliberately does not stretch its child —
+ * a button has to show its intrinsic width or truncation cannot be judged — and a
+ * row that needed the parent changed was a row with a bug. Both rows now declare
+ * `width: 100%`, which is correct in the app too. */
+.g-cell--full { grid-column: 1 / -1; }
+
+.g-cell {
+  border: 1px solid var(--q-borderColor-muted);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  padding: 9px 11px 12px;
+  min-width: 0;
+}
+
+.g-cell__label {
+  display: block;
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  margin-bottom: 8px;
+}
+
+/* Cells must not stretch their contents: a button in a gallery has to show its
+ * real intrinsic width, or long-label truncation cannot be judged. */
+.g-cell__body { display: flex; align-items: flex-start; min-width: 0; }
+
+.g-inline { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* A stack of list rows inside ONE cell. `.g-cell__body` is a flex row, which is
+ * right for putting controls side by side and wrong for a list — without this,
+ * several rows in one cell lay out shoulder to shoulder and overflow. `width: 100%`
+ * because the stack is itself a flex item and would otherwise size to content. */
+.g-rows { display: flex; flex-direction: column; width: 100%; min-width: 0; }
+
+/* A stack of skeleton BARS, which is not the same thing as a stack of rows and must not
+ * share `.g-rows`. Rows carry their own padding and a dividing rule, so any gap between
+ * them would be a double gap; bars stand in for lines of text and need the leading that
+ * text would have had. */
+.g-bars { display: flex; flex-direction: column; gap: var(--q-space-2); width: 100%; }
+
+/* The state strip's two-card row. This is page layout rather than gallery chrome, and
+ * it moves into the region's own stylesheet when the real page is built — it lives here
+ * only because the region is still a gallery component.
+ *
+ * `flex: 1 1 300px` used to sit on `Card` itself, where it was the parent's layout in
+ * the child, and wrong the moment a card entered the page's flex column: there
+ * `flex-basis` sizes the height, so every card asked to be 300px tall. `min-width: 0`
+ * lets a card shrink below 300px rather than overflowing a narrow window. */
+.g-strip { display: flex; gap: var(--q-space-3); flex-wrap: wrap; }
+.g-strip > * { flex: 1 1 300px; min-width: 0; }

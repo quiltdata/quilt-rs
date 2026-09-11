@@ -75,7 +75,7 @@ fn ErrorContent(
     };
 
     let login_host = data.login_host.clone();
-    let back_encoded = urlencoding::encode("/installed-packages-list");
+    let back_encoded = urlencoding::encode("/");
     let login_href = format!("/login?host={login_host}&back={back_encoded}");
 
     view! {

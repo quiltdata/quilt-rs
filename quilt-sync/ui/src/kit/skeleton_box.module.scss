@@ -1,0 +1,42 @@
+/*
+ * Placeholder bar.
+ *
+ * A PULSE, not a sweeping gradient, and the reason is that a sweep cannot be written
+ * once for both themes. A shimmer band has to be lighter than its base, and "lighter"
+ * is a lower grey step in the light theme and a higher one in the dark — so a gradient
+ * needs a per-theme highlight value, which means two more tokens for one component.
+ * Animating opacity fades toward whatever is actually behind the bar, so it is correct
+ * in both themes by construction and needs no token at all.
+ *
+ * This does not contradict rejecting a blinking StateLabel for provisional rows. That
+ * was blinking TEXT, where the blink is what stops you reading it. There is nothing to
+ * read here — the bar exists to say "not yet", and pulsing is how it says so. WCAG
+ * 2.2.2 is about content that blinks and distracts; 2.3.1 about flashing at 3Hz or
+ * more. A 1.4s fade on a contentless box is neither.
+ */
+
+.root {
+  display: block;
+  /* An opaque surface rather than an alpha, so a stack of bars cannot accumulate into
+   * a darker block where they overlap the row's own hover tint. */
+  background: var(--q-bgColor-inset);
+  border-radius: var(--q-radius);
+  /* One radius, like everything else. The component spec asked for a `radius` prop;
+   * collapsing the four radius tokens into one removed the reason for it. */
+  animation: skeleton-box-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-box-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Static, not absent. A skeleton that stops pulsing is still doing its job — it holds
+ * the space and says the content is not here — so reduced motion loses the animation
+ * and keeps the bar, at the midpoint so it does not read as a filled block. */
+@media (prefers-reduced-motion: reduce) {
+  .root {
+    animation: none;
+    opacity: 0.75;
+  }
+}

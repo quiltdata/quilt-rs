@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::SystemTime;
 
+use chrono::DateTime;
+use chrono::Utc;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use tauri::Manager;
@@ -86,6 +89,30 @@ pub struct Watcher {
     inner: Arc<WatcherInner>,
 }
 
+/// The two deadlines the watcher knows and used to discard.
+///
+/// Neither is derivable from anything already exposed, and both belong to the
+/// loop rather than to the tray: `SyncTrayAggregator` folds per-namespace state
+/// for the tray icon, and parking a countdown's deadline in it would put the
+/// page's clock inside the tray's fold.
+#[derive(Default)]
+pub(crate) struct Clocks {
+    /// When the loop will next tick, recorded before it sleeps.
+    ///
+    /// Not derived from `last_sync + interval`, which is wrong twice over:
+    /// `note_tick_ended_err` deliberately does not bump `last_sync`, so a run of
+    /// failing ticks would push the derived deadline further and further into
+    /// the past; and it is `None` until the first tick *completes*, so an
+    /// enabled toggle would read idle for the first cadence of every session.
+    pub next_pull_at: RwLock<Option<DateTime<Utc>>>,
+    /// Per namespace: when its quiet window expires and autopush may publish.
+    /// Written only where it is known — the deferral branch of
+    /// `refresh_then_maybe_sync`, which is the one place that holds both
+    /// `most_recent_mtime` and the quiet window — and cleared by any other
+    /// outcome, because any other outcome means the package is not waiting.
+    pub publish_arm: RwLock<BTreeMap<Namespace, DateTime<Utc>>>,
+}
+
 /// Shared, long-lived watcher state. `pub(crate)` so `tick.rs` can read
 /// the maps in place without round-tripping through `Watcher` methods.
 pub(crate) struct WatcherInner {
@@ -101,6 +128,32 @@ pub(crate) struct WatcherInner {
     pub login_blocked: RwLock<BTreeMap<Namespace, Option<Host>>>,
     pub reporter: Arc<dyn StatusReporter>,
     pub aggregator: Arc<SyncTrayAggregator>,
+    pub clocks: Clocks,
+}
+
+/// Everything the main page's watcher payload is derived from, read in one call.
+///
+/// One value, not several accessors, and that is the point: §1's constraint is
+/// about **how many places decide what is true**. The payload's paused list and
+/// both toggles' `paused` activity come from this struct's `paused` field, so
+/// they cannot contradict each other the way the 2026-07-11 report's watcher and
+/// `data.json` did.
+pub struct WatcherFacts {
+    pub pull_enabled: bool,
+    pub publish_enabled: bool,
+    /// Every paused namespace with its reason, from one read of the map.
+    pub paused: Vec<(Namespace, PausedReason)>,
+    pub next_pull_at: Option<DateTime<Utc>>,
+    /// The **earliest** arm time across every namespace waiting out its quiet
+    /// window — the next thing that will publish, which is what one countdown
+    /// can honestly represent. `None` when nothing is waiting.
+    pub publish_arm_at: Option<DateTime<Utc>>,
+    /// The cadence the loop is actually sleeping, which depends on window mode.
+    /// Not `pull_interval_secs` from the settings payload: `focused_secs`,
+    /// `unfocused_secs` and `closed_secs` can differ, and a ring drawn from the
+    /// wrong one of the three is a ring that finishes at the wrong time.
+    pub pull_interval: Duration,
+    pub publish_interval: Duration,
 }
 
 pub fn create_window_mode() -> SharedWindowMode {
@@ -151,6 +204,7 @@ impl Watcher {
             login_blocked: RwLock::new(BTreeMap::new()),
             reporter,
             aggregator,
+            clocks: Clocks::default(),
         });
         let task_inner = Arc::clone(&inner);
         tauri::async_runtime::spawn(async move {
@@ -160,6 +214,13 @@ impl Watcher {
                     let mode = *task_inner.window_mode.read().await;
                     cadence_for_mode(&settings.pull, mode)
                 };
+                // This arming covers the WAIT: the deadline has to be readable
+                // for the whole cadence, which is when the card draws it. The
+                // tick that follows is covered by `run_once`, which re-arms at
+                // its top — this one would otherwise be exactly now by the time
+                // the sleep ends, and in the past for the tick's duration
+                // (qhq-8mgw.30).
+                arm_next_pull(&task_inner, cadence).await;
                 tokio::time::sleep(cadence).await;
                 task_inner.aggregator.note_tick_started();
                 let model_state = app_handle.state::<Model>();
@@ -260,6 +321,43 @@ impl Watcher {
         reporter::WatcherSnapshot { paused }
     }
 
+    /// One read, for the main page's watcher payload.
+    pub async fn main_page_facts(&self) -> WatcherFacts {
+        let settings = self.inner.settings.read().await.clone();
+        let mode = *self.inner.window_mode.read().await;
+        let paused = self
+            .inner
+            .paused
+            .read()
+            .await
+            .iter()
+            .map(|(ns, reason)| (ns.clone(), reason.clone()))
+            .collect();
+        WatcherFacts {
+            pull_enabled: settings.pull.enabled,
+            publish_enabled: settings.push.enabled,
+            paused,
+            next_pull_at: *self.inner.clocks.next_pull_at.read().await,
+            publish_arm_at: self
+                .inner
+                .clocks
+                .publish_arm
+                .read()
+                .await
+                .values()
+                .min()
+                .copied(),
+            pull_interval: cadence_for_mode(&settings.pull, mode),
+            publish_interval: Duration::from_secs(settings.push.idle_timeout_secs),
+        }
+    }
+
+    /// One namespace's pause, for the per-package refresh. A lookup, not a
+    /// second resolution: the map is still the only thing that decides.
+    pub async fn paused_reason(&self, namespace: &Namespace) -> Option<PausedReason> {
+        self.inner.paused.read().await.get(namespace).cloned()
+    }
+
     /// The shared state the tick loop reads. Lets a test drive
     /// [`tick::run_once`] against the very same watcher a command handler
     /// holds — the two halves of the role-denial pause path, which is
@@ -295,6 +393,7 @@ impl Watcher {
                 login_blocked: RwLock::new(BTreeMap::new()),
                 reporter,
                 aggregator,
+                clocks: Clocks::default(),
             }),
         }
     }
@@ -318,9 +417,110 @@ impl Watcher {
             .insert(namespace, host);
     }
 
+    /// The shared state, for the file watcher — which observes an edit within
+    /// its debounce where this loop can be a whole cadence behind.
+    ///
+    /// Not `inner`: a `tauri::State<Watcher>` has an inherent `inner()` of its
+    /// own, and the call site holds one, so that name resolves to the guard's
+    /// method rather than this.
+    pub(crate) fn shared(&self) -> &WatcherInner {
+        &self.inner
+    }
+
     #[cfg(test)]
     async fn paused_count(&self) -> usize {
         self.inner.paused.read().await.len()
+    }
+}
+
+/// Record when the loop will next tick.
+///
+/// A free function rather than a line inside `Watcher::spawn` because the spawn
+/// loop needs a Tauri runtime and cannot be driven from a test, and an untested
+/// rule is a rule that survives only as prose.
+pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
+    *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
+}
+
+/// Record what a freshly observed tree means for this namespace's publish
+/// deadline.
+///
+/// For the file watcher, which hears about an edit within its debounce where the
+/// tick can be a whole cadence behind — 30s focused, 120s unfocused, 600s
+/// closed, and editing means unfocused. The tick stays authoritative: it sees
+/// the upstream state, which a local recompute cannot, and clears an arm that
+/// turns out not to apply.
+pub(crate) async fn arm_publish_from_status(
+    inner: &WatcherInner,
+    namespace: &Namespace,
+    status: &crate::quilt::lineage::InstalledPackageStatus,
+) {
+    let (push_enabled, quiet_window) = {
+        let settings = inner.settings.read().await;
+        (
+            settings.push.enabled,
+            Duration::from_secs(settings.push.idle_timeout_secs),
+        )
+    };
+    let mut arm = inner.clocks.publish_arm.write().await;
+    match publish_arm_from_status(status, push_enabled, quiet_window) {
+        Some(at) => {
+            arm.insert(namespace.clone(), at.into());
+        }
+        // Cleared, not left alone: a revert leaves a tree with nothing in it,
+        // and a countdown that outlives the changes it was counting for is the
+        // stale deadline the operator watched survive one.
+        None => {
+            arm.remove(namespace);
+        }
+    }
+}
+
+/// When a package with local changes will publish, if nothing else touches it.
+///
+/// The one place that turns an observed tree into an arm time, so the autopull
+/// tick and the file watcher cannot drift about it. Mirrors the deferral in
+/// `tick.rs`: a publish waits until the working tree has been quiet for the
+/// window, so the moment it becomes possible is the last edit plus that window.
+///
+/// `None` means there is nothing to count down to, which covers three different
+/// situations on purpose: publishing is off, the tree has no changes, and the
+/// tree is ALREADY quiet — that last one publishes on the next tick rather than
+/// at some future moment, so a deadline would be counting to the past.
+pub(crate) fn publish_arm_from_status(
+    status: &crate::quilt::lineage::InstalledPackageStatus,
+    push_enabled: bool,
+    quiet_window: Duration,
+) -> Option<SystemTime> {
+    if !push_enabled || status.changes.is_empty() {
+        return None;
+    }
+    if status.working_tree_quiet(SystemTime::now(), quiet_window) {
+        return None;
+    }
+    status.most_recent_mtime.map(|at| at + quiet_window)
+}
+
+/// A `WatcherInner` for a test, shared so the two modules that need one do not
+/// keep their own copies in step by hand.
+#[cfg(test)]
+pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
+    let (tx, _rx) = tokio::sync::watch::channel(status::SyncTrayStatus::default());
+    WatcherInner {
+        settings: Arc::new(RwLock::new(settings)),
+        experimental: Arc::new(RwLock::new(
+            crate::experimental_settings::ExperimentalSettings::default(),
+        )),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(
+            crate::publish_settings::PublishSettings::default(),
+        )),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: Arc::new(reporter::LogReporter),
+        aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
+        clocks: Clocks::default(),
     }
 }
 
@@ -518,6 +718,76 @@ mod tests {
         assert!(watcher.login_blocked_for_test().await.is_empty());
         assert!(rx.borrow().error.is_none());
         assert_eq!(rx.borrow().mode, TrayMode::Idle);
+    }
+
+    #[tokio::test]
+    async fn main_page_facts_puts_each_clock_in_its_own_slot() {
+        // The state-to-payload path itself. Every payload test starts from a
+        // hand-built `WatcherFacts`, so a transposition here — the pull deadline
+        // into the publish slot, or `.max()` where the rule is `.min()` — would
+        // pass all of them. Every value below is distinguishable from every other
+        // for exactly that reason.
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        {
+            let mut settings = watcher.inner_for_test().settings.write().await;
+            settings.pull.enabled = true;
+            settings.push.enabled = false;
+            settings.pull.focused_secs = 11;
+            settings.pull.unfocused_secs = 22;
+            settings.pull.closed_secs = 33;
+            settings.push.idle_timeout_secs = 44;
+        }
+        // Unfocused, so the cadence can only be right by reading the mode: it is
+        // the middle of three different values, and `pull_interval_secs` is not
+        // one of them.
+        watcher.set_window_mode(WindowMode::Unfocused).await;
+
+        let pull_at = Utc::now() + Duration::from_mins(15);
+        *watcher.inner_for_test().clocks.next_pull_at.write().await = Some(pull_at);
+        // Two namespaces waiting, arming at different moments: the earliest is the
+        // next thing that will publish, so `.max()` cannot pass this.
+        let earliest = Utc::now() + Duration::from_secs(60);
+        let latest = Utc::now() + Duration::from_secs(600);
+        {
+            let mut arm = watcher.inner_for_test().clocks.publish_arm.write().await;
+            arm.insert(("acme", "early").into(), earliest);
+            arm.insert(("acme", "late").into(), latest);
+        }
+
+        let facts = watcher.main_page_facts().await;
+        assert!(facts.pull_enabled, "the pull setting, not the push one");
+        assert!(!facts.publish_enabled, "the push setting, not the pull one");
+        assert_eq!(
+            facts.next_pull_at,
+            Some(pull_at),
+            "the pull clock belongs in the pull slot"
+        );
+        assert_eq!(
+            facts.publish_arm_at,
+            Some(earliest),
+            "the earliest arm across every waiting namespace, not the last"
+        );
+        assert_eq!(
+            facts.pull_interval,
+            Duration::from_secs(22),
+            "the cadence for the current window mode"
+        );
+        assert_eq!(
+            facts.publish_interval,
+            Duration::from_secs(44),
+            "the quiet window, from the push settings"
+        );
+    }
+
+    #[tokio::test]
+    async fn nothing_waiting_to_publish_arms_nothing() {
+        // The `None` half of the same rule: an empty arm map is "nothing is
+        // waiting", which is what makes the publish toggle read idle rather than
+        // counting down to a moment with no meaning.
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let facts = watcher.main_page_facts().await;
+        assert_eq!(facts.publish_arm_at, None);
+        assert_eq!(facts.next_pull_at, None);
     }
 
     #[tokio::test]

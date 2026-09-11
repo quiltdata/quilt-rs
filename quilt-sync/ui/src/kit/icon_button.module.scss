@@ -1,0 +1,80 @@
+/*
+ * Icon-only button. Two variants: `Framed` for chrome (the appbar's refresh and
+ * gear) and `Bare` for row actions.
+ *
+ * Bare does NOT hide itself at rest. Revealing row actions on hover is the row's
+ * business — it depends on the row's hover state, which this component cannot see
+ * and should not try to. A Bare button used outside a row is simply visible.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: var(--q-radius);
+  color: var(--q-fgColor-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.root:hover:not(:disabled) {
+  background: var(--q-overlay-hover);
+  color: var(--q-fgColor-default);
+}
+
+.root:active:not(:disabled) {
+  background: var(--q-overlay-active);
+  transform: translate(1px, 1px);
+}
+
+.root:disabled {
+  cursor: not-allowed;
+  color: var(--q-fgColor-disabled);
+}
+
+.root svg {
+  width: 15px;
+  height: 15px;
+}
+
+.default {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--q-borderColor-default);
+  background: var(--q-bgColor-default);
+}
+
+.default:hover:not(:disabled) {
+  border-color: var(--q-borderColor-emphasis);
+}
+
+.invisible {
+  width: 24px;
+  height: 22px;
+  border: 0;
+  background: none;
+}
+
+.invisible svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Refresh in flight. The same reduced-motion treatment as the button's spinner:
+ * keep the shape, stop the rotation, dim it, so a frozen icon reads as inactive
+ * rather than as a rendering fault. */
+.spinning svg {
+  animation: icon-spin 900ms linear infinite;
+}
+
+@keyframes icon-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinning svg {
+    animation: none;
+    opacity: 0.45;
+  }
+}
