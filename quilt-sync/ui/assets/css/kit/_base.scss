@@ -14,14 +14,20 @@
  */
 
 /* Document baseline in our tokens; overrides normalize's `html` floors.
- * No ground: v1 loads this bundle too and `data-theme` follows the OS whatever
- * the flag, so a themed body would sit under v1's unswitched black ink.
- * `PageLayout` paints v2's ground, `_chrome.scss` the gallery's. */
+ * No ground here: v1 loads this bundle too and `data-theme` follows the OS
+ * whatever the flag, so a themed body would sit under v1's unswitched black
+ * ink. `_chrome.scss` paints the gallery's. */
 body {
   color: var(--q-fgColor-default);
   font-family: var(--q-font-sans);
   font-size: var(--q-text-body);
   line-height: var(--q-line-body);
+}
+
+/* A v2 reader's ground, behind the marker `theme::set_v2` puts on the root. It
+ * covers what `PageLayout` does not: the frame `/` shows while it reads the flag. */
+:root.qui-v2 body {
+  background: var(--q-bgColor-page);
 }
 
 /* Every button here is styled, so strip native chrome: one that forgets its

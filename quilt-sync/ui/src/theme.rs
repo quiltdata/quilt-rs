@@ -132,20 +132,29 @@ mod tests {
     }
 
     /// The reset in `app.scss` reaches v1's pages, whose ink no theme switches,
-    /// and `follow_os` cannot see the flag — so a themed ground on `body` would
-    /// go dark under v1's black text. Pinned on the stylesheet, where it was
-    /// added once already.
+    /// and `follow_os` cannot see the flag — so a themed ground on a bare `body`
+    /// would go dark under v1's black text. The ground belongs behind
+    /// `V2_CLASS`, where only a v2 reader gets it. Pinned on the stylesheet,
+    /// where the bare rule was added once already.
     #[test]
-    fn the_shared_reset_paints_no_ground() {
+    fn the_shared_reset_paints_a_ground_only_for_a_v2_reader() {
         const BASE: &str = include_str!("../assets/css/kit/_base.scss");
-        let body = BASE
-            .split("\nbody {")
-            .nth(1)
-            .and_then(|rest| rest.split('}').next())
-            .expect("a body rule");
+        let rule = |selector: &str| {
+            BASE.split(selector)
+                .nth(1)
+                .and_then(|rest| rest.split('}').next())
+                .unwrap_or_else(|| panic!("a `{selector}` rule"))
+                .to_owned()
+        };
+        let bare = rule("\nbody {");
         assert!(
-            !body.contains("background"),
-            "the shared reset must not paint a ground: {body}"
+            !bare.contains("background"),
+            "the bare body rule must not paint a ground: {bare}"
+        );
+        let v2 = rule(&format!("\n:root.{V2_CLASS} body {{"));
+        assert!(
+            v2.contains("background: var(--q-bgColor-page)"),
+            "the v2 reader's ground must be there: {v2}"
         );
     }
 }
