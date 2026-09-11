@@ -61,6 +61,13 @@ jobs:
       - name: Install trunk
         uses: taiki-e/install-action@trunk
 
+      # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
+      # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml.
+      - name: Install stylance
+        uses: taiki-e/install-action@v2
+        with:
+          tool: stylance-cli@0.8.4
+
       - name: Build the app
         id: tauri
         uses: tauri-apps/tauri-action@v1
