@@ -3,10 +3,12 @@
  * else, so if the gallery looks wrong the tokens are wrong.
  */
 
-/* Gallery-only padding. Everything else about `body` is in the reset, which
- * the application bundle shares. */
+/* Gallery-only padding and ground. Everything else about `body` is in the reset,
+ * which the application bundle shares; the ground is here because in the app it
+ * belongs to `PageLayout`, not to `body` (see `_base.scss`). */
 body {
   padding: var(--q-space-7);
+  background: var(--q-bgColor-page);
 }
 
 /* Sticky index beside one long scroll, rather than tabs.

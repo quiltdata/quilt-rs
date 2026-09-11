@@ -130,4 +130,22 @@ mod tests {
             "and back — a one-way switch would strand a reader in dark"
         );
     }
+
+    /// The reset in `app.scss` reaches v1's pages, whose ink no theme switches,
+    /// and `follow_os` cannot see the flag — so a themed ground on `body` would
+    /// go dark under v1's black text. Pinned on the stylesheet, where it was
+    /// added once already.
+    #[test]
+    fn the_shared_reset_paints_no_ground() {
+        const BASE: &str = include_str!("../assets/css/kit/_base.scss");
+        let body = BASE
+            .split("\nbody {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("a body rule");
+        assert!(
+            !body.contains("background"),
+            "the shared reset must not paint a ground: {body}"
+        );
+    }
 }

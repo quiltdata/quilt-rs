@@ -13,9 +13,11 @@
  * business belongs in that component's module.
  */
 
-/* Document baseline in our tokens; overrides normalize's `html` floors. */
+/* Document baseline in our tokens; overrides normalize's `html` floors.
+ * No ground: v1 loads this bundle too and `data-theme` follows the OS whatever
+ * the flag, so a themed body would sit under v1's unswitched black ink.
+ * `PageLayout` paints v2's ground, `_chrome.scss` the gallery's. */
 body {
-  background: var(--q-bgColor-page);
   color: var(--q-fgColor-default);
   font-family: var(--q-font-sans);
   font-size: var(--q-text-body);
