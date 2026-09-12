@@ -100,6 +100,8 @@ jobs:
             os: macos-15
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-24.04
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -113,14 +115,20 @@ jobs:
         run: cargo build -p quilt-cli --release --target ${{ matrix.target }}
 
       - name: Package archive
+        shell: bash
         run: |
           set -euo pipefail
           STAGE="quilt-cli-${{ matrix.target }}"
           mkdir -p "$STAGE"
-          cp "target/${{ matrix.target }}/release/quilt" "$STAGE/"
+          if [[ "${{ matrix.target }}" == *-windows-* ]]; then
+            cp "target/${{ matrix.target }}/release/quilt.exe" "$STAGE/"
+          else
+            cp "target/${{ matrix.target }}/release/quilt" "$STAGE/"
+          fi
           tar -czf "${STAGE}.tar.gz" "$STAGE"
 
       - name: Upload asset to draft release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
