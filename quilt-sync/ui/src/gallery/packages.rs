@@ -140,7 +140,7 @@ fn EdgesStory() -> impl IntoView {
                     tone=StateTone::Success
                 />
             </Cell>
-            <Cell full=true label="provisional — the light phase's guess, dashed until confirmed">
+            <Cell full=true label="provisional — the light phase's guess, dimmed and dashed until confirmed">
                 <div class="g-rows">
                     <PackageRow
                         namespace="user/package-a"

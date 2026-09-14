@@ -18,7 +18,8 @@
  * above the list cannot all fit, and then this scrolls rather than crushing the
  * list to nothing. See `.list_region`'s own floor. */
 .root {
-  height: 100vh;
+  /* The gallery sets `--q-frame-height` to the window floor; the app leaves it at the viewport. */
+  height: var(--q-frame-height, 100vh);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
