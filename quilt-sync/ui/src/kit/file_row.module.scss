@@ -82,11 +82,12 @@
 }
 
 /* A right-aligned column with a floor, not a cap: `RelativeTime`'s vocabulary is
- * closed and 96px holds its widest phrase, "11 months ago", at 14px. A wider
- * platform font pushes the chip a few pixels instead of clipping a word. */
+ * closed and 104px holds its widest phrase, "11 months ago", at 14px in the widest
+ * system face we land on (Noto Sans, 99px). A wider one pushes the chip a few
+ * pixels instead of clipping a word. */
 .time {
   flex: none;
-  min-width: 96px;
+  min-width: 104px;
   text-align: right;
   white-space: nowrap;
 }

@@ -86,7 +86,7 @@ fn Rows() -> impl IntoView {
                   namespace truncates from the right. This row is a div with \
                   role=\"button\", not an anchor, because it has three actions and a second \
                   link inside it and nested anchors are invalid. Both rows give the time a \
-                  96px floor and never clip it, which is the thing to check here: every \
+                  104px floor and never clip it, which is the thing to check here: every \
                   phrase RelativeTime can produce must sit inside the column."
         >
             <Cell full=true label="ordinary">

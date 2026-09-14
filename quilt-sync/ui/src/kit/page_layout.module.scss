@@ -31,6 +31,11 @@
    * therefore black, which is invisible on the dark ground above
    * (qhq-8mgw.56). Descendants that do set one still win. */
   color: var(--q-fgColor-default);
+  /* Its own type for the same reason: v1's `layout.css` sets `body`'s face to
+   * Roboto after this bundle loads, and the page must not inherit it. */
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
 }
 
 /* The one surface in the kit that is not a step on the page's ladder.

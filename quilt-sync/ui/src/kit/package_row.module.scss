@@ -50,10 +50,10 @@
 }
 
 /* The same column as `FileRow`'s, duplicated so one can move without the other:
- * a 96px floor that holds `RelativeTime`'s widest phrase, never a cap. */
+ * a 104px floor that holds `RelativeTime`'s widest phrase, never a cap. */
 .time {
   flex: none;
-  min-width: 96px;
+  min-width: 104px;
   text-align: right;
   white-space: nowrap;
   color: var(--q-fgColor-muted);
