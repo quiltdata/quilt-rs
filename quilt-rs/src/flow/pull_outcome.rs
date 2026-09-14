@@ -420,6 +420,109 @@ mod tests {
         Ok(())
     }
 
+    /// Regression-free, through the pass rather than around it. Every other
+    /// conflict test hands `classify_pull` an empty identical-set, so none of
+    /// them would notice if `identical_to_latest` started reporting paths it
+    /// should not. A local *removal* against a remote modification is a true
+    /// conflict whatever the algorithms are, and the pass must not touch it:
+    /// there is no working file to hash, and no content that could agree.
+    #[test(tokio::test)]
+    async fn remove_vs_remote_modify_blocks_through_the_pass() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        // Locally removed: nothing on disk at all.
+        let base = manifest_of(vec![row("a", b"the old content")]);
+        let latest = manifest_of(vec![row("a", b"what the remote pushed")]);
+        let status = behind(ChangeSet::from([(
+            path.clone(),
+            Change::Removed(row("a", b"the old content")),
+        )]));
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        assert!(
+            identical.is_empty(),
+            "a removed path has no content to be identical to"
+        );
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![path]
+            }
+        );
+        Ok(())
+    }
+
+    /// The other rule the change did not mean to relax: both sides added the
+    /// same path with *different* content still blocks, including when their
+    /// algorithms differ — the case the pass exists for. Differing algorithms
+    /// are a reason to re-derive the comparison, never a reason to wave it
+    /// through.
+    #[test(tokio::test)]
+    async fn both_added_different_content_blocks_through_the_pass() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        storage
+            .write_byte_stream(
+                working_dir.join(&path),
+                ByteStream::from_static(b"what this copy added"),
+            )
+            .await?;
+        let local_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Sha256Chunked,
+                host: None,
+            },
+        )
+        .await?;
+
+        // `latest` added the same path with other content, under the other
+        // algorithm. No base row on either side: both sides *added*.
+        let other = PathBuf::from("other");
+        storage
+            .write_byte_stream(
+                working_dir.join(&other),
+                ByteStream::from_static(b"what the remote added"),
+            )
+            .await?;
+        let mut latest_row = calculate_hash(
+            &storage,
+            &working_dir.join(&other),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Crc64,
+                host: None,
+            },
+        )
+        .await?;
+        latest_row.logical_key = path.clone();
+
+        let base = manifest_of(vec![]);
+        let latest = manifest_of(vec![latest_row]);
+        let status = behind(ChangeSet::from([(path.clone(), Change::Added(local_row))]));
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        assert!(
+            identical.is_empty(),
+            "different bytes are not identical, whatever the algorithms say"
+        );
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![path]
+            }
+        );
+        Ok(())
+    }
+
     /// The regression guard for the arm above: when the local edit is genuinely
     /// different content, a cross-algorithm package must still block. The fix
     /// may not turn every mismatched-algorithm path into a free pass.

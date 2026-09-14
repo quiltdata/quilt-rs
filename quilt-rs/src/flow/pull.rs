@@ -444,6 +444,8 @@ mod tests {
     use aws_sdk_s3::primitives::ByteStream;
     use multihash::Multihash;
 
+    use crate::checksum::calculate_hash;
+    use crate::io::remote::HostChecksums;
     use crate::io::remote::HostConfig;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::StorageExt;
@@ -451,6 +453,7 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
+    use crate::lineage::UpstreamState;
     use crate::manifest::ManifestRow;
     use crate::object_hash::Hash;
     use crate::object_hash::Sha256Hash;
@@ -545,6 +548,107 @@ mod tests {
         assert_eq!(report.removed, paths(&["dropped.csv"]));
         assert_eq!(report.message.as_deref(), Some("a message"));
         assert!(!report.is_empty());
+    }
+
+    /// The Example's interrupted instance, retried — the claim the whole change
+    /// rests on, and the one thing the two halves never checked together.
+    ///
+    /// The tree an interrupted apply leaves: one file already holding
+    /// `latest`'s content, two still at `base`'s, `base` still naming the old
+    /// revision. On the retry the written file reads as a *local modification*,
+    /// because its content no longer matches the row this copy started from.
+    /// The Example claims two things about that tree: nothing is refused, and
+    /// nothing is fetched twice. Both are asserted here, on a package whose
+    /// rows are in the algorithm this host does not declare — the combination
+    /// that made the incident unrecoverable rather than merely broken.
+    #[test(tokio::test)]
+    async fn the_interrupted_tree_retries_cleanly() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let written = PathBuf::from("done.csv");
+        let pending = [PathBuf::from("todo-1.csv"), PathBuf::from("todo-2.csv")];
+
+        // The file the interrupted apply managed to write: it holds exactly
+        // what `latest` holds.
+        storage
+            .write_byte_stream(
+                working_dir.join(&written),
+                ByteStream::from_static(b"latest content for done.csv"),
+            )
+            .await?;
+        let crc64 = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+        let sha_chunked = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+        // The package's rows are CRC64; this host declares SHA-256-chunked, so
+        // the status walk hashed the written file into the host's algorithm.
+        let latest_row =
+            calculate_hash(&storage, &working_dir.join(&written), &written, &crc64).await?;
+        let local_row = calculate_hash(
+            &storage,
+            &working_dir.join(&written),
+            &written,
+            &sha_chunked,
+        )
+        .await?;
+
+        let base = manifest_of(vec![
+            row("done.csv", b"base-done"),
+            row("todo-1.csv", b"base-1"),
+            row("todo-2.csv", b"base-2"),
+        ]);
+        let latest = manifest_of(vec![
+            latest_row,
+            row("todo-1.csv", b"latest-1"),
+            row("todo-2.csv", b"latest-2"),
+        ]);
+
+        // The retry's status: only the written file looks changed.
+        let status = InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            ChangeSet::from([(written.clone(), Change::Modified(local_row))]),
+        );
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        assert!(
+            identical.contains(&written),
+            "the file the interrupted apply wrote already holds latest's content"
+        );
+
+        // Nothing is refused.
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::KeepsLocalChanges {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
+            },
+            "the interrupted tree must retry, not block"
+        );
+
+        // Nothing is fetched twice: the written file is out of the touch set,
+        // the two still at `base` are in it.
+        let tracked: LineagePaths = [&written, &pending[0], &pending[1]]
+            .into_iter()
+            .map(|p| (p.clone(), PathState::default()))
+            .collect();
+        let touched = touch_set(
+            remote_delta(&base, &latest).into_keys(),
+            &tracked,
+            &status.changes,
+            SyncScope::IndividualFiles,
+        );
+        assert_eq!(
+            touched,
+            vec![pending[0].clone(), pending[1].clone()],
+            "the already-written file must not be fetched again"
+        );
+        Ok(())
     }
 
     /// The touch set says what a pull *proposed* to move; only the apply knows
