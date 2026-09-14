@@ -48,10 +48,8 @@
 .text {
   display: block;
   padding: 0 11px;
-  /* Height, not display: flex — a flex box turns its text node into an anonymous
-   * flex item, and `text-overflow` only applies to block containers, so a long
-   * label would hard-clip instead of showing `…`. The shell's 1px border plus 2px
-   * padding, top and bottom, so the fill still reaches 2px inside the shell. */
+  /* A block, not flex: `text-overflow` needs a block container. 32 minus the shell's
+   * 1px border and 2px padding, top and bottom. */
   line-height: calc(var(--q-control-height) - 6px);
   /* The one nested case in the kit: the segment fills the shell's 2px padding, so
    * its corner sits 2px inside the shell's. An equal radius would bulge against

@@ -15,6 +15,10 @@
 
 - On the new main page the buttons, drop-downs, search box and view switch now line up: they share one height, where before each was its own size and the toolbar read as a ragged row. Rows in **Needs your attention**, the recent-files list and the top bar grew a few pixels to match (<https://github.com/quiltdata/quilt-rs/pull/912>)
 
+### Fixed
+
+- Keyboard focus is visible on every control of the new main page. The focus ring measured under the 3:1 contrast WCAG asks of a focus indicator against a white card in the light theme and against a card in the dark theme, and against the top bar in both; it now clears 3:1 everywhere (<https://github.com/quiltdata/quilt-rs/pull/913>)
+
 ## [v0.22.1] - 2026-09-11
 
 ### Added
