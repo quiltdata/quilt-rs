@@ -87,6 +87,10 @@
   gap: var(--q-space-3);
   padding-block: var(--q-space-2);
   min-height: 44px;
+  /* Both themes' rings fail on the brand ground (1.9:1 light, 2.3:1 dark), so the
+   * bar's controls take its own ink: 11.9:1. Redefined here, not in the token file,
+   * because the ground is the exception, not the ring. */
+  --q-focus-outlineColor: var(--q-fgColor-onBrand);
 }
 
 .logo {

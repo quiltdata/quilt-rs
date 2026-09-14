@@ -430,8 +430,12 @@
   --q-bgColor-accent-muted: var(--blue-3);
   --q-borderColor-accent-muted: var(--blue-7);
 
-  /* FOCUS. Step 8, not 9: light's 9 is near-black and reads as a border. */
-  --q-focus-outlineColor: var(--blue-8);
+  /* FOCUS. The first step that clears 3:1 (WCAG 1.4.11) against the page, a card
+   * and a muted surface: 11 in light (5.8 to 6.5), 9 in dark (3.0 to 3.6, in the
+   * override block below). Step 8 measured 2.2 to 2.9 on the same surfaces. Light's
+   * 9 and 10 pass too but are near-black and read as a border. The brand ground
+   * defeats both rings and redefines this token to `onBrand` — see `PageLayout`. */
+  --q-focus-outlineColor: var(--blue-11);
   --q-focus-outlineWidth: 2px;
   --q-focus-outlineOffset: 2px;
 
@@ -582,4 +586,6 @@
   --q-bgColor-default: var(--gray-2);
   --q-bgColor-muted: var(--gray-3);
   --q-bgColor-inset: var(--gray-4);
+  /* Dark's 11 is the pale accent-text step; 9 is the vivid one and reads as a ring. */
+  --q-focus-outlineColor: var(--blue-9);
 }
