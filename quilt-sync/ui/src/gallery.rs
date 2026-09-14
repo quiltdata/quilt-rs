@@ -12,7 +12,7 @@
 //! (`installed_packages_list.rs`, say) would still trap the module outside
 //! Tauri. The isolation stays correct regardless.)
 //!
-//! Run it with `trunk serve gallery.html` and iterate in Chrome or Firefox for
+//! Run it with `just gallery` and iterate in Chrome or Firefox for
 //! speed — then check **GNOME Web (Epiphany)**, which is `WebKitGTK`, before
 //! committing a layout. Chrome is not the webview that ships on Linux.
 //!

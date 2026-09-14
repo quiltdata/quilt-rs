@@ -37,6 +37,19 @@ just -l
 targets. CI checks all three, so a clean `just lint` leaves nothing for it to
 reject. `just fmt` is the half that writes, over the same file set.
 
+QuiltSync's frontend is a Rust-to-WebAssembly crate built by Trunk, so `just
+gallery` (the component gallery in a browser) and `just start` (the desktop app)
+need the frontend toolchain as well:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install trunk stylance-cli       # the page bundler and the CSS-module compiler
+# Node.js and npm, for the JSON editor bundle Trunk's pre-build hook installs
+```
+
+`just start` additionally needs `cargo install tauri-cli` and Tauri's platform
+dependencies, listed at <https://tauri.app/start/prerequisites/>.
+
 All cargo commands work on the entire workspace by default. Use the `-p` flag to
 target specific packages:
 

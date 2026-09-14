@@ -4,6 +4,12 @@
 start:
     cd quilt-sync && cargo tauri dev
 
+# Open the component gallery (the kit's design record, never the app) in a browser.
+# Needs the frontend toolchain, see CONTRIBUTING.md. Trunk refuses to start until the
+# generated files in its watch-ignore list exist; the pre-build hooks then overwrite them.
+gallery port="8787":
+    cd quilt-sync/ui && mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/_modules.scss assets/css/kit/_normalize.scss && trunk serve gallery.html --port {{port}} --open
+
 # Run test coverage for all packages
 coverage:
     cargo tarpaulin --out html
