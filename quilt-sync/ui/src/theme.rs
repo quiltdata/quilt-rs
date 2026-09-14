@@ -131,6 +131,56 @@ mod tests {
         );
     }
 
+    /// Native chrome — the `<select>` popup the kit deliberately delegates to the
+    /// OS, form-control internals, and the list card's own scrollbar — paints from
+    /// `color-scheme`, not from our tokens. Without the declaration it stays light
+    /// on a dark page (qhq-8mgw.64).
+    ///
+    /// The dark half MUST be scoped to a v2 reader. `data-theme` follows the OS
+    /// whatever the flag says, so a bare `:root[data-theme="dark"]` would hand v1's
+    /// pages dark scrollbars and dark select popups while every one of their own
+    /// `--q-ui-*` colours stayed light. Pinned here because the bare selector is
+    /// the obvious thing to write and is wrong.
+    #[test]
+    fn native_chrome_follows_the_theme_only_for_a_v2_reader() {
+        const TOKENS: &str = include_str!("../assets/css/kit/_tokens.scss");
+
+        let declarations: Vec<&str> = TOKENS
+            .match_indices("color-scheme:")
+            .map(|(at, _)| {
+                let block = TOKENS[..at].rfind('{').expect("a rule around it");
+                let selector = TOKENS[..block].trim_end();
+                let start = selector.rfind(['}', '/', '\n']).map_or(0, |i| i + 1);
+                selector[start..].trim()
+            })
+            .collect();
+
+        assert!(
+            !declarations.is_empty(),
+            "no `color-scheme` anywhere: native chrome cannot follow the theme"
+        );
+
+        let dark: Vec<&&str> = declarations
+            .iter()
+            .filter(|selector| selector.contains("dark"))
+            .collect();
+        assert!(!dark.is_empty(), "nothing declares the dark scheme");
+        for selector in dark {
+            assert!(
+                selector.contains(V2_CLASS),
+                "`{selector}` would give v1's pages dark native chrome — \
+                 scope it to `.{V2_CLASS}`"
+            );
+        }
+
+        assert!(
+            declarations
+                .iter()
+                .any(|selector| !selector.contains("dark")),
+            "the light scheme must be stated too, or the UA default decides it"
+        );
+    }
+
     /// The reset in `app.scss` reaches v1's pages, whose ink no theme switches,
     /// and `follow_os` cannot see the flag — so a themed ground on `body` would
     /// go dark under v1's black text, for a v2 reader on Settings as much as for
