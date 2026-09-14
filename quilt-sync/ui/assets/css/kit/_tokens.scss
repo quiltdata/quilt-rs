@@ -565,7 +565,8 @@
   /* TYPE — system stack: no webfont, no FOUT, native on all three platforms.
    * `system-ui` first and no Roboto: v1 still links Roboto as a swap-display
    * webfont, and on WebKitGTK it would otherwise win the fallback and bring the
-   * swap flash with it.
+   * swap flash with it. Whatever face the desktop chooses is the right one, a light
+   * one included — this is a desktop app, not a web page (decided 2026-09-14).
    *
    * 14px IS THE FLOOR and there is deliberately no token below it, so nobody
    * can reach for one; hierarchy comes from weight and colour. The layout

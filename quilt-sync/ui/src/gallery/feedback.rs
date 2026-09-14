@@ -14,17 +14,7 @@ use crate::kit::PageLayout;
 use crate::kit::Spinner;
 use crate::kit::SpinnerVariant;
 use crate::kit::ToggleRow;
-
-fn gear_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4">
-            <circle cx="8" cy="8" r="2.1" />
-            <path d="M8 1.6v1.7M8 12.7v1.7M2.5 8H4.2M11.8 8h1.7M4.1 4.1l1.2 1.2M10.7 10.7l1.2 1.2M11.9 4.1l-1.2 1.2M5.3 10.7l-1.2 1.2" />
-        </svg>
-    }
-    .into_any()
-}
+use crate::kit::icons;
 
 #[component]
 pub fn FeedbackStories() -> impl IntoView {
@@ -123,7 +113,7 @@ fn Spinners() -> impl IntoView {
                 </div>
             </Cell>
             <Cell label="IconButton's spinning glyph — a third spelling, same treatment">
-                <IconButton icon=gear_icon() aria_label="Working" on_click=|_| () spinning=true />
+                <IconButton icon=icons::gear() aria_label="Working" on_click=|_| () spinning=true />
             </Cell>
             <Cell wide=true label="region — for content that is not rows">
                 <Card title="Account">
@@ -155,7 +145,7 @@ pub fn BannerScene() -> impl IntoView {
             >
             <PageLayout
                 actions=view! {
-                    <IconButton icon=gear_icon() aria_label="Settings" on_click=|_| () />
+                    <IconButton icon=icons::gear() aria_label="Settings" on_click=|_| () />
                 }
                     .into_any()
                 banner=view! {
