@@ -93,11 +93,10 @@ fn EdgesStory() -> impl IntoView {
             title="PackageRow — edges"
             note="Namespaces truncate from the RIGHT, the opposite of FileRow's paths: a \
                   namespace is distinguished by its start, and there is no filename at the \
-                  end worth saving. The time column is a fixed 96px — widened from 80 once \
-                  real timestamps landed on the page and the worst phrases could be read \
-                  rather than guessed at. The last cell is the worst-case phrase set; if any \
-                  of those still ellipsise, the phrases want shortening rather than the \
-                  column want widening again. \
+                  end worth saving. The time column is a 104px floor, sized to the widest \
+                  phrase RelativeTime can produce in the widest system face, and never a cap. \
+                  The last cell is the worst-case phrase set; every one of them must sit \
+                  inside the column. \
                   \
                   The state phrase in the truncation cells is `Changed in both places`, 22 \
                   characters, which is the widest label a LIST row can carry. It is not the \
