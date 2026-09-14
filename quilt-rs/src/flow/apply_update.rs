@@ -288,6 +288,10 @@ mod tests {
     /// from the lineage, which a retry could only read as a local delete
     /// against a remote modify and refuse with `PullConflict`. Forever — the
     /// gap re-derived the same verdict on every attempt.
+    ///
+    /// The interruption here lands in the fetch, so it also pins the stronger
+    /// property staging adds: nothing has been swapped in, so the tree is not
+    /// merely whole but wholly at `base`.
     #[test(tokio::test)]
     async fn interrupted_apply_leaves_every_tracked_path_whole() -> Res {
         let manifest_uri = ManifestUri {
@@ -382,15 +386,19 @@ mod tests {
                 String::from_utf8_lossy(&on_disk)
             );
         }
-        // Specifically: the one that landed holds `latest`, the rest `base`.
-        assert_eq!(
-            storage.read_bytes(&wd().join("a.txt")).await?,
-            b"new-a.txt".to_vec()
-        );
-        assert_eq!(
-            storage.read_bytes(&wd().join("c.txt")).await?,
-            b"base-c.txt".to_vec()
-        );
+        // And specifically, because the interruption landed in the fetch — which
+        // is where essentially all of an apply's time goes — *every* file is
+        // still at `base`. Nothing was swapped in, so there is no mixture at
+        // all, and a retry is an ordinary update rather than a reconcile. This
+        // is what staging the whole set before swapping any of it buys; the
+        // per-file replace could only ever leave the first file at `latest`.
+        for key in tracked {
+            assert_eq!(
+                storage.read_bytes(&wd().join(key)).await?,
+                format!("base-{key}").into_bytes(),
+                "{key} was written before the whole set was staged"
+            );
+        }
         Ok(())
     }
 

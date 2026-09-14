@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::collections::hash_map::RandomState;
+use std::path::Path;
 use std::path::PathBuf;
 
 use tokio_stream::StreamExt;
@@ -36,35 +37,41 @@ async fn cache_immutable_object(
     storage.write_byte_stream(object_dest, stream.body).await
 }
 
-/// Puts `immutable_source`'s bytes at `mutable_target`, whole or not at all.
+/// Copies an object out of the store into this apply's staging directory,
+/// returning where it landed. Nothing in the working tree moves.
 ///
-/// Staged under `.quilt/` and renamed into place rather than copied onto the
-/// destination. A copy truncates the target and refills it, so a kill or power
-/// loss mid-write leaves a tracked path holding neither revision — present, and
-/// matching no manifest row, which a retry can only classify as a conflict. The
-/// rename is atomic, so the path holds the old bytes or the new ones and never
-/// a prefix of either.
-///
-/// `.quilt/` and the working tree share the domain root, so the rename stays
-/// within one filesystem. A package directory mounted from a different
-/// filesystem would fail the rename; that gap is named in the spec rather than
-/// papered over with a copy fallback that would reintroduce the hole.
-async fn create_mutable_copy(
+/// Staged rather than copied straight onto the destination because a copy
+/// truncates the target and refills it: a kill mid-write would leave a tracked
+/// path holding neither revision — present, matching no manifest row, and
+/// readable by a retry only as a conflict.
+async fn stage_object(
     storage: &impl Storage,
-    immutable_source: &PathBuf,
-    mutable_target: &PathBuf,
-    staging_dir: &PathBuf,
+    immutable_source: &Path,
+    run_staging: &Path,
+) -> Res<PathBuf> {
+    // Unique per file: two files in one apply must never stage over each other.
+    let staged = run_staging.join(uuid::Uuid::new_v4().to_string());
+    storage.copy(&immutable_source, &staged).await?;
+    Ok(staged)
+}
+
+/// Moves a staged file onto its working-tree destination, atomically.
+///
+/// The rename is the only step that touches the working tree, and it is a
+/// metadata operation: the path holds the old bytes or the new ones, never a
+/// prefix of either. `.quilt/` and the working tree share the domain root, so
+/// this stays within one filesystem; a package directory mounted from another
+/// would fail here, which is the gap the invariant names rather than papers
+/// over with a copy fallback that would reintroduce the hole.
+async fn commit_staged(
+    storage: &impl Storage,
+    staged: &Path,
+    mutable_target: &Path,
 ) -> Res<chrono::DateTime<chrono::Utc>> {
-    let parent_dir = mutable_target.parent();
-    if let Some(parent) = parent_dir {
+    if let Some(parent) = mutable_target.parent() {
         storage.create_dir_all(parent).await?;
     }
-    storage.create_dir_all(staging_dir).await?;
-    // Unique per write: two installs in one apply, or two processes on one
-    // domain, must never stage over each other.
-    let staged = staging_dir.join(uuid::Uuid::new_v4().to_string());
-    storage.copy(&immutable_source, &staged).await?;
-    storage.rename(&staged, &mutable_target).await?;
+    storage.rename(staged, &mutable_target).await?;
     storage.modified_timestamp(&mutable_target).await
 }
 
@@ -153,7 +160,8 @@ pub async fn install_paths(
 /// install over a tracked path" a fact about the code rather than a convention
 /// callers have to keep.
 ///
-/// Each write lands whole — see [`create_mutable_copy`].
+/// Each write lands whole, and the whole touch set is staged before any of it
+/// is swapped in — see [`stage_object`] and [`commit_staged`].
 ///
 /// Rows go into the installed manifest **verbatim** — `physical_key` is never
 /// rewritten to the `file://` object-store location, despite the `place` value
@@ -208,8 +216,12 @@ pub(crate) async fn install_paths_over(
     let mut entries = BTreeMap::new();
     // Outside the tree the status walk reads: a staging file beside the working
     // file would be reported as a new file, committed if a commit landed in the
-    // window, and left as a permanent stray by a kill.
-    let staging_dir = paths.staging_dir();
+    // window, and left as a permanent stray by a kill. One subdirectory per
+    // apply, so a failure can drop exactly its own staged files without
+    // touching a concurrent apply's.
+    let run_staging = paths.staging_dir().join(uuid::Uuid::new_v4().to_string());
+    storage.create_dir_all(&run_staging).await?;
+    let mut staged: Vec<(PathBuf, PathBuf, ManifestRow)> = Vec::new();
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
@@ -250,15 +262,24 @@ pub(crate) async fn install_paths_over(
         // The row goes in unchanged — `physical_key` and all.
         entries.insert(row.logical_key.clone(), row.clone());
 
-        let working_dest = working_dir.join(&row.logical_key);
-        let last_modified =
-            create_mutable_copy(storage, &object_dest, &working_dest, &staging_dir).await?;
-        debug!(
-            "✔️ Created mutable copy at {} for {}",
-            last_modified,
-            working_dest.display()
-        );
+        // Staged, not written: the working tree stays wholly at its current
+        // revision until every file is ready.
+        let staged_path = stage_object(storage, &object_dest, &run_staging).await?;
+        staged.push((staged_path, working_dir.join(&row.logical_key), row.clone()));
+        debug!("✔️ Staged {}", row.logical_key.display());
+    }
 
+    // The swap. Everything above this line is fetching and copying, and none of
+    // it touched the working tree: interrupted anywhere earlier — which is where
+    // essentially all of the time goes — the tree is still wholly at `base` and
+    // a retry is an ordinary update with nothing to reconcile. From here it is
+    // renames only, milliseconds, and an interruption inside them leaves the
+    // mixed tree the invariant is written to survive.
+    //
+    // Not a transaction: the renames are atomic one at a time and not as a set.
+    debug!("⏳ Swapping {} staged files into place", staged.len());
+    for (staged_path, working_dest, row) in &staged {
+        let last_modified = commit_staged(storage, staged_path, working_dest).await?;
         lineage.paths.insert(
             row.logical_key.clone(),
             PathState {
@@ -266,8 +287,11 @@ pub(crate) async fn install_paths_over(
                 hash: row.hash.clone().into(),
             },
         );
-        debug!("✔️ Added {}  to lineage paths ", row.logical_key.display());
+        debug!("✔️ Swapped in {}", working_dest.display());
     }
+    // Best effort: the renames emptied it on the success path. A kill leaves it
+    // behind, and nothing sweeps one yet.
+    let _ = storage.remove_dir_all(&run_staging).await;
 
     debug!("⏳ Building manifest with installed rows");
     let stream = stream_remote_with_installed_rows(manifest, entries).await;
