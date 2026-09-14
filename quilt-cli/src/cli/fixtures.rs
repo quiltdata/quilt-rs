@@ -94,6 +94,27 @@ pub mod packages {
         pub const R3_MESSAGE: &str = "r3: adds add/six.txt, modifies keep.txt";
     }
 
+    /// A package whose objects are large enough that a pull can be observed —
+    /// and interrupted — while it is still running. Everything else in here is
+    /// sized for classification and reporting, where a few small text files are
+    /// ideal and a timing window does not exist.
+    ///
+    /// Two objects of 24 MiB of random (so incompressible) bytes, both replaced
+    /// in r2, making a pull move ~48 MiB. Reachable with ambient `~/.aws`
+    /// credentials like the other live fixtures; the URIs carry no `&catalog=`.
+    pub mod large {
+        pub const NAMESPACE_STR: &str = "reference/large";
+
+        /// r1 — install this one to be behind.
+        pub const R1_URI: &str = "quilt+s3://udp-spec#package=reference/large@eedcbe821a3d1bb691f01866b70a55034c1fc073debd1aa906f7e381bba22827";
+
+        /// r2 — both objects replaced, so a pull from r1 refetches everything.
+        pub const R2_TOP_HASH: &str =
+            "38a8d7c2de5e00346afebc981e73a45b8e5b353f71d1ee9e010c6bfa34152049";
+
+        pub const PATHS: [&str; 2] = ["bulk-a.bin", "bulk-b.bin"];
+    }
+
     pub mod invalid {
         pub const URI: &str = "quilt+s3://some-nonsense";
     }

@@ -1168,6 +1168,141 @@ mod tests {
         Ok(())
     }
 
+    /// A real `SIGKILL` in the middle of a real pull.
+    ///
+    /// Every other interruption in this workspace is an error return — a fetch
+    /// that fails, a rename that cannot land. Those model the *disk* state
+    /// correctly, because what makes a file whole is `rename` being atomic in
+    /// the kernel, which holds however the process ends. What they cannot model
+    /// is a process that stops between two syscalls with nothing unwinding: no
+    /// `?` propagating, no cleanup running. The invariant claims to survive
+    /// exactly that.
+    ///
+    /// Uses `reference/large` rather than the reporting fixture because this is
+    /// the one test whose subject is *timing*: a pull of a few small text files
+    /// finishes before anything can interrupt it, and a kill landing after the
+    /// pull completed would pass while proving nothing.
+    ///
+    /// The kill is gated on a **staging file existing**, not on elapsed time.
+    /// That is what makes the assertion strong rather than merely safe: staging
+    /// completes for the whole touch set before the first rename, so a staging
+    /// file proves the apply is under way *and* has not begun swapping — which
+    /// licenses asserting every path is still at r1, not the weaker "r1 or r2".
+    #[test(tokio::test)]
+    async fn live_killed_pull_leaves_every_tracked_path_at_the_old_revision() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::large as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        const CHILD_ENV: &str = "QUILT_KILLED_PULL_DOMAIN";
+
+        fn pull_args(root: &std::path::Path) -> Args {
+            Args {
+                domain: Some(root.to_path_buf()),
+                home: Some(root.to_path_buf()),
+                verbose: false,
+                command: Commands::Pull {
+                    pkg: PackageRef {
+                        namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                    },
+                },
+            }
+        }
+
+        // The child: pull, and expect to die inside it.
+        if let Ok(root) = std::env::var(CHILD_ENV) {
+            let _ = init(pull_args(std::path::Path::new(&root))).await;
+            return Ok(());
+        }
+
+        let tracked = pkg::PATHS
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect::<Vec<_>>();
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R1_URI, Some(tracked)).await?;
+        let root = temp_dir.path().to_path_buf();
+        let working = |name: &str| root.join(pkg::NAMESPACE_STR).join(name);
+
+        let at_r1: Vec<Vec<u8>> = pkg::PATHS
+            .iter()
+            .map(|name| std::fs::read(working(name)).expect("installed at r1"))
+            .collect();
+
+        let mut kid = std::process::Command::new(std::env::current_exe().unwrap())
+            // The full path: libtest's `--exact` matches the whole name, and a
+            // filter matching nothing runs nothing and exits happily.
+            .args([
+                "cli::tests::live_killed_pull_leaves_every_tracked_path_at_the_old_revision",
+                "--exact",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, &root)
+            .spawn()
+            .expect("spawn the pull that gets killed");
+
+        // Poll rather than sleep: a fixed delay on a slow machine kills before
+        // anything has happened, and on fixed code a pull that never started
+        // looks exactly like one that was interrupted safely.
+        let staging = root.join(".quilt").join("staging");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let mut staged = false;
+        while std::time::Instant::now() < deadline {
+            // Wait for *every* path to be staged, not merely one. That state
+            // only exists because staging completes for the whole touch set
+            // before the first rename: a shape that staged and swapped each
+            // file in turn could never hold two at once, so this both proves
+            // the swap has not begun and fails against that shape rather than
+            // racing it.
+            if std::fs::read_dir(&staging).is_ok_and(|entries| {
+                entries.flatten().any(|run| {
+                    std::fs::read_dir(run.path())
+                        .is_ok_and(|f| f.flatten().count() >= pkg::PATHS.len())
+                })
+            }) {
+                staged = true;
+                break;
+            }
+            if kid.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        kid.kill().ok();
+        kid.wait().ok();
+        assert!(
+            staged,
+            "the whole touch set was never staged at once, so either the pull was not interrupted mid-apply or files are being swapped in one at a time"
+        );
+
+        // Killed before the swap, so nothing was written into the working tree:
+        // every path is still whole, and still at r1.
+        for (name, before) in pkg::PATHS.iter().zip(&at_r1) {
+            let after = std::fs::read(working(name))
+                .unwrap_or_else(|err| panic!("{name} is absent after a killed pull: {err:?}"));
+            assert_eq!(
+                after.len(),
+                before.len(),
+                "{name} changed size, so it holds neither revision whole"
+            );
+            assert!(&after == before, "{name} was written before the swap began");
+        }
+
+        // And the tree is an ordinary retry: pulling again completes, and lands
+        // exactly r2 rather than merely changing something.
+        let mut output = Vec::new();
+        let result = init(pull_args(&root)).await?;
+        print(result, &mut output, &mut Vec::new())?;
+        let report = String::from_utf8(output).unwrap();
+        assert!(
+            report.contains(pkg::R2_TOP_HASH),
+            "the retry should land r2, got: {report}"
+        );
+        for (name, before) in pkg::PATHS.iter().zip(&at_r1) {
+            let after = std::fs::read(working(name)).expect("present after the retry");
+            assert!(&after != before, "{name} still holds r1 after the retry");
+        }
+        Ok(())
+    }
+
     /// Local work the remote did not touch survives the pull, and appears in no
     /// group — it is the user's change, not news from the remote.
     ///
