@@ -25,7 +25,7 @@
   max-width: 100%;
   padding: 0 10px;
   min-height: var(--q-control-height);
-  border: 1px solid var(--q-borderColor-default);
+  border: 1px solid var(--q-borderColor-field);
   border-radius: var(--q-radius);
   background: var(--q-bgColor-default);
   color: var(--q-fgColor-default);
@@ -37,7 +37,7 @@
 
 .root:hover:not(.disabled) {
   background: var(--q-overlay-hover);
-  border-color: var(--q-borderColor-emphasis);
+  border-color: var(--q-borderColor-field-hover);
 }
 
 /* The ring belongs around the whole control, so the wrapper takes it and the

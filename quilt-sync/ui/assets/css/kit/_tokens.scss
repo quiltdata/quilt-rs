@@ -412,10 +412,18 @@
   --q-overlay-onBrand-hover: rgb(255 255 255 / 0.14);
   --q-overlay-onBrand-active: rgb(255 255 255 / 0.22);
 
-  /* lines. `muted` separates rows; `default` outlines controls. */
+  /* lines. `muted` separates rows; `default` outlines buttons and cards. */
   --q-borderColor-muted: var(--gray-4);
   --q-borderColor-default: var(--gray-7);
   --q-borderColor-emphasis: var(--gray-8);
+
+  /* FIELDS. An empty field is identified by its edge alone, so the edge clears 3:1
+   * (WCAG 1.4.11): step 9 measures 3.3 to 3.6 in light and 3.1 to 3.7 in dark on
+   * the page, a card and a muted surface. Buttons and cards keep step 7 — their
+   * content identifies them. Hover steps to 10, the next step away from the
+   * surface on both scales; the emphasis step, 8, would lighten the edge in light. */
+  --q-borderColor-field: var(--gray-9);
+  --q-borderColor-field-hover: var(--gray-10);
 
   /* ACCENT. Step 11 for text, not 12: light's 12 (#2a2d52) is nearly identical
    * to 9, so a link would be indistinguishable from a solid accent fill.
