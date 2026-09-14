@@ -420,12 +420,17 @@
   /* ACCENT. Step 11 for text, not 12: light's 12 (#2a2d52) is nearly identical
    * to 9, so a link would be indistinguishable from a solid accent fill.
    *
-   * CAUTION — the two themes' hover directions are opposite. Light step 9 is a
-   * near-black navy and 10 is *lighter*; dark step 9 is a vivid blue and 10 is
+   * Emphasis is the brand literal in light, so a primary button, a checked box and
+   * the countdown ring are the bar's navy rather than a second one 1.13:1 away.
+   * Dark keeps its vivid step 9 (override below): a navy fill on a near-black card
+   * has no edge.
+   *
+   * CAUTION — the two themes' hover directions are opposite. Light's emphasis is a
+   * near-black navy and step 10 is *lighter*; dark step 9 is a vivid blue and 10 is
    * darker. Always go through the token; a hand-written hover will be wrong in
    * one theme. */
   --q-fgColor-accent: var(--blue-11);
-  --q-bgColor-accent-emphasis: var(--blue-9);
+  --q-bgColor-accent-emphasis: var(--q-bgColor-brand);
   --q-bgColor-accent-emphasis-hover: var(--blue-10);
   --q-bgColor-accent-muted: var(--blue-3);
   --q-borderColor-accent-muted: var(--blue-7);
@@ -500,6 +505,8 @@
   --q-bgColor-success-muted: var(--green-a2);
   --q-borderColor-success-muted: var(--green-6);
 
+  /* The loudest tone in dark, 11.5:1 where danger is 8.3: accepted, since bare
+   * attention text is the two phrases the user must notice. */
   --q-fgColor-attention: var(--amber-11);
   --q-fgColor-attention-onMuted: var(--amber-12);
   --q-bgColor-attention-muted: var(--amber-a3);
@@ -528,7 +535,7 @@
   --q-space-12: 48px;
 
   /* Control heights, on the spacing grid so a row of controls is one line. `lg` is
-   * Button's large size; `sm` is for controls inside a row (bare IconButton, CauseRow). */
+   * Button's large size; `sm` is for controls inside a row or a bar. */
   --q-control-height: var(--q-space-8);
   --q-control-height-lg: var(--q-space-10);
   --q-control-height-sm: var(--q-space-6);
@@ -588,4 +595,6 @@
   --q-bgColor-inset: var(--gray-4);
   /* Dark's 11 is the pale text step; 9 reads as a ring. */
   --q-focus-outlineColor: var(--blue-9);
+  /* Vivid, not the brand navy: see ACCENT. */
+  --q-bgColor-accent-emphasis: var(--blue-9);
 }
