@@ -49,9 +49,11 @@
   flex: none;
   display: flex;
   align-items: center;
-  /* 24px so a Button or a sentence centres on the same first line as the glyph and
-   * the text — same derivation as those two. */
-  min-height: var(--q-control-height-sm);
+  /* A 32px Button and a one-line sentence both centre on the row's first line, the
+   * 24px band the expander defines: full control height, pulled up by half the
+   * difference. */
+  min-height: var(--q-control-height);
+  margin-top: calc((var(--q-control-height-sm) - var(--q-control-height)) / 2);
   gap: var(--q-space-2);
   color: var(--q-fgColor-muted);
 }

@@ -533,7 +533,8 @@
    * Text sets a control's width; this sets its height, so a toolbar of five controls
    * in three constructions is one line rather than four. 32px is the desktop medium
    * (Primer, Radix, Fluent). `lg` is Button's large size. `sm` is for controls that
-   * live inside a row — the bare IconButton, CauseRow's expander. */
+   * live inside a row — the bare IconButton, CauseRow's expander and its action
+   * slot's offset. */
   --q-control-height: 32px;
   --q-control-height-lg: 40px;
   --q-control-height-sm: 24px;

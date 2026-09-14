@@ -15,7 +15,8 @@
   width: 100%;
   gap: var(--q-space-2);
   padding: 4px 2px;
-  /* A 32px control plus the 4px padding above and below it, so a row with a Button and a row without one are the same height. */
+  /* A 32px control plus the 4px padding above and below it, so a row with a Button
+   * and a row without one are the same height. */
   min-height: 40px;
 }
 
@@ -31,7 +32,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: var(--q-control-height-sm);
   align-self: stretch;
 }
 
@@ -73,6 +74,6 @@
  * indent step, the same unit a tree uses, rather than a number chosen to look right.
  * Quieter too, because it is evidence and not a decision of its own. */
 .sub {
-  padding-left: calc(24px + var(--q-space-2));
+  padding-left: calc(var(--q-control-height-sm) + var(--q-space-2));
   color: var(--q-fgColor-muted);
 }
