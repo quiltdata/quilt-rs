@@ -20,7 +20,8 @@
 
 .host {
   display: block;
-  font-weight: 500;
+  /* 600, not 500: the system faces have no medium, and 500 falls back to regular. */
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

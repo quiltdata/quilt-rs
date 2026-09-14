@@ -14,7 +14,8 @@
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 5px 12px;
+  padding: 0 12px;
+  min-height: var(--q-control-height);
   border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
   background: var(--q-bgColor-default);
@@ -51,7 +52,8 @@
 
 /* ── size — orthogonal to `variant`, hence a separate prop ─────────────── */
 .large {
-  padding: 8px 16px;
+  padding: 0 16px;
+  min-height: var(--q-control-height-lg);
   font-size: var(--q-text-lead);
 }
 

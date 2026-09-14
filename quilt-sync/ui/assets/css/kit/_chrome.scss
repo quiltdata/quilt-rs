@@ -65,11 +65,11 @@ body {
 .g-head p { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 60ch; }
 
 .g-section { margin-bottom: var(--q-space-8); }
+/* Sentence case at the lead size: Card titles are 14px uppercase, and a gallery
+ * heading set the same way reads as part of the scene it introduces. */
 .g-section h2 {
-  font-size: var(--q-text-body);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-lead);
+  font-weight: 600;
   margin: 0 0 3px;
 }
 .g-note { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 80ch; }
@@ -136,6 +136,28 @@ body {
  * them would be a double gap; bars stand in for lines of text and need the leading that
  * text would have had. */
 .g-bars { display: flex; flex-direction: column; gap: var(--q-space-2); width: 100%; }
+
+/* A whole-page scene at the window's minimum inner height, so the fold is the one a
+ * user at the floor sees rather than the gallery's own viewport. `auto` for a scene
+ * that is only the bar. The loading frame's own `min-height: 100vh` (see `_base.scss`)
+ * is pulled down to the window for the same reason. */
+.g-window {
+  --q-frame-height: 560px;
+  height: var(--q-frame-height);
+}
+
+.g-window--bar {
+  --q-frame-height: auto;
+}
+
+/* The bar-only scene shows the bar, not the empty padded `main` under it. */
+.g-window--bar main {
+  display: none;
+}
+
+.g-shell .g-window > [data-home-frame] {
+  min-height: 100%;
+}
 
 /* The state strip's two-card row. This is page layout rather than gallery chrome, and
  * it moves into the region's own stylesheet when the real page is built — it lives here

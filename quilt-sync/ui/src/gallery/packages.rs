@@ -93,11 +93,10 @@ fn EdgesStory() -> impl IntoView {
             title="PackageRow — edges"
             note="Namespaces truncate from the RIGHT, the opposite of FileRow's paths: a \
                   namespace is distinguished by its start, and there is no filename at the \
-                  end worth saving. The time column is a fixed 96px — widened from 80 once \
-                  real timestamps landed on the page and the worst phrases could be read \
-                  rather than guessed at. The last cell is the worst-case phrase set; if any \
-                  of those still ellipsise, the phrases want shortening rather than the \
-                  column want widening again. \
+                  end worth saving. The time column is a 104px floor, sized to the widest \
+                  phrase RelativeTime can produce in the widest system face, and never a cap. \
+                  The last cell is the worst-case phrase set; every one of them must sit \
+                  inside the column. \
                   \
                   The state phrase in the truncation cells is `Changed in both places`, 22 \
                   characters, which is the widest label a LIST row can carry. It is not the \
@@ -140,7 +139,7 @@ fn EdgesStory() -> impl IntoView {
                     tone=StateTone::Success
                 />
             </Cell>
-            <Cell full=true label="provisional — the light phase's guess, dashed until confirmed">
+            <Cell full=true label="provisional — the light phase's guess, dimmed and dashed until confirmed">
                 <div class="g-rows">
                     <PackageRow
                         namespace="user/package-a"
@@ -167,7 +166,7 @@ fn EdgesStory() -> impl IntoView {
                     />
                 </div>
             </Cell>
-            <Cell full=true label="the 80px time column against its worst cases">
+            <Cell full=true label="the time column against its widest phrases">
                 <div class="g-rows">
                     {[
                         ("just now", 10.0 * 1000.0),
@@ -175,7 +174,8 @@ fn EdgesStory() -> impl IntoView {
                         ("23 hours ago", 23.0 * HOUR),
                         ("yesterday", 30.0 * HOUR),
                         ("3 weeks ago", 21.0 * DAY),
-                        ("2 months ago", 70.0 * DAY),
+                        ("11 months ago", 340.0 * DAY),
+                        ("3 years ago", 1100.0 * DAY),
                     ]
                         .into_iter()
                         .map(|(phrase, elapsed)| {
@@ -341,7 +341,12 @@ fn row(entry: (&'static str, &'static str, &'static str, StateTone, f64)) -> Any
 
 /// The region itself, so the whole-page scene composes this code rather than a copy.
 #[component]
-pub fn PackagesRegion() -> impl IntoView {
+pub fn PackagesRegion(
+    /// Radio-group name for the view toggle. Unique per mounted instance: the whole-page
+    /// scenes mount this region beside this file's own, and two instances sharing a
+    /// name become one group with one selection between them.
+    view_name: &'static str,
+) -> impl IntoView {
     let view_mode = RwSignal::new("Packages".to_string());
     let query = RwSignal::new(String::new());
     let group = RwSignal::new("Bucket".to_string());
@@ -356,7 +361,7 @@ pub fn PackagesRegion() -> impl IntoView {
                 <ListToolbar>
                     <SegmentedControl
                         aria_label="List view"
-                        name="packages-view"
+                        name=view_name
                         options=vec!["Packages".to_string(), "Recent files".to_string()]
                         selected=view_mode
                     />
@@ -447,7 +452,7 @@ pub fn PackagesScene() -> impl IntoView {
                   bucket axis annotates a group with a shared cause — a prefix spans \
                   buckets, so no cause can be a property of one."
         >
-            <PackagesRegion />
+            <PackagesRegion view_name="packages-view" />
         </Scene>
         <Scene
             title="Scene · a fresh install"

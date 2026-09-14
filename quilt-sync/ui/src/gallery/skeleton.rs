@@ -61,7 +61,7 @@ fn Bars() -> impl IntoView {
                 <SkeletonBox width="88px" height="22px" />
             </Cell>
             <Cell label="a button's shape">
-                <SkeletonBox width="76px" height="26px" />
+                <SkeletonBox width="76px" height="32px" />
             </Cell>
             <Cell label="a block">
                 <SkeletonBox width="100%" height="64px" />
