@@ -150,6 +150,11 @@ body {
   --q-frame-height: auto;
 }
 
+/* The bar-only scene shows the bar, not the empty padded `main` under it. */
+.g-window--bar main {
+  display: none;
+}
+
 .g-shell .g-window > [data-home-frame] {
   min-height: 100%;
 }
