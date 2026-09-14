@@ -402,6 +402,120 @@ mod tests {
         Ok(())
     }
 
+    /// The Example's *rare* interruption: one that lands inside the closing run
+    /// of renames rather than during the fetch. Everything staged, so the swap
+    /// begins — and then stops part-way, leaving earlier paths at `latest` and
+    /// later ones at `base`.
+    ///
+    /// This is the mixture the invariant is written to survive, and staging
+    /// makes it rare without making it impossible: the renames are atomic one
+    /// at a time and not as a set. Its counterpart in
+    /// `flow::pull` shows such a tree retrying cleanly; this one shows the
+    /// apply actually producing it, rather than a test hand-building the state
+    /// and asserting about it.
+    ///
+    /// The injection is a destination that cannot be renamed onto — a directory
+    /// where a file belongs — standing in for a kill between two renames, which
+    /// an in-process test cannot produce.
+    #[test(tokio::test)]
+    async fn interrupted_swap_leaves_earlier_paths_at_latest() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        let (paths, _domain_tmp) = DomainPaths::from_temp_dir()?;
+        let paths = &paths;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let tracked = ["a.txt", "b.txt", "c.txt"];
+        for key in tracked {
+            storage
+                .write_byte_stream(
+                    wd().join(key),
+                    ByteStream::from(format!("base-{key}").into_bytes()),
+                )
+                .await?;
+        }
+        // `b.txt` becomes a directory, so its rename fails and the swap stops
+        // there — after `a.txt` has landed and before `c.txt` is reached.
+        storage.remove_file(wd().join("b.txt")).await.ok();
+        storage.create_dir_all(wd().join("b.txt")).await?;
+
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            paths: tracked
+                .iter()
+                .map(|k| (PathBuf::from(k), PathState::default()))
+                .collect(),
+            ..PackageLineage::default()
+        };
+        let latest_manifest = Manifest {
+            rows: tracked
+                .iter()
+                .map(|k| {
+                    row_at(
+                        k,
+                        format!("new-{k}").as_bytes(),
+                        &format!("objects/new-{k}"),
+                    )
+                })
+                .collect(),
+            ..Manifest::default()
+        };
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        publish(&remote, new_hash, &latest_manifest).await?;
+        // Every object is fetchable, so staging completes and the swap starts.
+        for key in tracked {
+            put_object_at(
+                &remote,
+                &format!("objects/new-{key}"),
+                format!("new-{key}").as_bytes(),
+            )
+            .await?;
+        }
+
+        let mut manifest = Manifest::default();
+        let touched: Vec<PathBuf> = tracked.iter().map(PathBuf::from).collect();
+        let result = apply_latest_update(
+            lineage,
+            &mut manifest,
+            paths,
+            &storage,
+            &remote,
+            wd(),
+            Namespace::default(),
+            ManifestUri {
+                hash: new_hash.to_string(),
+                ..manifest_uri
+            },
+            &touched,
+        )
+        .await;
+        assert!(result.is_err(), "the swap was meant to stop at b.txt");
+
+        // The mixture: swapped before the failure, untouched after it. Both
+        // whole, which is what makes the retry ordinary.
+        assert_eq!(
+            storage.read_bytes(&wd().join("a.txt")).await?,
+            b"new-a.txt".to_vec(),
+            "a.txt was swapped in before the failure"
+        );
+        assert_eq!(
+            storage.read_bytes(&wd().join("c.txt")).await?,
+            b"base-c.txt".to_vec(),
+            "c.txt was never reached, so it still holds base"
+        );
+        Ok(())
+    }
+
     /// The apply records which writes *replaced* a file this copy already held,
     /// because the write itself no longer says so. The pull report tells an
     /// update from an addition by exactly this, and it used to read it from the
