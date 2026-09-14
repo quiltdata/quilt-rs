@@ -105,6 +105,8 @@ fn Gallery() -> impl IntoView {
     // the app from the OS, and one of them getting the root element wrong is
     // exactly the bug the shared version's doc explains.
     Effect::new(move |_| quilt_sync_ui::theme::set(dark.get()));
+    // A v2 reader, so v2-only rules apply — the loading frame's ground is one.
+    quilt_sync_ui::theme::set_v2(true);
 
     // One list, used twice: the index reads the labels, the page consumes the
     // views. A second hardcoded list of section names would drift from this one

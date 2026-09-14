@@ -137,6 +137,23 @@ body {
  * text would have had. */
 .g-bars { display: flex; flex-direction: column; gap: var(--q-space-2); width: 100%; }
 
+/* A whole-page scene at the window's minimum inner height, so the fold is the one a
+ * user at the floor sees rather than the gallery's own viewport. `auto` for a scene
+ * that is only the bar. The loading frame's own `min-height: 100vh` (see `_base.scss`)
+ * is pulled down to the window for the same reason. */
+.g-window {
+  --q-frame-height: 560px;
+  height: var(--q-frame-height);
+}
+
+.g-window--bar {
+  --q-frame-height: auto;
+}
+
+.g-shell .g-window > [data-home-frame] {
+  min-height: 100%;
+}
+
 /* The state strip's two-card row. This is page layout rather than gallery chrome, and
  * it moves into the region's own stylesheet when the real page is built — it lives here
  * only because the region is still a gallery component.

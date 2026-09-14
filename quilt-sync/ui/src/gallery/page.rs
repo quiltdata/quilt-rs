@@ -25,6 +25,8 @@ use crate::gallery::state_strip::StateStripRegion;
 use crate::kit::Card;
 use crate::kit::IconButton;
 use crate::kit::PageLayout;
+use crate::kit::Spinner;
+use crate::kit::SpinnerVariant;
 use crate::kit::ZeroLine;
 
 fn refresh_icon() -> AnyView {
@@ -64,20 +66,22 @@ pub fn PageScene() -> impl IntoView {
             title="Scene · the whole page, a busy day"
             note="The worst case: nineteen things needing a decision, and both expanders \
                   still work. This is the scene that tests the design's central bet — that \
-                  a queue above the list earns the height it takes. Scroll it and count how \
-                  many package rows survive above the fold, then expand a cause and count \
-                  again. \
+                  a queue above the list earns the height it takes. The frame is 560px tall, \
+                  the window's minimum, so the fold is the real one: count how many package \
+                  rows survive above it, then expand a cause and count again. \
                   \
                   Read it top to bottom as a user would: what is running (Autosync), who \
                   you are (Accounts), what wants you (the queue), then everything else \
                   (the list). Nothing below the queue needs reading on a bad day, and \
                   nothing in the queue exists on a good one."
         >
-            <PageLayout actions=appbar_actions()>
-                <StateStripRegion />
-                <QueueRegion />
-                <PackagesRegion view_name="busy-day-view" />
-            </PageLayout>
+            <div class="g-window">
+                <PageLayout actions=appbar_actions()>
+                    <StateStripRegion />
+                    <QueueRegion />
+                    <PackagesRegion view_name="busy-day-view" />
+                </PageLayout>
+            </div>
         </Scene>
         <Scene
             title="Scene · the whole page, a normal day"
@@ -90,20 +94,47 @@ pub fn PageScene() -> impl IntoView {
                   The state strip is unchanged, and that is deliberate: it reports what is \
                   running, which is as true on a calm day as on a bad one."
         >
-            <PageLayout actions=appbar_actions()>
-                <StateStripRegion />
-                // The queue region collapsed. Composed here rather than hidden inside
-                // `QueueRegion` behind a flag — "is anything wrong" is the caller's
-                // question, and a region that answered it for itself would need the
-                // data this gallery does not have.
-                //
-                // No count: counting to zero is noise, and `Card`'s count is optional
-                // for exactly this row of the design.
-                <Card title="Needs your attention">
-                    <ZeroLine text="Everything is Latest — 43 packages" />
-                </Card>
-                <PackagesRegion view_name="normal-day-view" />
-            </PageLayout>
+            <div class="g-window">
+                <PageLayout actions=appbar_actions()>
+                    <StateStripRegion />
+                    // The queue region collapsed. Composed here rather than hidden inside
+                    // `QueueRegion` behind a flag — "is anything wrong" is the caller's
+                    // question, and a region that answered it for itself would need the
+                    // data this gallery does not have.
+                    //
+                    // No count: counting to zero is noise, and `Card`'s count is optional
+                    // for exactly this row of the design.
+                    <Card title="Needs your attention">
+                        <ZeroLine text="Everything is Latest — 43 packages" />
+                    </Card>
+                    <PackagesRegion view_name="normal-day-view" />
+                </PageLayout>
+            </div>
+        </Scene>
+        <Scene
+            title="Scene · the appbar alone"
+            note="The two chrome buttons on the brand ground, with nothing under them to \
+                  borrow attention from. Framed IconButtons with the frame taken off by the \
+                  bar (see PageLayout): hover and focus them here — the ring is the bar's \
+                  own ink. The glyphs are drawn twice, here and in main_page.rs; a shared \
+                  kit/icons.rs is qhq-8mgw.77's."
+        >
+            <div class="g-window g-window--bar">
+                <PageLayout actions=appbar_actions()>""</PageLayout>
+            </div>
+        </Scene>
+        <Scene
+            title="Scene · the frame while / decides"
+            note="What the window shows between launch and knowing which main page to draw: \
+                  the page ground and a region spinner, no appbar. Drawing one page's chrome \
+                  and then swapping it for the other's is the flicker this frame exists to \
+                  avoid. The markup is main.rs's, repeated here because a bin cannot lend it."
+        >
+            <div class="g-window">
+                <div data-home-frame>
+                    <Spinner variant=SpinnerVariant::Region aria_label="Loading QuiltSync" />
+                </div>
+            </div>
         </Scene>
     }
 }

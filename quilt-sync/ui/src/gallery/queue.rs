@@ -131,7 +131,7 @@ fn QueueRowStory() -> impl IntoView {
                                 namespace=namespace
                                 state=state
                                 tone=tone
-                                action=action(label, ButtonVariant::Default)
+                                action=action(label, ButtonVariant::Primary)
                             />
                         </Cell>
                     }
@@ -145,12 +145,12 @@ fn QueueRowStory() -> impl IntoView {
                     action=action("Sign in", ButtonVariant::Default)
                 />
             </Cell>
-            <Cell full=true label="primary action — the caller decides, the row does not">
+            <Cell full=true label="default variant — the row takes what it is given; the page passes Primary for every package action and Default for a cause's">
                 <QueueRow
                     namespace="user/package-b"
                     state="2 files changed"
                     tone=StateTone::Neutral
-                    action=action("Publish", ButtonVariant::Primary)
+                    action=action("Publish", ButtonVariant::Default)
                 />
             </Cell>
             <Cell full=true label="action disabled — a pull check in flight">
@@ -174,7 +174,7 @@ fn QueueRowStory() -> impl IntoView {
                     namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix"
                     state="Changed in both places"
                     tone=StateTone::Danger
-                    action=action("Resolve", ButtonVariant::Default)
+                    action=action("Resolve", ButtonVariant::Primary)
                 />
             </Cell>
             <Cell wide=true label="narrow — two columns">
@@ -182,7 +182,7 @@ fn QueueRowStory() -> impl IntoView {
                     namespace="local/my-data"
                     state="No S3 bucket yet"
                     tone=StateTone::Attention
-                    action=action("Choose S3 bucket", ButtonVariant::Default)
+                    action=action("Choose S3 bucket", ButtonVariant::Primary)
                 />
             </Cell>
         </Story>
@@ -324,7 +324,7 @@ pub fn QueueRegion() -> impl IntoView {
                                 namespace=namespace
                                 state=state
                                 tone=tone
-                                action=action(label, ButtonVariant::Default)
+                                action=action(label, ButtonVariant::Primary)
                             />
                         }
                     })
