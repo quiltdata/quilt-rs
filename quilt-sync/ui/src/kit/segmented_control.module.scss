@@ -14,7 +14,6 @@
 
 .root {
   display: inline-flex;
-  align-items: stretch;
   max-width: 100%;
   min-height: var(--q-control-height);
   padding: 2px;
@@ -24,7 +23,6 @@
 }
 
 .option {
-  display: flex;
   min-width: 0;
   cursor: pointer;
 }
@@ -48,9 +46,13 @@
  * are too long for a segmented control and belong in a `Select`. It just must not
  * break the row while telling you that. */
 .text {
-  display: flex;
-  align-items: center;
+  display: block;
   padding: 0 11px;
+  /* Height, not display: flex — a flex box turns its text node into an anonymous
+   * flex item, and `text-overflow` only applies to block containers, so a long
+   * label would hard-clip instead of showing `…`. The shell's 1px border plus 2px
+   * padding, top and bottom, so the fill still reaches 2px inside the shell. */
+  line-height: calc(var(--q-control-height) - 6px);
   /* The one nested case in the kit: the segment fills the shell's 2px padding, so
    * its corner sits 2px inside the shell's. An equal radius would bulge against
    * the outer curve, so it is the outer radius minus the inset — written as the
