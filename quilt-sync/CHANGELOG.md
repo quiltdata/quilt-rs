@@ -18,6 +18,7 @@
 ### Fixed
 
 - Keyboard focus is visible on every control of the new main page. The focus ring measured under the 3:1 contrast WCAG asks of a focus indicator against a white card in the light theme and against a card in the dark theme, and against the top bar in both; it now clears 3:1 everywhere (<https://github.com/quiltdata/quilt-rs/pull/913>)
+- In the recent-files list, a file's age is no longer cut short to "23 hours a…" or "2 months a…"; the column holds every phrase whole. Files older than a year now read "1 year ago" or "3 years ago" instead of a growing count of months (<https://github.com/quiltdata/quilt-rs/pull/914>)
 
 ## [v0.22.1] - 2026-09-11
 
