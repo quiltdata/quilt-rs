@@ -143,6 +143,42 @@ fn same_resulting_content(local: &Change, remote: &RemoteChange, identical: bool
     }
 }
 
+/// The paths [`identical_to_latest`] settled: locally changed, and already
+/// holding exactly what `latest` holds.
+///
+/// A newtype with a private field and no `Default`, so the only way to obtain
+/// one is to run the pass. That is the whole point of it. While this was a
+/// plain `BTreeSet`, passing an empty one silently restored the cross-algorithm
+/// comparison this module exists to fix — and every test in this file did
+/// exactly that until the change's verification went looking, which is as clear
+/// a demonstration as one could ask for that a convention is not enough here.
+#[derive(Debug)]
+pub struct Reconciled(BTreeSet<PathBuf>);
+
+impl Reconciled {
+    /// Whether the pass settled this path as already holding `latest`'s bytes.
+    #[must_use]
+    pub fn contains(&self, path: &Path) -> bool {
+        self.0.contains(path)
+    }
+
+    /// Whether the pass settled nothing — the ordinary case, where every
+    /// contested path's digests were already comparable.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// A reconciliation that was never run. Test-only, and named to say so: a
+    /// scenario with no cross-algorithm path reconciles to nothing anyway, and
+    /// spelling that out beats threading storage through tests that have no
+    /// working tree.
+    #[cfg(test)]
+    pub(crate) fn unreconciled() -> Self {
+        Self(BTreeSet::new())
+    }
+}
+
 /// The locally changed paths whose working file already holds *exactly* what
 /// `latest` holds, for the paths where comparing the two digests cannot answer
 /// that.
@@ -169,13 +205,13 @@ fn same_resulting_content(local: &Change, remote: &RemoteChange, identical: bool
 /// A working file that cannot be read is simply not reported identical: the
 /// path falls through to the digest comparison and, at worst, blocks the pull
 /// as it does today. Fail-safe in the same direction as the conflict rule.
-pub(crate) async fn identical_to_latest(
+pub async fn identical_to_latest(
     storage: &(impl Storage + Sync),
     working_dir: &Path,
     status: &InstalledPackageStatus,
     base: &Manifest,
     latest: &Manifest,
-) -> Res<BTreeSet<PathBuf>> {
+) -> Res<Reconciled> {
     let mut identical = BTreeSet::new();
     for (path, change) in &status.changes {
         let local_hash = match change {
@@ -210,7 +246,7 @@ pub(crate) async fn identical_to_latest(
             Err(err) => return Err(err),
         }
     }
-    Ok(identical)
+    Ok(Reconciled(identical))
 }
 
 /// Classify what a pull would do. Pure — no network, no I/O.
@@ -224,7 +260,7 @@ pub fn classify_pull(
     status: &InstalledPackageStatus,
     base: &Manifest,
     latest: &Manifest,
-    identical: &BTreeSet<PathBuf>,
+    identical: &Reconciled,
 ) -> PullOutcome {
     // Same revision — identical manifests — is the only genuine "nothing to
     // pull". A newer revision that changed *only* the manifest header
@@ -600,7 +636,7 @@ mod tests {
             &behind(ChangeSet::default()),
             &base,
             &latest,
-            &BTreeSet::new(),
+            &Reconciled::unreconciled(),
         );
         assert_eq!(out, PullOutcome::CleanUpdate);
         Ok(())
@@ -615,7 +651,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"x")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {
@@ -633,7 +674,12 @@ mod tests {
         let latest = manifest_of(vec![row("a", b"remote")]); // remote modified "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local"))); // local modified "a"
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -649,7 +695,12 @@ mod tests {
         let latest = manifest_of(vec![row("a", b"same")]);
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"same"))); // same content
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         // Trivially resolved: neither conflict nor kept work.
         assert_eq!(
             out,
@@ -668,7 +719,12 @@ mod tests {
         let latest = manifest_of(vec![row("a", b"2")]); // remote modified "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1"))); // local removed "a"
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -688,7 +744,12 @@ mod tests {
         let latest = manifest_of(vec![row("b", b"2")]); // remote removed "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local"))); // local modified "a"
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -704,7 +765,12 @@ mod tests {
         let latest = manifest_of(vec![row("b", b"2")]); // remote removed "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1"))); // local removed "a"
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {
@@ -729,7 +795,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"local")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -751,7 +822,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"same")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {
@@ -809,7 +885,7 @@ mod tests {
             &behind(ChangeSet::default()),
             &base,
             &latest,
-            &BTreeSet::new(),
+            &Reconciled::unreconciled(),
         );
         assert_eq!(out, PullOutcome::UpToDate);
         Ok(())
@@ -827,7 +903,7 @@ mod tests {
             &behind(ChangeSet::default()),
             &base,
             &latest,
-            &BTreeSet::new(),
+            &Reconciled::unreconciled(),
         );
         assert_eq!(out, PullOutcome::CleanUpdate);
         Ok(())
@@ -845,7 +921,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"x")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest, &BTreeSet::new());
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {
