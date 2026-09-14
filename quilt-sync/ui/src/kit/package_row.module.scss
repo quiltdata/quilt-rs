@@ -49,16 +49,12 @@
   white-space: nowrap;
 }
 
-/* 96px, widened from 80 once real timestamps arrived and the worst phrases could
- * be seen rather than guessed at. `FileRow` still has 80 — the two columns are
- * duplicated rather than shared precisely so one can move without the other, and
- * this is that. */
+/* The same column as `FileRow`'s, duplicated so one can move without the other:
+ * a 96px floor that holds `RelativeTime`'s widest phrase, never a cap. */
 .time {
   flex: none;
-  width: 96px;
+  min-width: 96px;
   text-align: right;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--q-fgColor-muted);
 }
