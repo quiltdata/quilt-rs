@@ -11,6 +11,7 @@ use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
 use crate::flow;
 use crate::flow::Applied;
+use crate::flow::LocalWork;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
 use crate::flow::classify_pull;
@@ -320,9 +321,17 @@ pub async fn pull_package(
     // edited after the walk is absent from `status.changes` and — if
     // remote-changed — lands in the touch-set. Re-checking the base content at
     // the destruction site turns such a raced edit into a `PullConflict`
-    // instead of a silent overwrite. The residual window shrinks to the
-    // verify→write syscalls (per file, microseconds), which is also the window
-    // an editor could save into.
+    // instead of a silent overwrite.
+    //
+    // This pass is the fail-fast half: it checks every touched path before any
+    // work starts, so drift aborts the pull before a byte is fetched. It is not
+    // the half that makes the write safe. The apply stages the whole touch set
+    // before it writes any of it, so a verdict reached here licenses a write a
+    // whole fetch later — and a background pull running while someone works is
+    // ordinary. The apply re-checks each destination against the row captured
+    // here immediately before replacing it (`LocalWork::Protect`), which is what
+    // shrinks the residual window back to the two syscalls between the check and
+    // the rename — also the window an editor could save into.
     //
     // Outside that window, an editor with the file open picks the new content up
     // cleanly (checked against nvim and GNOME Text Editor): editors read and
@@ -419,6 +428,10 @@ pub async fn pull_package(
         namespace,
         snapshot.latest,
         &touched,
+        // The verify pass above checked every one of these against its base
+        // row; the apply re-checks each immediately before overwriting it,
+        // because staging puts the whole fetch in between.
+        &LocalWork::Protect,
     )
     .await?;
 

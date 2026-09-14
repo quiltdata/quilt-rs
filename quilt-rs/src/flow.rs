@@ -23,6 +23,7 @@ mod uninstall_package;
 mod uninstall_paths;
 
 pub(crate) use apply_update::Applied;
+pub(crate) use apply_update::LocalWork;
 pub(crate) use apply_update::apply_latest_update;
 pub use browse::browse_remote_manifest as browse;
 pub use browse::cache_remote_manifest;
@@ -31,6 +32,7 @@ pub use commit::UserMeta;
 pub use commit::commit_package as commit;
 pub use create_package::create_package as create;
 pub use install_package::install_package;
+pub(crate) use install_paths::Protect;
 pub use install_paths::install_paths;
 pub(crate) use install_paths::install_paths_over;
 pub use list_revisions::Revision;

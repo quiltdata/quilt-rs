@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::Res;
+use crate::flow::LocalWork;
 use crate::flow::apply_latest_update;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
@@ -66,6 +67,9 @@ pub async fn reset_to_latest(
         namespace,
         latest,
         &touched,
+        // Reset exists to discard local work, so there is nothing here the
+        // apply must refuse to overwrite.
+        &LocalWork::Discard,
     )
     .await?;
 

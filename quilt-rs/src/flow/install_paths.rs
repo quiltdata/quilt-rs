@@ -12,7 +12,9 @@ use url::Url;
 use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
+use crate::checksum::refresh_hash;
 use crate::error::ManifestError;
+use crate::error::PackageOpError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
@@ -75,6 +77,55 @@ async fn commit_staged(
     storage.modified_timestamp(&mutable_target).await
 }
 
+/// Renames each staged file onto its destination, refusing to overwrite one a
+/// caller asked to protect that no longer holds the content it was verified at.
+///
+/// The re-check is what keeps the guarantee honest once the whole touch set is
+/// staged before anything is written: a caller's verification now happens a
+/// whole fetch earlier than the write it licenses, and an edit landing in that
+/// gap would otherwise be overwritten in silence. Checked immediately before
+/// each rename, the exposure is back to the two syscalls between them.
+///
+/// Fail-safe in the same direction as the conflict rule: a file that cannot be
+/// read is treated as changed, so the worst case is a retryable refusal rather
+/// than lost work.
+async fn swap_staged_into_place(
+    storage: &(impl Storage + Sync),
+    staged: &[(PathBuf, PathBuf, ManifestRow)],
+    protect: &Protect<'_>,
+    lineage: &mut PackageLineage,
+) -> Res {
+    for (staged_path, working_dest, row) in staged {
+        if let Protect::BaseContent(expected) = protect
+            && let Some(base_row) = expected.get(&row.logical_key)
+        {
+            let unchanged = matches!(
+                refresh_hash(storage, working_dest, (*base_row).clone()).await,
+                Ok(None)
+            );
+            if !unchanged {
+                debug!(
+                    "❌ {} changed while the revision was being staged",
+                    row.logical_key.display()
+                );
+                return Err(Error::PackageOp(PackageOpError::PullConflict(vec![
+                    row.logical_key.clone(),
+                ])));
+            }
+        }
+        let last_modified = commit_staged(storage, staged_path, working_dest).await?;
+        lineage.paths.insert(
+            row.logical_key.clone(),
+            PathState {
+                timestamp: last_modified,
+                hash: row.hash.clone().into(),
+            },
+        );
+        debug!("✔️ Swapped in {}", working_dest.display());
+    }
+    Ok(())
+}
+
 async fn stream_remote_with_installed_rows(
     remote_manifest: &Manifest,
     local_entries: BTreeMap<PathBuf, ManifestRow>,
@@ -94,6 +145,26 @@ async fn stream_remote_with_installed_rows(
                     .collect()
             })
         })
+}
+
+/// What a caller forbids the apply to overwrite.
+///
+/// The check has to happen immediately before each rename, not once up front:
+/// staging the whole touch set puts the whole fetch between a caller's
+/// verification and the write it licensed, and a background pull running while
+/// someone works is ordinary rather than exotic. But it cannot simply live
+/// inside the install, because [`reset_to_latest`](super::reset_to_latest)
+/// shares this primitive precisely to *discard* local work. So the caller says
+/// which it is, by name.
+pub(crate) enum Protect<'a> {
+    /// Replace a working file only while it still holds the content its row
+    /// names. Anything else is an edit that landed after the caller checked,
+    /// and overwriting it would lose work that was never committed and cannot
+    /// be recovered — there is no reflog.
+    BaseContent(&'a BTreeMap<PathBuf, ManifestRow>),
+    /// Overwrite whatever is there. Discarding local work is the operation, so
+    /// there is nothing to protect.
+    Nothing,
 }
 
 /// Refuses the whole call if any requested path is already installed.
@@ -138,6 +209,8 @@ pub async fn install_paths(
     entries_paths: &[&PathBuf],
 ) -> Res<PackageLineage> {
     refuse_already_installed(&lineage, entries_paths)?;
+    // Nothing to protect: the refusal above already established that none of
+    // these paths is installed, so no working file is at stake.
     install_paths_over(
         lineage,
         manifest,
@@ -147,6 +220,7 @@ pub async fn install_paths(
         storage,
         remote,
         entries_paths,
+        &Protect::Nothing,
     )
     .await
 }
@@ -188,6 +262,7 @@ pub(crate) async fn install_paths_over(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entries_paths: &[&PathBuf],
+    protect: &Protect<'_>,
 ) -> Res<PackageLineage> {
     if entries_paths.is_empty() {
         info!("No paths to install");
@@ -264,7 +339,13 @@ pub(crate) async fn install_paths_over(
 
         // Staged, not written: the working tree stays wholly at its current
         // revision until every file is ready.
-        let staged_path = stage_object(storage, &object_dest, &run_staging).await?;
+        let staged_path = match stage_object(storage, &object_dest, &run_staging).await {
+            Ok(path) => path,
+            Err(err) => {
+                let _ = storage.remove_dir_all(&run_staging).await;
+                return Err(err);
+            }
+        };
         staged.push((staged_path, working_dir.join(&row.logical_key), row.clone()));
         debug!("✔️ Staged {}", row.logical_key.display());
     }
@@ -278,20 +359,13 @@ pub(crate) async fn install_paths_over(
     //
     // Not a transaction: the renames are atomic one at a time and not as a set.
     debug!("⏳ Swapping {} staged files into place", staged.len());
-    for (staged_path, working_dest, row) in &staged {
-        let last_modified = commit_staged(storage, staged_path, working_dest).await?;
-        lineage.paths.insert(
-            row.logical_key.clone(),
-            PathState {
-                timestamp: last_modified,
-                hash: row.hash.clone().into(),
-            },
-        );
-        debug!("✔️ Swapped in {}", working_dest.display());
-    }
-    // Best effort: the renames emptied it on the success path. A kill leaves it
-    // behind, and nothing sweeps one yet.
+    let swapped = swap_staged_into_place(storage, &staged, protect, &mut lineage).await;
+    // On every path out, not only the successful one: the renames empty this
+    // directory when they all land, but any error above leaves the whole staged
+    // set behind, and at one object apiece that accumulates across retries. A
+    // kill still strands one, which no sweep collects yet.
     let _ = storage.remove_dir_all(&run_staging).await;
+    swapped?;
 
     debug!("⏳ Building manifest with installed rows");
     let stream = stream_remote_with_installed_rows(manifest, entries).await;

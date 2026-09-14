@@ -3,11 +3,15 @@ use std::path::PathBuf;
 use tracing::debug;
 
 use crate::Res;
+use std::collections::BTreeMap;
+
 use crate::flow;
+use crate::flow::Protect;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use crate::paths::copy_cached_to_installed;
 use quilt_uri::ManifestUri;
@@ -19,6 +23,20 @@ use quilt_uri::Namespace;
 /// under [`EntirePackage`](crate::lineage::SyncScope::EntirePackage), whose
 /// touch-set covers untracked paths — so a caller reporting the touch-set
 /// states things that did not happen.
+/// Whether the caller's local work is at stake in this apply.
+///
+/// Distinct from [`Protect`] one layer down, which carries the rows to check
+/// against: those are the apply's to compute, from the manifest it is about to
+/// replace. A caller only knows which of the two operations it is running.
+pub(crate) enum LocalWork {
+    /// A pull: it verified that every path it means to touch still holds its
+    /// `base` content, and the apply re-checks that immediately before each
+    /// overwrite, because staging puts a whole fetch in between.
+    Protect,
+    /// A reset: discarding local work is the operation.
+    Discard,
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Applied {
     /// Paths written from `latest` — whether or not a file was there before.
@@ -55,6 +73,7 @@ pub(crate) async fn apply_latest_update(
     namespace: Namespace,
     latest: ManifestUri,
     touched: &[PathBuf],
+    local_work: &LocalWork,
 ) -> Res<(PackageLineage, Applied)> {
     // Install first, delete last. The old order deleted every touched path and
     // then re-fetched it, so a failure in between left those paths gone from
@@ -64,6 +83,20 @@ pub(crate) async fn apply_latest_update(
     // here is atomic across the set; what it buys is that every tracked path
     // holds `base`'s bytes or `latest`'s at every instant, which is what makes
     // an interrupted apply retryable.
+    // The rows the caller's verification was taken against, captured before the
+    // manifest becomes `latest`. `Protect::BaseContent` re-checks a destination
+    // against these immediately before overwriting it, which is the only moment
+    // that means anything once the whole touch set is staged first.
+    let base_rows: BTreeMap<PathBuf, ManifestRow> = touched
+        .iter()
+        .filter(|path| lineage.paths.contains_key(*path))
+        .filter_map(|path| {
+            manifest
+                .get_record(path)
+                .map(|row| (path.clone(), row.clone()))
+        })
+        .collect();
+
     debug!("⏳ Advancing lineage to latest {}", latest.hash);
     lineage.remote_mut()?.hash.clone_from(&latest.hash);
     lineage.base_hash.clone_from(&latest.hash);
@@ -129,6 +162,10 @@ pub(crate) async fn apply_latest_update(
         storage,
         remote,
         &install_refs,
+        &match local_work {
+            LocalWork::Protect => Protect::BaseContent(&base_rows),
+            LocalWork::Discard => Protect::Nothing,
+        },
     )
     .await?;
 
@@ -171,6 +208,9 @@ mod tests {
 
     use aws_sdk_s3::primitives::ByteStream;
 
+    use crate::checksum::calculate_hash;
+    use crate::io::remote::HostChecksums;
+    use crate::io::remote::HostConfig;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::StorageExt;
     use crate::io::storage::mocks::MockStorage;
@@ -228,6 +268,7 @@ mod tests {
             Namespace::default(),
             latest,
             &[],
+            &LocalWork::Protect,
         )
         .await?;
 
@@ -366,6 +407,7 @@ mod tests {
                 ..manifest_uri
             },
             &touched,
+            &LocalWork::Protect,
         )
         .await;
         assert!(result.is_err(), "the second fetch was meant to fail");
@@ -399,6 +441,113 @@ mod tests {
                 "{key} was written before the whole set was staged"
             );
         }
+        Ok(())
+    }
+
+    /// An edit that lands while the revision is being staged must be refused,
+    /// not overwritten.
+    ///
+    /// Staging the whole touch set before writing any of it puts an entire
+    /// fetch between a caller's verification and the write that verification
+    /// licensed. A background pull running while someone works is ordinary, so
+    /// that gap is where uncommitted work would be lost — silently, and with no
+    /// reflog to recover it from. `LocalWork::Protect` re-checks each
+    /// destination against the row it was verified at, immediately before
+    /// replacing it.
+    ///
+    /// The working file here simply does not match its base row. The apply
+    /// captures rows, not file contents, so it cannot tell that from an edit
+    /// that raced in during staging — which is the case this stands in for,
+    /// since an in-process test cannot inject a write mid-apply.
+    #[test(tokio::test)]
+    async fn an_edit_during_staging_is_refused_not_overwritten() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        let (paths, _domain_tmp) = DomainPaths::from_temp_dir()?;
+        let paths = &paths;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let path = PathBuf::from("edited.txt");
+        let users_edit = b"what the user typed while the pull was running";
+        storage
+            .write_byte_stream(wd().join(&path), ByteStream::from_static(users_edit))
+            .await?;
+
+        // The base row names content this file no longer holds.
+        let mut base_row = calculate_hash(
+            &storage,
+            &wd().join(&path),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Sha256Chunked,
+                host: None,
+            },
+        )
+        .await?;
+        base_row.hash = row_at(
+            "edited.txt",
+            b"the content the pull verified",
+            "objects/base",
+        )
+        .hash;
+        let mut base = Manifest {
+            rows: vec![base_row],
+            ..Manifest::default()
+        };
+
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            paths: BTreeMap::from([(path.clone(), PathState::default())]),
+            ..PackageLineage::default()
+        };
+        let latest_manifest = Manifest {
+            rows: vec![row_at("edited.txt", b"new-edited", "objects/new-edited")],
+            ..Manifest::default()
+        };
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        publish(&remote, new_hash, &latest_manifest).await?;
+        put_object_at(&remote, "objects/new-edited", b"the remote's new content").await?;
+
+        let result = apply_latest_update(
+            lineage,
+            &mut base,
+            paths,
+            &storage,
+            &remote,
+            wd(),
+            Namespace::default(),
+            ManifestUri {
+                hash: new_hash.to_string(),
+                ..manifest_uri
+            },
+            std::slice::from_ref(&path),
+            &LocalWork::Protect,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result.as_ref().unwrap_err(),
+                crate::Error::PackageOp(crate::error::PackageOpError::PullConflict(paths))
+                    if paths == &vec![path.clone()]
+            ),
+            "expected a PullConflict naming the edited path, got: {result:?}"
+        );
+        assert_eq!(
+            storage.read_bytes(&wd().join(&path)).await?,
+            users_edit.to_vec(),
+            "the user's edit was overwritten"
+        );
         Ok(())
     }
 
@@ -497,6 +646,7 @@ mod tests {
                 ..manifest_uri
             },
             &touched,
+            &LocalWork::Protect,
         )
         .await;
         assert!(result.is_err(), "the swap was meant to stop at b.txt");
@@ -595,6 +745,7 @@ mod tests {
                 ..manifest_uri
             },
             &[PathBuf::from(held), PathBuf::from(fresh)],
+            &LocalWork::Protect,
         )
         .await?;
 
@@ -666,6 +817,7 @@ mod tests {
             latest,
             // Empty touch-set: `stale` is NOT uninstalled the normal way.
             &[],
+            &LocalWork::Protect,
         )
         .await?;
 
