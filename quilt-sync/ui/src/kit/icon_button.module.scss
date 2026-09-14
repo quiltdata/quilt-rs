@@ -39,8 +39,8 @@
 }
 
 .default {
-  width: 28px;
-  height: 28px;
+  width: var(--q-control-height);
+  height: var(--q-control-height);
   border: 1px solid var(--q-borderColor-default);
   background: var(--q-bgColor-default);
 }
@@ -50,8 +50,8 @@
 }
 
 .invisible {
-  width: 24px;
-  height: 22px;
+  width: var(--q-control-height-sm);
+  height: var(--q-control-height-sm);
   border: 0;
   background: none;
 }
