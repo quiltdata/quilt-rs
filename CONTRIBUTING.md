@@ -43,7 +43,7 @@ need the frontend toolchain as well:
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cargo install trunk stylance-cli       # Trunk builds the page; stylance compiles the CSS modules
+cargo install trunk stylance-cli       # the page bundler and the CSS-module compiler
 # Node.js and npm, for the JSON editor bundle Trunk's pre-build hook installs
 ```
 
