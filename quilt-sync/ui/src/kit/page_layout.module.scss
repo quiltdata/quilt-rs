@@ -86,7 +86,7 @@
   align-items: center;
   gap: var(--q-space-3);
   padding-block: var(--q-space-2);
-  min-height: 44px;
+  min-height: 48px;
 }
 
 .logo {
@@ -96,10 +96,8 @@
   text-decoration: none;
 }
 
-/* 22px keeps the appbar's height where it was. The asset is v1's 230x48
- * wordmark, so this draws about 105px wide — height is the dimension the bar
- * cares about, and `width: auto` keeps the aspect from the file rather than
- * restating it here. */
+/* 22px tall in a 48px bar, centred beside the 32px controls. The asset is v1's 230x48
+ * wordmark, so this draws about 105px wide; width: auto keeps the file's aspect. */
 .logo img {
   height: 22px;
   width: auto;
