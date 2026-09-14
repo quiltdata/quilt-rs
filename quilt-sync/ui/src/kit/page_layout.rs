@@ -39,8 +39,8 @@ stylance::import_crate_style!(style, "src/kit/page_layout.module.scss");
 
 #[component]
 pub fn PageLayout(
-    /// Appbar controls, pushed to the right — on the main page, refresh and settings
-    /// as Framed `IconButton`s. A slot rather than named props, because the appbar has
+    /// Appbar controls, pushed to the right — on the main page, Refresh and Settings
+    /// as labelled `Button`s. A slot rather than named props, because the appbar has
     /// no opinion about which page needs which controls.
     #[prop(optional)]
     actions: Option<AnyView>,

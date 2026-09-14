@@ -197,11 +197,13 @@ fn Icons() -> impl IntoView {
     view! {
         <Story
             title="IconButton"
-            note="Framed for chrome, Bare for row actions. Bare does not hide itself at rest — \
+            note="Framed for chrome that wants a raised pill — the appbar no longer does, its \
+                  pair are labelled Buttons — and Bare for row actions. Bare does not hide \
+                  itself at rest — \
                   revealing row actions depends on the row's hover state, which this component \
                   cannot see, so FileRow owns that."
         >
-            <Cell label="framed — the appbar's pair">
+            <Cell label="framed">
                 <div class="g-inline">
                     <IconButton icon=refresh_icon() aria_label="Refresh" on_click=|_| () />
                     <IconButton icon=gear_icon() aria_label="Settings" on_click=|_| () />

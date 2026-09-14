@@ -120,10 +120,10 @@
 
 /* The bar's own chrome, on the brand ground.
  *
- * `IconButton`'s framed variant is a raised white pill — right on a
- * page-coloured surface, and two white blobs on this one. So the frame comes
- * off and the glyph takes the bar's ink, which is what v1 does for the same
- * two buttons and the same reason (`.link` in `assets/css/components/button.css`).
+ * A `Button`'s frame is a raised white pill — right on a page-coloured surface,
+ * and two white blobs on this one. So the frame comes off and the label takes
+ * the bar's ink, which is what v1 does for the same two buttons and the same
+ * reason (`.link` in `assets/css/components/button.css`).
  * Scoped to the bar rather than pushed into the kit: the component is correct
  * everywhere else it is used, and it is the GROUND that is unusual here. */
 .actions button {
