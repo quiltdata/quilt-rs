@@ -17,7 +17,7 @@
   padding: 4px 2px;
   /* A 32px control plus the 4px padding above and below it, so a row with a Button
    * and a row without one are the same height. */
-  min-height: 40px;
+  min-height: calc(var(--q-control-height) + 2 * var(--q-space-1));
 }
 
 /* The disclosure column, occupied by a bullet rather than left empty. Same 24px as

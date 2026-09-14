@@ -534,10 +534,11 @@
    * in three constructions is one line rather than four. 32px is the desktop medium
    * (Primer, Radix, Fluent). `lg` is Button's large size. `sm` is for controls that
    * live inside a row — the bare IconButton, CauseRow's expander and its action
-   * slot's offset. */
-  --q-control-height: 32px;
-  --q-control-height-lg: 40px;
-  --q-control-height-sm: 24px;
+   * slot's offset. Sized ON the spacing grid, not merely near it: loosening the
+   * scale loosens the controls with it. */
+  --q-control-height: var(--q-space-8);
+  --q-control-height-lg: var(--q-space-10);
+  --q-control-height-sm: var(--q-space-6);
 
   /* Page width cap. v1 sets 1280px, which exactly equals the default window
    * width, so its container has zero margin at the size users actually get —

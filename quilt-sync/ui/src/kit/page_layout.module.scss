@@ -86,7 +86,8 @@
   align-items: center;
   gap: var(--q-space-3);
   padding-block: var(--q-space-2);
-  min-height: 48px;
+  /* The 32px framed IconButtons plus the padding above and below them. */
+  min-height: calc(var(--q-control-height) + 2 * var(--q-space-2));
 }
 
 .logo {
