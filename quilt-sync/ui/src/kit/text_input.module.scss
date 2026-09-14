@@ -9,7 +9,7 @@
   min-width: 0;
   padding: 0 8px;
   min-height: var(--q-control-height);
-  border: 1px solid var(--q-borderColor-default);
+  border: 1px solid var(--q-borderColor-field);
   border-radius: var(--q-radius);
   background: var(--q-bgColor-default);
   color: var(--q-fgColor-default);
@@ -22,7 +22,7 @@
 }
 
 .root:hover:not(:disabled) {
-  border-color: var(--q-borderColor-emphasis);
+  border-color: var(--q-borderColor-field-hover);
 }
 
 .root:disabled {
