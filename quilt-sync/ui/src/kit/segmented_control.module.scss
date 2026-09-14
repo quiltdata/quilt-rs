@@ -14,7 +14,9 @@
 
 .root {
   display: inline-flex;
+  align-items: stretch;
   max-width: 100%;
+  min-height: var(--q-control-height);
   padding: 2px;
   border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
@@ -22,6 +24,7 @@
 }
 
 .option {
+  display: flex;
   min-width: 0;
   cursor: pointer;
 }
@@ -45,8 +48,9 @@
  * are too long for a segmented control and belong in a `Select`. It just must not
  * break the row while telling you that. */
 .text {
-  display: block;
-  padding: 3px 11px;
+  display: flex;
+  align-items: center;
+  padding: 0 11px;
   /* The one nested case in the kit: the segment fills the shell's 2px padding, so
    * its corner sits 2px inside the shell's. An equal radius would bulge against
    * the outer curve, so it is the outer radius minus the inset — written as the
