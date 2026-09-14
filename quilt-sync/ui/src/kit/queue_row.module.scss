@@ -15,8 +15,7 @@
   width: 100%;
   gap: var(--q-space-2);
   padding: 4px 2px;
-  /* A 32px control plus the 4px padding above and below it, so a row with a Button
-   * and a row without one are the same height. */
+  /* A control plus its 4px padding, so rows with and without a Button match. */
   min-height: calc(var(--q-control-height) + 2 * var(--q-space-1));
 }
 

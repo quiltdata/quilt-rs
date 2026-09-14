@@ -88,9 +88,7 @@
   padding-block: var(--q-space-2);
   /* The 32px framed IconButtons plus the padding above and below them. */
   min-height: calc(var(--q-control-height) + 2 * var(--q-space-2));
-  /* Both themes' rings fail on the brand ground (1.9:1 light, 2.3:1 dark), so the
-   * bar's controls take its own ink: 11.9:1. Redefined here, not in the token file,
-   * because the ground is the exception, not the ring. */
+  /* The brand ground defeats both themes' rings (1.9 and 2.3:1); the bar's ink is 11.9:1. */
   --q-focus-outlineColor: var(--q-fgColor-onBrand);
 }
 
@@ -101,8 +99,7 @@
   text-decoration: none;
 }
 
-/* 22px tall in a 48px bar, centred beside the 32px controls. The asset is v1's 230x48
- * wordmark, so this draws about 105px wide; width: auto keeps the file's aspect. */
+/* 22px in a 48px bar; the 230x48 wordmark draws ~105px wide, width: auto keeps its aspect. */
 .logo img {
   height: 22px;
   width: auto;

@@ -430,11 +430,8 @@
   --q-bgColor-accent-muted: var(--blue-3);
   --q-borderColor-accent-muted: var(--blue-7);
 
-  /* FOCUS. The first step that clears 3:1 (WCAG 1.4.11) against the page, a card
-   * and a muted surface: 11 in light (5.8 to 6.5), 9 in dark (3.0 to 3.6, in the
-   * override block below). Step 8 measured 2.2 to 2.9 on the same surfaces. Light's
-   * 9 and 10 pass too but are near-black and read as a border. The brand ground
-   * defeats both rings and redefines this token to `onBrand` — see `PageLayout`. */
+  /* Focus ring: the first accent step over 3:1 on page, card and muted surfaces —
+   * 11 in light, 9 in dark (below); 8 measured 2.2 to 2.9. The brand bar overrides it. */
   --q-focus-outlineColor: var(--blue-11);
   --q-focus-outlineWidth: 2px;
   --q-focus-outlineOffset: 2px;
@@ -518,9 +515,7 @@
    * `--q-ui-size-1-5`). Use for layout: gaps between regions, page padding, row
    * rhythm.
    *
-   * A control's HORIZONTAL padding is not required to land on the grid: its width is
-   * set by its text, so `Button` uses 12px deliberately. Height is different — see
-   * `--q-control-height` below. */
+   * Horizontal control padding need not land on the grid; height does, see below. */
   --q-space-1: 4px;
   --q-space-2: 8px;
   --q-space-3: 12px;
@@ -532,14 +527,8 @@
   --q-space-10: 40px;
   --q-space-12: 48px;
 
-  /* CONTROL HEIGHT — every control that can share a row with another control reads
-   * it: Button, Select, TextInput, SearchInput, SegmentedControl, framed IconButton.
-   * Text sets a control's width; this sets its height, so a toolbar of five controls
-   * in three constructions is one line rather than four. 32px is the desktop medium
-   * (Primer, Radix, Fluent). `lg` is Button's large size. `sm` is for controls that
-   * live inside a row — the bare IconButton, CauseRow's expander and its action
-   * slot's offset. Sized ON the spacing grid, not merely near it: loosening the
-   * scale loosens the controls with it. */
+  /* Control heights, on the spacing grid so a row of controls is one line. `lg` is
+   * Button's large size; `sm` is for controls inside a row (bare IconButton, CauseRow). */
   --q-control-height: var(--q-space-8);
   --q-control-height-lg: var(--q-space-10);
   --q-control-height-sm: var(--q-space-6);
@@ -597,6 +586,6 @@
   --q-bgColor-default: var(--gray-2);
   --q-bgColor-muted: var(--gray-3);
   --q-bgColor-inset: var(--gray-4);
-  /* Dark's 11 is the pale accent-text step; 9 is the vivid one and reads as a ring. */
+  /* Dark's 11 is the pale text step; 9 reads as a ring. */
   --q-focus-outlineColor: var(--blue-9);
 }

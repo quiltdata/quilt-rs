@@ -49,9 +49,8 @@
   flex: none;
   display: flex;
   align-items: center;
-  /* A 32px Button and a one-line sentence both centre on the row's first line, the
-   * 24px band the expander defines: full control height, pulled up by half the
-   * difference. */
+  /* Full control height, pulled up by half the difference, so a Button and a
+   * sentence both centre on the expander's 24px line. */
   min-height: var(--q-control-height);
   margin-top: calc((var(--q-control-height-sm) - var(--q-control-height)) / 2);
   gap: var(--q-space-2);

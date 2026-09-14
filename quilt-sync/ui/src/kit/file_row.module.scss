@@ -19,9 +19,7 @@
   width: 100%;
   gap: var(--q-space-3);
   padding: 5px 2px;
-  /* The 24px action buttons plus the row's 5px padding above and below, plus
-   * the 1px bottom border. The skeleton shares this rule, so it matches the
-   * real row without drawing the buttons. */
+  /* 24px action buttons + 5px padding each side + 1px border; the skeleton shares it. */
   min-height: 35px;
   border-bottom: 1px solid var(--q-borderColor-muted);
   cursor: pointer;
