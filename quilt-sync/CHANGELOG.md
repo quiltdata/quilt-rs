@@ -16,6 +16,7 @@
 - On the new main page the buttons, drop-downs, search box and view switch now line up: they share one height, where before each was its own size and the toolbar read as a ragged row. Rows in **Needs your attention**, the recent-files list and the top bar grew a few pixels to match (<https://github.com/quiltdata/quilt-rs/pull/912>)
 - On the new main page, the primary button, the ticked checkboxes and the countdown ring use the same navy as the top bar. They were a second navy, close enough to look like the same colour and different enough to look like a mistake (<https://github.com/quiltdata/quilt-rs/pull/916>)
 - On Linux, the new main page uses the desktop's own font instead of Roboto, and no longer flashes from one to the other while it loads. macOS and Windows already used their system font (<https://github.com/quiltdata/quilt-rs/pull/918>)
+- Refresh and Settings in the new main page's top bar now show their names beside their icons, as the current page's toolbar does (<https://github.com/quiltdata/quilt-rs/pull/919>)
 
 ### Fixed
 
