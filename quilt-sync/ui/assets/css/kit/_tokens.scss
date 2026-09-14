@@ -518,10 +518,9 @@
    * `--q-ui-size-1-5`). Use for layout: gaps between regions, page padding, row
    * rhythm.
    *
-   * Component padding is NOT required to land on the grid. A control's optical
-   * size is set by its text and border, not by a layout rule, so `Button` uses
-   * 5px/12px deliberately. Forcing it onto 4px or 8px would change how the
-   * control reads to satisfy a number. */
+   * A control's HORIZONTAL padding is not required to land on the grid: its width is
+   * set by its text, so `Button` uses 12px deliberately. Height is different — see
+   * `--q-control-height` below. */
   --q-space-1: 4px;
   --q-space-2: 8px;
   --q-space-3: 12px;
@@ -532,6 +531,18 @@
   --q-space-8: 32px;
   --q-space-10: 40px;
   --q-space-12: 48px;
+
+  /* CONTROL HEIGHT — every control that can share a row with another control reads
+   * it: Button, Select, TextInput, SearchInput, SegmentedControl, framed IconButton.
+   * Text sets a control's width; this sets its height, so a toolbar of five controls
+   * in three constructions is one line rather than four. 32px is the desktop medium
+   * (Primer, Radix, Fluent). `lg` is Button's large size. `sm` is for controls that
+   * live inside a row — the bare IconButton, CauseRow's expander and its action
+   * slot's offset. Sized ON the spacing grid, not merely near it: loosening the
+   * scale loosens the controls with it. */
+  --q-control-height: var(--q-space-8);
+  --q-control-height-lg: var(--q-space-10);
+  --q-control-height-sm: var(--q-space-6);
 
   /* Page width cap. v1 sets 1280px, which exactly equals the default window
    * width, so its container has zero margin at the size users actually get —

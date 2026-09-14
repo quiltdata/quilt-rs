@@ -9,7 +9,8 @@
   gap: var(--q-space-2);
   flex: 1 1 auto;
   min-width: 0;
-  padding: 4px var(--q-space-2);
+  padding: 0 var(--q-space-2);
+  min-height: var(--q-control-height);
   border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
   background: var(--q-bgColor-default);

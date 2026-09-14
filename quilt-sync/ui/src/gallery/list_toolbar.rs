@@ -23,10 +23,11 @@ pub fn ListToolbarScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · list toolbar"
-            note="Check the baselines: five controls of three different constructions, which \
-                  is where a one-pixel disagreement shows. Switch the view toggle to Recent \
-                  files — grouping options differ per view, so Group is the control the two \
-                  views will disagree about."
+            note="Five controls of three constructions, all --q-control-height: the row must \
+                  read as one line, and any control that stands proud of it has stopped \
+                  reading the token. Switch the view toggle to Recent files — grouping \
+                  options differ per view, so Group is the control the two views will \
+                  disagree about."
         >
             <div style="display:flex; gap:var(--q-space-2); align-items:center; flex-wrap:wrap;">
                 <SegmentedControl
