@@ -42,14 +42,6 @@ use grouping::PackageGroup;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 
-/// Copied from the gallery's own helpers rather than shared: the gallery modules are
-/// not compiled into the app binary, and the kit deliberately owns no icons — a caller
-/// passes the glyph, so the appbar's owner draws it.
-/// A cog: a hub, a ring, and teeth that touch the ring.
-///
-/// The geometry is the whole icon. A small centre with long rays standing off it
-/// is a sun, not a gear — so the teeth start at the ring's edge and are shorter
-/// than it is wide.
 use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
