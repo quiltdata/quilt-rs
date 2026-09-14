@@ -1,0 +1,295 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-14T00:00:00Z",
+  "title": "Design System: QuiltSync UI Kit",
+  "extensions": {
+    "themes": {
+      "note": "Two themes from one rule set. The frontmatter carries the light theme, which is normative. Dark values are the same semantic role resolved through the dark tier-1 scale, plus four tier-2 overrides: the surface ladder shifts up one rung, the focus ring moves to the accent's vivid step, and the primary fill becomes that vivid step instead of the brand navy.",
+      "selector": "[data-theme=\"dark\"] on the root element, set from Rust rather than duplicated into a prefers-color-scheme block"
+    },
+    "colorMeta": {
+      "brand-navy": {
+        "role": "primary",
+        "displayName": "Brand Navy",
+        "canonical": "#2d306d",
+        "dark": "#2d306d",
+        "note": "A literal, not a scale step, and identical in both themes. A brand colour that changes hue with the theme is not a brand colour. White on it measures 11.9:1.",
+        "tonalRamp": ["#282b50", "#2a2d52", "#3a3e65", "#545a90", "#939bd7", "#aeb5e4", "#c2c8ef", "#e9ebf5"]
+      },
+      "accent-text": {
+        "role": "primary",
+        "displayName": "Quiet Navy",
+        "canonical": "#545a90",
+        "dark": "#93b4ff",
+        "note": "The accent scale's text step. The darkest step was rejected because it is within 1.13:1 of the brand navy, so a link would be indistinguishable from a primary fill.",
+        "tonalRamp": ["#282b50", "#2a2d52", "#3a3e65", "#545a90", "#939bd7", "#aeb5e4", "#c2c8ef", "#e9ebf5"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "canonical": "#1e1f24",
+        "dark": "#eeeef0",
+        "note": "16.5:1 light and 15.2:1 dark on the default surface.",
+        "tonalRamp": ["#1e1f24", "#5b5d65", "#797b86", "#848691", "#b1b3bf", "#c5c7cf", "#d9dae0", "#e9eaed"]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Slate",
+        "canonical": "#5b5d65",
+        "dark": "#b2b3bd",
+        "note": "6.6:1 light and 8.4:1 dark. The second and last text level; a third measured 3.38:1 and was refused.",
+        "tonalRamp": ["#1e1f24", "#5b5d65", "#797b86", "#848691", "#b1b3bf", "#c5c7cf", "#d9dae0", "#e9eaed"]
+      },
+      "ink-disabled": {
+        "role": "neutral",
+        "displayName": "Chalk",
+        "canonical": "#848691",
+        "dark": "#6c6e79",
+        "note": "Disabled controls only, where WCAG exempts inactive components. Never for text a user has to read."
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#ffffff",
+        "dark": "#19191b",
+        "note": "Literal white in light, not the grey scale's first step: that step is a tinted near-white darker than the page, so cards would recede rather than rise."
+      },
+      "page": {
+        "role": "neutral",
+        "displayName": "Bench",
+        "canonical": "#fafafa",
+        "dark": "#111111",
+        "note": "The page ground. Separation from a raised surface is 1.04:1 in light and a deliberately stronger 1.08:1 in dark, because dark surfaces read flatter."
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#e1e1e6",
+        "dark": "#292a2e",
+        "note": "Separates rows inside a card. Never outlines a control."
+      },
+      "edge": {
+        "role": "neutral",
+        "displayName": "Edge",
+        "canonical": "#c5c7cf",
+        "dark": "#46484f",
+        "note": "The outline of every control and card, at 3.1-3.7:1 against the surfaces it is drawn on."
+      },
+      "success-mark": {
+        "role": "tertiary",
+        "displayName": "Moss",
+        "canonical": "#218358",
+        "dark": "#3dd68c",
+        "note": "Stock Radix green, never brand-tinted. The resting state, and the quietest tone in the system because it is the state of 93% of rows.",
+        "tonalRamp": ["#193b2d", "#218358", "#2b9a66", "#30a46c", "#5bb98b", "#8eceaa", "#c4e8d1", "#e6f6eb"]
+      },
+      "neutral-mark": {
+        "role": "neutral",
+        "displayName": "Slate",
+        "canonical": "#5b5d65",
+        "dark": "#b2b3bd",
+        "note": "The tone that reports a number and takes no position, as in '2 files changed'.",
+        "tonalRamp": ["#1e1f24", "#5b5d65", "#797b86", "#848691", "#b1b3bf", "#c5c7cf", "#d9dae0", "#e9eaed"]
+      },
+      "attention-mark": {
+        "role": "secondary",
+        "displayName": "Ochre",
+        "canonical": "#ab6400",
+        "dark": "#ffca16",
+        "note": "Stock Radix amber. The loudest tone in dark at 11.5:1, which is accepted: bare attention text is the two phrases the user must notice.",
+        "tonalRamp": ["#4f3422", "#ab6400", "#e2a336", "#e9c162", "#f3d673", "#fbe577", "#ffee9c", "#fff7c2"]
+      },
+      "danger-mark": {
+        "role": "tertiary",
+        "displayName": "Rust",
+        "canonical": "#ce2c31",
+        "dark": "#ff9592",
+        "note": "Stock Radix red.",
+        "tonalRamp": ["#641723", "#ce2c31", "#dc3e42", "#e5484d", "#eb8e90", "#f4a9aa", "#ffcdce", "#feebec"]
+      },
+      "focus-ring": {
+        "role": "primary",
+        "displayName": "Focus Ring",
+        "canonical": "#545a90",
+        "dark": "#3d63dd",
+        "note": "The first accent step over 3:1 on the page, card and muted surfaces. Step 8 measured 2.2-2.9 and was rejected. The appbar overrides it to white, which measures 11.9:1 on the brand ground where both themes' rings fail at 1.9 and 2.3."
+      }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Page and section titles." },
+      "lead": { "displayName": "Lead", "purpose": "Card titles and emphasised copy." },
+      "body": { "displayName": "Body", "purpose": "Everything else. The 14px floor; there is deliberately no token below it." },
+      "control": { "displayName": "Control", "purpose": "Single-line text inside a control, where the body line height would inflate the box." },
+      "label": { "displayName": "Label", "purpose": "Upper-cased and tracked card titles. Upper-cased in CSS, never typed in capitals." },
+      "mono": { "displayName": "Mono", "purpose": "Identifiers and paths." }
+    },
+    "shadows": [
+      {
+        "name": "overlay",
+        "value": "0 8px 24px rgb(0 0 0 / 14%)",
+        "purpose": "The only shadow in the system. Overlays and nothing else; every other surface is flat and bordered."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-transition",
+        "value": "120ms ease",
+        "purpose": "Colour only, on background, border and text. Geometry is never transitioned: a control that moves under the cursor is a control you miss."
+      },
+      {
+        "name": "press",
+        "value": "translate(1px, 1px), untransitioned",
+        "purpose": "The pressed state. Instantaneous by design, which is why it is exempt from the no-moving-geometry rule."
+      },
+      {
+        "name": "banner-in",
+        "value": "160ms ease-out, from opacity 0 and translateY(-4px)",
+        "purpose": "A banner slides down from under the appbar, the direction it arrives from. No exit animation."
+      },
+      {
+        "name": "button-spin",
+        "value": "620ms linear infinite",
+        "purpose": "The loading ring. Under reduced motion it stops and dims to 0.45 rather than disappearing, so a frozen ring reads as inactive rather than broken."
+      }
+    ],
+    "breakpoints": [
+      { "name": "container", "value": "1200px" },
+      { "name": "window-floor", "value": "560px" }
+    ],
+    "controlHeights": [
+      { "name": "sm", "value": "24px", "purpose": "Controls inside a row or a bar, and the minimum click target." },
+      { "name": "base", "value": "32px", "purpose": "Buttons, inputs, selects, segmented controls." },
+      { "name": "lg", "value": "40px", "purpose": "Button's large size." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one emphasised action in a region. Brand navy in light, the accent's vivid step in dark.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Publish</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-default, #c5c7cf); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font: inherit; font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); cursor: pointer; white-space: nowrap; transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; } .ds-btn-primary { background: var(--q-bgColor-accent-emphasis, #2d306d); border-color: var(--q-bgColor-accent-emphasis, #2d306d); color: var(--q-fgColor-onEmphasis, #fff); } .ds-btn-primary:hover { background: var(--q-bgColor-accent-emphasis-hover, #3a3e65); border-color: var(--q-bgColor-accent-emphasis-hover, #3a3e65); } .ds-btn-primary:active { border-color: var(--q-fgColor-default, #1e1f24); transform: translate(1px, 1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--q-focus-outlineColor, #545a90); outline-offset: 2px; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "Every other action. Flat, bordered, white; the hover is an alpha overlay so it works on any surface.",
+      "html": "<button class=\"ds-btn2\">Refresh</button>",
+      "css": ".ds-btn2 { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-default, #c5c7cf); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font: inherit; font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); cursor: pointer; white-space: nowrap; transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease; } .ds-btn2:hover { background: var(--q-overlay-hover, #0a184212); border-color: var(--q-borderColor-emphasis, #b1b3bf); } .ds-btn2:active { background: var(--q-overlay-active, #030a3722); transform: translate(1px, 1px); } .ds-btn2:focus-visible { outline: 2px solid var(--q-focus-outlineColor, #545a90); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input-text",
+      "description": "32px, bordered, no fill change on any state. The select's closed state is drawn to match it exactly.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Package name\" />",
+      "css": ".ds-input { width: 220px; padding: 0 8px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-default, #c5c7cf); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font: inherit; font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); } .ds-input::placeholder { color: var(--q-fgColor-muted, #5b5d65); } .ds-input:hover { border-color: var(--q-borderColor-emphasis, #b1b3bf); } .ds-input:focus-visible { outline: 2px solid var(--q-focus-outlineColor, #545a90); outline-offset: 2px; }"
+    },
+    {
+      "name": "Select",
+      "kind": "input",
+      "refersTo": "select",
+      "description": "A native select at zero opacity over a drawn closed state, so the OS owns the dropdown and the system carries no listbox.",
+      "html": "<div class=\"ds-select\"><span class=\"ds-select__prefix\">Bucket</span><span class=\"ds-select__value\">quilt-example</span><svg class=\"ds-select__caret\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 4.75 6 7.75l3-3\"/></svg></div>",
+      "css": ".ds-select { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0 10px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-default, #c5c7cf); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; } .ds-select:hover { background: var(--q-overlay-hover, #0a184212); border-color: var(--q-borderColor-emphasis, #b1b3bf); } .ds-select__prefix { flex: none; color: var(--q-fgColor-muted, #5b5d65); } .ds-select__value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-select__caret { width: 12px; height: 12px; flex: none; color: var(--q-fgColor-muted, #5b5d65); }"
+    },
+    {
+      "name": "State Label — Success",
+      "kind": "chip",
+      "refersTo": "state-label-success",
+      "description": "The resting state, and the quietest chip in the system: the faintest fill and a softer edge than its siblings, because it is 93% of rows.",
+      "html": "<span class=\"ds-state ds-state--success\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3.2 8.6 6.3 11.7 12.8 4.6\"/></svg>Latest</span>",
+      "css": ".ds-state { display: inline-flex; align-items: center; flex: none; gap: 5px; padding: 0 var(--q-space-2, 8px) 0 6px; border: 1px solid var(--tone-edge); border-radius: var(--q-radius, 4px); background: var(--tone-fill); color: var(--tone-text); font-size: var(--q-text-body, 14px); line-height: 20px; white-space: nowrap; } .ds-state svg { flex: none; width: 12px; height: 12px; color: var(--tone-mark); } .ds-state--success { --tone-fill: var(--q-bgColor-success-muted, #00a32f0b); --tone-edge: var(--q-borderColor-success-muted, #adddc0); --tone-text: var(--q-fgColor-success-onMuted, #193b2d); --tone-mark: var(--q-fgColor-success, #218358); }"
+    },
+    {
+      "name": "State Label — Attention (provisional)",
+      "kind": "chip",
+      "refersTo": "state-label-attention",
+      "description": "A state that needs a decision, shown in its provisional form: a dashed edge while the page is still resolving the row's true state. Two channels, because a dashed edge alone on a 20px chip is findable only by someone already looking.",
+      "html": "<span class=\"ds-state2 ds-state2--attention ds-state2--provisional\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M8 1.9 15.1 14.1H0.9Z\"/></svg>Newer revision available</span>",
+      "css": ".ds-state2 { display: inline-flex; align-items: center; flex: none; gap: 5px; padding: 0 var(--q-space-2, 8px) 0 6px; border: 1px solid var(--tone-edge); border-radius: var(--q-radius, 4px); background: var(--tone-fill); color: var(--tone-text); font-size: var(--q-text-body, 14px); line-height: 20px; white-space: nowrap; } .ds-state2 svg { flex: none; width: 12px; height: 12px; color: var(--tone-mark); } .ds-state2--attention { --tone-fill: var(--q-bgColor-attention-muted, #ffde003d); --tone-edge: var(--q-borderColor-attention-muted, #e9c162); --tone-text: var(--q-fgColor-attention-onMuted, #4f3422); --tone-mark: var(--q-fgColor-attention, #ab6400); } .ds-state2--provisional { border-style: dashed; opacity: 0.75; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A bordered, titled container for related rows. Flat at every size, and it owns the hairline rhythm of its own contents.",
+      "html": "<div class=\"ds-card\"><h2 class=\"ds-card__title\">Autosync <span class=\"ds-card__count\">3</span></h2><div class=\"ds-card__body\"><div class=\"ds-card__row\">Get new revisions</div><div class=\"ds-card__row\">Publish your changes</div></div></div>",
+      "css": ".ds-card { min-width: 0; width: 280px; padding: var(--q-space-3, 12px); border: 1px solid var(--q-borderColor-default, #c5c7cf); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font-size: var(--q-text-body, 14px); } .ds-card__title { display: flex; align-items: baseline; gap: 6px; margin: 0 0 var(--q-space-2, 8px); font-size: var(--q-text-body, 14px); font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--q-fgColor-muted, #5b5d65); } .ds-card__count { text-transform: none; letter-spacing: 0; font-weight: 400; font-variant-numeric: tabular-nums; } .ds-card__body > * + * { border-top: 1px solid var(--q-borderColor-muted, #e1e1e6); } .ds-card__row { padding: 5px 2px; }"
+    },
+    {
+      "name": "Package Row",
+      "kind": "custom",
+      "refersTo": "package-row",
+      "description": "The list's unit. Namespace, time, state, and nothing clickable inside it. The state is deliberately not a fixed column, so identical chips form a pattern and the exceptions break it.",
+      "html": "<a class=\"ds-row\" href=\"#\"><span class=\"ds-row__ns\">example/rna-seq-2026</span><span class=\"ds-row__time\">2 hours ago</span><span class=\"ds-state3\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3.2 8.6 6.3 11.7 12.8 4.6\"/></svg>Latest</span></a>",
+      "css": ".ds-row { display: flex; align-items: center; width: 100%; gap: var(--q-space-3, 12px); padding: 5px 2px; border-bottom: 1px solid var(--q-borderColor-muted, #e1e1e6); color: var(--q-fgColor-default, #1e1f24); font-size: var(--q-text-body, 14px); text-decoration: none; cursor: pointer; } .ds-row:hover { background: var(--q-overlay-hover, #0a184212); } .ds-row:focus-visible { outline: 2px solid var(--q-focus-outlineColor, #545a90); outline-offset: 2px; } .ds-row__ns { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-row__time { flex: none; min-width: 104px; text-align: right; white-space: nowrap; color: var(--q-fgColor-muted, #5b5d65); } .ds-state3 { display: inline-flex; align-items: center; flex: none; gap: 5px; padding: 0 8px 0 6px; border: 1px solid var(--q-borderColor-success-muted, #adddc0); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-success-muted, #00a32f0b); color: var(--q-fgColor-success-onMuted, #193b2d); line-height: 20px; white-space: nowrap; } .ds-state3 svg { flex: none; width: 12px; height: 12px; color: var(--q-fgColor-success, #218358); }"
+    },
+    {
+      "name": "Banner — Warning",
+      "kind": "custom",
+      "refersTo": "banner-warning",
+      "description": "A page-level outcome bar reading the same four tone properties a state label does, so a warning here and a warning on a row cannot disagree. Its glyph is 16px because it is an announcement, not an annotation.",
+      "html": "<div class=\"ds-banner ds-banner--warning\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M8 1.9 15.1 14.1H0.9Z\"/></svg><p class=\"ds-banner__msg\">Couldn't check for new revisions on open.quiltdata.com.</p><button class=\"ds-banner__x\" aria-label=\"Dismiss\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8\"/></svg></button></div>",
+      "css": ".ds-banner { display: flex; align-items: flex-start; gap: var(--q-space-2, 8px); max-width: 520px; padding: var(--q-space-2, 8px) var(--q-space-3, 12px); border: 1px solid var(--tone-edge); border-radius: var(--q-radius, 4px); background: var(--tone-fill); color: var(--tone-text); font-size: var(--q-text-body, 14px); } .ds-banner--warning { --tone-fill: var(--q-bgColor-attention-muted, #ffde003d); --tone-edge: var(--q-borderColor-attention-muted, #e9c162); --tone-text: var(--q-fgColor-attention-onMuted, #4f3422); --tone-mark: var(--q-fgColor-attention, #ab6400); } .ds-banner > svg { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--tone-mark); } .ds-banner__msg { flex: 1 1 auto; min-width: 0; margin: 0; line-height: var(--q-line-body, 1.45); } .ds-banner__x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--q-radius, 4px); background: none; color: inherit; cursor: pointer; } .ds-banner__x:hover { background: var(--q-overlay-hover, #0a184212); } .ds-banner__x svg { width: 12px; height: 12px; }"
+    },
+    {
+      "name": "Appbar",
+      "kind": "nav",
+      "refersTo": "appbar",
+      "description": "Full-bleed brand navy, the one surface that is not a step on the page's ladder. No bottom rule: the colour change is the separation, and a grey line over it reads as a seam. Buttons lose their frame here and the focus ring turns white.",
+      "html": "<div class=\"ds-bar\"><span class=\"ds-bar__logo\">QuiltSync</span><div class=\"ds-bar__actions\"><button class=\"ds-bar__btn\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z\"/></svg>Refresh</button></div></div>",
+      "css": ".ds-bar { display: flex; align-items: center; gap: var(--q-space-3, 12px); min-height: 48px; padding: var(--q-space-2, 8px) var(--q-space-4, 16px); background: var(--q-bgColor-brand, #2d306d); color: var(--q-fgColor-onBrand, #fff); font-size: var(--q-text-body, 14px); } .ds-bar__logo { font-weight: 600; letter-spacing: 0.01em; } .ds-bar__actions { margin-left: auto; display: flex; flex: none; gap: var(--q-space-2, 8px); } .ds-bar__btn { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; min-height: 32px; border: 1px solid transparent; border-radius: var(--q-radius, 4px); background: transparent; color: inherit; font: inherit; cursor: pointer; transition: background-color 120ms ease; } .ds-bar__btn svg { width: 14px; height: 14px; flex: none; } .ds-bar__btn:hover { background: rgb(255 255 255 / 0.14); } .ds-bar__btn:active { background: rgb(255 255 255 / 0.22); } .ds-bar__btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Instrument",
+    "overview": "QuiltSync watches data packages on a scientist's disk and keeps them level with a remote catalog. Almost always, nothing is wrong. Forty of forty-three rows say Latest. A design that celebrates that is a design that shouts forty times a session and is therefore ignored the one time it matters. So this system is built as an instrument panel rather than a dashboard: the resting state is nearly silent, and every visual expenditure is reserved for the row that has something to report.\n\nThe surface language is flat and bordered. There is one shadow in the whole system and it is for overlays only; depth comes from a ladder of opaque surfaces and a vocabulary of hairlines. There is one corner radius. There is no webfont, because the desktop already chose a face and this is a desktop application rather than a web page. Colour is spent on four status tones and one brand navy, and the brand navy appears exactly once per screen, under the appbar.\n\nThe kit is twenty-eight hand-written Leptos components with no component library beneath them. Colour comes from Radix scales, vendored; the token names follow Primer's grammar. Nothing is imported at runtime. That combination was chosen so the system could be reasoned about entirely from this repository, and it means every value is a decision somebody made and can defend, not a framework default.",
+    "keyCharacteristics": [
+      "Flat, bordered, and unornamented. One shadow, one radius, no gradients.",
+      "A two-tier token layer: vendored Radix scales underneath, semantic roles on top, and component CSS may read only the top tier.",
+      "Four status tones, each carrying colour and a distinct glyph silhouette, so the vocabulary survives greyscale.",
+      "Loudness is inversely proportional to frequency: the common state whispers.",
+      "14px is the floor for every piece of text; hierarchy is carried by weight and colour.",
+      "Two themes from one set of rules, because a theme swap re-points tier two and touches no component."
+    ],
+    "rules": [
+      { "name": "The Two Levels Rule", "body": "Text has exactly two levels, default and muted, and there is no token for a third. A third level was measured at 3.38:1 and fails AA. When something must recede further, spend weight or size, never a lighter grey.", "section": "colors" },
+      { "name": "The Loudness Tracks Frequency Rule", "body": "Success is not weighted like the other three tones. It is the state of ninety-three percent of rows, and a tone that appears on almost every row is not reporting anything by appearing. It gets the faintest fill in the system and a softer edge than its siblings. Read as log levels, danger is error, attention is warn, and success is info: it says you are safe, not well done.", "section": "colors" },
+      { "name": "The Unbranded Status Rule", "body": "The greys and the accent blue are custom scales tinted toward the brand navy. Green, amber, and red are stock and must stay stock. A green pulled toward navy stops reading as good, and reading as good is the only job that green has.", "section": "colors" },
+      { "name": "The Composite Fill Rule", "body": "Status fills are alpha, never solid. A row tints on hover, so a fill's backdrop is not knowable in advance; a solid fill sits on a hovered row like a sticker that missed the hover, while an alpha fill composites. On an untinted surface the alpha step resolves to exactly the solid step, so nothing was lost to buy this.", "section": "colors" },
+      { "name": "The 14px Floor Rule", "body": "Fourteen pixels is the smallest text in the system and there is deliberately no token beneath it, so nobody can reach for one. Hierarchy is carried by weight and colour instead of by shrinking.", "section": "typography" },
+      { "name": "The Never Type The Caps Rule", "body": "Upper-casing is a text-transform, never a typed string. Typing a label in capitals makes some screen readers spell it out as an initialism.", "section": "typography" },
+      { "name": "The Regions Carry No Margin Rule", "body": "A region never spaces itself. The page column owns the rhythm between regions, because a region that spaced itself would look right alone and wrong beside its neighbours, and there would be no single place to change it.", "section": "layout" },
+      { "name": "The Honest Width Rule", "body": "A component is reviewed at the width the page actually gives it. Rows are checked at both the full column and roughly half of it, and a row that only works at page width is broken, not narrow.", "section": "layout" },
+      { "name": "The Flat And Bordered Rule", "body": "If a surface needs to separate from its neighbour, give it a border or move it a rung on the surface ladder. Never reach for a shadow.", "section": "elevation" },
+      { "name": "The One Radius Rule", "body": "Every corner in the system is 4px, or is derived from 4px by subtracting its own inset. There is no second radius token and adding one requires retiring this rule first.", "section": "shapes" },
+      { "name": "The Never Move Geometry Rule", "body": "Transitions animate colour only. A control that moves under the cursor is a control you miss. The pressed state's 1px translate is exempt because it is instantaneous and carries no transition.", "section": "components" },
+      { "name": "The Two Channels Rule", "body": "Every meaningful distinction is carried twice. A tone is a colour and a glyph silhouette, so it survives desaturation. A provisional row is a dashed edge and a dim, so it is findable by someone who is not already looking for it.", "section": "components" },
+      { "name": "The Platform Owns The Keyboard Rule", "body": "Where a native element exists, wrap it rather than rebuild it. Native select, native radios, native checkbox. This is why the system ships no listbox, no combobox, and no popover, and why roving focus and arrow-key movement were never hand-written.", "section": "components" }
+    ],
+    "dos": [
+      "Do read semantic tokens only. Component CSS may name a tier-two role and must never name a Radix step or a raw literal.",
+      "Do put a status colour's text on the tone's darkest step when it sits on the tone's own fill, and use the brighter mark step only for glyphs and for bare text on an untinted surface.",
+      "Do derive a nested radius as calc(var(--q-radius) - <inset>) so the relationship is visible in the code.",
+      "Do give every control a height from the control scale (24px, 32px, 40px), so a row of mixed controls lands on one line.",
+      "Do let the page column own the gaps between regions.",
+      "Do carry meaning in two channels whenever the distinction matters, so it survives greyscale.",
+      "Do check both themes before calling a colour change done. The two themes' hover directions are opposite: the light accent's hover step is lighter, the dark accent's is darker."
+    ],
+    "donts": [
+      "Don't add a third text colour. Two levels, then weight and size.",
+      "Don't add a second radius token.",
+      "Don't add a resting shadow to anything. The overlay shadow is for overlays.",
+      "Don't use a solid fill where the surface beneath can be tinted by hover. Reach for the alpha step.",
+      "Don't brand-tint a status hue.",
+      "Don't hand-write a hover colour. Go through the token, or it will be wrong in one theme.",
+      "Don't introduce a type token below 14px.",
+      "Don't link a webfont. The desktop's own face is the correct one, including a light one.",
+      "Don't truncate a state label. If it overflows, the words are wrong.",
+      "Don't build a listbox, combobox, or popover. Wrap the native element."
+    ]
+  }
+}
