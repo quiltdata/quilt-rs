@@ -49,9 +49,10 @@
   flex: none;
   display: flex;
   align-items: center;
-  /* 24px so a Button or a sentence centres on the same first line as the glyph and
-   * the text — same derivation as those two. */
-  min-height: 24px;
+  /* Full control height, pulled up by half the difference, so a Button and a
+   * sentence both centre on the expander's 24px line. */
+  min-height: var(--q-control-height);
+  margin-top: calc((var(--q-control-height-sm) - var(--q-control-height)) / 2);
   gap: var(--q-space-2);
   color: var(--q-fgColor-muted);
 }
@@ -68,8 +69,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--q-control-height-sm);
+  height: var(--q-control-height-sm);
   border: 0;
   border-radius: var(--q-radius);
   background: none;

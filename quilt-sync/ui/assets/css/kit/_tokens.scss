@@ -420,18 +420,24 @@
   /* ACCENT. Step 11 for text, not 12: light's 12 (#2a2d52) is nearly identical
    * to 9, so a link would be indistinguishable from a solid accent fill.
    *
-   * CAUTION — the two themes' hover directions are opposite. Light step 9 is a
-   * near-black navy and 10 is *lighter*; dark step 9 is a vivid blue and 10 is
+   * Emphasis is the brand literal in light, so a primary button, a checked box and
+   * the countdown ring are the bar's navy rather than a second one 1.13:1 away.
+   * Dark keeps its vivid step 9 (override below): a navy fill on a near-black card
+   * has no edge.
+   *
+   * CAUTION — the two themes' hover directions are opposite. Light's emphasis is a
+   * near-black navy and step 10 is *lighter*; dark step 9 is a vivid blue and 10 is
    * darker. Always go through the token; a hand-written hover will be wrong in
    * one theme. */
   --q-fgColor-accent: var(--blue-11);
-  --q-bgColor-accent-emphasis: var(--blue-9);
+  --q-bgColor-accent-emphasis: var(--q-bgColor-brand);
   --q-bgColor-accent-emphasis-hover: var(--blue-10);
   --q-bgColor-accent-muted: var(--blue-3);
   --q-borderColor-accent-muted: var(--blue-7);
 
-  /* FOCUS. Step 8, not 9: light's 9 is near-black and reads as a border. */
-  --q-focus-outlineColor: var(--blue-8);
+  /* Focus ring: the first accent step over 3:1 on page, card and muted surfaces —
+   * 11 in light, 9 in dark (below); 8 measured 2.2 to 2.9. The brand bar overrides it. */
+  --q-focus-outlineColor: var(--blue-11);
   --q-focus-outlineWidth: 2px;
   --q-focus-outlineOffset: 2px;
 
@@ -499,6 +505,8 @@
   --q-bgColor-success-muted: var(--green-a2);
   --q-borderColor-success-muted: var(--green-6);
 
+  /* The loudest tone in dark, 11.5:1 where danger is 8.3: accepted, since bare
+   * attention text is the two phrases the user must notice. */
   --q-fgColor-attention: var(--amber-11);
   --q-fgColor-attention-onMuted: var(--amber-12);
   --q-bgColor-attention-muted: var(--amber-a3);
@@ -514,10 +522,7 @@
    * `--q-ui-size-1-5`). Use for layout: gaps between regions, page padding, row
    * rhythm.
    *
-   * Component padding is NOT required to land on the grid. A control's optical
-   * size is set by its text and border, not by a layout rule, so `Button` uses
-   * 5px/12px deliberately. Forcing it onto 4px or 8px would change how the
-   * control reads to satisfy a number. */
+   * Horizontal control padding need not land on the grid; height does, see below. */
   --q-space-1: 4px;
   --q-space-2: 8px;
   --q-space-3: 12px;
@@ -528,6 +533,12 @@
   --q-space-8: 32px;
   --q-space-10: 40px;
   --q-space-12: 48px;
+
+  /* Control heights, on the spacing grid so a row of controls is one line. `lg` is
+   * Button's large size; `sm` is for controls inside a row or a bar. */
+  --q-control-height: var(--q-space-8);
+  --q-control-height-lg: var(--q-space-10);
+  --q-control-height-sm: var(--q-space-6);
 
   /* Page width cap. v1 sets 1280px, which exactly equals the default window
    * width, so its container has zero margin at the size users actually get —
@@ -552,12 +563,15 @@
   --q-shadow-overlay: 0 8px 24px rgb(0 0 0 / 14%);
 
   /* TYPE — system stack: no webfont, no FOUT, native on all three platforms.
+   * `system-ui` first and no Roboto: v1 still links Roboto as a swap-display
+   * webfont, and on WebKitGTK it would otherwise win the fallback and bring the
+   * swap flash with it.
    *
    * 14px IS THE FLOOR and there is deliberately no token below it, so nobody
    * can reach for one; hierarchy comes from weight and colour. The layout
    * spec's ~13-visible-rows figure assumed 12.5px and needs re-measuring. */
-  --q-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                 "Helvetica Neue", Arial, sans-serif;
+  --q-font-sans: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial,
+                 sans-serif;
   --q-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --q-text-body: 14px;    /* the floor. Rows, buttons, pills, labels. */
@@ -582,4 +596,8 @@
   --q-bgColor-default: var(--gray-2);
   --q-bgColor-muted: var(--gray-3);
   --q-bgColor-inset: var(--gray-4);
+  /* Dark's 11 is the pale text step; 9 reads as a ring. */
+  --q-focus-outlineColor: var(--blue-9);
+  /* Vivid, not the brand navy: see ACCENT. */
+  --q-bgColor-accent-emphasis: var(--blue-9);
 }

@@ -85,7 +85,7 @@ pub fn QueueRowSkeleton() -> impl IntoView {
             </span>
             <SkeletonBox width="120px" height="22px" />
             <span class=style::action>
-                <SkeletonBox width="76px" height="26px" />
+                <SkeletonBox width="76px" height="32px" />
             </span>
         </div>
     }

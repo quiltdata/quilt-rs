@@ -7,7 +7,8 @@
   /* `appearance` and `font` come from the baseline. */
   width: 100%;
   min-width: 0;
-  padding: 5px 8px;
+  padding: 0 8px;
+  min-height: var(--q-control-height);
   border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
   background: var(--q-bgColor-default);
