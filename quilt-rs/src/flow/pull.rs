@@ -324,15 +324,20 @@ pub async fn pull_package(
     // verify→write syscalls (per file, microseconds), which is also the window
     // an editor could save into.
     //
-    // Outside that window, an editor holding the file open is unaffected by the
-    // write itself: the apply renames a new inode over the name rather than
-    // refilling the old one, so an open fd keeps reading a complete `base`
-    // until it closes and can never observe a torn file. What the rename does
-    // not prevent is that editor *saving* afterwards over the content just
-    // pulled. That is bounded rather than silent: the apply only writes paths
-    // with no local change, so such a save re-lands `base`'s bytes and the path
-    // reports as locally modified from then on — visible, and a pull away from
-    // being back.
+    // Outside that window, an editor with the file open picks the new content up
+    // cleanly (checked against nvim and GNOME Text Editor): editors read and
+    // close rather than holding the descriptor, so their change detection
+    // re-opens by path and lands on the renamed-in inode. The rename matters
+    // here for what it rules out — a reload can never catch a half-written
+    // file, which the previous copy-onto-the-destination allowed.
+    //
+    // A descriptor genuinely held across the write (a tail, an mmap) keeps
+    // reading the old inode until it closes. And an editor with *unsaved*
+    // changes can still save over the content just pulled, since an unsaved
+    // buffer is not a local change on disk and does not keep the path out of
+    // the touch set. Bounded rather than silent either way: such a save
+    // re-lands `base`'s bytes, the path reports as locally modified from then
+    // on, and a pull puts it back.
     //
     // TODO: this second `remote_delta` pass re-derives the partition
     // `classify_pull` just computed and discarded, and the blanket skip of
