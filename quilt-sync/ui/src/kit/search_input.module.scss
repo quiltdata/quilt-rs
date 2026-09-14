@@ -75,8 +75,8 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: var(--q-control-height-sm);
+  height: var(--q-control-height-sm);
   border-radius: var(--q-radius);
   color: var(--q-fgColor-muted);
   cursor: pointer;
