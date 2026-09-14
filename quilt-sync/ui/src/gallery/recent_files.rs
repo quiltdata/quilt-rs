@@ -85,9 +85,9 @@ fn Rows() -> impl IntoView {
                   truncation. A path truncates from the LEFT so the filename survives; a \
                   namespace truncates from the right. This row is a div with \
                   role=\"button\", not an anchor, because it has three actions and a second \
-                  link inside it and nested anchors are invalid. Both rows share the 80px \
-                  time column, which is the thing to check here: if a phrase ellipsises, \
-                  the column wants 96px."
+                  link inside it and nested anchors are invalid. Both rows give the time a \
+                  96px floor and never clip it, which is the thing to check here: every \
+                  phrase RelativeTime can produce must sit inside the column."
         >
             <Cell full=true label="ordinary">
                 {row("analysis/qc/summary-by-well.parquet", "org/dataset-c", 41.0 * MINUTE)}
@@ -127,13 +127,14 @@ fn Rows() -> impl IntoView {
             // longer matters: `FileRow` truncates from the right and draws the path
             // literally, so a leading number is safe. The next cell is the standing
             // check on that.
-            <Cell full=true label="the 80px time column against its worst cases">
+            <Cell full=true label="the time column against its widest phrases">
                 <div class="g-rows">
                     {[
                         ("check/just-now.txt", 10.0 * 1000.0),
                         ("check/twenty-three-hours-ago.txt", 23.0 * HOUR),
                         ("check/three-weeks-ago.txt", 21.0 * DAY),
-                        ("check/two-months-ago.txt", 70.0 * DAY),
+                        ("check/eleven-months-ago.txt", 340.0 * DAY),
+                        ("check/three-years-ago.txt", 1100.0 * DAY),
                     ]
                         .into_iter()
                         .map(|(path, elapsed)| row(path, "user/package-a", elapsed))
@@ -183,6 +184,9 @@ fn Times() -> impl IntoView {
             </Cell>
             <Cell label="months">
                 <RelativeTime at=ago(120.0 * DAY) />
+            </Cell>
+            <Cell label="years — the vocabulary's ceiling">
+                <RelativeTime at=ago(1100.0 * DAY) />
             </Cell>
         </Story>
     }

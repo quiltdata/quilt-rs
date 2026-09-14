@@ -167,7 +167,7 @@ fn EdgesStory() -> impl IntoView {
                     />
                 </div>
             </Cell>
-            <Cell full=true label="the 80px time column against its worst cases">
+            <Cell full=true label="the time column against its widest phrases">
                 <div class="g-rows">
                     {[
                         ("just now", 10.0 * 1000.0),
@@ -175,7 +175,8 @@ fn EdgesStory() -> impl IntoView {
                         ("23 hours ago", 23.0 * HOUR),
                         ("yesterday", 30.0 * HOUR),
                         ("3 weeks ago", 21.0 * DAY),
-                        ("2 months ago", 70.0 * DAY),
+                        ("11 months ago", 340.0 * DAY),
+                        ("3 years ago", 1100.0 * DAY),
                     ]
                         .into_iter()
                         .map(|(phrase, elapsed)| {
