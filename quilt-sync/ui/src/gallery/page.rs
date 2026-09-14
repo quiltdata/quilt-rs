@@ -22,8 +22,8 @@ use crate::Scene;
 use crate::gallery::packages::PackagesRegion;
 use crate::gallery::queue::QueueRegion;
 use crate::gallery::state_strip::StateStripRegion;
+use crate::kit::Button;
 use crate::kit::Card;
-use crate::kit::IconButton;
 use crate::kit::PageLayout;
 use crate::kit::Spinner;
 use crate::kit::SpinnerVariant;
@@ -53,8 +53,12 @@ fn gear_icon() -> AnyView {
 
 fn appbar_actions() -> AnyView {
     view! {
-        <IconButton icon=refresh_icon() aria_label="Refresh" on_click=|_| () />
-        <IconButton icon=gear_icon() aria_label="Settings" on_click=|_| () />
+        <Button leading_visual=refresh_icon() on_click=|_| ()>
+            "Refresh"
+        </Button>
+        <Button leading_visual=gear_icon() on_click=|_| ()>
+            "Settings"
+        </Button>
     }
     .into_any()
 }
@@ -114,10 +118,10 @@ pub fn PageScene() -> impl IntoView {
         <Scene
             title="Scene · the appbar alone"
             note="The two chrome buttons on the brand ground, with nothing under them to \
-                  borrow attention from. Framed IconButtons with the frame taken off by the \
-                  bar (see PageLayout): hover and focus them here — the ring is the bar's \
-                  own ink. The glyphs are drawn twice, here and in main_page.rs; a shared \
-                  kit/icons.rs is qhq-8mgw.77's."
+                  borrow attention from. Buttons with an icon and a label, frame taken off \
+                  by the bar (see PageLayout), as v1's link buttons: hover and focus them \
+                  here — the ring is the bar's own ink. The glyphs are drawn twice, here and \
+                  in main_page.rs; a shared kit/icons.rs is qhq-8mgw.77's."
         >
             <div class="g-window g-window--bar">
                 <PageLayout actions=appbar_actions()>""</PageLayout>

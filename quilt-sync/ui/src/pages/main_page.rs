@@ -79,7 +79,6 @@ use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::FileRowSkeleton;
 use crate::kit::GroupHeading;
-use crate::kit::IconButton;
 use crate::kit::ListToolbar;
 use crate::kit::Naming;
 use crate::kit::PackageRow;
@@ -1146,18 +1145,17 @@ pub fn MainPage() -> impl IntoView {
 
     view! {
         <PageLayout actions=view! {
-            <IconButton
-                icon=refresh_icon()
-                aria_label="Refresh"
-                on_click=move |_| reload.notify()
-            />
+            <Button leading_visual=refresh_icon() on_click=move |_| reload.notify()>
+                "Refresh"
+            </Button>
             // The only way back to Settings from here. `/` redirects straight back to
             // this page while the experiment is on, so the logo is not an escape.
-            <IconButton
-                icon=gear_icon()
-                aria_label="Settings"
+            <Button
+                leading_visual=gear_icon()
                 on_click=move |_| navigate("/settings", NavigateOptions::default())
-            />
+            >
+                "Settings"
+            </Button>
         }
             .into_any()>
             <PackageStatusListener reload=reload />
