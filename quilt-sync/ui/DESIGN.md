@@ -14,6 +14,8 @@ colors:
   hairline: "#e1e1e6"
   edge: "#c5c7cf"
   edge-strong: "#b1b3bf"
+  field-edge: "#848691"
+  field-edge-hover: "#797b86"
   accent-text: "#545a90"
   accent-emphasis-hover: "#3a3e65"
   accent-muted: "#e9ebf5"
@@ -203,9 +205,10 @@ because the desktop already chose a face and this is a desktop application
 rather than a web page. Colour is spent on four status tones and one brand navy,
 and the brand navy appears exactly once per screen, under the appbar.
 
-The kit is twenty-eight hand-written Leptos components with no component library
-beneath them. Colour comes from Radix scales, vendored; the token names follow
-Primer's grammar. Nothing is imported at runtime. That combination was chosen so
+The kit is twenty-eight modules of hand-written Leptos components with no
+component library beneath them. Colour comes from Radix scales, vendored; the
+token names follow Primer's grammar. Nothing is imported at runtime. That
+combination was chosen so
 the system could be reasoned about entirely from this repository, and it means
 every value below is a decision somebody made and can defend, not a framework
 default.
@@ -251,8 +254,13 @@ three stock status hues that are deliberately not brand-tinted.
   darker than the page behind it, which would make cards recede instead of rise.
 - **Bench** (`#fafafa`): The page ground.
 - **Hairline** (`#e1e1e6`): Row dividers and the rules inside a card.
-- **Edge** (`#c5c7cf`): The outline of every control and card. Its hover partner
-  is one step stronger at `#b1b3bf`.
+- **Edge** (`#c5c7cf`): The outline of buttons and cards, whose own content
+  identifies them. Its hover partner is one step stronger at `#b1b3bf`.
+- **Field Edge** (`#848691`): The outline of anything a user types into or picks
+  from, with a hover partner one step further at `#797b86`. An empty field is
+  identified by its edge alone, so this role clears 3:1 where the button edge
+  does not: 3.3 to 3.6 in light and 3.1 to 3.7 in dark, measured on the page, a
+  card and a muted surface.
 - **Chalk** (`#848691`): Disabled controls only. Never for text a user has to
   read.
 
@@ -288,6 +296,11 @@ are safe, not well done.
 tinted toward the brand navy. Green, amber, and red are stock and must stay
 stock. A green pulled toward navy stops reading as good, and reading as good is
 the only job that green has.
+
+**The Field Edge Rule.** Anything a user types into or picks from takes the field
+edge, and buttons and cards take the lighter one. The split exists because an
+empty field is identified by its outline alone, so that outline is held to the
+3:1 floor for non-text contrast, while a button's own label identifies it.
 
 **The Composite Fill Rule.** Status fills are alpha, never solid. A row tints on
 hover, so a fill's backdrop is not knowable in advance; a solid fill sits on a
@@ -401,10 +414,10 @@ there would only be a magic number that happens to agree today.
 Genuine circles are not radii and are left alone: a spinner is round because it
 rotates.
 
-Borders are 1px throughout. There are three border roles, and they are not
-interchangeable: the faintest separates rows inside a card, the middle one
-outlines controls and cards, and the strongest is the hover partner of the
-middle one.
+Borders are 1px throughout, and the five border roles are not interchangeable.
+The faintest separates rows inside a card. The next outlines buttons and cards,
+with a stronger partner for their hover. The last two are the field roles, which
+sit darker still, because a field has no content of its own to identify it.
 
 ### Named Rules
 
@@ -424,12 +437,16 @@ requires retiring this rule first.
   a near-black card has no edge.
 - **Hover / Focus:** Colour only, over 120ms. Hover darkens the fill and
   strengthens the border. Focus is the global ring.
-- **Active:** A 1px diagonal translate, untransitioned, plus a darker border.
-  The primary variant carries its press entirely in geometry and border, because
-  the light theme's accent cannot go darker than its resting state.
+- **Active:** A 1px diagonal translate, untransitioned, plus a border that
+  switches to the page's default ink. That is darker in light and lighter in
+  dark, which is the point: the primary variant carries its press entirely in
+  geometry and border, because the light theme's accent cannot go darker than
+  its resting state.
 - **Loading:** A spinning ring replaces the leading icon in the same slot, so an
-  iconed button keeps its width. Under reduced motion the ring stops and dims
-  rather than disappearing, so a frozen ring reads as inactive rather than as a
+  iconed button neither reflows nor swaps its layout. The two match at the large
+  size; at the default size the ring is 2px narrower, so the width is steady
+  rather than identical. Under reduced motion the ring stops and dims rather
+  than disappearing, so a frozen ring reads as inactive rather than as a
   rendering bug.
 
 ### Cards
@@ -446,9 +463,10 @@ requires retiring this rule first.
 
 ### Inputs / Fields
 
-- **Style:** 32px tall, 4px corners, 1px edge border, white surface, 8px
-  horizontal padding.
-- **Hover:** Border strengthens one step.
+- **Style:** 32px tall, 4px corners, a 1px field edge, white surface, 8px
+  horizontal padding. The field edge and not the button edge: an empty field has
+  no content of its own, so its outline is the only thing saying it is there.
+- **Hover:** The field edge steps one further from the surface.
 - **Focus:** The global ring on the control.
 - **Invalid:** The border alone changes, never a fill. A red wash behind text
   the user is still typing makes it harder to read at the moment they are trying
@@ -466,8 +484,10 @@ a select and an input side by side must not disagree about height or border.
 ### Segmented Control
 
 Native radio inputs, positioned off-screen rather than hidden, with the labels
-drawn as segments inside a 32px shell. The selected segment's radius is the
-shell's radius minus the shell's 2px padding. A truncating segment label is the
+drawn as segments inside a 32px shell carrying the field edge, because it is a
+control you pick from rather than a button you press. The selected segment's
+radius is the shell's radius minus the shell's 2px padding. A truncating segment
+label is the
 signal that the options are too long for a segmented control and belong in a
 select.
 
@@ -545,6 +565,8 @@ focus and arrow-key movement were never hand-written.
   bare text on an untinted surface.
 - **Do** derive a nested radius as `calc(var(--q-radius) - <inset>)` so the
   relationship is visible in the code.
+- **Do** give anything a user types into or picks from the field edge, and keep
+  the lighter button edge for buttons and cards.
 - **Do** give every control a height from the control scale (24px, 32px, 40px),
   so a row of mixed controls lands on one line.
 - **Do** let the page column own the gaps between regions.
@@ -562,6 +584,8 @@ focus and arrow-key movement were never hand-written.
   overlays.
 - **Don't** use a solid fill where the surface beneath can be tinted by hover.
   Reach for the alpha step.
+- **Don't** outline a form field with the button edge. An empty field is
+  identified by its edge alone and has to clear 3:1.
 - **Don't** brand-tint a status hue.
 - **Don't** hand-write a hover colour. Go through the token, or it will be wrong
   in one theme.

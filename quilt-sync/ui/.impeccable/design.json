@@ -14,7 +14,16 @@
         "canonical": "#2d306d",
         "dark": "#2d306d",
         "note": "A literal, not a scale step, and identical in both themes. A brand colour that changes hue with the theme is not a brand colour. White on it measures 11.9:1.",
-        "tonalRamp": ["#282b50", "#2a2d52", "#3a3e65", "#545a90", "#939bd7", "#aeb5e4", "#c2c8ef", "#e9ebf5"]
+        "tonalRamp": [
+          "#282b50",
+          "#2a2d52",
+          "#3a3e65",
+          "#545a90",
+          "#939bd7",
+          "#aeb5e4",
+          "#c2c8ef",
+          "#e9ebf5"
+        ]
       },
       "accent-text": {
         "role": "primary",
@@ -22,7 +31,16 @@
         "canonical": "#545a90",
         "dark": "#93b4ff",
         "note": "The accent scale's text step. The darkest step was rejected because it is within 1.13:1 of the brand navy, so a link would be indistinguishable from a primary fill.",
-        "tonalRamp": ["#282b50", "#2a2d52", "#3a3e65", "#545a90", "#939bd7", "#aeb5e4", "#c2c8ef", "#e9ebf5"]
+        "tonalRamp": [
+          "#282b50",
+          "#2a2d52",
+          "#3a3e65",
+          "#545a90",
+          "#939bd7",
+          "#aeb5e4",
+          "#c2c8ef",
+          "#e9ebf5"
+        ]
       },
       "ink": {
         "role": "neutral",
@@ -30,7 +48,16 @@
         "canonical": "#1e1f24",
         "dark": "#eeeef0",
         "note": "16.5:1 light and 15.2:1 dark on the default surface.",
-        "tonalRamp": ["#1e1f24", "#5b5d65", "#797b86", "#848691", "#b1b3bf", "#c5c7cf", "#d9dae0", "#e9eaed"]
+        "tonalRamp": [
+          "#1e1f24",
+          "#5b5d65",
+          "#797b86",
+          "#848691",
+          "#b1b3bf",
+          "#c5c7cf",
+          "#d9dae0",
+          "#e9eaed"
+        ]
       },
       "ink-muted": {
         "role": "neutral",
@@ -38,7 +65,16 @@
         "canonical": "#5b5d65",
         "dark": "#b2b3bd",
         "note": "6.6:1 light and 8.4:1 dark. The second and last text level; a third measured 3.38:1 and was refused.",
-        "tonalRamp": ["#1e1f24", "#5b5d65", "#797b86", "#848691", "#b1b3bf", "#c5c7cf", "#d9dae0", "#e9eaed"]
+        "tonalRamp": [
+          "#1e1f24",
+          "#5b5d65",
+          "#797b86",
+          "#848691",
+          "#b1b3bf",
+          "#c5c7cf",
+          "#d9dae0",
+          "#e9eaed"
+        ]
       },
       "ink-disabled": {
         "role": "neutral",
@@ -73,7 +109,16 @@
         "displayName": "Edge",
         "canonical": "#c5c7cf",
         "dark": "#46484f",
-        "note": "The outline of every control and card, at 3.1-3.7:1 against the surfaces it is drawn on."
+        "note": "Radix's element-border step. The outline of buttons and cards, whose own content identifies them. Form fields take a darker role instead."
+      },
+      "field-edge": {
+        "role": "neutral",
+        "displayName": "Field Edge",
+        "canonical": "#848691",
+        "dark": "#6c6e79",
+        "hover": "#797b86",
+        "darkHover": "#797b86",
+        "note": "The outline of anything a user types into or picks from: text field, search field, select, segmented control. An empty field is identified by its edge alone, so this role clears the 3:1 floor for non-text contrast (WCAG 1.4.11) where the button edge does not: 3.3 to 3.6 in light and 3.1 to 3.7 in dark, on the page, a card and a muted surface. Hover steps one further from the surface; the emphasis step would lighten the edge in light."
       },
       "success-mark": {
         "role": "tertiary",
@@ -81,7 +126,16 @@
         "canonical": "#218358",
         "dark": "#3dd68c",
         "note": "Stock Radix green, never brand-tinted. The resting state, and the quietest tone in the system because it is the state of 93% of rows.",
-        "tonalRamp": ["#193b2d", "#218358", "#2b9a66", "#30a46c", "#5bb98b", "#8eceaa", "#c4e8d1", "#e6f6eb"]
+        "tonalRamp": [
+          "#193b2d",
+          "#218358",
+          "#2b9a66",
+          "#30a46c",
+          "#5bb98b",
+          "#8eceaa",
+          "#c4e8d1",
+          "#e6f6eb"
+        ]
       },
       "neutral-mark": {
         "role": "neutral",
@@ -89,7 +143,16 @@
         "canonical": "#5b5d65",
         "dark": "#b2b3bd",
         "note": "The tone that reports a number and takes no position, as in '2 files changed'.",
-        "tonalRamp": ["#1e1f24", "#5b5d65", "#797b86", "#848691", "#b1b3bf", "#c5c7cf", "#d9dae0", "#e9eaed"]
+        "tonalRamp": [
+          "#1e1f24",
+          "#5b5d65",
+          "#797b86",
+          "#848691",
+          "#b1b3bf",
+          "#c5c7cf",
+          "#d9dae0",
+          "#e9eaed"
+        ]
       },
       "attention-mark": {
         "role": "secondary",
@@ -97,7 +160,16 @@
         "canonical": "#ab6400",
         "dark": "#ffca16",
         "note": "Stock Radix amber. The loudest tone in dark at 11.5:1, which is accepted: bare attention text is the two phrases the user must notice.",
-        "tonalRamp": ["#4f3422", "#ab6400", "#e2a336", "#e9c162", "#f3d673", "#fbe577", "#ffee9c", "#fff7c2"]
+        "tonalRamp": [
+          "#4f3422",
+          "#ab6400",
+          "#e2a336",
+          "#e9c162",
+          "#f3d673",
+          "#fbe577",
+          "#ffee9c",
+          "#fff7c2"
+        ]
       },
       "danger-mark": {
         "role": "tertiary",
@@ -105,7 +177,16 @@
         "canonical": "#ce2c31",
         "dark": "#ff9592",
         "note": "Stock Radix red.",
-        "tonalRamp": ["#641723", "#ce2c31", "#dc3e42", "#e5484d", "#eb8e90", "#f4a9aa", "#ffcdce", "#feebec"]
+        "tonalRamp": [
+          "#641723",
+          "#ce2c31",
+          "#dc3e42",
+          "#e5484d",
+          "#eb8e90",
+          "#f4a9aa",
+          "#ffcdce",
+          "#feebec"
+        ]
       },
       "focus-ring": {
         "role": "primary",
@@ -116,12 +197,30 @@
       }
     },
     "typographyMeta": {
-      "title": { "displayName": "Title", "purpose": "Page and section titles." },
-      "lead": { "displayName": "Lead", "purpose": "Card titles and emphasised copy." },
-      "body": { "displayName": "Body", "purpose": "Everything else. The 14px floor; there is deliberately no token below it." },
-      "control": { "displayName": "Control", "purpose": "Single-line text inside a control, where the body line height would inflate the box." },
-      "label": { "displayName": "Label", "purpose": "Upper-cased and tracked card titles. Upper-cased in CSS, never typed in capitals." },
-      "mono": { "displayName": "Mono", "purpose": "Identifiers and paths." }
+      "title": {
+        "displayName": "Title",
+        "purpose": "Page and section titles."
+      },
+      "lead": {
+        "displayName": "Lead",
+        "purpose": "Card titles and emphasised copy."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Everything else. The 14px floor; there is deliberately no token below it."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Single-line text inside a control, where the body line height would inflate the box."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Upper-cased and tracked card titles. Upper-cased in CSS, never typed in capitals."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Identifiers and paths."
+      }
     },
     "shadows": [
       {
@@ -153,13 +252,31 @@
       }
     ],
     "breakpoints": [
-      { "name": "container", "value": "1200px" },
-      { "name": "window-floor", "value": "560px" }
+      {
+        "name": "container",
+        "value": "1200px"
+      },
+      {
+        "name": "window-floor",
+        "value": "560px"
+      }
     ],
     "controlHeights": [
-      { "name": "sm", "value": "24px", "purpose": "Controls inside a row or a bar, and the minimum click target." },
-      { "name": "base", "value": "32px", "purpose": "Buttons, inputs, selects, segmented controls." },
-      { "name": "lg", "value": "40px", "purpose": "Button's large size." }
+      {
+        "name": "sm",
+        "value": "24px",
+        "purpose": "Controls inside a row or a bar, and the minimum click target."
+      },
+      {
+        "name": "base",
+        "value": "32px",
+        "purpose": "Buttons, inputs, selects, segmented controls."
+      },
+      {
+        "name": "lg",
+        "value": "40px",
+        "purpose": "Button's large size."
+      }
     ]
   },
   "components": [
@@ -185,15 +302,15 @@
       "refersTo": "input-text",
       "description": "32px, bordered, no fill change on any state. The select's closed state is drawn to match it exactly.",
       "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Package name\" />",
-      "css": ".ds-input { width: 220px; padding: 0 8px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-default, #c5c7cf); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font: inherit; font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); } .ds-input::placeholder { color: var(--q-fgColor-muted, #5b5d65); } .ds-input:hover { border-color: var(--q-borderColor-emphasis, #b1b3bf); } .ds-input:focus-visible { outline: 2px solid var(--q-focus-outlineColor, #545a90); outline-offset: 2px; }"
+      "css": ".ds-input { width: 220px; padding: 0 8px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-field, #848691); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font: inherit; font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); } .ds-input::placeholder { color: var(--q-fgColor-muted, #5b5d65); } .ds-input:hover { border-color: var(--q-borderColor-field-hover, #797b86); } .ds-input:focus-visible { outline: 2px solid var(--q-focus-outlineColor, #545a90); outline-offset: 2px; }"
     },
     {
       "name": "Select",
       "kind": "input",
       "refersTo": "select",
-      "description": "A native select at zero opacity over a drawn closed state, so the OS owns the dropdown and the system carries no listbox.",
-      "html": "<div class=\"ds-select\"><span class=\"ds-select__prefix\">Bucket</span><span class=\"ds-select__value\">quilt-example</span><svg class=\"ds-select__caret\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 4.75 6 7.75l3-3\"/></svg></div>",
-      "css": ".ds-select { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0 10px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-default, #c5c7cf); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; } .ds-select:hover { background: var(--q-overlay-hover, #0a184212); border-color: var(--q-borderColor-emphasis, #b1b3bf); } .ds-select__prefix { flex: none; color: var(--q-fgColor-muted, #5b5d65); } .ds-select__value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-select__caret { width: 12px; height: 12px; flex: none; color: var(--q-fgColor-muted, #5b5d65); }"
+      "description": "A native select at zero opacity over a drawn closed state, so the OS owns the dropdown and the system carries no listbox. The transparent select covers the whole wrapper, which is why every pixel of the control opens it.",
+      "html": "<div class=\"ds-select\"><select class=\"ds-select__field\" aria-label=\"Bucket\"><option>quilt-example</option><option>quilt-staging</option></select><span class=\"ds-select__prefix\">Bucket</span><span class=\"ds-select__value\">quilt-example</span><svg class=\"ds-select__caret\" viewBox=\"0 0 12 12\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 4.75 6 7.75l3-3\"/></svg></div>",
+      "css": ".ds-select { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0 10px; min-height: var(--q-control-height, 32px); border: 1px solid var(--q-borderColor-field, #848691); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-default, #fff); color: var(--q-fgColor-default, #1e1f24); font-size: var(--q-text-body, 14px); line-height: var(--q-line-tight, 1.25); cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; } .ds-select:hover { background: var(--q-overlay-hover, #0a184212); border-color: var(--q-borderColor-field-hover, #797b86); } .ds-select__prefix { flex: none; color: var(--q-fgColor-muted, #5b5d65); } .ds-select__value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-select__caret { width: 12px; height: 12px; flex: none; color: var(--q-fgColor-muted, #5b5d65); } .ds-select__field { position: absolute; inset: 0; width: 100%; height: 100%; appearance: none; padding: 0; border: 0; background: none; font: inherit; cursor: inherit; opacity: 0; } .ds-select:focus-within { outline: 2px solid var(--q-focus-outlineColor, #545a90); outline-offset: 2px; } .ds-select__field:focus-visible { outline: none; }"
     },
     {
       "name": "State Label — Success",
@@ -246,7 +363,7 @@
   ],
   "narrative": {
     "northStar": "The Quiet Instrument",
-    "overview": "QuiltSync watches data packages on a scientist's disk and keeps them level with a remote catalog. Almost always, nothing is wrong. Forty of forty-three rows say Latest. A design that celebrates that is a design that shouts forty times a session and is therefore ignored the one time it matters. So this system is built as an instrument panel rather than a dashboard: the resting state is nearly silent, and every visual expenditure is reserved for the row that has something to report.\n\nThe surface language is flat and bordered. There is one shadow in the whole system and it is for overlays only; depth comes from a ladder of opaque surfaces and a vocabulary of hairlines. There is one corner radius. There is no webfont, because the desktop already chose a face and this is a desktop application rather than a web page. Colour is spent on four status tones and one brand navy, and the brand navy appears exactly once per screen, under the appbar.\n\nThe kit is twenty-eight hand-written Leptos components with no component library beneath them. Colour comes from Radix scales, vendored; the token names follow Primer's grammar. Nothing is imported at runtime. That combination was chosen so the system could be reasoned about entirely from this repository, and it means every value is a decision somebody made and can defend, not a framework default.",
+    "overview": "QuiltSync watches data packages on a scientist's disk and keeps them level with a remote catalog. Almost always, nothing is wrong. Forty of forty-three rows say Latest. A design that celebrates that is a design that shouts forty times a session and is therefore ignored the one time it matters. So this system is built as an instrument panel rather than a dashboard: the resting state is nearly silent, and every visual expenditure is reserved for the row that has something to report.\n\nThe surface language is flat and bordered. There is one shadow in the whole system and it is for overlays only; depth comes from a ladder of opaque surfaces and a vocabulary of hairlines. There is one corner radius. There is no webfont, because the desktop already chose a face and this is a desktop application rather than a web page. Colour is spent on four status tones and one brand navy, and the brand navy appears exactly once per screen, under the appbar.\n\nThe kit is twenty-eight modules of hand-written Leptos components with no component library beneath them. Colour comes from Radix scales, vendored; the token names follow Primer's grammar. Nothing is imported at runtime. That combination was chosen so the system could be reasoned about entirely from this repository, and it means every value is a decision somebody made and can defend, not a framework default.",
     "keyCharacteristics": [
       "Flat, bordered, and unornamented. One shadow, one radius, no gradients.",
       "A two-tier token layer: vendored Radix scales underneath, semantic roles on top, and component CSS may read only the top tier.",
@@ -256,24 +373,82 @@
       "Two themes from one set of rules, because a theme swap re-points tier two and touches no component."
     ],
     "rules": [
-      { "name": "The Two Levels Rule", "body": "Text has exactly two levels, default and muted, and there is no token for a third. A third level was measured at 3.38:1 and fails AA. When something must recede further, spend weight or size, never a lighter grey.", "section": "colors" },
-      { "name": "The Loudness Tracks Frequency Rule", "body": "Success is not weighted like the other three tones. It is the state of ninety-three percent of rows, and a tone that appears on almost every row is not reporting anything by appearing. It gets the faintest fill in the system and a softer edge than its siblings. Read as log levels, danger is error, attention is warn, and success is info: it says you are safe, not well done.", "section": "colors" },
-      { "name": "The Unbranded Status Rule", "body": "The greys and the accent blue are custom scales tinted toward the brand navy. Green, amber, and red are stock and must stay stock. A green pulled toward navy stops reading as good, and reading as good is the only job that green has.", "section": "colors" },
-      { "name": "The Composite Fill Rule", "body": "Status fills are alpha, never solid. A row tints on hover, so a fill's backdrop is not knowable in advance; a solid fill sits on a hovered row like a sticker that missed the hover, while an alpha fill composites. On an untinted surface the alpha step resolves to exactly the solid step, so nothing was lost to buy this.", "section": "colors" },
-      { "name": "The 14px Floor Rule", "body": "Fourteen pixels is the smallest text in the system and there is deliberately no token beneath it, so nobody can reach for one. Hierarchy is carried by weight and colour instead of by shrinking.", "section": "typography" },
-      { "name": "The Never Type The Caps Rule", "body": "Upper-casing is a text-transform, never a typed string. Typing a label in capitals makes some screen readers spell it out as an initialism.", "section": "typography" },
-      { "name": "The Regions Carry No Margin Rule", "body": "A region never spaces itself. The page column owns the rhythm between regions, because a region that spaced itself would look right alone and wrong beside its neighbours, and there would be no single place to change it.", "section": "layout" },
-      { "name": "The Honest Width Rule", "body": "A component is reviewed at the width the page actually gives it. Rows are checked at both the full column and roughly half of it, and a row that only works at page width is broken, not narrow.", "section": "layout" },
-      { "name": "The Flat And Bordered Rule", "body": "If a surface needs to separate from its neighbour, give it a border or move it a rung on the surface ladder. Never reach for a shadow.", "section": "elevation" },
-      { "name": "The One Radius Rule", "body": "Every corner in the system is 4px, or is derived from 4px by subtracting its own inset. There is no second radius token and adding one requires retiring this rule first.", "section": "shapes" },
-      { "name": "The Never Move Geometry Rule", "body": "Transitions animate colour only. A control that moves under the cursor is a control you miss. The pressed state's 1px translate is exempt because it is instantaneous and carries no transition.", "section": "components" },
-      { "name": "The Two Channels Rule", "body": "Every meaningful distinction is carried twice. A tone is a colour and a glyph silhouette, so it survives desaturation. A provisional row is a dashed edge and a dim, so it is findable by someone who is not already looking for it.", "section": "components" },
-      { "name": "The Platform Owns The Keyboard Rule", "body": "Where a native element exists, wrap it rather than rebuild it. Native select, native radios, native checkbox. This is why the system ships no listbox, no combobox, and no popover, and why roving focus and arrow-key movement were never hand-written.", "section": "components" }
+      {
+        "name": "The Two Levels Rule",
+        "body": "Text has exactly two levels, default and muted, and there is no token for a third. A third level was measured at 3.38:1 and fails AA. When something must recede further, spend weight or size, never a lighter grey.",
+        "section": "colors"
+      },
+      {
+        "name": "The Loudness Tracks Frequency Rule",
+        "body": "Success is not weighted like the other three tones. It is the state of ninety-three percent of rows, and a tone that appears on almost every row is not reporting anything by appearing. It gets the faintest fill in the system and a softer edge than its siblings. Read as log levels, danger is error, attention is warn, and success is info: it says you are safe, not well done.",
+        "section": "colors"
+      },
+      {
+        "name": "The Unbranded Status Rule",
+        "body": "The greys and the accent blue are custom scales tinted toward the brand navy. Green, amber, and red are stock and must stay stock. A green pulled toward navy stops reading as good, and reading as good is the only job that green has.",
+        "section": "colors"
+      },
+      {
+        "name": "The Field Edge Rule",
+        "body": "Anything a user types into or picks from takes the field edge, and buttons and cards take the lighter one. The split exists because an empty field is identified by its outline alone, so that outline is held to the 3:1 floor for non-text contrast, while a button's own label identifies it.",
+        "section": "colors"
+      },
+      {
+        "name": "The Composite Fill Rule",
+        "body": "Status fills are alpha, never solid. A row tints on hover, so a fill's backdrop is not knowable in advance; a solid fill sits on a hovered row like a sticker that missed the hover, while an alpha fill composites. On an untinted surface the alpha step resolves to exactly the solid step, so nothing was lost to buy this.",
+        "section": "colors"
+      },
+      {
+        "name": "The 14px Floor Rule",
+        "body": "Fourteen pixels is the smallest text in the system and there is deliberately no token beneath it, so nobody can reach for one. Hierarchy is carried by weight and colour instead of by shrinking.",
+        "section": "typography"
+      },
+      {
+        "name": "The Never Type The Caps Rule",
+        "body": "Upper-casing is a text-transform, never a typed string. Typing a label in capitals makes some screen readers spell it out as an initialism.",
+        "section": "typography"
+      },
+      {
+        "name": "The Regions Carry No Margin Rule",
+        "body": "A region never spaces itself. The page column owns the rhythm between regions, because a region that spaced itself would look right alone and wrong beside its neighbours, and there would be no single place to change it.",
+        "section": "layout"
+      },
+      {
+        "name": "The Honest Width Rule",
+        "body": "A component is reviewed at the width the page actually gives it. Rows are checked at both the full column and roughly half of it, and a row that only works at page width is broken, not narrow.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat And Bordered Rule",
+        "body": "If a surface needs to separate from its neighbour, give it a border or move it a rung on the surface ladder. Never reach for a shadow.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Radius Rule",
+        "body": "Every corner in the system is 4px, or is derived from 4px by subtracting its own inset. There is no second radius token and adding one requires retiring this rule first.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Never Move Geometry Rule",
+        "body": "Transitions animate colour only. A control that moves under the cursor is a control you miss. The pressed state's 1px translate is exempt because it is instantaneous and carries no transition.",
+        "section": "components"
+      },
+      {
+        "name": "The Two Channels Rule",
+        "body": "Every meaningful distinction is carried twice. A tone is a colour and a glyph silhouette, so it survives desaturation. A provisional row is a dashed edge and a dim, so it is findable by someone who is not already looking for it.",
+        "section": "components"
+      },
+      {
+        "name": "The Platform Owns The Keyboard Rule",
+        "body": "Where a native element exists, wrap it rather than rebuild it. Native select, native radios, native checkbox. This is why the system ships no listbox, no combobox, and no popover, and why roving focus and arrow-key movement were never hand-written.",
+        "section": "components"
+      }
     ],
     "dos": [
       "Do read semantic tokens only. Component CSS may name a tier-two role and must never name a Radix step or a raw literal.",
       "Do put a status colour's text on the tone's darkest step when it sits on the tone's own fill, and use the brighter mark step only for glyphs and for bare text on an untinted surface.",
       "Do derive a nested radius as calc(var(--q-radius) - <inset>) so the relationship is visible in the code.",
+      "Do give anything a user types into or picks from the field edge, and keep the lighter button edge for buttons and cards.",
       "Do give every control a height from the control scale (24px, 32px, 40px), so a row of mixed controls lands on one line.",
       "Do let the page column own the gaps between regions.",
       "Do carry meaning in two channels whenever the distinction matters, so it survives greyscale.",
@@ -284,6 +459,7 @@
       "Don't add a second radius token.",
       "Don't add a resting shadow to anything. The overlay shadow is for overlays.",
       "Don't use a solid fill where the surface beneath can be tinted by hover. Reach for the alpha step.",
+      "Don't outline a form field with the button edge. An empty field is identified by its edge alone and has to clear 3:1.",
       "Don't brand-tint a status hue.",
       "Don't hand-write a hover colour. Go through the token, or it will be wrong in one theme.",
       "Don't introduce a type token below 14px.",
