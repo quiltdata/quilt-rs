@@ -44,6 +44,7 @@ pub use pull::snapshot_for_pull;
 pub use pull_outcome::PullOutcome;
 pub use pull_outcome::PullPreview;
 pub use pull_outcome::classify_pull;
+pub(crate) use pull_outcome::identical_to_latest;
 pub(crate) use pull_outcome::remote_additions;
 pub(crate) use pull_outcome::remote_delta;
 pub use push::PushResult;

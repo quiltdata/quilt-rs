@@ -653,9 +653,25 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         if snapshot.status.upstream_state != UpstreamState::Behind {
             return Ok(nothing_to_pull());
         }
+        // Same reconciling pass the pull itself runs: a preview that called a
+        // byte-identical edit a conflict would send the user to resolve one the
+        // pull would not raise.
+        let identical = flow::identical_to_latest(
+            &self.storage,
+            &package_home,
+            &snapshot.status,
+            &base,
+            &snapshot.latest_manifest,
+        )
+        .await?;
         Ok(flow::PullPreview {
             added: flow::remote_additions(&base, &snapshot.latest_manifest),
-            outcome: flow::classify_pull(&snapshot.status, &base, &snapshot.latest_manifest),
+            outcome: flow::classify_pull(
+                &snapshot.status,
+                &base,
+                &snapshot.latest_manifest,
+                &identical,
+            ),
         })
     }
 

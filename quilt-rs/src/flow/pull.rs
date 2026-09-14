@@ -14,6 +14,7 @@ use crate::flow::Applied;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
 use crate::flow::classify_pull;
+use crate::flow::identical_to_latest;
 use crate::flow::pull_outcome::RemoteChange;
 use crate::flow::remote_delta;
 use crate::io::manifest::resolve_tag;
@@ -278,7 +279,26 @@ pub async fn pull_package(
 
     // `manifest` is the installed (base) manifest the caller passed in;
     // `snapshot` carries the already-fetched `latest` and its manifest.
-    let outcome = classify_pull(&snapshot.status, manifest, &snapshot.latest_manifest);
+    //
+    // The reconciling pass runs first: where a local change and `latest`'s row
+    // carry different checksum algorithms, their digests cannot be compared,
+    // and only re-hashing the working file in `latest`'s algorithm can tell an
+    // edit that landed `latest`'s own content from a genuine disagreement.
+    // Hashes nothing when the algorithms already agree.
+    let identical = identical_to_latest(
+        storage,
+        &working_dir,
+        &snapshot.status,
+        manifest,
+        &snapshot.latest_manifest,
+    )
+    .await?;
+    let outcome = classify_pull(
+        &snapshot.status,
+        manifest,
+        &snapshot.latest_manifest,
+        &identical,
+    );
     match &outcome {
         PullOutcome::UpToDate => {
             return Err(PackageOpError::AlreadyUpToDate.into());
