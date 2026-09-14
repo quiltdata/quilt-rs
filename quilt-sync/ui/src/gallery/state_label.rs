@@ -58,7 +58,7 @@ pub fn StateLabelStories() -> impl IntoView {
 fn VocabularyStory() -> impl IntoView {
     view! {
         <Story
-            title="StateLabel — nine states, ten labels"
+            title="StateLabel — eleven states, twelve labels"
             note="Read the words, not the colours. Each one is what the page says out loud, and \
                   the tone only sets how loudly. Steps 3 / 7 / 12 of the tone's scale, in that \
                   order: fill, edge, text. Text is step 12 rather than the scale's own text \

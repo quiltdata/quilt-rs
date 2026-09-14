@@ -342,7 +342,12 @@ fn row(entry: (&'static str, &'static str, &'static str, StateTone, f64)) -> Any
 
 /// The region itself, so the whole-page scene composes this code rather than a copy.
 #[component]
-pub fn PackagesRegion() -> impl IntoView {
+pub fn PackagesRegion(
+    /// Radio-group name for the view toggle. Unique per mounted instance: the whole-page
+    /// scenes mount this region beside this file's own, and two instances sharing a
+    /// name become one group with one selection between them.
+    view_name: &'static str,
+) -> impl IntoView {
     let view_mode = RwSignal::new("Packages".to_string());
     let query = RwSignal::new(String::new());
     let group = RwSignal::new("Bucket".to_string());
@@ -357,7 +362,7 @@ pub fn PackagesRegion() -> impl IntoView {
                 <ListToolbar>
                     <SegmentedControl
                         aria_label="List view"
-                        name="packages-view"
+                        name=view_name
                         options=vec!["Packages".to_string(), "Recent files".to_string()]
                         selected=view_mode
                     />
@@ -448,7 +453,7 @@ pub fn PackagesScene() -> impl IntoView {
                   bucket axis annotates a group with a shared cause — a prefix spans \
                   buckets, so no cause can be a property of one."
         >
-            <PackagesRegion />
+            <PackagesRegion view_name="packages-view" />
         </Scene>
         <Scene
             title="Scene · a fresh install"
