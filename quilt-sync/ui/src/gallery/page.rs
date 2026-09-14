@@ -76,7 +76,7 @@ pub fn PageScene() -> impl IntoView {
             <PageLayout actions=appbar_actions()>
                 <StateStripRegion />
                 <QueueRegion />
-                <PackagesRegion />
+                <PackagesRegion view_name="busy-day-view" />
             </PageLayout>
         </Scene>
         <Scene
@@ -102,7 +102,7 @@ pub fn PageScene() -> impl IntoView {
                 <Card title="Needs your attention">
                     <ZeroLine text="Everything is Latest — 43 packages" />
                 </Card>
-                <PackagesRegion />
+                <PackagesRegion view_name="normal-day-view" />
             </PageLayout>
         </Scene>
     }

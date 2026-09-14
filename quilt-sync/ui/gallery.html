@@ -24,6 +24,8 @@
     `src/kit/*.module.scss` and concatenates them.
   -->
   <link data-trunk rel="scss" href="assets/css/kit/gallery.scss" />
+  <!-- The appbar's mark, for the whole-page scenes; the app's index.html copies all of assets/. -->
+  <link data-trunk rel="copy-dir" href="assets/img" data-target-path="assets/img" />
 
   <link data-trunk rel="rust" data-bin="gallery" data-wasm-opt="z" />
 </head>
