@@ -8,7 +8,7 @@
   <!--
     Debug harness. Its own Trunk target so it mounts `Gallery`, never `App` —
     `App` invokes on mount and the Tauri bridge has no `catch`, so in a plain
-    browser it traps the wasm module. Run: `trunk serve gallery.html`.
+    browser it traps the wasm module. Run: `just gallery`.
 
     No fonts are linked: the system stack lives in tokens.css. v1's index.html
     pulls 1.2 MB of Roboto; none of it is wanted here.
