@@ -32,6 +32,7 @@ pub use commit::commit_package as commit;
 pub use create_package::create_package as create;
 pub use install_package::install_package;
 pub use install_paths::install_paths;
+pub(crate) use install_paths::install_paths_over;
 pub use list_revisions::Revision;
 pub use list_revisions::list_revisions;
 pub use publish::CommitOptions;

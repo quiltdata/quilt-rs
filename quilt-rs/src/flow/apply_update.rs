@@ -23,6 +23,11 @@ use quilt_uri::Namespace;
 pub(crate) struct Applied {
     /// Paths written from `latest` — whether or not a file was there before.
     pub installed: Vec<PathBuf>,
+    /// The subset of `installed` that replaced a file this copy already
+    /// tracked, as opposed to writing one where there was nothing. Recorded
+    /// because the write itself no longer says which: the apply used to delete
+    /// before installing, so "was also uninstalled" meant "was already here".
+    pub replaced: Vec<PathBuf>,
     /// Paths deleted from the working tree and dropped from tracking.
     pub uninstalled: Vec<PathBuf>,
 }
@@ -41,7 +46,7 @@ pub(crate) struct Applied {
 /// transaction across I/O; callers treat `pull`/`reset` as retryable.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_latest_update(
-    lineage: PackageLineage,
+    mut lineage: PackageLineage,
     manifest: &mut Manifest,
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -51,23 +56,14 @@ pub(crate) async fn apply_latest_update(
     latest: ManifestUri,
     touched: &[PathBuf],
 ) -> Res<(PackageLineage, Applied)> {
-    // TODO: a failure between `uninstall_paths` and `install_paths` (e.g. a
-    // network drop) leaves the touched files deleted but still tracked, so the
-    // retry classifies the gap as local-Removed vs remote-Modified and refuses
-    // with `PullConflict` instead of resuming. Make the apply transactional
-    // (install-before-uninstall for modified paths, or stage-then-swap) so the
-    // retryability promised in the doc comment holds mid-apply.
-    // Uninstall only the touched paths we currently track (a remote-added
-    // path is not tracked; a remote-removed path is).
-    let to_uninstall: Vec<PathBuf> = touched
-        .iter()
-        .filter(|p| lineage.paths.contains_key(*p))
-        .cloned()
-        .collect();
-    debug!("⏳ Uninstalling {} touched paths", to_uninstall.len());
-    let mut lineage =
-        flow::uninstall_paths(lineage, working_dir.clone(), storage, &to_uninstall).await?;
-
+    // Install first, delete last. The old order deleted every touched path and
+    // then re-fetched it, so a failure in between left those paths gone from
+    // the working tree AND dropped from the lineage — a retry read the gap as a
+    // local delete against a remote modify and refused with `PullConflict`
+    // forever, which is the incident this ordering exists to remove. Nothing
+    // here is atomic across the set; what it buys is that every tracked path
+    // holds `base`'s bytes or `latest`'s at every instant, which is what makes
+    // an interrupted apply retryable.
     debug!("⏳ Advancing lineage to latest {}", latest.hash);
     lineage.remote_mut()?.hash.clone_from(&latest.hash);
     lineage.base_hash.clone_from(&latest.hash);
@@ -91,6 +87,54 @@ pub(crate) async fn apply_latest_update(
         Manifest::from_path(storage, &paths.installed_manifest(&namespace, &latest.hash)).await?;
     lineage.remote_uri = Some(latest);
 
+    // Split the touch set by presence in the new base: what `latest` still has
+    // is written over, what it no longer has is deleted afterwards.
+    let to_install: Vec<PathBuf> = touched
+        .iter()
+        .filter(|p| manifest.contains_record(p))
+        .cloned()
+        .collect();
+    let to_uninstall: Vec<PathBuf> = touched
+        .iter()
+        .filter(|p| !manifest.contains_record(p))
+        .filter(|p| lineage.paths.contains_key(*p))
+        .cloned()
+        .collect();
+
+    // Which installs replace a file already here, read BEFORE the install adds
+    // its own lineage rows. The pull report tells an update from an addition by
+    // this; it used to read it from a path being both uninstalled and
+    // installed, which the reorder makes always false.
+    let replaced: Vec<PathBuf> = to_install
+        .iter()
+        .filter(|p| lineage.paths.contains_key(*p))
+        .cloned()
+        .collect();
+
+    debug!(
+        "⏳ Reinstalling {} touched paths present in latest",
+        to_install.len()
+    );
+    let install_refs: Vec<&PathBuf> = to_install.iter().collect();
+    // `install_paths_over`, not `install_paths`: these paths are tracked and
+    // stay tracked across the write, which the user-facing verb refuses by
+    // design. Safe only because the touch set already excludes every path the
+    // user touched — see `pull::touch_set`.
+    let mut lineage = flow::install_paths_over(
+        lineage,
+        manifest,
+        paths,
+        working_dir.clone(),
+        namespace,
+        storage,
+        remote,
+        &install_refs,
+    )
+    .await?;
+
+    debug!("⏳ Uninstalling {} touched paths", to_uninstall.len());
+    lineage = flow::uninstall_paths(lineage, working_dir, storage, &to_uninstall).await?;
+
     // Prune lineage paths that have no row in the new base manifest. This only
     // catches trivially-resolved both-removed paths (locally deleted + absent
     // from `latest`): they are filtered out of the touch-set, so they never go
@@ -101,36 +145,18 @@ pub(crate) async fn apply_latest_update(
     // remote-removed + locally-modified path is classified `Blocked` and never
     // reaches apply; a remote-removed untouched path is in the touch-set and
     // uninstalled normally. For reset (touch-set = every path) this is a no-op.
+    //
+    // AFTER the uninstall, not before: pruning first would drop the very rows
+    // `uninstall_paths` looks up, and it errors on a path whose row is gone.
     lineage
         .paths
         .retain(|path, _| manifest.contains_record(path));
-
-    let to_install: Vec<PathBuf> = touched
-        .iter()
-        .filter(|p| manifest.contains_record(p))
-        .cloned()
-        .collect();
-    debug!(
-        "⏳ Reinstalling {} touched paths present in latest",
-        to_install.len()
-    );
-    let install_refs: Vec<&PathBuf> = to_install.iter().collect();
-    let lineage = flow::install_paths(
-        lineage,
-        manifest,
-        paths,
-        working_dir,
-        namespace,
-        storage,
-        remote,
-        &install_refs,
-    )
-    .await?;
 
     Ok((
         lineage,
         Applied {
             installed: to_install,
+            replaced,
             uninstalled: to_uninstall,
         },
     ))
@@ -143,9 +169,13 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use aws_sdk_s3::primitives::ByteStream;
+
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::StorageExt;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::PathState;
+    use crate::manifest::ManifestRow;
     use quilt_uri::S3Uri;
 
     // An empty touch-set advances the hashes (`base_hash`, `latest_hash`, and
@@ -208,6 +238,253 @@ mod tests {
         // An empty touch-set moved nothing, and the record says so — what a
         // caller reports comes from here, not from the touch-set.
         assert_eq!(applied, Applied::default());
+        Ok(())
+    }
+
+    async fn publish(remote: &MockRemote, hash: &str, manifest: &Manifest) -> Res {
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{hash}").as_str())?,
+                ByteStream::from(manifest),
+            )
+            .await
+    }
+
+    async fn put_object_at(remote: &MockRemote, key: &str, body: &[u8]) -> Res {
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://b/{key}").as_str())?,
+                body.to_vec(),
+            )
+            .await
+    }
+
+    fn wd() -> PathBuf {
+        PathBuf::from("/wd")
+    }
+
+    fn row_at(key: &str, seed: &[u8], object: &str) -> ManifestRow {
+        ManifestRow {
+            logical_key: PathBuf::from(key),
+            physical_key: format!("s3://b/{object}"),
+            hash: multihash::Multihash::<256>::wrap(0x12, seed)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            size: seed.len() as u64,
+            meta: None,
+        }
+    }
+
+    /// The invariant the whole change exists for. An apply that dies part-way
+    /// must leave **every** tracked path on disk, each holding `base`'s bytes
+    /// or `latest`'s — never absent, and never a prefix of either.
+    ///
+    /// Under the old delete-then-install order this could not hold: the
+    /// uninstall removed all three files before the first fetch, so a failure
+    /// on the second left two paths gone from the working tree *and* dropped
+    /// from the lineage, which a retry could only read as a local delete
+    /// against a remote modify and refuse with `PullConflict`. Forever — the
+    /// gap re-derived the same verdict on every attempt.
+    #[test(tokio::test)]
+    async fn interrupted_apply_leaves_every_tracked_path_whole() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        // Absolute root: `install_paths` builds a `file://` URL from the object
+        // path, which requires one.
+        let (paths, _domain_tmp) = DomainPaths::from_temp_dir()?;
+        let paths = &paths;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let tracked = ["a.txt", "b.txt", "c.txt"];
+        for key in tracked {
+            storage
+                .write_byte_stream(
+                    wd().join(key),
+                    ByteStream::from(format!("base-{key}").into_bytes()),
+                )
+                .await?;
+        }
+
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            paths: tracked
+                .iter()
+                .map(|k| (PathBuf::from(k), PathState::default()))
+                .collect(),
+            ..PackageLineage::default()
+        };
+
+        // `latest` rewrites all three paths.
+        let latest_manifest = Manifest {
+            rows: tracked
+                .iter()
+                .map(|k| {
+                    row_at(
+                        k,
+                        format!("new-{k}").as_bytes(),
+                        &format!("objects/new-{k}"),
+                    )
+                })
+                .collect(),
+            ..Manifest::default()
+        };
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        publish(&remote, new_hash, &latest_manifest).await?;
+        // Only the FIRST path's object is fetchable. The second install dies,
+        // which is the interruption under test.
+        put_object_at(&remote, "objects/new-a.txt", b"new-a.txt").await?;
+
+        let mut manifest = Manifest::default();
+        let touched: Vec<PathBuf> = tracked.iter().map(PathBuf::from).collect();
+        let result = apply_latest_update(
+            lineage,
+            &mut manifest,
+            paths,
+            &storage,
+            &remote,
+            wd(),
+            Namespace::default(),
+            ManifestUri {
+                hash: new_hash.to_string(),
+                ..manifest_uri
+            },
+            &touched,
+        )
+        .await;
+        assert!(result.is_err(), "the second fetch was meant to fail");
+
+        // The invariant: present, and holding one revision's bytes whole.
+        for key in tracked {
+            let on_disk = storage
+                .read_bytes(&wd().join(key))
+                .await
+                .unwrap_or_else(|err| {
+                    panic!("tracked path {key} is absent after an interrupted apply: {err:?}")
+                });
+            let base = format!("base-{key}").into_bytes();
+            let latest = format!("new-{key}").into_bytes();
+            assert!(
+                on_disk == base || on_disk == latest,
+                "{key} holds neither revision whole: {:?}",
+                String::from_utf8_lossy(&on_disk)
+            );
+        }
+        // Specifically: the one that landed holds `latest`, the rest `base`.
+        assert_eq!(
+            storage.read_bytes(&wd().join("a.txt")).await?,
+            b"new-a.txt".to_vec()
+        );
+        assert_eq!(
+            storage.read_bytes(&wd().join("c.txt")).await?,
+            b"base-c.txt".to_vec()
+        );
+        Ok(())
+    }
+
+    /// The apply records which writes *replaced* a file this copy already held,
+    /// because the write itself no longer says so. The pull report tells an
+    /// update from an addition by exactly this, and it used to read it from the
+    /// path having been uninstalled first — which the reorder makes never true.
+    #[test(tokio::test)]
+    async fn replaced_names_the_paths_that_were_already_here() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        // Absolute root: `install_paths` builds a `file://` URL from the object
+        // path, which requires one.
+        let (paths, _domain_tmp) = DomainPaths::from_temp_dir()?;
+        let paths = &paths;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let held = "held.txt";
+        let fresh = "fresh.txt";
+        storage
+            .write_byte_stream(wd().join(held), ByteStream::from_static(b"old"))
+            .await?;
+
+        // Only `held` is tracked; `fresh` is a path this copy never had.
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            paths: BTreeMap::from([(PathBuf::from(held), PathState::default())]),
+            ..PackageLineage::default()
+        };
+
+        let latest_manifest = Manifest {
+            rows: vec![
+                row_at(held, b"new-held", "objects/new-held"),
+                row_at(fresh, b"new-fresh", "objects/new-fresh"),
+            ],
+            ..Manifest::default()
+        };
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from(format!("s3://b/.quilt/packages/{new_hash}").as_str())?,
+                ByteStream::from(&latest_manifest),
+            )
+            .await?;
+        for (object, body) in [
+            ("new-held", &b"new-held"[..]),
+            ("new-fresh", &b"new-fresh"[..]),
+        ] {
+            remote
+                .put_object(
+                    None,
+                    &S3Uri::try_from(format!("s3://b/objects/{object}").as_str())?,
+                    body.to_vec(),
+                )
+                .await?;
+        }
+
+        let mut manifest = Manifest::default();
+        let (_, applied) = apply_latest_update(
+            lineage,
+            &mut manifest,
+            paths,
+            &storage,
+            &remote,
+            wd(),
+            Namespace::default(),
+            ManifestUri {
+                hash: new_hash.to_string(),
+                ..manifest_uri
+            },
+            &[PathBuf::from(held), PathBuf::from(fresh)],
+        )
+        .await?;
+
+        assert_eq!(
+            applied.replaced,
+            vec![PathBuf::from(held)],
+            "only the path this copy already held was replaced"
+        );
+        assert!(
+            applied.installed.contains(&PathBuf::from(fresh)),
+            "the new path was still written"
+        );
         Ok(())
     }
 

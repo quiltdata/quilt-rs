@@ -36,16 +36,35 @@ async fn cache_immutable_object(
     storage.write_byte_stream(object_dest, stream.body).await
 }
 
+/// Puts `immutable_source`'s bytes at `mutable_target`, whole or not at all.
+///
+/// Staged under `.quilt/` and renamed into place rather than copied onto the
+/// destination. A copy truncates the target and refills it, so a kill or power
+/// loss mid-write leaves a tracked path holding neither revision — present, and
+/// matching no manifest row, which a retry can only classify as a conflict. The
+/// rename is atomic, so the path holds the old bytes or the new ones and never
+/// a prefix of either.
+///
+/// `.quilt/` and the working tree share the domain root, so the rename stays
+/// within one filesystem. A package directory mounted from a different
+/// filesystem would fail the rename; that gap is named in the spec rather than
+/// papered over with a copy fallback that would reintroduce the hole.
 async fn create_mutable_copy(
     storage: &impl Storage,
     immutable_source: &PathBuf,
     mutable_target: &PathBuf,
+    staging_dir: &PathBuf,
 ) -> Res<chrono::DateTime<chrono::Utc>> {
     let parent_dir = mutable_target.parent();
     if let Some(parent) = parent_dir {
         storage.create_dir_all(parent).await?;
     }
-    storage.copy(&immutable_source, &mutable_target).await?;
+    storage.create_dir_all(staging_dir).await?;
+    // Unique per write: two installs in one apply, or two processes on one
+    // domain, must never stage over each other.
+    let staged = staging_dir.join(uuid::Uuid::new_v4().to_string());
+    storage.copy(&immutable_source, &staged).await?;
+    storage.rename(&staged, &mutable_target).await?;
     storage.modified_timestamp(&mutable_target).await
 }
 
@@ -70,7 +89,71 @@ async fn stream_remote_with_installed_rows(
         })
 }
 
-/// Installs paths to already existing manifest (provided as an argument to this function).
+/// Refuses the whole call if any requested path is already installed.
+///
+/// The check reads `lineage.paths`, not the working tree: "already installed"
+/// means this copy tracks the path, and so may hold edits in it that writing
+/// over would destroy with nothing to recover them from.
+fn refuse_already_installed(lineage: &PackageLineage, entries_paths: &[&PathBuf]) -> Res {
+    debug!("🔍 Checking for already installed paths");
+    if !lineage
+        .paths
+        .keys()
+        .collect::<HashSet<&PathBuf, RandomState>>()
+        .is_disjoint(&entries_paths.iter().copied().collect::<HashSet<_>>())
+    {
+        debug!("❌ Found paths that are already installed");
+        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
+    }
+    Ok(())
+}
+
+/// Installs paths this copy does not already hold, refusing the whole call if
+/// any of them is already installed.
+///
+/// This is the verb a user reaches, directly or through
+/// [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths).
+/// Writing over a path someone is editing loses work that was never committed
+/// and cannot be recovered, so asking for one is refused rather than guessed
+/// at. The reconcile, whose paths are known to carry no local edit, uses
+/// [`install_paths_over`] instead — a separate entry point rather than a flag
+/// on this one, so that overwriting is something a caller *chooses by name*
+/// and cannot reach from outside this crate at all.
+#[allow(clippy::too_many_arguments)]
+pub async fn install_paths(
+    lineage: PackageLineage,
+    manifest: &mut Manifest,
+    paths: &DomainPaths,
+    working_dir: PathBuf,
+    namespace: Namespace,
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entries_paths: &[&PathBuf],
+) -> Res<PackageLineage> {
+    refuse_already_installed(&lineage, entries_paths)?;
+    install_paths_over(
+        lineage,
+        manifest,
+        paths,
+        working_dir,
+        namespace,
+        storage,
+        remote,
+        entries_paths,
+    )
+    .await
+}
+
+/// Installs paths **over** whatever the working tree already holds for them.
+///
+/// `pub(crate)` on purpose: the only caller entitled to this is the reconcile
+/// in [`apply_latest_update`](super::apply_update), whose touch set excludes
+/// every path the user has touched, so no local edit is ever at stake. Nothing
+/// outside this crate can reach it, which is what makes "only the reconcile may
+/// install over a tracked path" a fact about the code rather than a convention
+/// callers have to keep.
+///
+/// Each write lands whole — see [`create_mutable_copy`].
 ///
 /// Rows go into the installed manifest **verbatim** — `physical_key` is never
 /// rewritten to the `file://` object-store location, despite the `place` value
@@ -88,7 +171,7 @@ async fn stream_remote_with_installed_rows(
 // TODO: `working_dir` is in `paths` already, and we pass namespace anyway
 //       so we can remove working_dir from the arguments
 #[allow(clippy::too_many_arguments)]
-pub async fn install_paths(
+pub(crate) async fn install_paths_over(
     mut lineage: PackageLineage,
     manifest: &mut Manifest,
     paths: &DomainPaths,
@@ -111,19 +194,6 @@ pub async fn install_paths(
         namespace
     );
 
-    debug!("🔍 Checking for already installed paths");
-    // TODO: what happens if paths are already installed? Ignore, or error?
-    // Fail early if path is already installed
-    if !lineage
-        .paths
-        .keys()
-        .collect::<HashSet<&PathBuf, RandomState>>()
-        .is_disjoint(&entries_paths.iter().copied().collect::<HashSet<_>>())
-    {
-        debug!("❌ Found paths that are already installed");
-        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
-    }
-
     // for each path in entries_paths:
     //   get entry from installed manifest
     //   cache the entry into identity cache (if not there)
@@ -136,6 +206,10 @@ pub async fn install_paths(
     //   add installed package entry:
     //     remote: RemoteManifest
     let mut entries = BTreeMap::new();
+    // Outside the tree the status walk reads: a staging file beside the working
+    // file would be reported as a new file, committed if a commit landed in the
+    // window, and left as a permanent stray by a kill.
+    let staging_dir = paths.staging_dir();
 
     for path in entries_paths {
         // TODO: Consider using a hashmap or treemap for manifest.rows
@@ -177,7 +251,8 @@ pub async fn install_paths(
         entries.insert(row.logical_key.clone(), row.clone());
 
         let working_dest = working_dir.join(&row.logical_key);
-        let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
+        let last_modified =
+            create_mutable_copy(storage, &object_dest, &working_dest, &staging_dir).await?;
         debug!(
             "✔️ Created mutable copy at {} for {}",
             last_modified,

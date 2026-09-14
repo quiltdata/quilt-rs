@@ -163,6 +163,7 @@ fn report_of(
     message: Option<String>,
 ) -> PullReport {
     let installed: BTreeSet<&PathBuf> = applied.installed.iter().collect();
+    let replaced: BTreeSet<&PathBuf> = applied.replaced.iter().collect();
     let uninstalled: BTreeSet<&PathBuf> = applied.uninstalled.iter().collect();
     let mut report = PullReport {
         manifest_uri,
@@ -178,13 +179,16 @@ fn report_of(
     // remote changed.
     for (path, change) in delta {
         match (installed.contains(path), uninstalled.contains(path)) {
-            // Deleted and written again: a file that was here has new content.
-            (true, true) => report.updated.push(path.clone()),
-            // Written where there was nothing, whether the remote called the
-            // path added or modified: under whole-package scope a modified
-            // path this copy never checked out is fetched here too, and
-            // nothing was overwritten either way.
-            (true, false) => report.added.push(path.clone()),
+            // Written: an *update* if it replaced a file this copy already
+            // held, an *addition* if it went where there was nothing. Read from
+            // `applied.replaced` rather than from a preceding delete — the
+            // apply writes over the live file now and never deletes first, so
+            // "was also uninstalled" would say `added` for every update. Under
+            // whole-package scope a remote-modified path this copy never
+            // checked out is fetched here too, and it is an addition to this
+            // working tree whatever the remote called it.
+            (true, _) if replaced.contains(path) => report.updated.push(path.clone()),
+            (true, _) => report.added.push(path.clone()),
             // Deleted with no replacement: absent from `latest`.
             (false, true) => report.removed.push(path.clone()),
             // Nothing moved, so the file on disk is already right — the
@@ -477,9 +481,10 @@ mod tests {
         names.iter().map(PathBuf::from).collect()
     }
 
-    fn applied(installed: &[&str], uninstalled: &[&str]) -> Applied {
+    fn applied(installed: &[&str], replaced: &[&str], uninstalled: &[&str]) -> Applied {
         Applied {
             installed: paths(installed),
+            replaced: paths(replaced),
             uninstalled: paths(uninstalled),
         }
     }
@@ -503,12 +508,14 @@ mod tests {
             ),
             (PathBuf::from("dropped.csv"), RemoteChange::Removed),
         ]);
-        // `changed.csv` was tracked, so it was deleted and written again;
-        // `fetched.csv` was written where there was nothing; `dropped.csv` was
-        // deleted with no replacement; `listed.csv` was left on the remote.
+        // `changed.csv` was tracked, so the write replaced a file already
+        // here; `fetched.csv` was written where there was nothing;
+        // `dropped.csv` was deleted with no replacement; `listed.csv` was left
+        // on the remote.
         let applied = applied(
             &["fetched.csv", "changed.csv"],
-            &["changed.csv", "dropped.csv"],
+            &["changed.csv"],
+            &["dropped.csv"],
         );
 
         let report = report_of(
@@ -544,7 +551,7 @@ mod tests {
         // Both are in the touch set under whole-package scope. Neither was
         // tracked, so neither is uninstalled; the one still in `latest` is
         // written.
-        let applied = applied(&["first-fetch.csv"], &[]);
+        let applied = applied(&["first-fetch.csv"], &[], &[]);
 
         let report = report_of(uri(), &delta, &applied, &ChangeSet::new(), None);
 
