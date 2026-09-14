@@ -321,10 +321,18 @@ pub async fn pull_package(
     // remote-changed — lands in the touch-set. Re-checking the base content at
     // the destruction site turns such a raced edit into a `PullConflict`
     // instead of a silent overwrite. The residual window shrinks to the
-    // verify→unlink syscalls (per file, microseconds). The one case still not
-    // covered is an editor writing through an already-open fd *during* the
-    // apply; that is addressed by the displace-don't-delete design in the
-    // transactional-apply follow-up (the `apply_update.rs` TODO).
+    // verify→write syscalls (per file, microseconds), which is also the window
+    // an editor could save into.
+    //
+    // Outside that window, an editor holding the file open is unaffected by the
+    // write itself: the apply renames a new inode over the name rather than
+    // refilling the old one, so an open fd keeps reading a complete `base`
+    // until it closes and can never observe a torn file. What the rename does
+    // not prevent is that editor *saving* afterwards over the content just
+    // pulled. That is bounded rather than silent: the apply only writes paths
+    // with no local change, so such a save re-lands `base`'s bytes and the path
+    // reports as locally modified from then on — visible, and a pull away from
+    // being back.
     //
     // TODO: this second `remote_delta` pass re-derives the partition
     // `classify_pull` just computed and discarded, and the blanket skip of
