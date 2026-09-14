@@ -28,35 +28,14 @@ use crate::kit::PageLayout;
 use crate::kit::Spinner;
 use crate::kit::SpinnerVariant;
 use crate::kit::ZeroLine;
-
-fn refresh_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4" stroke-linecap="round">
-            <path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.15" />
-            <path d="M13.6 1.9v2.4h-2.4" />
-        </svg>
-    }
-    .into_any()
-}
-
-fn gear_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4">
-            <circle cx="8" cy="8" r="2.1" />
-            <path d="M8 1.6v1.7M8 12.7v1.7M2.5 8H4.2M11.8 8h1.7M4.1 4.1l1.2 1.2M10.7 10.7l1.2 1.2M11.9 4.1l-1.2 1.2M5.3 10.7l-1.2 1.2" />
-        </svg>
-    }
-    .into_any()
-}
+use crate::kit::icons;
 
 fn appbar_actions() -> AnyView {
     view! {
-        <Button leading_visual=refresh_icon() on_click=|_| ()>
+        <Button leading_visual=icons::sync() on_click=|_| ()>
             "Refresh"
         </Button>
-        <Button leading_visual=gear_icon() on_click=|_| ()>
+        <Button leading_visual=icons::gear() on_click=|_| ()>
             "Settings"
         </Button>
     }

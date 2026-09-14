@@ -30,6 +30,7 @@ pub mod form_control;
 pub mod group_heading;
 pub mod host_row;
 pub mod icon_button;
+pub mod icons;
 pub mod list_toolbar;
 pub mod package_row;
 pub mod package_state;

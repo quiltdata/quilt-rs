@@ -21,6 +21,7 @@ use crate::kit::RelativeTime;
 use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
+use crate::kit::icons;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -28,28 +29,6 @@ const DAY: f64 = 24.0 * HOUR;
 
 fn ago(ms: f64) -> f64 {
     js_sys::Date::now() - ms
-}
-
-fn refresh_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4" stroke-linecap="round">
-            <path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.15" />
-            <path d="M13.6 1.9v2.4h-2.4" />
-        </svg>
-    }
-    .into_any()
-}
-
-fn gear_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4">
-            <circle cx="8" cy="8" r="2.1" />
-            <path d="M8 1.6v1.7M8 12.7v1.7M2.5 8H4.2M11.8 8h1.7M4.1 4.1l1.2 1.2M10.7 10.7l1.2 1.2M11.9 4.1l-1.2 1.2M5.3 10.7l-1.2 1.2" />
-        </svg>
-    }
-    .into_any()
 }
 
 #[component]
@@ -205,19 +184,19 @@ fn Icons() -> impl IntoView {
         >
             <Cell label="framed">
                 <div class="g-inline">
-                    <IconButton icon=refresh_icon() aria_label="Refresh" on_click=|_| () />
-                    <IconButton icon=gear_icon() aria_label="Settings" on_click=|_| () />
+                    <IconButton icon=icons::sync() aria_label="Refresh" on_click=|_| () />
+                    <IconButton icon=icons::gear() aria_label="Settings" on_click=|_| () />
                 </div>
             </Cell>
             <Cell label="framed · spinning — a fetch in flight">
-                <IconButton icon=refresh_icon() aria_label="Refreshing" on_click=|_| () spinning=true />
+                <IconButton icon=icons::sync() aria_label="Refreshing" on_click=|_| () spinning=true />
             </Cell>
             <Cell label="framed · disabled">
-                <IconButton icon=refresh_icon() aria_label="Refresh" on_click=|_| () disabled=true />
+                <IconButton icon=icons::sync() aria_label="Refresh" on_click=|_| () disabled=true />
             </Cell>
             <Cell label="bare — visible here, because no row is hiding it">
                 <IconButton
-                    icon=gear_icon()
+                    icon=icons::gear()
                     aria_label="Settings"
                     variant=IconButtonVariant::Invisible
                     on_click=|_| ()

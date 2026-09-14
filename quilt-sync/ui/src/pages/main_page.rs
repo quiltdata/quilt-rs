@@ -50,29 +50,6 @@ stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 /// The geometry is the whole icon. A small centre with long rays standing off it
 /// is a sun, not a gear — so the teeth start at the ring's edge and are shorter
 /// than it is wide.
-fn gear_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4" stroke-linecap="round">
-            <circle cx="8" cy="8" r="1.7" />
-            <circle cx="8" cy="8" r="4.3" />
-            <path d="M8 4.3V2.2M8 11.7v2.1M4.3 8H2.2M11.7 8h2.1" />
-            <path d="M5.38 5.38 3.9 3.9M10.62 10.62l1.48 1.48M10.62 5.38 12.1 3.9M5.38 10.62 3.9 12.1" />
-        </svg>
-    }
-    .into_any()
-}
-
-fn refresh_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.4" stroke-linecap="round">
-            <path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.15" />
-            <path d="M13.6 1.9v2.4h-2.4" />
-        </svg>
-    }
-    .into_any()
-}
 use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
@@ -90,6 +67,7 @@ use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::Site;
 use crate::kit::ZeroLineSkeleton;
+use crate::kit::icons;
 use crate::kit::render;
 
 /// The fixed sentence shown when the fetch fails. The backend's error text is
@@ -1145,13 +1123,13 @@ pub fn MainPage() -> impl IntoView {
 
     view! {
         <PageLayout actions=view! {
-            <Button leading_visual=refresh_icon() on_click=move |_| reload.notify()>
+            <Button leading_visual=icons::sync() on_click=move |_| reload.notify()>
                 "Refresh"
             </Button>
             // The only way back to Settings from here. `/` redirects straight back to
             // this page while the experiment is on, so the logo is not an escape.
             <Button
-                leading_visual=gear_icon()
+                leading_visual=icons::gear()
                 on_click=move |_| navigate("/settings", NavigateOptions::default())
             >
                 "Settings"
