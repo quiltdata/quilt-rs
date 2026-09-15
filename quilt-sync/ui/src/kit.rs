@@ -93,6 +93,33 @@ pub use zero_line::ZeroLineSkeleton;
 
 #[cfg(test)]
 mod tests {
+    /// Every `selector { body }` pair in a stylesheet, comments and nesting aside.
+    ///
+    /// The kit's stylesheets are flat — one level of rules, no nested blocks — so a
+    /// scan for braces is enough and a Sass parser would be a dependency bought for
+    /// nothing. A nested rule would make this wrong, which is why the test that uses
+    /// it names the rules it expects rather than sweeping the file.
+    fn rules(sheet: &str) -> impl Iterator<Item = (&str, &str)> {
+        sheet.match_indices('{').filter_map(move |(open, _)| {
+            let before = &sheet[..open];
+            let start = before
+                .rfind(['}', ';'])
+                .map_or(0, |i| i + 1)
+                .max(before.rfind("*/").map_or(0, |i| i + 2));
+            let body = sheet[open + 1..].split('}').next()?;
+            Some((before[start..].trim(), body))
+        })
+    }
+
+    /// Whether a selector list picks out `class`, allowing for grouping and for
+    /// compound selectors such as `.root.disabled .sublabel`.
+    fn selects(selector: &str, class: &str) -> bool {
+        selector
+            .split(',')
+            .filter_map(|one| one.split_whitespace().last())
+            .any(|last| last == class)
+    }
+
     /// Prose in the kit obeys the measure, not the window.
     ///
     /// Two elements are read as sentences rather than as labels: a `Banner`'s
@@ -115,11 +142,14 @@ mod tests {
         ];
 
         for (component, class, sheet) in PROSE {
-            let rule = sheet
-                .split(&format!("\n{class} {{"))
-                .nth(1)
-                .and_then(|rest| rest.split('}').next())
-                .unwrap_or_else(|| panic!("{component} has no `{class}` rule"));
+            // Found by walking rules rather than by matching a literal `\n.x {`:
+            // grouping the selector, moving the brace or reindenting are all legal
+            // Sass that leaves the compiled measure intact, and a test that broke on
+            // them would be a maintenance tax with no defect behind it.
+            let Some((_, rule)) = rules(sheet).find(|(selector, _)| selects(selector, class))
+            else {
+                panic!("{component} has no `{class}` rule")
+            };
             let cap = rule
                 .lines()
                 .find_map(|line| line.trim().strip_prefix("max-width:"))
