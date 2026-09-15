@@ -173,6 +173,7 @@ mod tests {
             "WebKit drops the semantics with `list-style: none`, so it is stated"
         );
     }
+
     /// `SkeletonBox` hides itself from the accessibility tree, so without this a
     /// reader gets an empty card and hears nothing when the rows arrive.
     #[wasm_bindgen_test]
