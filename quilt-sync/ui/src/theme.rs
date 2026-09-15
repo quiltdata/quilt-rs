@@ -140,40 +140,54 @@ mod tests {
     /// to name a surface the v2 palette actually paints.
     #[test]
     fn a_dark_scheme_never_reaches_the_document_root() {
-        const BASE: &str = include_str!("../assets/css/kit/_base.scss");
+        // Both global partials the app bundle carries, because the rule this pins
+        // was written in `_tokens.scss` and moved. `_chrome.scss` is excluded: it is
+        // the gallery's own and never ships. A component module could hold a `:root`
+        // rule in principle, but one would already be breaking the tier split.
+        const SHEETS: [(&str, &str); 2] = [
+            (
+                "_tokens.scss",
+                include_str!("../assets/css/kit/_tokens.scss"),
+            ),
+            ("_base.scss", include_str!("../assets/css/kit/_base.scss")),
+        ];
 
-        let declarations: Vec<(&str, &str)> = BASE
-            .match_indices("color-scheme:")
-            .map(|(at, keyword)| {
-                let block = BASE[..at].rfind('{').expect("a rule around it");
-                let selector = BASE[..block].trim_end();
-                let start = selector.rfind(['}', '/']).map_or(0, |i| i + 1);
-                let value = BASE[at + keyword.len()..]
-                    .split(';')
-                    .next()
-                    .expect("a terminated declaration")
-                    .trim();
-                (selector[start..].trim(), value)
+        let declarations: Vec<(&str, &str, &str)> = SHEETS
+            .iter()
+            .flat_map(|(file, sheet)| {
+                sheet
+                    .match_indices("color-scheme:")
+                    .map(move |(at, keyword)| {
+                        let block = sheet[..at].rfind('{').expect("a rule around it");
+                        let selector = sheet[..block].trim_end();
+                        let start = selector.rfind(['}', '/']).map_or(0, |i| i + 1);
+                        let value = sheet[at + keyword.len()..]
+                            .split(';')
+                            .next()
+                            .expect("a terminated declaration")
+                            .trim();
+                        (*file, selector[start..].trim(), value)
+                    })
             })
             .collect();
         assert!(!declarations.is_empty(), "native chrome follows nothing");
 
-        for (selector, value) in &declarations {
+        for (file, selector, value) in &declarations {
             if *value == "dark" {
                 assert!(
                     selector.contains("[data-v2-page]") || selector.contains("[data-home-frame]"),
-                    "`{selector}` would darken the canvas a v1 page draws on"
+                    "{file}: `{selector}` would darken the canvas a v1 page draws on"
                 );
             } else {
-                assert_eq!(*value, "light", "`{selector}` declares `{value}`");
+                assert_eq!(*value, "light", "{file}: `{selector}` declares `{value}`");
             }
         }
         assert!(
-            declarations.iter().any(|(_, value)| *value == "dark"),
+            declarations.iter().any(|(_, _, value)| *value == "dark"),
             "nothing follows the dark theme"
         );
         assert!(
-            declarations.iter().any(|(_, value)| *value == "light"),
+            declarations.iter().any(|(_, _, value)| *value == "light"),
             "the light scheme must be stated, or the UA default decides it"
         );
     }
