@@ -18,7 +18,9 @@
   color: var(--q-fgColor-muted);
 }
 
+/* An `h3`; the UA's margin is not wanted, the stack's gap owns the spacing. */
 .heading {
+  margin: 0;
   font-size: var(--q-text-lead);
   font-weight: 600;
   color: var(--q-fgColor-default);

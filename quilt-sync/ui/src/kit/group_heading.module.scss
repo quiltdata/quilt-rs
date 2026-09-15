@@ -6,12 +6,17 @@
  * ("no access as analyst") instead of thirty rows each carrying the same note.
  */
 
+/* An `h3`, so the UA's own heading margin and size are stated away: the run of rows
+ * this names is a section for a screen reader and a row of text on screen. */
 .root {
   display: flex;
   align-items: baseline;
   gap: var(--q-space-2);
+  margin: 0;
   padding: var(--q-space-2) 2px 3px;
   border-bottom: 1px solid var(--q-borderColor-muted);
+  font-size: var(--q-text-body);
+  font-weight: 400;
 }
 
 .title {

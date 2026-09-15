@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use leptos::prelude::*;
 
+use super::super::main_page::rows_class;
 use crate::commands;
 use crate::commands::MainPageFileData;
 use crate::kit::Blankslate;
@@ -43,7 +44,7 @@ pub fn RecentFilesRegion(
 ) -> impl IntoView {
     if files.is_empty() {
         return view! {
-            <Card>
+            <Card label="Recent files">
                 <Blankslate
                     heading="No files yet"
                     description="Files appear here once you install a package or publish a change."
@@ -54,7 +55,7 @@ pub fn RecentFilesRegion(
     }
 
     view! {
-        <Card>
+        <Card label="Recent files">
             {move || {
                 let text = query.get();
                 let needle = text.trim().to_lowercase();
@@ -93,13 +94,16 @@ pub fn RecentFilesRegion(
                             let count = group_files.len();
                             view! {
                                 <GroupHeading title=namespace count=count />
-                                {group_files.iter().map(file_row).collect_view()}
+                                <ul class=rows_class()>
+                                    {group_files.iter().map(file_row).collect_view()}
+                                </ul>
                             }
                         })
                         .collect_view()
                         .into_any()
                 } else {
-                    visible.iter().map(file_row).collect_view().into_any()
+                    view! { <ul class=rows_class()>{visible.iter().map(file_row).collect_view()}</ul> }
+                        .into_any()
                 }
             }}
         </Card>
@@ -117,6 +121,7 @@ fn file_row(f: &MainPageFileData) -> impl IntoView + use<> {
     let reveal_ns = namespace.clone();
     let reveal_path = f.path.clone();
     view! {
+        <li>
         <FileRow
             path=f.path.clone()
             package=namespace.clone()
@@ -145,6 +150,7 @@ fn file_row(f: &MainPageFileData) -> impl IntoView + use<> {
                 });
             }
         />
+        </li>
     }
 }
 

@@ -59,7 +59,7 @@ pub fn PageScene() -> impl IntoView {
                   nothing in the queue exists on a good one."
         >
             <div class="g-window">
-                <PageLayout actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions()>
                     <StateStripRegion />
                     <QueueRegion />
                     <PackagesRegion view_name="busy-day-view" />
@@ -78,7 +78,7 @@ pub fn PageScene() -> impl IntoView {
                   running, which is as true on a calm day as on a bad one."
         >
             <div class="g-window">
-                <PageLayout actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions()>
                     <StateStripRegion />
                     // The queue region collapsed. Composed here rather than hidden inside
                     // `QueueRegion` behind a flag — "is anything wrong" is the caller's
@@ -103,7 +103,7 @@ pub fn PageScene() -> impl IntoView {
                   in main_page.rs; a shared kit/icons.rs is qhq-8mgw.77's."
         >
             <div class="g-window g-window--bar">
-                <PageLayout actions=appbar_actions()>""</PageLayout>
+                <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
             </div>
         </Scene>
         <Scene

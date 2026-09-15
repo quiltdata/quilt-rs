@@ -66,3 +66,27 @@
     overflow-y: auto;
   }
 }
+
+/* A run of rows under one heading: a list for a screen reader, and on screen the
+ * flat run it has always been.
+ *
+ * The hairline above the run comes from `Card`'s `.body > * + *`, exactly as it used
+ * to come above the first row; the one between rows moves here, because the rows are
+ * no longer that card's direct children. */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rows > li + li {
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+/* A list with no dividing rule: the queue, whose items are decisions rather than
+ * rows of data, and the packages an expanded cause reveals. */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
