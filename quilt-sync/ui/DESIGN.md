@@ -519,6 +519,23 @@ Hover is a tint and nothing else. There is no hover underline to go with it,
 because the tint already says the row responds and two signals for one target is
 noise.
 
+### Queue Row
+
+The only row in the kit that carries a text button, and the payoff for stripping
+buttons off the list rows rather than an exception to it. A queue row exists
+because the package needs the action, so the button and the row are the same
+fact. The row does not navigate, so there is no hover tint and one tab stop per
+row, which is the button. Actions hug their labels at the right edge, so the
+right edges line up and the left ones follow the verb's length.
+
+A row may carry a **detail line** beneath its first, for a state whose account of
+itself is longer than a label. Today one state uses it: a paused sync, whose
+reason comes from the engine rather than from this vocabulary. That text is shown
+verbatim with its line breaks kept, since a workflow rejection is a sentence
+followed by one indented line per broken rule. It is indented to the namespace
+rather than the bullet, muted, and capped at the same measure as the kit's other
+prose. It is allowed to be tall: the queue is where attention is meant to go.
+
 ### Banner
 
 A page-level outcome bar reading the same four tone properties the state label
