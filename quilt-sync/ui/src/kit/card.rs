@@ -34,6 +34,11 @@ pub fn Card(
     /// siblings exactly as it divided `div` ones.
     #[prop(optional)]
     list: bool,
+    /// The rows are skeletons and the real ones are still being read. `SkeletonBox`
+    /// hides itself from the accessibility tree and its doc says the composing region
+    /// states this; nothing did, so a reader got an empty card and a silent swap.
+    #[prop(optional, into)]
+    busy: Signal<bool>,
     /// Rows. The card draws a hairline between any two of them, so children need not
     /// know they are in a list — pass a single wrapper element to opt out, as the queue
     /// does, where dividers would make a list of decisions read as a table.
@@ -53,7 +58,11 @@ pub fn Card(
         // `h2`: the page's regions are h2, and a card is a region. If a caller ever
         // needs a different level, that is a prop — not a hard-coded guess repeated at
         // each call site.
-        <section class=style::root aria-labelledby=named>
+        <section
+            class=style::root
+            aria-labelledby=named
+            aria-busy=move || busy.get().then_some("true")
+        >
             {heading
                 .map(|heading| {
                     let class = if hidden { None } else { Some(style::title) };
@@ -162,6 +171,32 @@ mod tests {
                 .as_deref(),
             Some("list"),
             "WebKit drops the semantics with `list-style: none`, so it is stated"
+        );
+    }
+
+    /// `SkeletonBox` hides itself from the accessibility tree, so without this a
+    /// reader gets an empty card and hears nothing when the rows arrive.
+    #[wasm_bindgen_test]
+    fn a_card_of_skeletons_says_it_is_busy() {
+        let el = mount(|| view! { <Card label="Packages" busy=true>"skeletons"</Card> });
+        assert_eq!(
+            el.query_selector("section")
+                .unwrap()
+                .unwrap()
+                .get_attribute("aria-busy")
+                .as_deref(),
+            Some("true")
+        );
+
+        let settled = mount(|| view! { <Card label="Packages">"rows"</Card> });
+        assert!(
+            settled
+                .query_selector("section")
+                .unwrap()
+                .unwrap()
+                .get_attribute("aria-busy")
+                .is_none(),
+            "and drops it once they land"
         );
     }
 }

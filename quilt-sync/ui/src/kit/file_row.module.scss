@@ -39,7 +39,13 @@
  *
  * The cost is real: paths sharing a long prefix now truncate alike. Moving the
  * ellipsis back means measuring text or truncating in Rust, not a CSS trick. */
+/* A `button` now, so the chrome the baseline strips is only half the job: the face,
+ * the alignment and the ink still have to be said. */
 .path {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;

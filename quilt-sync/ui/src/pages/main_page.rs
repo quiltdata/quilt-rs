@@ -575,7 +575,7 @@ fn files_view(
         // (qhq-8mgw.44). §6 exempts chrome from skeletons; a list is not chrome.
         <Transition fallback=|| {
             view! {
-                <Card>
+                <Card label="Recent files" busy=true>
                     <FileRowSkeleton />
                     <FileRowSkeleton />
                     <FileRowSkeleton />
@@ -804,7 +804,7 @@ fn MainPageRegions(
                         sort_by,
                         create_open,
                     )}
-                    <Card>
+                    <Card label="Packages" busy=true>
                         <PackageRowSkeleton />
                         <PackageRowSkeleton />
                         <PackageRowSkeleton />
