@@ -1122,7 +1122,10 @@ fn refresh_button(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
 /// turning long after the page started moving again.
 ///
 /// Takes `ready` rather than the resources themselves, so the rule can be driven
-/// from a test without a Tauri host.
+/// from a test without a Tauri host. The caller's `ready` must mean "no read is
+/// outstanding" and not "both resources hold a value": a refetching resource keeps
+/// its previous value until the new one lands, so the second question is true for
+/// the whole of a refresh.
 fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
     Effect::new(move |_| {
         if ready.get() {
@@ -1134,9 +1137,20 @@ fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
+    // Light-phase reads still outstanding, counted the way the heavy phase counts
+    // its own (`PackageStore::in_flight`). It has to be a count and not "both
+    // resources hold a value": a refetching resource KEEPS its previous value until
+    // the new one lands, so that question answers yes for the whole of a refresh
+    // and the first of the two answers would end the press early.
+    let outstanding = RwSignal::new(0usize);
     let packages = LocalResource::new(move || {
         reload.track();
-        async move { commands::get_main_page_packages().await }
+        async move {
+            outstanding.update(|n| *n += 1);
+            let answer = commands::get_main_page_packages().await;
+            outstanding.update(|n| *n = n.saturating_sub(1));
+            answer
+        }
     });
     // Held here rather than inside the Accounts card, which is where it used to
     // live: the queue joins against these same host facts (§4.3, R3), and a second
@@ -1150,15 +1164,18 @@ pub fn MainPage() -> impl IntoView {
     // fetcher, which the regression routes around (qhq-8mgw.38).
     let accounts = LocalResource::new(move || {
         reload.track();
-        commands::get_main_page_accounts()
+        async move {
+            outstanding.update(|n| *n += 1);
+            let answer = commands::get_main_page_accounts().await;
+            outstanding.update(|n| *n = n.saturating_sub(1));
+            answer
+        }
     });
     let navigate = use_navigate();
-    // The press has to show at once; the light phase answering takes it away.
+    // The press has to show at once, so it is set by the press rather than inferred
+    // from a read starting. The last read answering takes it away.
     let refreshing = RwSignal::new(false);
-    end_spin_when_ready(
-        refreshing,
-        Signal::derive(move || packages.get().is_some() && accounts.get().is_some()),
-    );
+    end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
 
     view! {
         <PageLayout actions=view! {
@@ -4094,6 +4111,42 @@ mod tests {
         assert!(
             button.has_attribute("disabled"),
             "and a second press must not send a second read"
+        );
+    }
+
+    /// The refresh-from-a-loaded-page path, which is the normal one and the one
+    /// that broke the first version of this.
+    ///
+    /// A refetching `LocalResource` keeps its previous value until the new one
+    /// lands, so "both resources hold a value" is true for the whole of a refresh
+    /// — the first of the two answers used to end the press while the other was
+    /// still out. Counting outstanding reads cannot say yes early, and this drives
+    /// the count through the same three steps a real refresh takes.
+    #[wasm_bindgen_test]
+    async fn a_refresh_from_a_loaded_page_spins_until_the_last_read_answers() {
+        let outstanding = RwSignal::new(0usize);
+        let refreshing = RwSignal::new(false);
+        end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
+        leptos::task::tick().await;
+
+        // The press, and the two reads it starts.
+        refreshing.set(true);
+        outstanding.set(2);
+        leptos::task::tick().await;
+        assert!(refreshing.get_untracked(), "both reads are still out");
+
+        outstanding.set(1);
+        leptos::task::tick().await;
+        assert!(
+            refreshing.get_untracked(),
+            "one of two answering is not the end of the press"
+        );
+
+        outstanding.set(0);
+        leptos::task::tick().await;
+        assert!(
+            !refreshing.get_untracked(),
+            "the last read answered, so the press is finished"
         );
     }
 
