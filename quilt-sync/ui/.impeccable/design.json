@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-14T00:00:00Z",
+  "generatedAt": "2026-09-15T12:50:53Z",
   "title": "Design System: QuiltSync UI Kit",
   "extensions": {
     "themes": {
@@ -359,6 +359,14 @@
       "description": "Full-bleed brand navy, the one surface that is not a step on the page's ladder. No bottom rule: the colour change is the separation, and a grey line over it reads as a seam. Buttons lose their frame here and the focus ring turns white.",
       "html": "<div class=\"ds-bar\"><span class=\"ds-bar__logo\">QuiltSync</span><div class=\"ds-bar__actions\"><button class=\"ds-bar__btn\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z\"/></svg>Refresh</button></div></div>",
       "css": ".ds-bar { display: flex; align-items: center; gap: var(--q-space-3, 12px); min-height: 48px; padding: var(--q-space-2, 8px) var(--q-space-4, 16px); background: var(--q-bgColor-brand, #2d306d); color: var(--q-fgColor-onBrand, #fff); font-size: var(--q-text-body, 14px); } .ds-bar__logo { font-weight: 600; letter-spacing: 0.01em; } .ds-bar__actions { margin-left: auto; display: flex; flex: none; gap: var(--q-space-2, 8px); } .ds-bar__btn { display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; min-height: 32px; border: 1px solid transparent; border-radius: var(--q-radius, 4px); background: transparent; color: inherit; font: inherit; cursor: pointer; transition: background-color 120ms ease; } .ds-bar__btn svg { width: 14px; height: 14px; flex: none; } .ds-bar__btn:hover { background: rgb(255 255 255 / 0.14); } .ds-bar__btn:active { background: rgb(255 255 255 / 0.22); } .ds-bar__btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Queue Row — paused, with its reason",
+      "kind": "custom",
+      "refersTo": "package-row",
+      "description": "The attention queue's row. A detail line under the first carries a state's account of itself when that is longer than a label: here the engine's own rejection text, shown verbatim with its line breaks kept.",
+      "html": "<div class=\"ds-qrow\"><div class=\"ds-qrow__line\"><span class=\"ds-qrow__bullet\"></span><span class=\"ds-qrow__ns\">team/imaging-cohort-b</span><span class=\"ds-qrow__state\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M4 4 12 12M12 4 4 12\"/></svg>Sync paused</span></div><p class=\"ds-qrow__detail\">package does not satisfy the workflow:\n  - a commit message is required by this workflow, but none was provided\n  - package name \"team/imaging-cohort-b\" does not match the required handle_pattern</p></div>",
+      "css": ".ds-qrow { display: flex; flex-direction: column; width: 100%; padding: 4px 2px; color: var(--q-fgColor-default, #1e1f24); font-size: var(--q-text-body, 14px); } .ds-qrow__line { display: flex; align-items: center; width: 100%; min-width: 0; gap: var(--q-space-2, 8px); min-height: 40px; } .ds-qrow__bullet { flex: none; display: flex; align-items: center; justify-content: center; width: 24px; align-self: stretch; } .ds-qrow__bullet::before { content: \"\"; width: 4px; height: 4px; border-radius: 50%; background: var(--q-borderColor-emphasis, #b1b3bf); } .ds-qrow__ns { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-qrow__state { display: inline-flex; align-items: center; flex: none; gap: 5px; padding: 0 8px 0 6px; border: 1px solid var(--q-borderColor-danger-muted, #f4a9aa); border-radius: var(--q-radius, 4px); background: var(--q-bgColor-danger-muted, #f3000d14); color: var(--q-fgColor-danger-onMuted, #641723); line-height: 20px; white-space: nowrap; } .ds-qrow__state svg { flex: none; width: 12px; height: 12px; color: var(--q-fgColor-danger, #ce2c31); } .ds-qrow__detail { margin: 0; padding-left: 32px; padding-bottom: 4px; color: var(--q-fgColor-muted, #5b5d65); white-space: pre-wrap; overflow-wrap: anywhere; max-width: 70ch; }"
     }
   ],
   "narrative": {
@@ -441,6 +449,11 @@
       {
         "name": "The Platform Owns The Keyboard Rule",
         "body": "Where a native element exists, wrap it rather than rebuild it. Native select, native radios, native checkbox. This is why the system ships no listbox, no combobox, and no popover, and why roving focus and arrow-key movement were never hand-written.",
+        "section": "components"
+      },
+      {
+        "name": "The Verbatim Detail Rule",
+        "body": "A detail line carries text this design did not write — the engine's account of why something stopped. It is shown as given, line breaks kept, because a workflow rejection is a sentence followed by one indented line per broken rule and flattening it loses which rules those are.",
         "section": "components"
       }
     ],

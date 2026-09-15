@@ -136,12 +136,14 @@ fn Rows() -> impl IntoView {
                             namespace="org/dataset-c"
                             state="conflicts in 2 files"
                             tone=StateTone::Danger
-                            action=view! {
-                                <Button variant=ButtonVariant::Default on_click=|_| ()>
-                                    "Publish"
-                                </Button>
-                            }
-                                .into_any()
+                            action=Some(
+                                view! {
+                                    <Button variant=ButtonVariant::Default on_click=|_| ()>
+                                        "Publish"
+                                    </Button>
+                                }
+                                    .into_any(),
+                            )
                         />
                     </div>
                 </Card>

@@ -62,6 +62,19 @@ const ACTIONS: &[(&str, &str, StateTone, &str)] = &[
     ),
 ];
 
+/// A workflow rejection, verbatim. `WorkflowValidationError::Rejected` renders its
+/// violations one per line, so the row has to keep the newlines: flattened, the reader
+/// cannot tell one broken rule from the next.
+const REJECTION: &str = concat!(
+    "package does not satisfy the workflow:\n",
+    "  - a commit message is required by this workflow, but none was provided\n",
+    "  - package name \"team/imaging-cohort-b\" does not match the required ",
+    "handle_pattern \"^[a-z]+/[a-z]+-[0-9]{4}$\"",
+);
+
+/// The other shape: one line, from a malformed `.quilt/workflows/config.yml`.
+const BAD_CONFIG: &str = "Invalid workflows config: missing required key 'version'";
+
 fn action(label: &'static str, variant: ButtonVariant) -> AnyView {
     view! {
         <Button variant=variant on_click=|_| ()>
@@ -131,7 +144,7 @@ fn QueueRowStory() -> impl IntoView {
                                 namespace=namespace
                                 state=state
                                 tone=tone
-                                action=action(label, ButtonVariant::Primary)
+                                action=Some(action(label, ButtonVariant::Primary))
                             />
                         </Cell>
                     }
@@ -142,7 +155,7 @@ fn QueueRowStory() -> impl IntoView {
                     namespace="custom.registry.io"
                     state="No access"
                     tone=StateTone::Danger
-                    action=action("Sign in", ButtonVariant::Default)
+                    action=Some(action("Sign in", ButtonVariant::Default))
                 />
             </Cell>
             <Cell full=true label="default variant — the row takes what it is given; the page passes Primary for every package action and Default for a cause's">
@@ -150,7 +163,7 @@ fn QueueRowStory() -> impl IntoView {
                     namespace="user/package-b"
                     state="2 files changed"
                     tone=StateTone::Neutral
-                    action=action("Publish", ButtonVariant::Default)
+                    action=Some(action("Publish", ButtonVariant::Default))
                 />
             </Cell>
             <Cell full=true label="action disabled — a pull check in flight">
@@ -158,12 +171,38 @@ fn QueueRowStory() -> impl IntoView {
                     namespace="user/package-e"
                     state="Newer revision available"
                     tone=StateTone::Attention
-                    action=view! {
-                        <Button on_click=|_| () disabled=true>
-                            "Get latest"
-                        </Button>
-                    }
-                        .into_any()
+                    action=Some(
+                        view! {
+                            <Button on_click=|_| () disabled=true>
+                                "Get latest"
+                            </Button>
+                        }
+                            .into_any(),
+                    )
+                />
+            </Cell>
+            <Cell full=true label="Sync paused — the engine's own words, kept verbatim">
+                <QueueRow
+                    namespace="team/imaging-cohort-b"
+                    state="Sync paused"
+                    tone=StateTone::Danger
+                    detail=Some(REJECTION.to_string())
+                />
+            </Cell>
+            <Cell full=true label="Sync paused — a one-line reason">
+                <QueueRow
+                    namespace="org/dataset-c"
+                    state="Sync paused"
+                    tone=StateTone::Danger
+                    detail=Some(BAD_CONFIG.to_string())
+                />
+            </Cell>
+            <Cell wide=true label="narrow · the rejection wraps, and keeps its own line breaks">
+                <QueueRow
+                    namespace="team/imaging-cohort-b"
+                    state="Sync paused"
+                    tone=StateTone::Danger
+                    detail=Some(REJECTION.to_string())
                 />
             </Cell>
             <Cell full=true label="sub-row — no state, no action, indented">
@@ -174,7 +213,7 @@ fn QueueRowStory() -> impl IntoView {
                     namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix"
                     state="Changed in both places"
                     tone=StateTone::Danger
-                    action=action("Resolve", ButtonVariant::Primary)
+                    action=Some(action("Resolve", ButtonVariant::Primary))
                 />
             </Cell>
             <Cell wide=true label="narrow — two columns">
@@ -182,7 +221,7 @@ fn QueueRowStory() -> impl IntoView {
                     namespace="local/my-data"
                     state="No S3 bucket yet"
                     tone=StateTone::Attention
-                    action=action("Choose S3 bucket", ButtonVariant::Primary)
+                    action=Some(action("Choose S3 bucket", ButtonVariant::Primary))
                 />
             </Cell>
         </Story>
@@ -276,9 +315,9 @@ pub fn QueueRegion() -> impl IntoView {
     let signed_out = RwSignal::new(false);
     let role = RwSignal::new(false);
 
-    // Derived, never written — 11 + 3 + 5. The mock's hand-written (17) is off by two
-    // against its own rows, which is the failure mode this closure exists to avoid.
-    let total = move || 11 + 3 + ACTIONS.len();
+    // Derived, never written — 11 + 3 + 5 + the paused row. The mock's hand-written
+    // (17) is off against its own rows, which is what this closure exists to avoid.
+    let total = move || 11 + 3 + ACTIONS.len() + 1;
 
     view! {
         // One wrapper child, so `Card`'s between-children hairline does not fire: a
@@ -318,13 +357,37 @@ pub fn QueueRegion() -> impl IntoView {
                 </Show>
                 {ACTIONS
                     .iter()
+                    .take(1)
                     .map(|&(namespace, state, tone, label)| {
                         view! {
                             <QueueRow
                                 namespace=namespace
                                 state=state
                                 tone=tone
-                                action=action(label, ButtonVariant::Primary)
+                                action=Some(action(label, ButtonVariant::Primary))
+                            />
+                        }
+                    })
+                    .collect_view()}
+                // Precedence row 3, between the conflict above and everything below,
+                // and the only row here with no button: nothing in the app can restart
+                // a sync the remote refused.
+                <QueueRow
+                    namespace="team/imaging-cohort-b"
+                    state="Sync paused"
+                    tone=StateTone::Danger
+                    detail=Some(REJECTION.to_string())
+                />
+                {ACTIONS
+                    .iter()
+                    .skip(1)
+                    .map(|&(namespace, state, tone, label)| {
+                        view! {
+                            <QueueRow
+                                namespace=namespace
+                                state=state
+                                tone=tone
+                                action=Some(action(label, ButtonVariant::Primary))
                             />
                         }
                     })
@@ -345,7 +408,12 @@ pub fn QueueScene() -> impl IntoView {
                   thing this design spends to buy. \
                   \
                   Read down the buttons: five different verbs, one per row, each true of \
-                  the row it sits on. That column is what replaces 43 rows of Publish."
+                  the row it sits on. That column is what replaces 43 rows of Publish. \
+                  \
+                  The paused row is the exception and costs the most height: it carries \
+                  the engine's own rejection instead of a button, because no operation \
+                  here can restart a sync the remote refused. It is allowed to take the \
+                  room — that text is the only account of why the package stopped."
         >
             <QueueRegion />
         </Scene>

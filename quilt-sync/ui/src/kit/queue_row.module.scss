@@ -6,17 +6,39 @@
  * has its own hover.
  */
 
+/* A column, because a row may carry a detail line under its first one. */
 .root {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   /* Same reason as the list rows: a flex item's automatic minimum size is its
    * max-content width, so without a definite width a long namespace pushes the row
    * past its container instead of ellipsising. */
   width: 100%;
-  gap: var(--q-space-2);
   padding: 4px 2px;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: var(--q-space-2);
   /* A control plus its 4px padding, so rows with and without a Button match. */
   min-height: calc(var(--q-control-height) + 2 * var(--q-space-1));
+}
+
+/* The pause's own message, from the engine rather than from this vocabulary.
+ *
+ * `pre-wrap` keeps the newlines: a workflow rejection is a sentence followed by one
+ * indented line per broken rule, and flattening it loses which rules those are.
+ * Indented to the namespace, not the bullet, because it is about that package. */
+.detail {
+  padding-left: calc(var(--q-control-height-sm) + var(--q-space-2));
+  padding-bottom: var(--q-space-1);
+  color: var(--q-fgColor-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 70ch;
 }
 
 /* The disclosure column, occupied by a bullet rather than left empty. Same 24px as

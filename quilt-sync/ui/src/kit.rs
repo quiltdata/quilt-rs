@@ -122,12 +122,17 @@ mod tests {
     /// pixels does not.
     #[test]
     fn prose_is_capped_to_a_readable_measure() {
-        const PROSE: [(&str, &str, &str); 2] = [
+        const PROSE: [(&str, &str, &str); 3] = [
             ("banner", ".message", include_str!("kit/banner.module.scss")),
             (
                 "toggle_row",
                 ".sublabel",
                 include_str!("kit/toggle_row.module.scss"),
+            ),
+            (
+                "queue_row",
+                ".detail",
+                include_str!("kit/queue_row.module.scss"),
             ),
         ];
 
@@ -158,5 +163,20 @@ mod tests {
                 "{component}'s `{class}` caps at {width}ch, outside the readable 65-75"
             );
         }
+    }
+    /// A queue row's detail is engine prose, and a workflow rejection is a sentence
+    /// followed by one indented line per broken rule. Collapsing the whitespace loses
+    /// which rules those are.
+    #[test]
+    fn a_queue_row_detail_keeps_the_line_breaks_it_is_given() {
+        const SHEET: &str = include_str!("kit/queue_row.module.scss");
+        let rule = rules(SHEET)
+            .find(|(selector, _)| selects(selector, ".detail"))
+            .map(|(_, body)| body)
+            .expect("a `.detail` rule");
+        assert!(
+            rule.contains("white-space: pre-wrap"),
+            "the message's own newlines have to survive: {rule}"
+        );
     }
 }

@@ -673,6 +673,25 @@ fn MainPageRegions(
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
     // expanders (R6) — so a view signal created inside it would reset on every
     // Refresh and throw a reader of the feed back to Packages.
+    // Held here rather than inside the Autosync card, for the reason the accounts
+    // read is: the queue joins against this payload for a paused package's message.
+    let watcher_reload = Trigger::new();
+    let watcher =
+        autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher);
+    // A signal, NOT awaited beside `hosts` below. The watcher reloads on a deadline,
+    // on the window coming back and after a toggle write; awaiting it inside that
+    // `Suspend` would rebuild the queue on each, re-collapsing every expanded cause
+    // (R6) several times a minute. Read where it is drawn, so only the line changes.
+    let pause_messages = Signal::derive(move || {
+        watcher
+            .get()
+            .and_then(|data| {
+                data.as_ref()
+                    .ok()
+                    .map(|data| queue::pause_messages(&data.paused))
+            })
+            .unwrap_or_default()
+    });
     let view_selected = RwSignal::new(PACKAGES_VIEW.to_string());
     // R2, and the same reason `view_selected` is here: a refetch rebuilds the
     // resolved subtree, so a signal created inside it would clear the reader's
@@ -717,7 +736,7 @@ fn MainPageRegions(
         // Outside every boundary, so both cards are constructed once and each one
         // owns when it blanks.
         <div class=style::strip>
-            <autosync::AutosyncCard refresh=reload />
+            <autosync::AutosyncCard reload=watcher_reload watcher=watcher />
             <Transition fallback=|| ()>
                 {move || Suspend::new(async move {
                     match accounts.await {
@@ -879,6 +898,7 @@ fn MainPageRegions(
                                 total=total
                                 unchecked=unchecked
                                 retry=retry
+                                pause_messages=pause_messages
                             />
                             <div class=style::list_region>
                             {list_toolbar(

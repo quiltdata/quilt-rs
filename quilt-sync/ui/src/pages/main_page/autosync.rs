@@ -285,7 +285,7 @@ fn AutosyncListener(reload: Trigger) -> impl IntoView {
 /// rows and leaves the card asserting `Paused` beside rows that have just stopped
 /// being conflicted, and a paused card has no deadline, so its own trigger has
 /// nothing scheduled to correct it.
-fn watcher_resource<Fut>(
+pub(super) fn watcher_resource<Fut>(
     reload: Trigger,
     refresh: Trigger,
     fetch: impl Fn() -> Fut + 'static,
@@ -311,15 +311,14 @@ where
 /// plan 2's final review removed from the row path.
 #[component]
 pub fn AutosyncCard(
-    /// The page's own reload trigger, so the appbar's Refresh refetches this card
-    /// as well as the package rows.
-    refresh: Trigger,
+    /// Notified when a deadline expires, when the window becomes visible again, and
+    /// after a toggle write.
+    reload: Trigger,
+    /// Held by the page, not by this card: the queue joins against the same payload
+    /// for a pause's message, and a second resource would be a second read of one
+    /// question — the reason the accounts read sits up there too.
+    watcher: LocalResource<Result<MainPageWatcherData, String>>,
 ) -> impl IntoView {
-    // Notified when a deadline expires, when the window becomes visible again, and
-    // after a toggle write.
-    let reload = Trigger::new();
-    let watcher = watcher_resource(reload, refresh, commands::get_main_page_watcher);
-
     view! {
         <AutosyncListener reload=reload />
         <Transition fallback=|| ()>
