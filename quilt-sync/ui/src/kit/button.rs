@@ -215,8 +215,23 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split('}').next())
             .expect("a rule hiding the icon while loading");
-        assert!(
-            rule.contains("display: none"),
+
+        // The declaration, not the characters. A substring passes for a commented-out
+        // rule, for `none-block`, and for a `display` that a later one overrides.
+        let display = rule
+            .split("/*")
+            .map(|part| part.split_once("*/").map_or(part, |(_, rest)| rest))
+            .flat_map(|part| part.lines())
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .flat_map(|line| line.split(';'))
+            .filter_map(|declaration| declaration.split_once(':'))
+            .filter(|(property, _)| property.trim() == "display")
+            .map(|(_, value)| value.trim())
+            .last();
+
+        assert_eq!(
+            display,
+            Some("none"),
             "without it the icon and the spinner both draw: {rule}"
         );
     }
