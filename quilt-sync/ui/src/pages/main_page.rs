@@ -76,6 +76,12 @@ const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
 /// manufactures a state the page does not know.
 const FILES_FETCH_ERROR_WORDS: &str = "Could not load your files.";
 
+/// The strip's two reads, which used to fail into nothing at all. A card that is not
+/// drawn cannot be told from an account with no autosync and a machine with no
+/// sessions, which is the blank R1 forbids.
+const AUTOSYNC_ERROR_WORDS: &str = "Could not load autosync.";
+const ACCOUNTS_ERROR_WORDS: &str = "Could not load your accounts.";
+
 /// The list region's two views, as the toggle names them. Consts because each
 /// string is the toggle's option, the value the selection signal holds, and the
 /// condition the region switches on — three uses that must not drift apart.
@@ -99,8 +105,39 @@ const SORT_NAME: &str = "Name";
 /// handled (`MainPage`'s `Err` arm below), not here: this is a view function,
 /// and view functions can re-run on every re-render, which would re-log the
 /// same failure each time.
-fn render_fetch_error() -> impl IntoView {
-    view! { <p>{FETCH_ERROR_WORDS}</p> }
+fn render_fetch_error(reload: Trigger) -> impl IntoView {
+    view! {
+        <p>{FETCH_ERROR_WORDS}</p>
+        {retry_button(reload)}
+    }
+}
+
+/// `Try again`, the one affordance a failed read can offer. The same words the
+/// queue's unchecked cause already uses, and the same shape: notify the trigger the
+/// read is built on and let the resource re-run.
+fn retry_button(reload: Trigger) -> AnyView {
+    view! {
+        <Button on_click=move |_| reload.notify()>"Try again"</Button>
+    }
+    .into_any()
+}
+
+/// A strip card that could not read what it draws. It keeps its title, because the
+/// title is how the reader tells this card from the one beside it.
+pub(super) fn fetch_error_card(
+    title: &'static str,
+    words: &'static str,
+    reload: Trigger,
+) -> AnyView {
+    view! {
+        <Card title=title>
+            <div class=style::card_error>
+                <p>{words}</p>
+                {retry_button(reload)}
+            </div>
+        </Card>
+    }
+    .into_any()
 }
 
 /// The feed's failure branch. Same shape and same reasoning as
@@ -108,8 +145,11 @@ fn render_fetch_error() -> impl IntoView {
 /// backend's error text is logged once where the fetch result is handled — not
 /// here, because a view function can re-run on every re-render and would re-log
 /// the same failure each time.
-fn render_files_fetch_error() -> impl IntoView {
-    view! { <p>{FILES_FETCH_ERROR_WORDS}</p> }
+fn render_files_fetch_error(reload: Trigger) -> impl IntoView {
+    view! {
+        <p>{FILES_FETCH_ERROR_WORDS}</p>
+        {retry_button(reload)}
+    }
 }
 
 /// A row's live state: the light phase's guess, replaced in place by the heavy
@@ -566,6 +606,7 @@ fn files_view(
     recent_files: LocalResource<Result<MainPageRecentFilesData, String>>,
     query: RwSignal<String>,
     group_files_by: RwSignal<String>,
+    reload: Trigger,
 ) -> AnyView {
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
@@ -598,7 +639,7 @@ fn files_view(
                         web_sys::console::error_1(
                             &format!("get_main_page_recent_files failed: {err}").into(),
                         );
-                        view! { <Card>{render_files_fetch_error()}</Card> }.into_any()
+                        view! { <Card>{render_files_fetch_error(reload)}</Card> }.into_any()
                     }
                 }
             })}
@@ -760,13 +801,14 @@ fn MainPageRegions(
                                 .into_any()
                         }
                         Err(err) => {
-                            // Logged here, once, and rendered as nothing: asserting
-                            // anything about a user's sessions on the strength of a
-                            // failed read would be a manufactured state.
+                            // Logged here, once. The card still draws: asserting
+                            // anything about a user's sessions on a failed read would
+                            // be a manufactured state, and drawing nothing is its own
+                            // false claim — that there are no sessions.
                             web_sys::console::error_1(
                                 &format!("get_main_page_accounts failed: {err}").into(),
                             );
-                            ().into_any()
+                            fetch_error_card("Accounts", ACCOUNTS_ERROR_WORDS, reload)
                         }
                     }
                 })}
@@ -1079,7 +1121,7 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query, group_files_by)}
+                                {files_view(recent_files, query, group_files_by, reload)}
                             </Show>
                             </div>
                         }
@@ -1111,9 +1153,11 @@ fn MainPageRegions(
                                 )}
                                 <Show
                                     when=move || view_selected.get() == FILES_VIEW
-                                    fallback=|| view! { <Card>{render_fetch_error()}</Card> }
+                                    fallback=move || {
+                                        view! { <Card>{render_fetch_error(reload)}</Card> }
+                                    }
                                 >
-                                    {files_view(recent_files, query, group_files_by)}
+                                    {files_view(recent_files, query, group_files_by, reload)}
                                 </Show>
                             </div>
                         }
@@ -2804,8 +2848,9 @@ mod tests {
     async fn a_failed_accounts_read_still_draws_the_queue_and_the_list() {
         // The other direction. Without host facts no cause can be attributed to a
         // host, so the signed-out package falls to a row of its own rather than
-        // vanishing — and the Accounts card renders nothing at all rather than a
-        // card with no rows, which would assert the user has no sessions.
+        // vanishing — and the Accounts card says it could not read, rather than
+        // drawing no rows (which asserts the user has no sessions) or vanishing
+        // (which asserts there is no such card).
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -2828,9 +2873,18 @@ mod tests {
             !text.contains("Signed out from"),
             "nothing said any host was signed out: {text}"
         );
+        let strip = strip_of(&el).text_content().unwrap();
         assert!(
-            !strip_of(&el).text_content().unwrap().contains("Accounts"),
-            "no card, rather than an empty one: {text}"
+            strip.contains("Accounts") && strip.contains(ACCOUNTS_ERROR_WORDS),
+            "the card keeps its title and says what happened: {strip}"
+        );
+        assert!(
+            strip.contains("Try again"),
+            "and offers the one thing that can be done: {strip}"
+        );
+        assert!(
+            !strip.contains("Signed out"),
+            "without asserting anything about the sessions it could not read: {strip}"
         );
         assert_eq!(
             el.query_selector_all("a[href*=installed-package]")
@@ -3471,7 +3525,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_fetch_failure_shows_fixed_words_never_the_raw_error() {
-        let el = mount(render_fetch_error);
+        let el = mount(|| render_fetch_error(Trigger::new()));
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Could not load your packages."),
@@ -4053,6 +4107,7 @@ mod tests {
                 recent_files,
                 RwSignal::new(String::new()),
                 RwSignal::new(GROUP_NONE.to_string()),
+                Trigger::new(),
             )
         });
         leptos::task::tick().await;
