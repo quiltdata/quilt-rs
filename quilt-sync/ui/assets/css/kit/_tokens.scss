@@ -610,25 +610,3 @@
   /* Vivid, not the brand navy: see ACCENT. */
   --q-bgColor-accent-emphasis: var(--blue-9);
 }
-
-/* ═════════════════════════════════════════════════════════════════════════
- * NATIVE CHROME
- *
- * The part of the page the tokens cannot reach: the `<select>` popup the kit
- * hands to the OS on purpose (`kit/select.rs`), form-control internals, and the
- * list card's own scrollbar. Those paint from `color-scheme`, and without it
- * they stay light on a dark page.
- *
- * The dark half is scoped to a v2 reader, which is load-bearing rather than
- * tidy: `data-theme` follows the OS whatever the flag says (see `theme.rs`), so
- * a bare `:root[data-theme="dark"]` would hand v1's pages dark scrollbars and
- * dark select popups while every one of their own `--q-ui-*` colours stayed
- * light. The gallery marks itself `qui-v2`, so it keeps both schemes.
- * ═════════════════════════════════════════════════════════════════════════ */
-:root {
-  color-scheme: light;
-}
-
-:root.qui-v2[data-theme="dark"] {
-  color-scheme: dark;
-}

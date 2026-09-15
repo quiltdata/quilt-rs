@@ -54,7 +54,10 @@ pub fn PageLayout(
     children: Children,
 ) -> impl IntoView {
     view! {
-        <div class=style::root>
+        // `data-v2-page` marks the surface the v2 palette paints, which is what
+        // `color-scheme` keys on: `qui-v2` marks a READER who opted in, and that
+        // reader still visits v1's pages.
+        <div class=style::root data-v2-page>
             // `header` and `main` rather than divs: they are the two landmarks a
             // screen reader offers to skip between, and they cost nothing.
             <header class=style::appbar>
@@ -123,6 +126,16 @@ mod tests {
         assert!(
             !img.get_attribute("alt").unwrap_or_default().is_empty(),
             "the mark is the only content of a link, so it has to name it"
+        );
+    }
+    /// The stylesheet hangs the dark `color-scheme` on this attribute, so a page
+    /// that lost it would put v1's ink on a dark canvas again.
+    #[wasm_bindgen_test]
+    fn the_frame_marks_itself_as_a_v2_surface() {
+        let el = mount(|| view! { <PageLayout>"body"</PageLayout> });
+        assert!(
+            el.query_selector("[data-v2-page]").unwrap().is_some(),
+            "the v2 frame has to name itself"
         );
     }
 }
