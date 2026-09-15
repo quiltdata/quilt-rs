@@ -93,12 +93,8 @@ pub use zero_line::ZeroLineSkeleton;
 
 #[cfg(test)]
 mod tests {
-    /// Every `selector { body }` pair in a stylesheet, comments and nesting aside.
-    ///
-    /// The kit's stylesheets are flat — one level of rules, no nested blocks — so a
-    /// scan for braces is enough and a Sass parser would be a dependency bought for
-    /// nothing. A nested rule would make this wrong, which is why the test that uses
-    /// it names the rules it expects rather than sweeping the file.
+    /// Every `selector { body }` pair. Correct only for a flat stylesheet, which
+    /// the kit's are; callers name the rules they want rather than sweep the file.
     fn rules(sheet: &str) -> impl Iterator<Item = (&str, &str)> {
         sheet.match_indices('{').filter_map(move |(open, _)| {
             let before = &sheet[..open];
@@ -120,16 +116,10 @@ mod tests {
             .any(|last| last == class)
     }
 
-    /// Prose in the kit obeys the measure, not the window.
+    /// The two elements read as sentences rather than labels carry a measure.
     ///
-    /// Two elements are read as sentences rather than as labels: a `Banner`'s
-    /// message and a `ToggleRow`'s sublabel. Left uncapped they ran to 116-132 and
-    /// 81-91 characters at 1280, and the eye stops tracking back reliably somewhere
-    /// around 75 (qhq-8mgw.76).
-    ///
-    /// The band is what is pinned, not the number: any cap inside 65-75ch is a
-    /// legal swap, and a cap in pixels is not — the count of characters is the
-    /// thing being limited, and the face is whatever the desktop chose.
+    /// The band is pinned, not the number: any cap inside 65-75ch passes, a cap in
+    /// pixels does not.
     #[test]
     fn prose_is_capped_to_a_readable_measure() {
         const PROSE: [(&str, &str, &str); 2] = [
@@ -142,10 +132,6 @@ mod tests {
         ];
 
         for (component, class, sheet) in PROSE {
-            // Found by walking rules rather than by matching a literal `\n.x {`:
-            // grouping the selector, moving the brace or reindenting are all legal
-            // Sass that leaves the compiled measure intact, and a test that broke on
-            // them would be a maintenance tax with no defect behind it.
             let Some((_, rule)) = rules(sheet).find(|(selector, _)| selects(selector, class))
             else {
                 panic!("{component} has no `{class}` rule")

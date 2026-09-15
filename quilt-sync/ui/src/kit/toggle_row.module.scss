@@ -121,9 +121,7 @@
   display: block;
   margin-top: 1px;
   color: var(--q-fgColor-muted);
-  /* The same measure as a banner's message, for the same reason: this is a
-   * sentence explaining the switch above it, not a label. It reached 81-91
-   * characters before the cap. */
+  /* A sentence, not a label: the same measure as a banner's message. */
   max-width: 70ch;
 }
 

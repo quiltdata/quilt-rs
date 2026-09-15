@@ -60,12 +60,7 @@
   min-width: 0;
   margin: 0;
   line-height: var(--q-line-body);
-  /* Prose, so it obeys the measure rather than the window. At 1280 an undamped
-   * message ran to 116-132 characters, roughly twice what the eye tracks back
-   * from comfortably; 70ch sits in the middle of the 65-75 band. In `ch` and not
-   * pixels, because the cap is about the count of characters and the face is
-   * whatever the desktop chose. Still `flex: 1 1 auto`, so a short message does
-   * not reserve the width. */
+  /* Prose: held to a readable measure. In `ch` because it counts characters. */
   max-width: 70ch;
 }
 
