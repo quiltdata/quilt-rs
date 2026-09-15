@@ -102,6 +102,11 @@ pub fn FileRow(
     #[prop(optional, into)]
     on_copy_uri: Option<Callback<MouseEvent>>,
 ) -> impl IntoView {
+    // Both of these ellipsise, and a truncated identifier is unrecoverable
+    // without navigating — so each carries its full value natively, the same
+    // rule `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    let full_path = path.clone();
+    let full_package = package.clone();
     view! {
         // `role="button"` and `tabindex="0"` announce this row as a button and put
         // it in the tab order, so it owes what a native button gives for free.
@@ -133,10 +138,11 @@ pub fn FileRow(
                 }
             }
         >
-            <span class=style::path>{path}</span>
+            <span class=style::path title=full_path>{path}</span>
             // Stops propagation, or going to the package would also open the file.
             <a
                 class=style::tag
+                title=full_package
                 href=package_href
                 on:click=|ev: MouseEvent| ev.stop_propagation()
             >
@@ -454,6 +460,37 @@ mod tests {
             opened.get_untracked(),
             0,
             "reveal must not also open the file"
+        );
+    }
+
+    /// qhq-8mgw.68, both of them: the path truncates from the right and the
+    /// package tag is capped at 30% of the row, so each needs its full value.
+    #[wasm_bindgen_test]
+    fn the_path_and_the_package_tag_carry_their_whole_values() {
+        let el = mount(|| {
+            view! {
+                <FileRow
+                    path="data/deep/nested/directory/with/a/long/name/measurements.csv"
+                    package="a-long-owner-name/a-much-longer-package-name-than-the-column"
+                    package_href="/installed-package"
+                    at=0.0
+                    on_open=|_| {}
+                    on_reveal=|_| {}
+                />
+            }
+        });
+        let path = el
+            .query_selector("[class*=path]")
+            .unwrap()
+            .expect("the path");
+        assert_eq!(
+            path.get_attribute("title").as_deref(),
+            Some("data/deep/nested/directory/with/a/long/name/measurements.csv"),
+        );
+        let tag = el.query_selector("[class*=tag]").unwrap().expect("the tag");
+        assert_eq!(
+            tag.get_attribute("title").as_deref(),
+            Some("a-long-owner-name/a-much-longer-package-name-than-the-column")
         );
     }
 }

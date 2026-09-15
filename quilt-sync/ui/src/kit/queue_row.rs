@@ -53,13 +53,17 @@ pub fn QueueRow(
         style::root.to_string()
     };
 
+    // Ellipsised by the stylesheet, and a truncated identifier is unrecoverable
+    // without navigating — so it carries its full value natively, the same rule
+    // `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    let full_namespace = namespace.clone();
     view! {
         <div class=class>
             // The list bullet, filling the column `CauseRow` uses for its expander.
             // Empty of text, so it says nothing to a screen reader — the row's own
             // words are the content and a bullet is not one of them.
             <span class=style::bullet></span>
-            <span class=style::namespace>{namespace}</span>
+            <span class=style::namespace title=full_namespace>{namespace}</span>
             {state
                 .zip(tone)
                 .map(|(state, tone)| view! { <StateLabel tone=tone>{state}</StateLabel> })}
@@ -88,5 +92,40 @@ pub fn QueueRowSkeleton() -> impl IntoView {
                 <SkeletonBox width="76px" height="32px" />
             </span>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// `main_page.rs`'s pattern: mount a view into a fresh, attached `div` and
+    /// hand back the element to query against.
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// qhq-8mgw.68. A queue row asks the reader to act on a package, so the name
+    /// of the package must not be the part that got cut.
+    #[wasm_bindgen_test]
+    fn the_truncating_namespace_carries_its_whole_value() {
+        let el = mount(
+            || view! { <QueueRow namespace="a-long-owner-name/a-much-longer-package-name-than-the-column" /> },
+        );
+        let span = el
+            .query_selector("[class*=namespace]")
+            .unwrap()
+            .expect("the namespace");
+        assert_eq!(
+            span.get_attribute("title").as_deref(),
+            Some("a-long-owner-name/a-much-longer-package-name-than-the-column")
+        );
     }
 }

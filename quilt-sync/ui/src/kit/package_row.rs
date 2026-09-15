@@ -76,9 +76,13 @@ pub fn PackageRow(
         out
     };
 
+    // Ellipsised by the stylesheet, and a truncated identifier is unrecoverable
+    // without navigating — so it carries its full value natively, the same rule
+    // `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    let full_namespace = namespace.clone();
     view! {
         <a class=class href=href>
-            <span class=style::namespace>{namespace}</span>
+            <span class=style::namespace title=full_namespace>{namespace}</span>
             <span class=style::time>
                 {move || changed_at
                     .get()
@@ -185,6 +189,31 @@ mod tests {
         assert!(
             !root_class(&row(false)).contains("provisional"),
             "a settled row carries nothing"
+        );
+    }
+
+    /// qhq-8mgw.68. The namespace ellipsises, so without a native title a long
+    /// one is unrecoverable without navigating to the package to read it.
+    #[wasm_bindgen_test]
+    fn the_truncating_namespace_carries_its_whole_value() {
+        let el = mount(|| {
+            view! {
+                <PackageRow
+                    namespace="a-long-owner-name/a-much-longer-package-name-than-the-column"
+                    href="/x"
+                    state=Signal::stored("Latest".to_string())
+                    tone=Signal::stored(StateTone::Success)
+                />
+            }
+        });
+        let span = el
+            .query_selector("[class*=namespace]")
+            .unwrap()
+            .expect("the namespace");
+        assert_eq!(
+            span.get_attribute("title").as_deref(),
+            Some("a-long-owner-name/a-much-longer-package-name-than-the-column"),
+            "the whole namespace has to survive the ellipsis"
         );
     }
 }

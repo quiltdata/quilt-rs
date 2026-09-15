@@ -16,12 +16,71 @@ pub fn GroupHeading(
     #[prop(optional, into)]
     annotation: Option<String>,
 ) -> impl IntoView {
+    // Ellipsised by the stylesheet, and a truncated identifier is unrecoverable
+    // without navigating — so it carries its full value natively, the same rule
+    // `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    let full_title = title.clone();
     view! {
         <div class=style::root>
-            <span class=style::title>{title}</span>
+            <span class=style::title title=full_title>{title}</span>
             {annotation
-                .map(|note| view! { <span class=style::annotation>{format!("— {note}")}</span> })}
+                .map(|note| {
+                    let full = format!("— {note}");
+                    let hint = full.clone();
+                    view! {
+                        <span class=style::annotation title=hint>{full}</span>
+                    }
+                })}
             <span class=style::count>{count}</span>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// `main_page.rs`'s pattern: mount a view into a fresh, attached `div` and
+    /// hand back the element to query against.
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// qhq-8mgw.68. A bucket name is the group's identity, and both the name and
+    /// its cause annotation ellipsise.
+    #[wasm_bindgen_test]
+    fn the_truncating_title_and_annotation_carry_their_whole_values() {
+        let el = mount(|| {
+            view! {
+                <GroupHeading
+                    title="a-very-long-bucket-name-for-a-research-programme"
+                    count=3
+                    annotation="no access as a-long-role-name"
+                />
+            }
+        });
+        let title = el
+            .query_selector("[class*=title]")
+            .unwrap()
+            .expect("the title");
+        assert_eq!(
+            title.get_attribute("title").as_deref(),
+            Some("a-very-long-bucket-name-for-a-research-programme"),
+        );
+        let note = el
+            .query_selector("[class*=annotation]")
+            .unwrap()
+            .expect("the annotation");
+        assert_eq!(
+            note.get_attribute("title").as_deref(),
+            Some("— no access as a-long-role-name"),
+        );
     }
 }
