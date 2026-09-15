@@ -131,6 +131,77 @@ mod tests {
         );
     }
 
+    /// Native chrome — the `<select>` popup the kit deliberately delegates to the
+    /// OS, form-control internals, and the list card's own scrollbar — paints from
+    /// `color-scheme`, not from our tokens. Without the declaration it stays light
+    /// on a dark page (qhq-8mgw.64).
+    ///
+    /// The dark half MUST be scoped to a v2 reader. `data-theme` follows the OS
+    /// whatever the flag says, so a bare `:root[data-theme="dark"]` would hand v1's
+    /// pages dark scrollbars and dark select popups while every one of their own
+    /// `--q-ui-*` colours stayed light. Pinned here because the bare selector is
+    /// the obvious thing to write and is wrong.
+    #[test]
+    fn native_chrome_follows_the_theme_only_for_a_v2_reader() {
+        const TOKENS: &str = include_str!("../assets/css/kit/_tokens.scss");
+
+        // Selector and value together: a rule scoped correctly and then declaring
+        // `light`, `normal` or a typo would satisfy the scoping check alone while
+        // leaving native chrome exactly as broken as it was.
+        let declarations: Vec<(&str, &str)> = TOKENS
+            .match_indices("color-scheme:")
+            .map(|(at, keyword)| {
+                let block = TOKENS[..at].rfind('{').expect("a rule around it");
+                let selector = TOKENS[..block].trim_end();
+                let start = selector.rfind(['}', '/', '\n']).map_or(0, |i| i + 1);
+                let value = TOKENS[at + keyword.len()..]
+                    .split(';')
+                    .next()
+                    .expect("a terminated declaration")
+                    .trim();
+                (selector[start..].trim(), value)
+            })
+            .collect();
+
+        assert!(
+            !declarations.is_empty(),
+            "no `color-scheme` anywhere: native chrome cannot follow the theme"
+        );
+
+        let dark: Vec<&(&str, &str)> = declarations
+            .iter()
+            .filter(|(selector, _)| selector.contains("dark"))
+            .collect();
+        assert!(!dark.is_empty(), "nothing is declared for a dark root");
+        for (selector, value) in dark {
+            assert!(
+                selector.contains(V2_CLASS),
+                "`{selector}` would give v1's pages dark native chrome — \
+                 scope it to `.{V2_CLASS}`"
+            );
+            assert_eq!(
+                *value, "dark",
+                "`{selector}` declares `{value}`, so native chrome does not follow \
+                 the dark theme"
+            );
+        }
+
+        let light: Vec<&(&str, &str)> = declarations
+            .iter()
+            .filter(|(selector, _)| !selector.contains("dark"))
+            .collect();
+        assert!(
+            !light.is_empty(),
+            "the light scheme must be stated too, or the UA default decides it"
+        );
+        for (selector, value) in light {
+            assert_eq!(
+                *value, "light",
+                "`{selector}` declares `{value}` where the page is light"
+            );
+        }
+    }
+
     /// The reset in `app.scss` reaches v1's pages, whose ink no theme switches,
     /// and `follow_os` cannot see the flag — so a themed ground on `body` would
     /// go dark under v1's black text, for a v2 reader on Settings as much as for
