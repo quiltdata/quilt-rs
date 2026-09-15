@@ -317,7 +317,7 @@ fn cause_item(
             // The packages a cause speaks for are a list inside its own item, not
             // siblings of it.
             <Show when=move || expanded.get()>
-                <ul class=list_class()>
+                <ul class=list_class() role="list">
                     {members
                         .iter()
                         .map(|namespace| {
@@ -614,7 +614,7 @@ pub fn QueueRegion(
             // fire: a queue is a list of decisions, and dividing every row would
             // make it read as a table. A `ul`, because it is also a list of them.
             <Card title="Needs your attention" count=count>
-                <ul class=list_class()>
+                <ul class=list_class() role="list">
                     // Keyed, not `Vec`'s positional diff. `derive_queue` sorts
                     // by precedence, so one package settling into a higher rank
                     // inserts at the top and shifts every row below it — and an

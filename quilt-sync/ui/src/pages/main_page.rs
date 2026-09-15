@@ -434,7 +434,7 @@ fn PackageList(packages: Vec<ListRowData>, store: PackageStore) -> impl IntoView
             })
         })
         .collect_view();
-    view! { <ul class=style::rows>{rows}</ul> }
+    view! { <ul class=style::rows role="list">{rows}</ul> }
 }
 
 /// The one cause every row in this group shares, or `None`.

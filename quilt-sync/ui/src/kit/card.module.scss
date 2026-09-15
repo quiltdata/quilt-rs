@@ -56,6 +56,8 @@
 
 /* A list for the reader that announces one, with none of the chrome that implies.
  * `ul.body` rather than `.body`, so the `div` form keeps its own shorter reset. */
+/* `list-style: none` is enough for WebKit to drop the list semantics with it,
+ * so every one of these carries an explicit `role="list"`. */
 ul.body {
   list-style: none;
   margin: 0;
