@@ -18,6 +18,19 @@
 //! keyframe with its component: `button-spin`, `icon-spin`, `countdown-sweep`,
 //! `skeleton-box-pulse`, `spinner-rotate`.
 
+/// A document-unique id, for an element that has to be pointed at.
+///
+/// Ids only have to be unique within a document, and this is a single-threaded wasm
+/// document, so `Relaxed` is enough. The prefix keeps one caller's ids from colliding
+/// with another's counter.
+pub(crate) fn unique_id(prefix: &str) -> String {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    format!("{prefix}-{}", NEXT.fetch_add(1, Ordering::Relaxed))
+}
+
 pub mod banner;
 pub mod blankslate;
 pub mod button;

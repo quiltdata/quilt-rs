@@ -19,7 +19,8 @@ pub fn GroupHeading(
     // Ellipsised by the stylesheet, so the whole value rides in `title`.
     let full_title = title.clone();
     view! {
-        <div class=style::root>
+        // `h3`: it sits under a `Card`'s `h2`, and a run of rows is a section of one.
+        <h3 class=style::root>
             <span class=style::title title=full_title>{title}</span>
             {annotation
                 .map(|note| {
@@ -30,7 +31,7 @@ pub fn GroupHeading(
                     }
                 })}
             <span class=style::count>{count}</span>
-        </div>
+        </h3>
     }
 }
 
@@ -79,5 +80,13 @@ mod tests {
             note.get_attribute("title").as_deref(),
             Some("— no access as a-long-role-name"),
         );
+    }
+    /// `h3`, under a `Card`'s `h2`: a bucket heading was a `div` and so unreachable
+    /// by heading navigation, which is how you move through a 43-row list.
+    #[wasm_bindgen_test]
+    fn a_group_heading_is_a_heading() {
+        let el = mount(|| view! { <GroupHeading title="s3://bucket" count=3 /> });
+        let heading = el.query_selector("h3").unwrap().expect("a heading");
+        assert!(heading.text_content().unwrap().contains("s3://bucket"));
     }
 }

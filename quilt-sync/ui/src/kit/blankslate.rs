@@ -16,7 +16,8 @@ pub fn Blankslate(
 ) -> impl IntoView {
     view! {
         <div class=style::root>
-            <span class=style::heading>{heading}</span>
+            // `h3`: a blankslate stands where a card's rows would, under its `h2`.
+            <h3 class=style::heading>{heading}</h3>
             <span class=style::description>{description}</span>
             {primary_action}
         </div>

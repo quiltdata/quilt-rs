@@ -39,6 +39,11 @@ stylance::import_crate_style!(style, "src/kit/page_layout.module.scss");
 
 #[component]
 pub fn PageLayout(
+    /// The page's name. Drawn only for a screen reader: the appbar carries the
+    /// wordmark and the regions below are `h2`, so without this they hang from
+    /// nothing and heading navigation has no top.
+    #[prop(into)]
+    heading: String,
     /// Appbar controls, pushed to the right — on the main page, Refresh and Settings
     /// as labelled `Button`s. A slot rather than named props, because the appbar has
     /// no opinion about which page needs which controls.
@@ -58,6 +63,7 @@ pub fn PageLayout(
         // `color-scheme` keys on: `qui-v2` marks a READER who opted in, and that
         // reader still visits v1's pages.
         <div class=style::root data-v2-page>
+            <h1 data-sr-only>{heading}</h1>
             // `header` and `main` rather than divs: they are the two landmarks a
             // screen reader offers to skip between, and they cost nothing.
             <header class=style::appbar>
@@ -113,7 +119,7 @@ mod tests {
     /// format is checked where assets are, not here.
     #[wasm_bindgen_test]
     fn the_appbar_mark_is_the_asset_with_an_alpha_channel() {
-        let el = mount(|| view! { <PageLayout>"body"</PageLayout> });
+        let el = mount(|| view! { <PageLayout heading="Page">"body"</PageLayout> });
         let img = el
             .query_selector("header img")
             .unwrap()
@@ -132,10 +138,22 @@ mod tests {
     /// that lost it would put v1's ink on a dark canvas again.
     #[wasm_bindgen_test]
     fn the_frame_marks_itself_as_a_v2_surface() {
-        let el = mount(|| view! { <PageLayout>"body"</PageLayout> });
+        let el = mount(|| view! { <PageLayout heading="Page">"body"</PageLayout> });
         assert!(
             el.query_selector("[data-v2-page]").unwrap().is_some(),
             "the v2 frame has to name itself"
         );
+    }
+    /// One `h1`, and only a screen reader sees it: the appbar carries the wordmark,
+    /// so a visible one would be a second title.
+    #[wasm_bindgen_test]
+    fn the_page_has_exactly_one_top_level_heading() {
+        let el = mount(|| view! { <PageLayout heading="QuiltSync">"body"</PageLayout> });
+        let headings = el.query_selector_all("h1").unwrap();
+        assert_eq!(headings.length(), 1);
+        let h1 = headings.get(0).unwrap();
+        let h1: web_sys::Element = h1.dyn_into().unwrap();
+        assert_eq!(h1.text_content().as_deref(), Some("QuiltSync"));
+        assert!(h1.has_attribute("data-sr-only"), "and it is not drawn");
     }
 }

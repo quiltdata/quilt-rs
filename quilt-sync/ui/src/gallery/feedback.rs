@@ -144,6 +144,7 @@ pub fn BannerScene() -> impl IntoView {
                   the signal."
             >
             <PageLayout
+                heading="QuiltSync"
                 actions=view! {
                     <IconButton icon=icons::gear() aria_label="Settings" on_click=|_| () />
                 }

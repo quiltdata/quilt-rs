@@ -10,6 +10,7 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
+use super::super::main_page::list_class;
 use super::accounts::sign_in_href;
 use crate::commands::AccountHostData;
 use crate::commands::MainPagePackageData;
@@ -285,6 +286,53 @@ fn precedence(state: &PackageState) -> u8 {
         PackageState::RoleDenied { .. } => 8,
         PackageState::Latest => unreachable!("Latest never enters either collection"),
     }
+}
+
+/// One shared cause and, when it is open, the packages it speaks for.
+fn cause_item(
+    text: String,
+    action: &CauseAction,
+    members: Vec<String>,
+    expanders: StoredValue<HashMap<String, RwSignal<bool>>>,
+    owner: &Owner,
+    navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
+    retry: Callback<Vec<String>>,
+) -> AnyView {
+    // Looked up, not built: the map outlives this render, so a group the user opened
+    // stays open across every settle that follows.
+    let expanded = expanders
+        .with_value(|map| map.get(&text).copied())
+        .unwrap_or_else(|| {
+            let signal = owner.with(|| RwSignal::new(false));
+            expanders.update_value(|map| {
+                map.insert(text.clone(), signal);
+            });
+            signal
+        });
+    let member_count = members.len();
+    let trailing = cause_trailing(action, &members, navigate, retry);
+    view! {
+        <li>
+            <CauseRow text=text count=member_count expanded=expanded trailing=trailing />
+            // The packages a cause speaks for are a list inside its own item, not
+            // siblings of it.
+            <Show when=move || expanded.get()>
+                <ul class=list_class() role="list">
+                    {members
+                        .iter()
+                        .map(|namespace| {
+                            view! {
+                                <li>
+                                    <QueueRow namespace=namespace.clone() sub=true />
+                                </li>
+                            }
+                        })
+                        .collect_view()}
+                </ul>
+            </Show>
+        </li>
+    }
+    .into_any()
 }
 
 /// One package's row: its words, its detail if it has one, and its button if the
@@ -564,9 +612,9 @@ pub fn QueueRegion(
             view! {
             // One wrapper child, so `Card`'s between-children hairline does not
             // fire: a queue is a list of decisions, and dividing every row would
-            // make it read as a table.
+            // make it read as a table. A `ul`, because it is also a list of them.
             <Card title="Needs your attention" count=count>
-                <div>
+                <ul class=list_class() role="list">
                     // Keyed, not `Vec`'s positional diff. `derive_queue` sorts
                     // by precedence, so one package settling into a higher rank
                     // inserts at the top and shifts every row below it — and an
@@ -578,52 +626,31 @@ pub fn QueueRegion(
                         each=move || items.get()
                         key=QueueItem::key
                         children=move |item| match item {
-                            QueueItem::Cause { text, action, members } => {
-                                // Looked up, not built: the map outlives this
-                                // render, so a group the user opened stays open
-                                // across every settle that follows.
-                                let expanded = expanders
-                                    .with_value(|map| map.get(&text).copied())
-                                    .unwrap_or_else(|| {
-                                        let signal = owner.with(|| RwSignal::new(false));
-                                        expanders
-                                            .update_value(|map| {
-                                                map.insert(text.clone(), signal);
-                                            });
-                                        signal
-                                    });
-                                let member_count = members.len();
-                                let trailing =
-                                    cause_trailing(&action, &members, navigate.clone(), retry);
+                            QueueItem::Cause { text, action, members } => cause_item(
+                                text,
+                                &action,
+                                members,
+                                expanders,
+                                &owner,
+                                navigate.clone(),
+                                retry,
+                            ),
+                            QueueItem::Package { namespace, state } => {
                                 view! {
-                                    <CauseRow
-                                        text=text
-                                        count=member_count
-                                        expanded=expanded
-                                        trailing=trailing
-                                    />
-                                    <Show when=move || expanded.get()>
-                                        {members
-                                            .iter()
-                                            .map(|namespace| {
-                                                view! { <QueueRow namespace=namespace.clone() sub=true /> }
-                                            })
-                                            .collect_view()}
-                                    </Show>
+                                    <li>
+                                        {package_row(
+                                            &namespace,
+                                            &state,
+                                            pause_messages,
+                                            navigate.clone(),
+                                        )}
+                                    </li>
                                 }
                                     .into_any()
                             }
-                            QueueItem::Package { namespace, state } => {
-                                package_row(
-                                    &namespace,
-                                    &state,
-                                    pause_messages,
-                                    navigate.clone(),
-                                )
-                            }
                         }
                     />
-                    </div>
+                    </ul>
                 </Card>
             }
             .into_any()
@@ -2067,6 +2094,29 @@ mod tests {
         assert!(
             el.text_content().unwrap().contains("a/one"),
             "a watcher reload must not close what the reader opened"
+        );
+    }
+    /// Nineteen things needing a decision is a list, and was announced as a run of
+    /// anonymous divs. A cause owns the packages it speaks for, so they are a list
+    /// inside its item rather than siblings of it.
+    #[wasm_bindgen_test]
+    async fn the_queue_announces_itself_as_a_list() {
+        let el = mount_region(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            Signal::stored(false),
+        );
+        assert!(
+            el.query_selector("ul > li").unwrap().is_some(),
+            "the queue's items are list items"
+        );
+
+        click(&expander(&el));
+        leptos::task::tick().await;
+
+        assert!(
+            el.query_selector("li ul > li").unwrap().is_some(),
+            "and a cause's packages are a list within its own item"
         );
     }
 }

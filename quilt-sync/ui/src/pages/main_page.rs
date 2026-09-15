@@ -401,9 +401,21 @@ fn PackageListRow(
 /// chrome's `.g-rows` is not shipped to the app bundle at all (`app.scss`
 /// excludes it). Split out from `MainPage` so it can be tested without a
 /// Tauri host.
+/// The class a run of rows carries, for the feed's list as well as this one — it has
+/// no stylesheet of its own and the rule is the page's.
+pub(super) fn rows_class() -> &'static str {
+    style::rows
+}
+
+/// The class a list with no dividing rule carries — the queue's items, and the
+/// packages an expanded cause reveals.
+pub(super) fn list_class() -> &'static str {
+    style::list
+}
+
 #[component]
 fn PackageList(packages: Vec<ListRowData>, store: PackageStore) -> impl IntoView {
-    packages
+    let rows = packages
         .into_iter()
         .filter_map(|row_data| {
             // A namespace the store was not seeded with cannot happen from one
@@ -412,14 +424,17 @@ fn PackageList(packages: Vec<ListRowData>, store: PackageStore) -> impl IntoView
             // either way: it counts the calls the resolve fired, not the rows.
             let row = store.row(&row_data.namespace)?;
             Some(view! {
-                <PackageListRow
-                    namespace=row_data.namespace
-                    row=row
-                    changed_at=row_data.changed_at
-                />
+                <li>
+                    <PackageListRow
+                        namespace=row_data.namespace
+                        row=row
+                        changed_at=row_data.changed_at
+                    />
+                </li>
             })
         })
-        .collect_view()
+        .collect_view();
+    view! { <ul class=style::rows role="list">{rows}</ul> }
 }
 
 /// The one cause every row in this group shares, or `None`.
@@ -924,7 +939,7 @@ fn MainPageRegions(
                                     // time the reader comes back to the view.
                                     let rows = rows.clone();
                                     view! {
-                                        <Card>
+                                        <Card label="Packages">
                                             // A search/group/sort re-arrangement, downstream
                                             // of both the seed and the resolve's call
                                             // loop above: this closure reads `query`,
@@ -1183,7 +1198,7 @@ pub fn MainPage() -> impl IntoView {
     end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
 
     view! {
-        <PageLayout actions=view! {
+        <PageLayout heading="QuiltSync" actions=view! {
             {refresh_button(reload, refreshing)}
             // The only way back to Settings from here. `/` redirects straight back to
             // this page while the experiment is on, so the logo is not an escape.
