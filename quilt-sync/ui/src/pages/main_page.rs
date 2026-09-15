@@ -1090,12 +1090,54 @@ fn MainPageRegions(
     }
 }
 
+/// The appbar's Refresh. `loading` spins it and disables it, so a second press
+/// cannot send a second read.
+///
+/// Separate from `MainPage` so it mounts without a Tauri host.
+fn refresh_button(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
+    view! {
+        <Button
+            leading_visual=icons::sync()
+            loading=refreshing
+            on_click=move |_| {
+                refreshing.set(true);
+                reload.notify();
+            }
+        >
+            "Refresh"
+        </Button>
+    }
+    .into_any()
+}
+
+/// Clears `refreshing` when `ready` goes true.
+///
+/// `ready` means no read is outstanding, never "both resources hold a value": a
+/// refetching `LocalResource` keeps its previous value until the new one lands, so
+/// that second question is true for the whole of a refresh.
+fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
+    Effect::new(move |_| {
+        if ready.get() {
+            refreshing.set(false);
+        }
+    });
+}
+
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
+    // Light-phase reads still out, counted as the heavy phase counts its own
+    // (`PackageStore::in_flight`). The heavy phase reports itself by rows settling,
+    // so the spin covers the light phase alone.
+    let outstanding = RwSignal::new(0usize);
     let packages = LocalResource::new(move || {
         reload.track();
-        async move { commands::get_main_page_packages().await }
+        async move {
+            outstanding.update(|n| *n += 1);
+            let answer = commands::get_main_page_packages().await;
+            outstanding.update(|n| *n = n.saturating_sub(1));
+            answer
+        }
     });
     // Held here rather than inside the Accounts card, which is where it used to
     // live: the queue joins against these same host facts (§4.3, R3), and a second
@@ -1109,15 +1151,20 @@ pub fn MainPage() -> impl IntoView {
     // fetcher, which the regression routes around (qhq-8mgw.38).
     let accounts = LocalResource::new(move || {
         reload.track();
-        commands::get_main_page_accounts()
+        async move {
+            outstanding.update(|n| *n += 1);
+            let answer = commands::get_main_page_accounts().await;
+            outstanding.update(|n| *n = n.saturating_sub(1));
+            answer
+        }
     });
     let navigate = use_navigate();
+    let refreshing = RwSignal::new(false);
+    end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
 
     view! {
         <PageLayout actions=view! {
-            <Button leading_visual=icons::sync() on_click=move |_| reload.notify()>
-                "Refresh"
-            </Button>
+            {refresh_button(reload, refreshing)}
             // The only way back to Settings from here. `/` redirects straight back to
             // this page while the experiment is on, so the logo is not an escape.
             <Button
@@ -4011,6 +4058,92 @@ mod tests {
         assert!(
             el.query_selector("[class*=placeholder]").unwrap().is_none(),
             "the placeholder must not survive the answer"
+        );
+    }
+    /// `aria-busy` and `disabled` on the element rather than the signal: those are
+    /// what `Button`'s `loading` produces, so an unwired prop reddens this.
+    #[wasm_bindgen_test]
+    async fn refresh_reports_itself_busy_the_moment_it_is_pressed() {
+        let reload = Trigger::new();
+        let refreshing = RwSignal::new(false);
+        let el = mount(move || refresh_button(reload, refreshing));
+
+        let button: web_sys::HtmlElement = el
+            .query_selector("button")
+            .unwrap()
+            .expect("the Refresh button")
+            .dyn_into()
+            .unwrap();
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("false"),
+            "at rest it is not busy"
+        );
+
+        button.click();
+        leptos::task::tick().await;
+
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("true"),
+            "a press that moves nothing on screen has to say so itself"
+        );
+        assert!(
+            button.has_attribute("disabled"),
+            "and a second press must not send a second read"
+        );
+    }
+
+    /// The path a refresh from a loaded page takes. Both resources read as present
+    /// throughout one, so only the count tells one answer from both.
+    #[wasm_bindgen_test]
+    async fn a_refresh_from_a_loaded_page_spins_until_the_last_read_answers() {
+        let outstanding = RwSignal::new(0usize);
+        let refreshing = RwSignal::new(false);
+        end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
+        leptos::task::tick().await;
+
+        // The press, and the two reads it starts.
+        refreshing.set(true);
+        outstanding.set(2);
+        leptos::task::tick().await;
+        assert!(refreshing.get_untracked(), "both reads are still out");
+
+        outstanding.set(1);
+        leptos::task::tick().await;
+        assert!(
+            refreshing.get_untracked(),
+            "one of two answering is not the end of the press"
+        );
+
+        outstanding.set(0);
+        leptos::task::tick().await;
+        assert!(
+            !refreshing.get_untracked(),
+            "the last read answered, so the press is finished"
+        );
+    }
+
+    /// The ending rule alone. A version that cleared unconditionally passes the
+    /// second assertion and fails the first.
+    #[wasm_bindgen_test]
+    async fn the_spin_ends_when_the_light_phase_answers_and_not_before() {
+        let refreshing = RwSignal::new(true);
+        let ready = RwSignal::new(false);
+        end_spin_when_ready(refreshing, ready.into());
+        leptos::task::tick().await;
+
+        assert!(
+            refreshing.get_untracked(),
+            "still reading: the spinner stays"
+        );
+
+        ready.set(true);
+        leptos::task::tick().await;
+
+        assert!(
+            !refreshing.get_untracked(),
+            "the light phase answered, so the press is finished"
         );
     }
 }
