@@ -9,6 +9,22 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.31.2] - 2026-09-15
+
+### Fixed
+
+- `quilt pull` can be retried after an interruption — a dropped connection, an expired credential, a kill, power loss. The apply deleted each path it was about to update before re-fetching it, so an interruption lost those paths from the working tree and from tracking at once, and every retry read that gap as a conflict and refused. A pull now fetches and stages the whole update before it writes anything into the working tree (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- `quilt pull` no longer disturbs a process that has a package file open. Each file is staged and renamed into place, so a reader sees one revision's bytes or the other's and never a prefix of either; a process with the file memory-mapped — ordinary for HDF5, Zarr, Arrow and `numpy` `mmap_mode` — used to die on `SIGBUS` (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- `quilt pull` no longer reports a conflict on a locally edited file whose content is already byte-identical to the incoming revision (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
+### Security
+
+- The prebuilt binaries take rustls 0.23.45 for [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), where TLS 1.3 handshake messages were accepted across encryption level boundaries. It arrives transitively through the AWS SDK's TLS stack; no manifest here selects it (<https://github.com/quiltdata/quilt-rs/pull/923>)
+
+### quilt-rs
+
+- Updated [from v0.38.0 to v0.39.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.38.0...quilt-rs/v0.39.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.31.1] - 2026-09-11
 
 ### quilt-rs
