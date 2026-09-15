@@ -94,7 +94,7 @@ pub fn RecentFilesRegion(
                             let count = group_files.len();
                             view! {
                                 <GroupHeading title=namespace count=count />
-                                <ul class=rows_class()>
+                                <ul class=rows_class() role="list">
                                     {group_files.iter().map(file_row).collect_view()}
                                 </ul>
                             }
@@ -102,7 +102,7 @@ pub fn RecentFilesRegion(
                         .collect_view()
                         .into_any()
                 } else {
-                    view! { <ul class=rows_class()>{visible.iter().map(file_row).collect_view()}</ul> }
+                    view! { <ul class=rows_class() role="list">{visible.iter().map(file_row).collect_view()}</ul> }
                         .into_any()
                 }
             }}

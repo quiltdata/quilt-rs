@@ -73,6 +73,8 @@
  * The hairline above the run comes from `Card`'s `.body > * + *`, exactly as it used
  * to come above the first row; the one between rows moves here, because the rows are
  * no longer that card's direct children. */
+/* `list-style: none` is enough for WebKit to drop the list semantics with it,
+ * so every one of these carries an explicit `role="list"`. */
 .rows {
   list-style: none;
   margin: 0;

@@ -76,7 +76,7 @@ pub fn Card(
                     }
                 })}
             {if list {
-                view! { <ul class=style::body>{children()}</ul> }.into_any()
+                view! { <ul class=style::body role="list">{children()}</ul> }.into_any()
             } else {
                 view! { <div class=style::body>{children()}</div> }.into_any()
             }}
@@ -154,6 +154,14 @@ mod tests {
     #[wasm_bindgen_test]
     fn a_list_card_holds_its_rows_in_a_list() {
         let el = mount(|| view! { <Card list=true><li>"one"</li></Card> });
-        assert!(el.query_selector("ul > li").unwrap().is_some());
+        let list = el.query_selector("ul > li").unwrap().expect("a list item");
+        assert_eq!(
+            list.parent_element()
+                .unwrap()
+                .get_attribute("role")
+                .as_deref(),
+            Some("list"),
+            "WebKit drops the semantics with `list-style: none`, so it is stated"
+        );
     }
 }
