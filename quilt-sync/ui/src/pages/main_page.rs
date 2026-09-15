@@ -105,19 +105,22 @@ const SORT_NAME: &str = "Name";
 /// handled (`MainPage`'s `Err` arm below), not here: this is a view function,
 /// and view functions can re-run on every re-render, which would re-log the
 /// same failure each time.
-fn render_fetch_error(reload: Trigger) -> impl IntoView {
-    view! {
-        <p>{FETCH_ERROR_WORDS}</p>
-        {retry_button(reload)}
-    }
+fn render_fetch_error(retry: Trigger) -> impl IntoView {
+    fetch_error_body(FETCH_ERROR_WORDS, retry)
 }
 
-/// `Try again`, the one affordance a failed read can offer. The same words the
-/// queue's unchecked cause already uses, and the same shape: notify the trigger the
-/// read is built on and let the resource re-run.
-fn retry_button(reload: Trigger) -> AnyView {
+/// The sentence and its retry as ONE child of the card: `Card` draws a hairline
+/// between any two of its children, and a rule between a failure and the button that
+/// answers it would read as two unrelated things.
+///
+/// `retry` is the read's own trigger, never the page's — a card that could not read
+/// asks for its own read again, not for everything.
+fn fetch_error_body(words: &'static str, retry: Trigger) -> AnyView {
     view! {
-        <Button on_click=move |_| reload.notify()>"Try again"</Button>
+        <div class=style::card_error>
+            <p>{words}</p>
+            <Button on_click=move |_| retry.notify()>"Try again"</Button>
+        </div>
     }
     .into_any()
 }
@@ -127,17 +130,9 @@ fn retry_button(reload: Trigger) -> AnyView {
 pub(super) fn fetch_error_card(
     title: &'static str,
     words: &'static str,
-    reload: Trigger,
+    retry: Trigger,
 ) -> AnyView {
-    view! {
-        <Card title=title>
-            <div class=style::card_error>
-                <p>{words}</p>
-                {retry_button(reload)}
-            </div>
-        </Card>
-    }
-    .into_any()
+    view! { <Card title=title>{fetch_error_body(words, retry)}</Card> }.into_any()
 }
 
 /// The feed's failure branch. Same shape and same reasoning as
@@ -145,11 +140,8 @@ pub(super) fn fetch_error_card(
 /// backend's error text is logged once where the fetch result is handled — not
 /// here, because a view function can re-run on every re-render and would re-log
 /// the same failure each time.
-fn render_files_fetch_error(reload: Trigger) -> impl IntoView {
-    view! {
-        <p>{FILES_FETCH_ERROR_WORDS}</p>
-        {retry_button(reload)}
-    }
+fn render_files_fetch_error(retry: Trigger) -> impl IntoView {
+    fetch_error_body(FILES_FETCH_ERROR_WORDS, retry)
 }
 
 /// A row's live state: the light phase's guess, replaced in place by the heavy
@@ -606,7 +598,7 @@ fn files_view(
     recent_files: LocalResource<Result<MainPageRecentFilesData, String>>,
     query: RwSignal<String>,
     group_files_by: RwSignal<String>,
-    reload: Trigger,
+    retry: Trigger,
 ) -> AnyView {
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
@@ -639,7 +631,7 @@ fn files_view(
                         web_sys::console::error_1(
                             &format!("get_main_page_recent_files failed: {err}").into(),
                         );
-                        view! { <Card>{render_files_fetch_error(reload)}</Card> }.into_any()
+                        view! { <Card>{render_files_fetch_error(retry)}</Card> }.into_any()
                     }
                 }
             })}
@@ -701,6 +693,11 @@ fn MainPageRegions(
     accounts: LocalResource<Result<MainPageAccountsData, String>>,
     /// The page's reload trigger, which every resource here tracks.
     reload: Trigger,
+    /// Each read's own retry, for the failure state that offers one. Optional
+    /// because a test that never fails a read never presses one.
+    #[prop(optional)]
+    packages_retry: Trigger,
+    #[prop(optional)] accounts_retry: Trigger,
     /// Handed the [`PackageStore`] the moment the page seeds one, so a test can
     /// drive a settle the way the heavy phase would. Read-only and one-shot: the
     /// page still owns the store and still seeds it from its own payload, so a
@@ -774,8 +771,10 @@ fn MainPageRegions(
     // is the guard *inside* the future, not the resource's laziness, that keeps
     // the command from being invoked on a page that never leaves Packages.
     // `reload` is tracked too, or Refresh would leave a stale feed on screen.
+    let files_retry = Trigger::new();
     let recent_files = LocalResource::new(move || {
         reload.track();
+        files_retry.track();
         let wanted = files_wanted.get();
         async move {
             if !wanted {
@@ -808,7 +807,7 @@ fn MainPageRegions(
                             web_sys::console::error_1(
                                 &format!("get_main_page_accounts failed: {err}").into(),
                             );
-                            fetch_error_card("Accounts", ACCOUNTS_ERROR_WORDS, reload)
+                            fetch_error_card("Accounts", ACCOUNTS_ERROR_WORDS, accounts_retry)
                         }
                     }
                 })}
@@ -1121,7 +1120,7 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query, group_files_by, reload)}
+                                {files_view(recent_files, query, group_files_by, files_retry)}
                             </Show>
                             </div>
                         }
@@ -1154,10 +1153,10 @@ fn MainPageRegions(
                                 <Show
                                     when=move || view_selected.get() == FILES_VIEW
                                     fallback=move || {
-                                        view! { <Card>{render_fetch_error(reload)}</Card> }
+                                        view! { <Card>{render_fetch_error(packages_retry)}</Card> }
                                     }
                                 >
-                                    {files_view(recent_files, query, group_files_by, reload)}
+                                    {files_view(recent_files, query, group_files_by, files_retry)}
                                 </Show>
                             </div>
                         }
@@ -1209,8 +1208,14 @@ pub fn MainPage() -> impl IntoView {
     // (`PackageStore::in_flight`). The heavy phase reports itself by rows settling,
     // so the spin covers the light phase alone.
     let outstanding = RwSignal::new(0usize);
+    // A retry trigger per read, beside the page's. `watcher_resource` already takes
+    // two for the same reason: a card that could not read asks for its own read
+    // again, and a page-wide trigger would refetch three things it did not ask about.
+    let packages_retry = Trigger::new();
+    let accounts_retry = Trigger::new();
     let packages = LocalResource::new(move || {
         reload.track();
+        packages_retry.track();
         async move {
             outstanding.update(|n| *n += 1);
             let answer = commands::get_main_page_packages().await;
@@ -1230,6 +1235,7 @@ pub fn MainPage() -> impl IntoView {
     // fetcher, which the regression routes around (qhq-8mgw.38).
     let accounts = LocalResource::new(move || {
         reload.track();
+        accounts_retry.track();
         async move {
             outstanding.update(|n| *n += 1);
             let answer = commands::get_main_page_accounts().await;
@@ -1255,7 +1261,13 @@ pub fn MainPage() -> impl IntoView {
         }
             .into_any()>
             <PackageStatusListener reload=reload />
-            <MainPageRegions packages=packages accounts=accounts reload=reload />
+            <MainPageRegions
+                packages=packages
+                accounts=accounts
+                reload=reload
+                packages_retry=packages_retry
+                accounts_retry=accounts_retry
+            />
         </PageLayout>
     }
 }
@@ -4234,6 +4246,79 @@ mod tests {
         assert!(
             !refreshing.get_untracked(),
             "the light phase answered, so the press is finished"
+        );
+    }
+    /// A card that could not read asks for its OWN read again. On the page-wide
+    /// trigger, one card's Try again refetched the packages, the feed and the
+    /// watcher as well — three reads the reader did not ask about.
+    ///
+    /// What this pins is which trigger the card's retry notifies: the resources are
+    /// the test's own, so wiring the card back to `reload` fails it. The page's own
+    /// resource definitions live a level up in `MainPage` and are not covered here.
+    #[wasm_bindgen_test]
+    async fn one_cards_retry_does_not_refetch_the_others() {
+        let package_reads = RwSignal::new(0);
+        let account_reads = RwSignal::new(0);
+        let reload = Trigger::new();
+        let packages_retry = Trigger::new();
+        let accounts_retry = Trigger::new();
+
+        let el = mount(move || {
+            let packages = LocalResource::new(move || {
+                reload.track();
+                packages_retry.track();
+                package_reads.update(|n| *n += 1);
+                async { Ok(two_packages_all_latest()) }
+            });
+            let accounts = LocalResource::new(move || {
+                reload.track();
+                accounts_retry.track();
+                account_reads.update(|n| *n += 1);
+                async { Err::<MainPageAccountsData, String>("nope".to_string()) }
+            });
+            view! {
+                <MainPageRegions
+                    packages=packages
+                    accounts=accounts
+                    reload=reload
+                    packages_retry=packages_retry
+                    accounts_retry=accounts_retry
+                />
+            }
+        });
+        sleep_ms(50).await;
+        let (packages_before, accounts_before) =
+            (package_reads.get_untracked(), account_reads.get_untracked());
+
+        // By card, not by position: the Autosync read has no Tauri host here either,
+        // so the strip holds two failed cards and two retries.
+        let cards = strip_of(&el).query_selector_all("section").unwrap();
+        let accounts_card: web_sys::Element = (0..cards.length())
+            .filter_map(|i| cards.get(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .find(|card| {
+                card.text_content()
+                    .is_some_and(|text| text.contains(ACCOUNTS_ERROR_WORDS))
+            })
+            .expect("the Accounts card, which failed");
+        let retry: web_sys::HtmlElement = accounts_card
+            .query_selector("button")
+            .unwrap()
+            .expect("its Try again")
+            .dyn_into()
+            .unwrap();
+        retry.click();
+        sleep_ms(200).await;
+
+        assert_eq!(
+            account_reads.get_untracked() - accounts_before,
+            1,
+            "the card that failed reads again"
+        );
+        assert_eq!(
+            package_reads.get_untracked(),
+            packages_before,
+            "and nothing else does"
         );
     }
 }
