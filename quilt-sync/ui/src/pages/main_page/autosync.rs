@@ -326,10 +326,14 @@ pub fn AutosyncCard(
                 match watcher.await {
                     Ok(data) => view! { <AutosyncBody data=data reload=reload /> }.into_any(),
                     Err(err) => {
+                        // The card still draws. Its own doc argued for rendering
+                        // nothing, on the grounds that a failed read asserts nothing —
+                        // but an absent card asserts something too, and the wrong
+                        // thing: that this machine has no autosync.
                         web_sys::console::error_1(
                             &format!("get_main_page_watcher failed: {err}").into(),
                         );
-                        ().into_any()
+                        super::fetch_error_card("Autosync", super::AUTOSYNC_ERROR_WORDS, reload)
                     }
                 }
             })}
@@ -704,5 +708,58 @@ mod tests {
         window().dispatch_event(&event).unwrap();
         sleep_ms(50).await;
         assert_eq!(fired.get_untracked() - before, 1);
+    }
+    /// A card that is not drawn says something, and the wrong thing: that this
+    /// machine has no autosync. It keeps its title and states the failure instead.
+    #[wasm_bindgen_test]
+    async fn a_failed_read_draws_the_card_and_says_so() {
+        let reload = Trigger::new();
+        let refresh = Trigger::new();
+        let el = mount(move || {
+            let watcher = watcher_resource(reload, refresh, || async {
+                Err::<MainPageWatcherData, String>("nope".to_string())
+            });
+            view! { <AutosyncCard reload=reload watcher=watcher /> }
+        });
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Autosync"), "the title stays: {text}");
+        assert!(text.contains("Could not load autosync."), "{text}");
+        assert!(text.contains("Try again"), "{text}");
+    }
+
+    /// The retry is the one affordance the failure offers, so it has to fetch. The
+    /// call count is its only observable.
+    #[wasm_bindgen_test]
+    async fn try_again_reads_again() {
+        let calls = RwSignal::new(0);
+        let reload = Trigger::new();
+        let refresh = Trigger::new();
+        let el = mount(move || {
+            let watcher = watcher_resource(reload, refresh, move || {
+                calls.update(|n| *n += 1);
+                async { Err::<MainPageWatcherData, String>("nope".to_string()) }
+            });
+            view! { <AutosyncCard reload=reload watcher=watcher /> }
+        });
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+        assert_eq!(before, 1, "the first read, which failed");
+
+        let button: web_sys::HtmlElement = el
+            .query_selector("button")
+            .unwrap()
+            .expect("Try again")
+            .dyn_into()
+            .unwrap();
+        button.click();
+        sleep_ms(200).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "Try again has to read again, exactly once"
+        );
     }
 }

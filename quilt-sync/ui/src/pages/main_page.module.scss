@@ -92,3 +92,17 @@
   margin: 0;
   padding: 0;
 }
+
+/* A strip card that could not read what it draws: the sentence, then the one thing
+ * that can be done about it. */
+.card_error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--q-space-3);
+}
+
+.card_error p {
+  margin: 0;
+  max-width: 70ch;
+}
