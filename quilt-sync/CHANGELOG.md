@@ -9,22 +9,40 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.2-alpha1] - 2026-09-14
-
-### Changed
-
-- On the new main page the buttons, drop-downs, search box and view switch now line up: they share one height, where before each was its own size and the toolbar read as a ragged row. Rows in **Needs your attention**, the recent-files list and the top bar grew a few pixels to match (<https://github.com/quiltdata/quilt-rs/pull/912>)
-- On the new main page, the primary button, the ticked checkboxes and the countdown ring use the same navy as the top bar. They were a second navy, close enough to look like the same colour and different enough to look like a mistake (<https://github.com/quiltdata/quilt-rs/pull/916>)
-- On Linux, the new main page uses the desktop's own font instead of Roboto, and no longer flashes from one to the other while it loads. macOS and Windows already used their system font (<https://github.com/quiltdata/quilt-rs/pull/918>)
-- Refresh and Settings in the new main page's top bar now show their names beside their icons, as the current page's toolbar does (<https://github.com/quiltdata/quilt-rs/pull/919>)
-- The Settings button's icon on the new main page is now a gear that reads as one; the old drawing looked like a sun at that size (<https://github.com/quiltdata/quilt-rs/pull/920>)
+## [v0.22.2] - 2026-09-15
 
 ### Fixed
 
-- Keyboard focus is visible on every control of the new main page. The focus ring measured under the 3:1 contrast WCAG asks of a focus indicator against a white card in the light theme and against a card in the dark theme, and against the top bar in both; it now clears 3:1 everywhere (<https://github.com/quiltdata/quilt-rs/pull/913>)
-- In the recent-files list, a file's age is no longer cut short to "23 hours a…" or "2 months a…"; the column holds every phrase whole. Files older than a year now read "1 year ago" or "3 years ago" instead of a growing count of months (<https://github.com/quiltdata/quilt-rs/pull/914>)
-- The close button on a banner and the clear button in the search box are easier to hit: both are now 24px squares, the minimum the rest of the page's controls already met (<https://github.com/quiltdata/quilt-rs/pull/916>)
-- Text fields, the search box, drop-downs and the view switch on the new main page have a clearer edge, so an empty field is visible as a field on a white card. Buttons and cards are unchanged (<https://github.com/quiltdata/quilt-rs/pull/924>)
+- A pull that is interrupted — a dropped connection, an expired credential, a quit, power loss — can now be retried. It used to leave the package stuck for good: the files being updated were deleted before they were fetched again, so an interruption lost them from your folder and from tracking at once, and every retry read that gap as a conflict between your delete and the remote's change and refused. A pull now downloads and stages the whole update before it writes anything into your folder, so an interruption before the writes — which is where nearly all of the time goes — leaves the folder untouched and the retry is an ordinary update (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- A pull no longer disturbs a program that has a package file open. Each file is now written aside and moved into place, so a reader sees one revision's bytes or the other's and never a half-written file; a program holding the file memory-mapped, which is ordinary for HDF5, Zarr, Arrow and `numpy` `mmap_mode`, used to be killed outright by a pull arriving mid-analysis (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- A pull no longer reports a conflict on a file you have edited to exactly what the incoming revision holds. The two were compared by hash without accounting for the algorithm each was computed in, so byte-identical content could compare as different and block a pull that had nothing to resolve (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
+### Changed
+
+- The new main page (Settings → Experimental → **New main page**, still off by default) is polished throughout. The current page is unchanged by all of it:
+  - A paused package now says why it paused, under its row in **Needs your attention**; it used to say only `Sync paused` (<https://github.com/quiltdata/quilt-rs/pull/933>)
+  - Refresh shows that it is working, and takes no second press until it is done (<https://github.com/quiltdata/quilt-rs/pull/929>)
+  - Anything cut short to fit — a package name, a file path, a host, a group heading — shows its full value on hover (<https://github.com/quiltdata/quilt-rs/pull/930>)
+  - Buttons, drop-downs, the search box and the view switch share one height, where each used to be its own size (<https://github.com/quiltdata/quilt-rs/pull/912>)
+  - The primary button, the ticked checkboxes and the countdown ring use the top bar's navy instead of a second, nearly identical one (<https://github.com/quiltdata/quilt-rs/pull/916>)
+  - Refresh and Settings show their names beside their icons, as the current page's toolbar does (<https://github.com/quiltdata/quilt-rs/pull/919>)
+  - The Settings icon is a gear that reads as one; the old drawing looked like a sun at that size (<https://github.com/quiltdata/quilt-rs/pull/920>)
+  - Linux uses the desktop's own font instead of Roboto, and no longer flashes from one to the other while it loads (<https://github.com/quiltdata/quilt-rs/pull/918>)
+  - Native drop-down popups and scrollbars follow the light or dark theme; the current page stays light whatever the system is set to (<https://github.com/quiltdata/quilt-rs/pull/927>, <https://github.com/quiltdata/quilt-rs/pull/934>)
+  - Text fields, the search box, drop-downs and the view switch have a clearer edge, so an empty field is visible as a field on a white card (<https://github.com/quiltdata/quilt-rs/pull/924>)
+  - Keyboard focus is visible on every control: the focus ring clears the 3:1 contrast WCAG asks of it, in both themes (<https://github.com/quiltdata/quilt-rs/pull/913>)
+  - A file's age is no longer cut short to "23 hours a…", and anything older than a year reads "1 year ago" rather than a growing count of months (<https://github.com/quiltdata/quilt-rs/pull/914>)
+  - The close button on a banner and the clear button in the search box are 24px squares, the minimum the other controls already met (<https://github.com/quiltdata/quilt-rs/pull/916>)
+  - A banner's message and a toggle's sublabel wrap at a readable measure instead of running the width of the window (<https://github.com/quiltdata/quilt-rs/pull/931>)
+- Under the hood, the components the new main page is built from are now recorded as a design system and browsable on their own, which is the groundwork the page is assembled from (<https://github.com/quiltdata/quilt-rs/pull/915>, <https://github.com/quiltdata/quilt-rs/pull/917>, <https://github.com/quiltdata/quilt-rs/pull/925>, <https://github.com/quiltdata/quilt-rs/pull/926>, <https://github.com/quiltdata/quilt-rs/pull/932>)
+
+### Security
+
+- QuiltSync takes rustls 0.23.45 for [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), where TLS 1.3 handshake messages were accepted across encryption level boundaries. It arrives transitively through the AWS SDK's TLS stack; nothing in QuiltSync selects it (<https://github.com/quiltdata/quilt-rs/pull/923>)
+
+### quilt-rs
+
+- Updated [from v0.38.0 to v0.39.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.38.0...quilt-rs/v0.39.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.1] - 2026-09-11
 
