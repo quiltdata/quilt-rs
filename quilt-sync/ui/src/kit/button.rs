@@ -198,6 +198,29 @@ mod tests {
         );
     }
 
+    /// The slot is only one slot because the stylesheet hides the icon while loading.
+    ///
+    /// Read from the source, not from a computed style: no stylesheet is loaded in the
+    /// test harness, so `getComputedStyle` there returns browser defaults. Same reason
+    /// the kit's measure test reads its SCSS.
+    ///
+    /// The sizes are deliberately not asserted equal. At the large size both are 16px,
+    /// but at the medium one the icon is 14px against the spinner's 12px, so the button
+    /// narrows by 2px — stated in `DESIGN.md` rather than pinned as if it were exact.
+    #[test]
+    fn the_stylesheet_is_what_hides_the_icon_while_loading() {
+        const SHEET: &str = include_str!("button.module.scss");
+        let rule = SHEET
+            .split(".loading .icon {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("a rule hiding the icon while loading");
+        assert!(
+            rule.contains("display: none"),
+            "without it the icon and the spinner both draw: {rule}"
+        );
+    }
+
     /// Inside a form the default would submit it.
     #[wasm_bindgen_test]
     fn a_button_is_never_a_submit() {
