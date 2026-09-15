@@ -1,9 +1,14 @@
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::Res;
+use crate::checksum::refresh_hash;
+use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::InstalledPackageStatus;
 use crate::manifest::Manifest;
@@ -122,17 +127,126 @@ pub(crate) fn remote_additions(base: &Manifest, latest: &Manifest) -> Vec<PathBu
 
 /// Do the local and remote sides of a both-changed path reach the *same*
 /// result? Same content (or both removed) is not a conflict.
-fn same_resulting_content(local: &Change, remote: &RemoteChange) -> bool {
+fn same_resulting_content(local: &Change, remote: &RemoteChange, identical: bool) -> bool {
     match (local, remote) {
         (Change::Modified(row), RemoteChange::Modified(hash))
         // Both sides added the same path. Only `Change::Added` can pair with
         // `RemoteChange::Added`: a local add means the path has no `base` row,
         // and a remote add means the same, while `Modified`/`Removed` on either
         // side require one.
-        | (Change::Added(row), RemoteChange::Added(hash)) => &row.hash == hash,
+        // `identical` first: a digest comparison is only meaningful when both
+        // sides are in the same algorithm, and `identical_to_latest` has
+        // already settled the paths where they are not.
+        | (Change::Added(row), RemoteChange::Added(hash)) => identical || &row.hash == hash,
         (Change::Removed(_), RemoteChange::Removed) => true,
         _ => false,
     }
+}
+
+/// The paths [`identical_to_latest`] settled: locally changed, and already
+/// holding exactly what `latest` holds.
+///
+/// A newtype with a private field and no `Default`, so the only way to obtain
+/// one is to run the pass. That is the whole point of it. While this was a
+/// plain `BTreeSet`, passing an empty one silently restored the cross-algorithm
+/// comparison this module exists to fix — and every test in this file did
+/// exactly that until the change's verification went looking, which is as clear
+/// a demonstration as one could ask for that a convention is not enough here.
+#[derive(Debug)]
+pub struct Reconciled(BTreeSet<PathBuf>);
+
+impl Reconciled {
+    /// Whether the pass settled this path as already holding `latest`'s bytes.
+    #[must_use]
+    pub fn contains(&self, path: &Path) -> bool {
+        self.0.contains(path)
+    }
+
+    /// Whether the pass settled nothing — the ordinary case, where every
+    /// contested path's digests were already comparable.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// A reconciliation that was never run. Test-only, and named to say so: a
+    /// scenario with no cross-algorithm path reconciles to nothing anyway, and
+    /// spelling that out beats threading storage through tests that have no
+    /// working tree.
+    #[cfg(test)]
+    pub(crate) fn unreconciled() -> Self {
+        Self(BTreeSet::new())
+    }
+}
+
+/// The locally changed paths whose working file already holds *exactly* what
+/// `latest` holds, for the paths where comparing the two digests cannot answer
+/// that.
+///
+/// An [`ObjectHash`] is a multihash: it carries the algorithm that produced it,
+/// and two algorithms' digests of identical bytes are unequal. A package's rows
+/// can be in mixed algorithms — a changed file is hashed into the *host's*
+/// declared algorithm at status time, an untouched row keeps whatever wrote it,
+/// and `recommit` rehashes in bulk — so a local change and `latest`'s row for
+/// the same path routinely disagree on algorithm. Left to a plain `==`, a file
+/// byte-identical to `latest` reads as different content and blocks the pull.
+///
+/// This re-derives the answer the only way it can be derived: hash the working
+/// file **in `latest`'s row's own algorithm**, which is what `refresh_hash`
+/// does with a row — the same discipline the verify-before-uninstall pass in
+/// [`pull`](super::pull) uses against the base row. `Ok(None)` from it means
+/// the file already matches that row.
+///
+/// I/O only where the digests cannot be compared: a path whose algorithms
+/// already agree is left to [`classify_pull`]'s own comparison, so a package
+/// and host in step hash nothing here. Kept out of [`classify_pull`] so that
+/// stays pure and synchronous.
+///
+/// A working file that cannot be read is simply not reported identical: the
+/// path falls through to the digest comparison and, at worst, blocks the pull
+/// as it does today. Fail-safe in the same direction as the conflict rule.
+pub async fn identical_to_latest(
+    storage: &(impl Storage + Sync),
+    working_dir: &Path,
+    status: &InstalledPackageStatus,
+    base: &Manifest,
+    latest: &Manifest,
+) -> Res<Reconciled> {
+    let mut identical = BTreeSet::new();
+    for (path, change) in &status.changes {
+        let local_hash = match change {
+            Change::Modified(row) | Change::Added(row) => &row.hash,
+            // A local removal is compared against a remote removal, which needs
+            // no content at all.
+            Change::Removed(_) => continue,
+        };
+        let Some(latest_row) = latest.get_record(path) else {
+            continue;
+        };
+        // Only a path the remote also changed reaches the comparison at all —
+        // [`classify_pull`] carries every other local change forward untouched.
+        // Without this, a package whose rows are all in the other algorithm
+        // would re-hash every locally edited file on every pull for an answer
+        // nothing reads.
+        if base
+            .get_record(path)
+            .is_some_and(|base_row| base_row.hash == latest_row.hash)
+        {
+            continue;
+        }
+        if local_hash.algorithm() == latest_row.hash.algorithm() {
+            continue;
+        }
+        match refresh_hash(storage, &working_dir.join(path), latest_row.clone()).await {
+            Ok(None) => {
+                identical.insert(path.clone());
+            }
+            Ok(Some(_)) => {}
+            Err(err) if err.is_not_found() => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(Reconciled(identical))
 }
 
 /// Classify what a pull would do. Pure — no network, no I/O.
@@ -146,6 +260,7 @@ pub fn classify_pull(
     status: &InstalledPackageStatus,
     base: &Manifest,
     latest: &Manifest,
+    identical: &Reconciled,
 ) -> PullOutcome {
     // Same revision — identical manifests — is the only genuine "nothing to
     // pull". A newer revision that changed *only* the manifest header
@@ -170,7 +285,7 @@ pub fn classify_pull(
     for (path, change) in &status.changes {
         if let Some(remote_change) = delta.get(path) {
             // Changed on both sides: conflict unless the results agree.
-            if !same_resulting_content(change, remote_change) {
+            if !same_resulting_content(change, remote_change, identical.contains(path)) {
                 conflicts.push(path.clone());
             }
             // Same result → trivially resolved: not kept work, not a conflict.
@@ -205,7 +320,13 @@ mod tests {
     use super::*;
     use test_log::test;
 
+    use aws_sdk_s3::primitives::ByteStream;
     use multihash::Multihash;
+
+    use crate::checksum::calculate_hash;
+    use crate::io::remote::HostChecksums;
+    use crate::io::remote::HostConfig;
+    use crate::io::storage::mocks::MockStorage;
 
     use crate::Res;
     use crate::lineage::Change;
@@ -265,11 +386,258 @@ mod tests {
         InstalledPackageStatus::new(UpstreamState::Behind, changes)
     }
 
+    /// The incident's arm. The package's rows were written under one checksum
+    /// algorithm; this host declares the other, so a locally edited file is
+    /// hashed into the host's algorithm at status time. When that edit lands
+    /// *exactly* the content `latest` holds, the two digests describe the same
+    /// bytes and still compare unequal, because an `ObjectHash` carries its
+    /// algorithm. Today that reads as a conflict and blocks the pull.
+    #[test(tokio::test)]
+    async fn identical_edit_across_algorithms_is_not_a_conflict() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        // The working file holds precisely what `latest` holds.
+        let content = b"exactly the remote's new bytes";
+        storage
+            .write_byte_stream(working_dir.join(&path), ByteStream::from_static(content))
+            .await?;
+
+        // `latest`'s row for `a` is in CRC64 — whoever pushed it ran against a
+        // host declaring that algorithm.
+        let latest_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Crc64,
+                host: None,
+            },
+        )
+        .await?;
+        // This host declares SHA-256-chunked, so `verify_hash` produced the
+        // local change's row in that algorithm — same bytes, different digest.
+        let local_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Sha256Chunked,
+                host: None,
+            },
+        )
+        .await?;
+        assert_ne!(
+            local_row.hash, latest_row.hash,
+            "precondition: the two algorithms must disagree on the same bytes"
+        );
+
+        let base = manifest_of(vec![row("a", b"the old content")]);
+        let latest = manifest_of(vec![latest_row]);
+        let status = behind(ChangeSet::from([(
+            path.clone(),
+            Change::Modified(local_row),
+        )]));
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let out = classify_pull(&status, &base, &latest, &identical);
+
+        assert_eq!(
+            out,
+            PullOutcome::KeepsLocalChanges {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
+            },
+            "an edit landing latest's own content is trivially resolved, not a conflict"
+        );
+        Ok(())
+    }
+
+    /// Regression-free, through the pass rather than around it. Every other
+    /// conflict test hands `classify_pull` an empty identical-set, so none of
+    /// them would notice if `identical_to_latest` started reporting paths it
+    /// should not. A local *removal* against a remote modification is a true
+    /// conflict whatever the algorithms are, and the pass must not touch it:
+    /// there is no working file to hash, and no content that could agree.
+    #[test(tokio::test)]
+    async fn remove_vs_remote_modify_blocks_through_the_pass() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        // Locally removed: nothing on disk at all.
+        let base = manifest_of(vec![row("a", b"the old content")]);
+        let latest = manifest_of(vec![row("a", b"what the remote pushed")]);
+        let status = behind(ChangeSet::from([(
+            path.clone(),
+            Change::Removed(row("a", b"the old content")),
+        )]));
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        assert!(
+            identical.is_empty(),
+            "a removed path has no content to be identical to"
+        );
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![path]
+            }
+        );
+        Ok(())
+    }
+
+    /// The other rule the change did not mean to relax: both sides added the
+    /// same path with *different* content still blocks, including when their
+    /// algorithms differ — the case the pass exists for. Differing algorithms
+    /// are a reason to re-derive the comparison, never a reason to wave it
+    /// through.
+    #[test(tokio::test)]
+    async fn both_added_different_content_blocks_through_the_pass() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        storage
+            .write_byte_stream(
+                working_dir.join(&path),
+                ByteStream::from_static(b"what this copy added"),
+            )
+            .await?;
+        let local_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Sha256Chunked,
+                host: None,
+            },
+        )
+        .await?;
+
+        // `latest` added the same path with other content, under the other
+        // algorithm. No base row on either side: both sides *added*.
+        let other = PathBuf::from("other");
+        storage
+            .write_byte_stream(
+                working_dir.join(&other),
+                ByteStream::from_static(b"what the remote added"),
+            )
+            .await?;
+        let mut latest_row = calculate_hash(
+            &storage,
+            &working_dir.join(&other),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Crc64,
+                host: None,
+            },
+        )
+        .await?;
+        latest_row.logical_key = path.clone();
+
+        let base = manifest_of(vec![]);
+        let latest = manifest_of(vec![latest_row]);
+        let status = behind(ChangeSet::from([(path.clone(), Change::Added(local_row))]));
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        assert!(
+            identical.is_empty(),
+            "different bytes are not identical, whatever the algorithms say"
+        );
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![path]
+            }
+        );
+        Ok(())
+    }
+
+    /// The regression guard for the arm above: when the local edit is genuinely
+    /// different content, a cross-algorithm package must still block. The fix
+    /// may not turn every mismatched-algorithm path into a free pass.
+    #[test(tokio::test)]
+    async fn differing_edit_across_algorithms_still_blocks() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+
+        // The working file holds the user's own edit.
+        storage
+            .write_byte_stream(
+                working_dir.join(&path),
+                ByteStream::from_static(b"the user's own edit"),
+            )
+            .await?;
+        let local_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Sha256Chunked,
+                host: None,
+            },
+        )
+        .await?;
+
+        // `latest` holds different content again, hashed under the other
+        // algorithm.
+        let other = PathBuf::from("other");
+        storage
+            .write_byte_stream(
+                working_dir.join(&other),
+                ByteStream::from_static(b"what the remote actually pushed"),
+            )
+            .await?;
+        let mut latest_row = calculate_hash(
+            &storage,
+            &working_dir.join(&other),
+            &path,
+            &HostConfig {
+                checksums: HostChecksums::Crc64,
+                host: None,
+            },
+        )
+        .await?;
+        latest_row.logical_key = path.clone();
+
+        let base = manifest_of(vec![row("a", b"the old content")]);
+        let latest = manifest_of(vec![latest_row]);
+        let status = behind(ChangeSet::from([(
+            path.clone(),
+            Change::Modified(local_row),
+        )]));
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let out = classify_pull(&status, &base, &latest, &identical);
+
+        assert_eq!(
+            out,
+            PullOutcome::Blocked {
+                conflicts: vec![path]
+            },
+            "a real both-changed disagreement must still block"
+        );
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn clean_tree_is_clean_update() -> Res {
         let base = manifest_of(vec![row("a", b"1")]);
         let latest = manifest_of(vec![row("a", b"2")]); // remote changed "a"
-        let out = classify_pull(&behind(ChangeSet::default()), &base, &latest);
+        let out = classify_pull(
+            &behind(ChangeSet::default()),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(out, PullOutcome::CleanUpdate);
         Ok(())
     }
@@ -283,7 +651,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"x")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {
@@ -301,7 +674,12 @@ mod tests {
         let latest = manifest_of(vec![row("a", b"remote")]); // remote modified "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local"))); // local modified "a"
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -317,7 +695,12 @@ mod tests {
         let latest = manifest_of(vec![row("a", b"same")]);
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"same"))); // same content
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         // Trivially resolved: neither conflict nor kept work.
         assert_eq!(
             out,
@@ -336,7 +719,12 @@ mod tests {
         let latest = manifest_of(vec![row("a", b"2")]); // remote modified "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1"))); // local removed "a"
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -356,7 +744,12 @@ mod tests {
         let latest = manifest_of(vec![row("b", b"2")]); // remote removed "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Modified(row("a", b"local"))); // local modified "a"
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -372,7 +765,12 @@ mod tests {
         let latest = manifest_of(vec![row("b", b"2")]); // remote removed "a"
         let mut changes = ChangeSet::new();
         changes.insert(PathBuf::from("a"), Change::Removed(row("a", b"1"))); // local removed "a"
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {
@@ -397,7 +795,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"local")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::Blocked {
@@ -419,7 +822,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"same")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {
@@ -473,7 +881,12 @@ mod tests {
     async fn no_remote_change_is_up_to_date() -> Res {
         let base = manifest_of(vec![row("a", b"1")]);
         let latest = manifest_of(vec![row("a", b"1")]); // identical
-        let out = classify_pull(&behind(ChangeSet::default()), &base, &latest);
+        let out = classify_pull(
+            &behind(ChangeSet::default()),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(out, PullOutcome::UpToDate);
         Ok(())
     }
@@ -486,7 +899,12 @@ mod tests {
         let base = manifest_of(vec![row("a", b"1")]);
         let mut latest = manifest_of(vec![row("a", b"1")]);
         latest.header.message = Some("newer revision message".to_string());
-        let out = classify_pull(&behind(ChangeSet::default()), &base, &latest);
+        let out = classify_pull(
+            &behind(ChangeSet::default()),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(out, PullOutcome::CleanUpdate);
         Ok(())
     }
@@ -503,7 +921,12 @@ mod tests {
             PathBuf::from("new.txt"),
             Change::Added(row("new.txt", b"x")),
         );
-        let out = classify_pull(&behind(changes), &base, &latest);
+        let out = classify_pull(
+            &behind(changes),
+            &base,
+            &latest,
+            &Reconciled::unreconciled(),
+        );
         assert_eq!(
             out,
             PullOutcome::KeepsLocalChanges {

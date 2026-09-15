@@ -5760,6 +5760,7 @@ version = "0.31.1"
 dependencies = [
  "clap",
  "dirs 7.0.0",
+ "libc",
  "quilt-rs",
  "quilt-uri",
  "serde",
@@ -5775,7 +5776,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.38.0"
+version = "0.39.0-alpha1"
 dependencies = [
  "async-trait",
  "aws-config",

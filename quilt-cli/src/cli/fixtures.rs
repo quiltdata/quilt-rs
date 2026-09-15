@@ -94,6 +94,53 @@ pub mod packages {
         pub const R3_MESSAGE: &str = "r3: adds add/six.txt, modifies keep.txt";
     }
 
+    /// A package whose objects are large enough that a pull can be observed —
+    /// and interrupted — while it is still running. Everything else in here is
+    /// sized for classification and reporting, where a few small text files are
+    /// ideal and a timing window does not exist.
+    ///
+    /// Two objects of 24 MiB of random (so incompressible) bytes, both replaced
+    /// in r2, making a pull move ~48 MiB. Reachable with ambient `~/.aws`
+    /// credentials like the other live fixtures; the URIs carry no `&catalog=`.
+    pub mod large {
+        pub const NAMESPACE_STR: &str = "reference/large";
+
+        /// r1 — install this one to be behind.
+        pub const R1_URI: &str = "quilt+s3://udp-spec#package=reference/large@eedcbe821a3d1bb691f01866b70a55034c1fc073debd1aa906f7e381bba22827";
+
+        /// r2 — both objects replaced, so a pull from r1 refetches everything.
+        pub const R2_TOP_HASH: &str =
+            "38a8d7c2de5e00346afebc981e73a45b8e5b353f71d1ee9e010c6bfa34152049";
+
+        pub const PATHS: [&str; 2] = ["bulk-a.bin", "bulk-b.bin"];
+    }
+
+    /// A package whose object gets **smaller** in r2, which is what makes the
+    /// memory-mapping test deterministic rather than a race.
+    ///
+    /// Replacing a file by copying onto it truncates the destination first, so a
+    /// mapping of it is invalidated; if the replacement were the same size, the
+    /// window in which a read faults would last only as long as the copy. A file
+    /// that ends up shorter leaves the tail permanently past end-of-file, so the
+    /// fault is certain. Replacing by rename never invalidates the mapping at
+    /// all, whatever the sizes.
+    ///
+    /// 4 MiB down to 64 KiB, which is plenty of tail and costs the live suite
+    /// almost nothing.
+    pub mod shrinking {
+        pub const NAMESPACE_STR: &str = "reference/shrinking";
+
+        /// r1 — 4 MiB. Install this one and map it.
+        pub const R1_URI: &str = "quilt+s3://udp-spec#package=reference/shrinking@a445691b1a7740971e334235c3fbfe4975c3cce94bc3c6c712b37f16a0412cca";
+
+        /// r2 — the same path at 64 KiB.
+        pub const R2_TOP_HASH: &str =
+            "ba1e5279aea0cc3ae92b72eb5d32251542ab423b17e6956cbc71b5708bb1cf60";
+
+        pub const MAPPED: &str = "mapped.bin";
+        pub const R1_LEN: usize = 4 * 1024 * 1024;
+    }
+
     pub mod invalid {
         pub const URI: &str = "quilt+s3://some-nonsense";
     }

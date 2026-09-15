@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::collections::hash_map::RandomState;
+use std::path::Path;
 use std::path::PathBuf;
 
 use tokio_stream::StreamExt;
@@ -11,7 +12,9 @@ use url::Url;
 use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
+use crate::checksum::refresh_hash;
 use crate::error::ManifestError;
+use crate::error::PackageOpError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
@@ -36,17 +39,91 @@ async fn cache_immutable_object(
     storage.write_byte_stream(object_dest, stream.body).await
 }
 
-async fn create_mutable_copy(
+/// Copies an object out of the store into this apply's staging directory,
+/// returning where it landed. Nothing in the working tree moves.
+///
+/// Staged rather than copied straight onto the destination because a copy
+/// truncates the target and refills it: a kill mid-write would leave a tracked
+/// path holding neither revision — present, matching no manifest row, and
+/// readable by a retry only as a conflict.
+async fn stage_object(
     storage: &impl Storage,
-    immutable_source: &PathBuf,
-    mutable_target: &PathBuf,
+    immutable_source: &Path,
+    run_staging: &Path,
+) -> Res<PathBuf> {
+    // Unique per file: two files in one apply must never stage over each other.
+    let staged = run_staging.join(uuid::Uuid::new_v4().to_string());
+    storage.copy(&immutable_source, &staged).await?;
+    Ok(staged)
+}
+
+/// Moves a staged file onto its working-tree destination, atomically.
+///
+/// The rename is the only step that touches the working tree, and it is a
+/// metadata operation: the path holds the old bytes or the new ones, never a
+/// prefix of either. `.quilt/` and the working tree share the domain root, so
+/// this stays within one filesystem; a package directory mounted from another
+/// would fail here, which is the gap the invariant names rather than papers
+/// over with a copy fallback that would reintroduce the hole.
+async fn commit_staged(
+    storage: &impl Storage,
+    staged: &Path,
+    mutable_target: &Path,
 ) -> Res<chrono::DateTime<chrono::Utc>> {
-    let parent_dir = mutable_target.parent();
-    if let Some(parent) = parent_dir {
+    if let Some(parent) = mutable_target.parent() {
         storage.create_dir_all(parent).await?;
     }
-    storage.copy(&immutable_source, &mutable_target).await?;
+    storage.rename(staged, &mutable_target).await?;
     storage.modified_timestamp(&mutable_target).await
+}
+
+/// Renames each staged file onto its destination, refusing to overwrite one a
+/// caller asked to protect that no longer holds the content it was verified at.
+///
+/// The re-check is what keeps the guarantee honest once the whole touch set is
+/// staged before anything is written: a caller's verification now happens a
+/// whole fetch earlier than the write it licenses, and an edit landing in that
+/// gap would otherwise be overwritten in silence. Checked immediately before
+/// each rename, the exposure is back to the two syscalls between them.
+///
+/// Fail-safe in the same direction as the conflict rule: a file that cannot be
+/// read is treated as changed, so the worst case is a retryable refusal rather
+/// than lost work.
+async fn swap_staged_into_place(
+    storage: &(impl Storage + Sync),
+    staged: &[(PathBuf, PathBuf, ManifestRow)],
+    protect: &Protect<'_>,
+    lineage: &mut PackageLineage,
+) -> Res {
+    for (staged_path, working_dest, row) in staged {
+        if let Protect::BaseContent(expected) = protect
+            && let Some(base_row) = expected.get(&row.logical_key)
+        {
+            let unchanged = matches!(
+                refresh_hash(storage, working_dest, (*base_row).clone()).await,
+                Ok(None)
+            );
+            if !unchanged {
+                debug!(
+                    "❌ {} changed while the revision was being staged",
+                    row.logical_key.display()
+                );
+                return Err(Error::PackageOp(PackageOpError::PullConflict(vec![
+                    row.logical_key.clone(),
+                ])));
+            }
+        }
+        let last_modified = commit_staged(storage, staged_path, working_dest).await?;
+        lineage.paths.insert(
+            row.logical_key.clone(),
+            PathState {
+                timestamp: last_modified,
+                hash: row.hash.clone().into(),
+            },
+        );
+        debug!("✔️ Swapped in {}", working_dest.display());
+    }
+    Ok(())
 }
 
 async fn stream_remote_with_installed_rows(
@@ -70,7 +147,95 @@ async fn stream_remote_with_installed_rows(
         })
 }
 
-/// Installs paths to already existing manifest (provided as an argument to this function).
+/// What a caller forbids the apply to overwrite.
+///
+/// The check has to happen immediately before each rename, not once up front:
+/// staging the whole touch set puts the whole fetch between a caller's
+/// verification and the write it licensed, and a background pull running while
+/// someone works is ordinary rather than exotic. But it cannot simply live
+/// inside the install, because [`reset_to_latest`](super::reset_to_latest)
+/// shares this primitive precisely to *discard* local work. So the caller says
+/// which it is, by name.
+pub(crate) enum Protect<'a> {
+    /// Replace a working file only while it still holds the content its row
+    /// names. Anything else is an edit that landed after the caller checked,
+    /// and overwriting it would lose work that was never committed and cannot
+    /// be recovered — there is no reflog.
+    BaseContent(&'a BTreeMap<PathBuf, ManifestRow>),
+    /// Overwrite whatever is there. Discarding local work is the operation, so
+    /// there is nothing to protect.
+    Nothing,
+}
+
+/// Refuses the whole call if any requested path is already installed.
+///
+/// The check reads `lineage.paths`, not the working tree: "already installed"
+/// means this copy tracks the path, and so may hold edits in it that writing
+/// over would destroy with nothing to recover them from.
+fn refuse_already_installed(lineage: &PackageLineage, entries_paths: &[&PathBuf]) -> Res {
+    debug!("🔍 Checking for already installed paths");
+    if !lineage
+        .paths
+        .keys()
+        .collect::<HashSet<&PathBuf, RandomState>>()
+        .is_disjoint(&entries_paths.iter().copied().collect::<HashSet<_>>())
+    {
+        debug!("❌ Found paths that are already installed");
+        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
+    }
+    Ok(())
+}
+
+/// Installs paths this copy does not already hold, refusing the whole call if
+/// any of them is already installed.
+///
+/// This is the verb a user reaches, directly or through
+/// [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths).
+/// Writing over a path someone is editing loses work that was never committed
+/// and cannot be recovered, so asking for one is refused rather than guessed
+/// at. The reconcile, whose paths are known to carry no local edit, uses
+/// [`install_paths_over`] instead — a separate entry point rather than a flag
+/// on this one, so that overwriting is something a caller *chooses by name*
+/// and cannot reach from outside this crate at all.
+#[allow(clippy::too_many_arguments)]
+pub async fn install_paths(
+    lineage: PackageLineage,
+    manifest: &mut Manifest,
+    paths: &DomainPaths,
+    working_dir: PathBuf,
+    namespace: Namespace,
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entries_paths: &[&PathBuf],
+) -> Res<PackageLineage> {
+    refuse_already_installed(&lineage, entries_paths)?;
+    // Nothing to protect: the refusal above already established that none of
+    // these paths is installed, so no working file is at stake.
+    install_paths_over(
+        lineage,
+        manifest,
+        paths,
+        working_dir,
+        namespace,
+        storage,
+        remote,
+        entries_paths,
+        &Protect::Nothing,
+    )
+    .await
+}
+
+/// Installs paths **over** whatever the working tree already holds for them.
+///
+/// `pub(crate)` on purpose: the only caller entitled to this is the reconcile
+/// in [`apply_latest_update`](super::apply_update), whose touch set excludes
+/// every path the user has touched, so no local edit is ever at stake. Nothing
+/// outside this crate can reach it, which is what makes "only the reconcile may
+/// install over a tracked path" a fact about the code rather than a convention
+/// callers have to keep.
+///
+/// Each write lands whole, and the whole touch set is staged before any of it
+/// is swapped in — see [`stage_object`] and [`commit_staged`].
 ///
 /// Rows go into the installed manifest **verbatim** — `physical_key` is never
 /// rewritten to the `file://` object-store location, despite the `place` value
@@ -88,7 +253,7 @@ async fn stream_remote_with_installed_rows(
 // TODO: `working_dir` is in `paths` already, and we pass namespace anyway
 //       so we can remove working_dir from the arguments
 #[allow(clippy::too_many_arguments)]
-pub async fn install_paths(
+pub(crate) async fn install_paths_over(
     mut lineage: PackageLineage,
     manifest: &mut Manifest,
     paths: &DomainPaths,
@@ -97,6 +262,7 @@ pub async fn install_paths(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entries_paths: &[&PathBuf],
+    protect: &Protect<'_>,
 ) -> Res<PackageLineage> {
     if entries_paths.is_empty() {
         info!("No paths to install");
@@ -111,19 +277,6 @@ pub async fn install_paths(
         namespace
     );
 
-    debug!("🔍 Checking for already installed paths");
-    // TODO: what happens if paths are already installed? Ignore, or error?
-    // Fail early if path is already installed
-    if !lineage
-        .paths
-        .keys()
-        .collect::<HashSet<&PathBuf, RandomState>>()
-        .is_disjoint(&entries_paths.iter().copied().collect::<HashSet<_>>())
-    {
-        debug!("❌ Found paths that are already installed");
-        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
-    }
-
     // for each path in entries_paths:
     //   get entry from installed manifest
     //   cache the entry into identity cache (if not there)
@@ -136,63 +289,94 @@ pub async fn install_paths(
     //   add installed package entry:
     //     remote: RemoteManifest
     let mut entries = BTreeMap::new();
+    // Outside the tree the status walk reads: a staging file beside the working
+    // file would be reported as a new file, committed if a commit landed in the
+    // window, and left as a permanent stray by a kill. One subdirectory per
+    // apply, so a failure can drop exactly its own staged files without
+    // touching a concurrent apply's.
+    let run_staging = paths.staging_dir().join(uuid::Uuid::new_v4().to_string());
+    storage.create_dir_all(&run_staging).await?;
+    // Fetching and staging, as one fallible phase. Every `?` in here — a
+    // missing manifest row, a failed fetch, an unparseable physical key, a
+    // relative object path — lands on the single cleanup below, so none of them
+    // can strand the staged set. Scoping it this way rather than sweeping after
+    // each call is what makes "no error leaks a staging directory" a property of
+    // the shape instead of a list of call sites to remember.
+    let staging: Res<Vec<(PathBuf, PathBuf, ManifestRow)>> = async {
+        let mut staged: Vec<(PathBuf, PathBuf, ManifestRow)> = Vec::new();
 
-    for path in entries_paths {
-        // TODO: Consider using a hashmap or treemap for manifest.rows
-        let row = manifest
-            .get_record(path)
-            .ok_or(ManifestError::Table(format!(
-                "path \"{}\" not found",
-                path.display()
-            )))?;
+        for path in entries_paths {
+            // TODO: Consider using a hashmap or treemap for manifest.rows
+            let row = manifest
+                .get_record(path)
+                .ok_or(ManifestError::Table(format!(
+                    "path \"{}\" not found",
+                    path.display()
+                )))?;
 
-        let object_dest = paths.object(row.hash.digest());
+            let object_dest = paths.object(row.hash.digest());
 
-        if storage.exists(&object_dest).await {
-            debug!("✔️ Object already in cache: {}", object_dest.display());
-        } else {
-            cache_immutable_object(
-                storage,
-                remote,
-                remote_uri.origin.as_ref(),
-                &object_dest,
-                &row.physical_key.parse()?,
-            )
-            .await?;
-            debug!("✔️ Cached object: {}", object_dest.display());
+            if storage.exists(&object_dest).await {
+                debug!("✔️ Object already in cache: {}", object_dest.display());
+            } else {
+                cache_immutable_object(
+                    storage,
+                    remote,
+                    remote_uri.origin.as_ref(),
+                    &object_dest,
+                    &row.physical_key.parse()?,
+                )
+                .await?;
+                debug!("✔️ Cached object: {}", object_dest.display());
+            }
+
+            // Diagnostic only: the `file://` URL the row *would* carry if rows were
+            // rewritten to the object store (they are not — see above). Logged and
+            // discarded; the error arm still asserts `object_dest` is absolute.
+            let place = Url::from_file_path(&object_dest)
+                .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
+                .to_string();
+            debug!(
+                "✔️ Path {} converted to a `place` {}",
+                object_dest.display(),
+                place
+            );
+            // The row goes in unchanged — `physical_key` and all.
+            entries.insert(row.logical_key.clone(), row.clone());
+
+            // Staged, not written: the working tree stays wholly at its current
+            // revision until every file is ready.
+            let staged_path = stage_object(storage, &object_dest, &run_staging).await?;
+            staged.push((staged_path, working_dir.join(&row.logical_key), row.clone()));
+            debug!("✔️ Staged {}", row.logical_key.display());
         }
-
-        // Diagnostic only: the `file://` URL the row *would* carry if rows were
-        // rewritten to the object store (they are not — see above). Logged and
-        // discarded; the error arm still asserts `object_dest` is absolute.
-        let place = Url::from_file_path(&object_dest)
-            .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
-            .to_string();
-        debug!(
-            "✔️ Path {} converted to a `place` {}",
-            object_dest.display(),
-            place
-        );
-        // The row goes in unchanged — `physical_key` and all.
-        entries.insert(row.logical_key.clone(), row.clone());
-
-        let working_dest = working_dir.join(&row.logical_key);
-        let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
-        debug!(
-            "✔️ Created mutable copy at {} for {}",
-            last_modified,
-            working_dest.display()
-        );
-
-        lineage.paths.insert(
-            row.logical_key.clone(),
-            PathState {
-                timestamp: last_modified,
-                hash: row.hash.clone().into(),
-            },
-        );
-        debug!("✔️ Added {}  to lineage paths ", row.logical_key.display());
+        Ok(staged)
     }
+    .await;
+    let staged = match staging {
+        Ok(staged) => staged,
+        Err(err) => {
+            let _ = storage.remove_dir_all(&run_staging).await;
+            return Err(err);
+        }
+    };
+
+    // The swap. Everything above this line is fetching and copying, and none of
+    // it touched the working tree: interrupted anywhere earlier — which is where
+    // essentially all of the time goes — the tree is still wholly at `base` and
+    // a retry is an ordinary update with nothing to reconcile. From here it is
+    // renames only, milliseconds, and an interruption inside them leaves the
+    // mixed tree the invariant is written to survive.
+    //
+    // Not a transaction: the renames are atomic one at a time and not as a set.
+    debug!("⏳ Swapping {} staged files into place", staged.len());
+    let swapped = swap_staged_into_place(storage, &staged, protect, &mut lineage).await;
+    // On every path out, not only the successful one: the renames empty this
+    // directory when they all land, but any error above leaves the whole staged
+    // set behind, and at one object apiece that accumulates across retries. A
+    // kill still strands one, which no sweep collects yet.
+    let _ = storage.remove_dir_all(&run_staging).await;
+    swapped?;
 
     debug!("⏳ Building manifest with installed rows");
     let stream = stream_remote_with_installed_rows(manifest, entries).await;

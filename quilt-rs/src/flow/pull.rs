@@ -11,9 +11,11 @@ use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
 use crate::flow;
 use crate::flow::Applied;
+use crate::flow::LocalWork;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
 use crate::flow::classify_pull;
+use crate::flow::identical_to_latest;
 use crate::flow::pull_outcome::RemoteChange;
 use crate::flow::remote_delta;
 use crate::io::manifest::resolve_tag;
@@ -162,6 +164,7 @@ fn report_of(
     message: Option<String>,
 ) -> PullReport {
     let installed: BTreeSet<&PathBuf> = applied.installed.iter().collect();
+    let replaced: BTreeSet<&PathBuf> = applied.replaced.iter().collect();
     let uninstalled: BTreeSet<&PathBuf> = applied.uninstalled.iter().collect();
     let mut report = PullReport {
         manifest_uri,
@@ -177,13 +180,16 @@ fn report_of(
     // remote changed.
     for (path, change) in delta {
         match (installed.contains(path), uninstalled.contains(path)) {
-            // Deleted and written again: a file that was here has new content.
-            (true, true) => report.updated.push(path.clone()),
-            // Written where there was nothing, whether the remote called the
-            // path added or modified: under whole-package scope a modified
-            // path this copy never checked out is fetched here too, and
-            // nothing was overwritten either way.
-            (true, false) => report.added.push(path.clone()),
+            // Written: an *update* if it replaced a file this copy already
+            // held, an *addition* if it went where there was nothing. Read from
+            // `applied.replaced` rather than from a preceding delete — the
+            // apply writes over the live file now and never deletes first, so
+            // "was also uninstalled" would say `added` for every update. Under
+            // whole-package scope a remote-modified path this copy never
+            // checked out is fetched here too, and it is an addition to this
+            // working tree whatever the remote called it.
+            (true, _) if replaced.contains(path) => report.updated.push(path.clone()),
+            (true, _) => report.added.push(path.clone()),
             // Deleted with no replacement: absent from `latest`.
             (false, true) => report.removed.push(path.clone()),
             // Nothing moved, so the file on disk is already right — the
@@ -278,7 +284,26 @@ pub async fn pull_package(
 
     // `manifest` is the installed (base) manifest the caller passed in;
     // `snapshot` carries the already-fetched `latest` and its manifest.
-    let outcome = classify_pull(&snapshot.status, manifest, &snapshot.latest_manifest);
+    //
+    // The reconciling pass runs first: where a local change and `latest`'s row
+    // carry different checksum algorithms, their digests cannot be compared,
+    // and only re-hashing the working file in `latest`'s algorithm can tell an
+    // edit that landed `latest`'s own content from a genuine disagreement.
+    // Hashes nothing when the algorithms already agree.
+    let identical = identical_to_latest(
+        storage,
+        &working_dir,
+        &snapshot.status,
+        manifest,
+        &snapshot.latest_manifest,
+    )
+    .await?;
+    let outcome = classify_pull(
+        &snapshot.status,
+        manifest,
+        &snapshot.latest_manifest,
+        &identical,
+    );
     match &outcome {
         PullOutcome::UpToDate => {
             return Err(PackageOpError::AlreadyUpToDate.into());
@@ -296,11 +321,32 @@ pub async fn pull_package(
     // edited after the walk is absent from `status.changes` and — if
     // remote-changed — lands in the touch-set. Re-checking the base content at
     // the destruction site turns such a raced edit into a `PullConflict`
-    // instead of a silent overwrite. The residual window shrinks to the
-    // verify→unlink syscalls (per file, microseconds). The one case still not
-    // covered is an editor writing through an already-open fd *during* the
-    // apply; that is addressed by the displace-don't-delete design in the
-    // transactional-apply follow-up (the `apply_update.rs` TODO).
+    // instead of a silent overwrite.
+    //
+    // This pass is the fail-fast half: it checks every touched path before any
+    // work starts, so drift aborts the pull before a byte is fetched. It is not
+    // the half that makes the write safe. The apply stages the whole touch set
+    // before it writes any of it, so a verdict reached here licenses a write a
+    // whole fetch later — and a background pull running while someone works is
+    // ordinary. The apply re-checks each destination against the row captured
+    // here immediately before replacing it (`LocalWork::Protect`), which is what
+    // shrinks the residual window back to the two syscalls between the check and
+    // the rename — also the window an editor could save into.
+    //
+    // Outside that window, an editor with the file open picks the new content up
+    // cleanly (checked against nvim and GNOME Text Editor): editors read and
+    // close rather than holding the descriptor, so their change detection
+    // re-opens by path and lands on the renamed-in inode. The rename matters
+    // here for what it rules out — a reload can never catch a half-written
+    // file, which the previous copy-onto-the-destination allowed.
+    //
+    // A descriptor genuinely held across the write (a tail, an mmap) keeps
+    // reading the old inode until it closes. And an editor with *unsaved*
+    // changes can still save over the content just pulled, since an unsaved
+    // buffer is not a local change on disk and does not keep the path out of
+    // the touch set. Bounded rather than silent either way: such a save
+    // re-lands `base`'s bytes, the path reports as locally modified from then
+    // on, and a pull puts it back.
     //
     // TODO: this second `remote_delta` pass re-derives the partition
     // `classify_pull` just computed and discarded, and the blanket skip of
@@ -382,6 +428,10 @@ pub async fn pull_package(
         namespace,
         snapshot.latest,
         &touched,
+        // The verify pass above checked every one of these against its base
+        // row; the apply re-checks each immediately before overwriting it,
+        // because staging puts the whole fetch in between.
+        &LocalWork::Protect,
     )
     .await?;
 
@@ -407,6 +457,8 @@ mod tests {
     use aws_sdk_s3::primitives::ByteStream;
     use multihash::Multihash;
 
+    use crate::checksum::calculate_hash;
+    use crate::io::remote::HostChecksums;
     use crate::io::remote::HostConfig;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::StorageExt;
@@ -414,6 +466,7 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
+    use crate::lineage::UpstreamState;
     use crate::manifest::ManifestRow;
     use crate::object_hash::Hash;
     use crate::object_hash::Sha256Hash;
@@ -457,9 +510,10 @@ mod tests {
         names.iter().map(PathBuf::from).collect()
     }
 
-    fn applied(installed: &[&str], uninstalled: &[&str]) -> Applied {
+    fn applied(installed: &[&str], replaced: &[&str], uninstalled: &[&str]) -> Applied {
         Applied {
             installed: paths(installed),
+            replaced: paths(replaced),
             uninstalled: paths(uninstalled),
         }
     }
@@ -483,12 +537,14 @@ mod tests {
             ),
             (PathBuf::from("dropped.csv"), RemoteChange::Removed),
         ]);
-        // `changed.csv` was tracked, so it was deleted and written again;
-        // `fetched.csv` was written where there was nothing; `dropped.csv` was
-        // deleted with no replacement; `listed.csv` was left on the remote.
+        // `changed.csv` was tracked, so the write replaced a file already
+        // here; `fetched.csv` was written where there was nothing;
+        // `dropped.csv` was deleted with no replacement; `listed.csv` was left
+        // on the remote.
         let applied = applied(
             &["fetched.csv", "changed.csv"],
-            &["changed.csv", "dropped.csv"],
+            &["changed.csv"],
+            &["dropped.csv"],
         );
 
         let report = report_of(
@@ -505,6 +561,107 @@ mod tests {
         assert_eq!(report.removed, paths(&["dropped.csv"]));
         assert_eq!(report.message.as_deref(), Some("a message"));
         assert!(!report.is_empty());
+    }
+
+    /// The Example's interrupted instance, retried — the claim the whole change
+    /// rests on, and the one thing the two halves never checked together.
+    ///
+    /// The tree an interrupted apply leaves: one file already holding
+    /// `latest`'s content, two still at `base`'s, `base` still naming the old
+    /// revision. On the retry the written file reads as a *local modification*,
+    /// because its content no longer matches the row this copy started from.
+    /// The Example claims two things about that tree: nothing is refused, and
+    /// nothing is fetched twice. Both are asserted here, on a package whose
+    /// rows are in the algorithm this host does not declare — the combination
+    /// that made the incident unrecoverable rather than merely broken.
+    #[test(tokio::test)]
+    async fn the_interrupted_tree_retries_cleanly() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let written = PathBuf::from("done.csv");
+        let pending = [PathBuf::from("todo-1.csv"), PathBuf::from("todo-2.csv")];
+
+        // The file the interrupted apply managed to write: it holds exactly
+        // what `latest` holds.
+        storage
+            .write_byte_stream(
+                working_dir.join(&written),
+                ByteStream::from_static(b"latest content for done.csv"),
+            )
+            .await?;
+        let crc64 = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+        let sha_chunked = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+        // The package's rows are CRC64; this host declares SHA-256-chunked, so
+        // the status walk hashed the written file into the host's algorithm.
+        let latest_row =
+            calculate_hash(&storage, &working_dir.join(&written), &written, &crc64).await?;
+        let local_row = calculate_hash(
+            &storage,
+            &working_dir.join(&written),
+            &written,
+            &sha_chunked,
+        )
+        .await?;
+
+        let base = manifest_of(vec![
+            row("done.csv", b"base-done"),
+            row("todo-1.csv", b"base-1"),
+            row("todo-2.csv", b"base-2"),
+        ]);
+        let latest = manifest_of(vec![
+            latest_row,
+            row("todo-1.csv", b"latest-1"),
+            row("todo-2.csv", b"latest-2"),
+        ]);
+
+        // The retry's status: only the written file looks changed.
+        let status = InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            ChangeSet::from([(written.clone(), Change::Modified(local_row))]),
+        );
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        assert!(
+            identical.contains(&written),
+            "the file the interrupted apply wrote already holds latest's content"
+        );
+
+        // Nothing is refused.
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::KeepsLocalChanges {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
+            },
+            "the interrupted tree must retry, not block"
+        );
+
+        // Nothing is fetched twice: the written file is out of the touch set,
+        // the two still at `base` are in it.
+        let tracked: LineagePaths = [&written, &pending[0], &pending[1]]
+            .into_iter()
+            .map(|p| (p.clone(), PathState::default()))
+            .collect();
+        let touched = touch_set(
+            remote_delta(&base, &latest).into_keys(),
+            &tracked,
+            &status.changes,
+            SyncScope::IndividualFiles,
+        );
+        assert_eq!(
+            touched,
+            vec![pending[0].clone(), pending[1].clone()],
+            "the already-written file must not be fetched again"
+        );
+        Ok(())
     }
 
     /// The touch set says what a pull *proposed* to move; only the apply knows
@@ -524,7 +681,7 @@ mod tests {
         // Both are in the touch set under whole-package scope. Neither was
         // tracked, so neither is uninstalled; the one still in `latest` is
         // written.
-        let applied = applied(&["first-fetch.csv"], &[]);
+        let applied = applied(&["first-fetch.csv"], &[], &[]);
 
         let report = report_of(uri(), &delta, &applied, &ChangeSet::new(), None);
 

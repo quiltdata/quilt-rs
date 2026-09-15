@@ -100,6 +100,17 @@ impl DomainPaths {
         self.root_dir.join(DOT_QUILT_DIR)
     }
 
+    /// Directory for files staged mid-write, under `.quilt/`.
+    ///
+    /// Outside the working tree on purpose: the status walk has no built-in
+    /// exclusion, so anything staged beside its destination would read as a new
+    /// file. Under the domain root, so a rename from here into the working tree
+    /// stays on one filesystem.
+    #[must_use]
+    pub fn staging_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join("staging")
+    }
+
     /// Path to the installed manifest.
     ///
     /// Takes `(namespace, hash)` rather than `&ManifestUri` because the
