@@ -9,6 +9,7 @@
 # Trunk build output. Nothing here is tracked: the directory has to exist for
 # tauri::generate_context!(), and src-tauri/build.rs creates it.
 ui/dist/
+ui/dist-gallery/
 
 # Bundled by esbuild during trunk build (see ui/Trunk.toml hook)
 ui/assets/js/json-editor.js
