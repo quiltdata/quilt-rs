@@ -90,3 +90,57 @@ pub use text_input::TextInput;
 pub use toggle_row::ToggleRow;
 pub use zero_line::ZeroLine;
 pub use zero_line::ZeroLineSkeleton;
+
+#[cfg(test)]
+mod tests {
+    /// Prose in the kit obeys the measure, not the window.
+    ///
+    /// Two elements are read as sentences rather than as labels: a `Banner`'s
+    /// message and a `ToggleRow`'s sublabel. Left uncapped they ran to 116-132 and
+    /// 81-91 characters at 1280, and the eye stops tracking back reliably somewhere
+    /// around 75 (qhq-8mgw.76).
+    ///
+    /// The band is what is pinned, not the number: any cap inside 65-75ch is a
+    /// legal swap, and a cap in pixels is not — the count of characters is the
+    /// thing being limited, and the face is whatever the desktop chose.
+    #[test]
+    fn prose_is_capped_to_a_readable_measure() {
+        const PROSE: [(&str, &str, &str); 2] = [
+            ("banner", ".message", include_str!("kit/banner.module.scss")),
+            (
+                "toggle_row",
+                ".sublabel",
+                include_str!("kit/toggle_row.module.scss"),
+            ),
+        ];
+
+        for (component, class, sheet) in PROSE {
+            let rule = sheet
+                .split(&format!("\n{class} {{"))
+                .nth(1)
+                .and_then(|rest| rest.split('}').next())
+                .unwrap_or_else(|| panic!("{component} has no `{class}` rule"));
+            let cap = rule
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("max-width:"))
+                .unwrap_or_else(|| {
+                    panic!("{component}'s `{class}` is prose and has no measure: {rule}")
+                })
+                .trim()
+                .trim_end_matches(';');
+            let width: f32 = cap
+                .strip_suffix("ch")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{component}'s `{class}` caps at `{cap}`, which is not a character count"
+                    )
+                })
+                .parse()
+                .expect("a number of characters");
+            assert!(
+                (65.0..=75.0).contains(&width),
+                "{component}'s `{class}` caps at {width}ch, outside the readable 65-75"
+            );
+        }
+    }
+}
