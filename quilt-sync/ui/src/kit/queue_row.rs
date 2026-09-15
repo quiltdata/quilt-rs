@@ -53,9 +53,7 @@ pub fn QueueRow(
         style::root.to_string()
     };
 
-    // Ellipsised by the stylesheet, and a truncated identifier is unrecoverable
-    // without navigating — so it carries its full value natively, the same rule
-    // `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    // Ellipsised by the stylesheet, so the whole value rides in `title`.
     let full_namespace = namespace.clone();
     view! {
         <div class=class>
@@ -112,8 +110,7 @@ mod tests {
         container.into()
     }
 
-    /// qhq-8mgw.68. A queue row asks the reader to act on a package, so the name
-    /// of the package must not be the part that got cut.
+    /// A queue row asks the reader to act on this package, so its name must survive.
     #[wasm_bindgen_test]
     fn the_truncating_namespace_carries_its_whole_value() {
         let el = mount(

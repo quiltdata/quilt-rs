@@ -76,9 +76,7 @@ pub fn PackageRow(
         out
     };
 
-    // Ellipsised by the stylesheet, and a truncated identifier is unrecoverable
-    // without navigating — so it carries its full value natively, the same rule
-    // `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    // Ellipsised by the stylesheet, so the whole value rides in `title`.
     let full_namespace = namespace.clone();
     view! {
         <a class=class href=href>
@@ -192,8 +190,7 @@ mod tests {
         );
     }
 
-    /// qhq-8mgw.68. The namespace ellipsises, so without a native title a long
-    /// one is unrecoverable without navigating to the package to read it.
+    /// A namespace longer than its column: `title` holds all of it.
     #[wasm_bindgen_test]
     fn the_truncating_namespace_carries_its_whole_value() {
         let el = mount(|| {

@@ -102,9 +102,7 @@ pub fn FileRow(
     #[prop(optional, into)]
     on_copy_uri: Option<Callback<MouseEvent>>,
 ) -> impl IntoView {
-    // Both of these ellipsise, and a truncated identifier is unrecoverable
-    // without navigating — so each carries its full value natively, the same
-    // rule `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    // Both ellipsise, so each carries its whole value in `title`.
     let full_path = path.clone();
     let full_package = package.clone();
     view! {
@@ -463,8 +461,7 @@ mod tests {
         );
     }
 
-    /// qhq-8mgw.68, both of them: the path truncates from the right and the
-    /// package tag is capped at 30% of the row, so each needs its full value.
+    /// The path truncates from the right and the tag is capped at 30% of the row.
     #[wasm_bindgen_test]
     fn the_path_and_the_package_tag_carry_their_whole_values() {
         let el = mount(|| {

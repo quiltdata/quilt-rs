@@ -16,9 +16,7 @@ pub fn GroupHeading(
     #[prop(optional, into)]
     annotation: Option<String>,
 ) -> impl IntoView {
-    // Ellipsised by the stylesheet, and a truncated identifier is unrecoverable
-    // without navigating — so it carries its full value natively, the same rule
-    // `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    // Ellipsised by the stylesheet, so the whole value rides in `title`.
     let full_title = title.clone();
     view! {
         <div class=style::root>
@@ -53,8 +51,7 @@ mod tests {
         container.into()
     }
 
-    /// qhq-8mgw.68. A bucket name is the group's identity, and both the name and
-    /// its cause annotation ellipsise.
+    /// The bucket name and its cause annotation both ellipsise.
     #[wasm_bindgen_test]
     fn the_truncating_title_and_annotation_carry_their_whole_values() {
         let el = mount(|| {

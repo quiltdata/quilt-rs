@@ -62,9 +62,7 @@ pub fn HostRow(
         Some(view! { {move || format!("Role: {}", role.get())} }.into_any())
     };
 
-    // Ellipsised by the stylesheet, and a truncated identifier is unrecoverable
-    // without navigating — so it carries its full value natively, the same rule
-    // `RelativeTime` already follows for an exact timestamp (qhq-8mgw.68).
+    // Ellipsised by the stylesheet, so the whole value rides in `title`.
     let full_host = host.clone();
     view! {
         <div class=style::root>
@@ -115,7 +113,7 @@ mod tests {
         container.into()
     }
 
-    /// qhq-8mgw.68. A catalog host is a domain, and a long one truncates.
+    /// A catalog host is a domain, and a long one truncates.
     #[wasm_bindgen_test]
     fn the_truncating_host_carries_its_whole_value() {
         let el = mount(|| {
