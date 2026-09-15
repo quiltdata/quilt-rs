@@ -65,3 +65,89 @@ pub fn TextInput(
         />
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::FormControl;
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    fn field(el: &web_sys::Element, selector: &str) -> web_sys::HtmlInputElement {
+        el.query_selector(selector)
+            .unwrap()
+            .expect("the field")
+            .dyn_into()
+            .unwrap()
+    }
+
+    /// Typing reaches the caller's signal. Without it the field is decoration.
+    #[wasm_bindgen_test]
+    async fn typing_writes_the_callers_signal() {
+        let value = RwSignal::new(String::new());
+        let el = mount(move || {
+            view! {
+                <FormControl label="Package name" control=move |id| {
+                    view! { <TextInput id=id value=value /> }.into_any()
+                } />
+            }
+        });
+        let input = field(&el, "input");
+        input.set_value("acme/demo");
+        input
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        leptos::task::tick().await;
+        assert_eq!(value.get_untracked(), "acme/demo");
+    }
+
+    /// `invalid` draws the border AND says so; the message is `FormControl`'s, because
+    /// only the caller knows what is wrong.
+    #[wasm_bindgen_test]
+    fn an_invalid_field_says_so_as_well_as_drawing_it() {
+        let value = RwSignal::new(String::new());
+        let el = mount(move || {
+            view! {
+                <FormControl label="Package name" control=move |id| {
+                    view! { <TextInput id=id value=value invalid=true /> }.into_any()
+                } />
+            }
+        });
+        let input = field(&el, "input");
+        assert_eq!(input.get_attribute("aria-invalid").as_deref(), Some("true"));
+        assert!(input.class_name().contains("invalid"), "and it is drawn");
+    }
+
+    /// A placeholder disappears the moment the user types, so it is never the label.
+    #[wasm_bindgen_test]
+    fn a_field_is_named_by_its_label_and_not_its_placeholder() {
+        let value = RwSignal::new(String::new());
+        let el = mount(move || {
+            view! {
+                <FormControl label="Package name" control=move |id| {
+                    view! { <TextInput id=id value=value placeholder="owner/name" /> }.into_any()
+                } />
+            }
+        });
+        let input = field(&el, "input");
+        assert_eq!(
+            input.get_attribute("placeholder").as_deref(),
+            Some("owner/name")
+        );
+        let label = el.query_selector("label").unwrap().unwrap();
+        assert_eq!(
+            label.get_attribute("for").as_deref(),
+            input.get_attribute("id").as_deref(),
+            "the name comes from the label"
+        );
+    }
+}
