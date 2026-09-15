@@ -1168,6 +1168,169 @@ mod tests {
         Ok(())
     }
 
+    /// The mapped reader half of [`live_pull_leaves_a_memory_mapped_file_readable`]:
+    /// map the file, say so, wait to be told, then read the tail and say what it
+    /// found. Never exits on its own — the parent decides when it is finished,
+    /// so the read happens strictly after the pull has landed.
+    fn mapped_reader_child(path: &str, len: usize) {
+        use std::os::unix::io::AsRawFd as _;
+
+        let file = std::fs::File::open(path).expect("map target");
+        // SAFETY: a private read-only mapping of a file this process holds open;
+        // the pointer is used only for the single read below.
+        let addr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        assert!(!std::ptr::eq(addr, libc::MAP_FAILED), "mmap failed");
+        println!("MAPPED");
+        let mut line = String::new();
+        std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line).ok();
+        // The tail — the part a shrinking replacement leaves past end-of-file.
+        // SAFETY: within the mapping established above.
+        let byte = unsafe { std::ptr::read_volatile((addr as *const u8).add(len - 1)) };
+        println!("READ {byte}");
+    }
+
+    /// A pull must not disturb a process that has a package file mapped.
+    ///
+    /// Replacing a working file by copying onto it truncates the destination
+    /// before refilling it, and a mapping of a truncated file faults: a read
+    /// past the new end of file raises `SIGBUS` and kills the reader outright.
+    /// Mapping package files is ordinary for what this tool carries — HDF5,
+    /// Zarr, Arrow, `numpy` `mmap_mode` all do it — so under the old write a
+    /// pull arriving mid-analysis could take the analysis down with it. Writing
+    /// by rename leaves the mapping bound to the inode it opened, which stays
+    /// readable until the mapping is dropped.
+    ///
+    /// This is the one claim in the change whose mechanism is entirely the
+    /// kernel's, so a mock filesystem could not test it at all.
+    ///
+    /// The fixture shrinks 4 MiB to 64 KiB deliberately. Were the replacement
+    /// the same size, a copy would only fault during its own truncate window and
+    /// the test would race; a file that ends up shorter leaves the mapped tail
+    /// permanently past end-of-file, so the old behaviour fails every time.
+    #[test(tokio::test)]
+    #[allow(
+        clippy::zombie_processes,
+        reason = "the child is killed and reaped on every path out, including a failed pull and each failed assertion; the analysis cannot follow it through the branches"
+    )]
+    async fn live_pull_leaves_a_memory_mapped_file_readable() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::shrinking as pkg;
+        use crate::cli::model::install_paths_into_temp_dir;
+
+        const CHILD_ENV: &str = "QUILT_MMAP_TEST_FILE";
+
+        // The child half lives in `mapped_reader_child`.
+        if let Ok(path) = std::env::var(CHILD_ENV) {
+            mapped_reader_child(&path, pkg::R1_LEN);
+            return Ok(());
+        }
+
+        let tracked = vec![std::path::PathBuf::from(pkg::MAPPED)];
+        let (_, _, temp_dir) = install_paths_into_temp_dir(pkg::R1_URI, Some(tracked)).await?;
+        let root = temp_dir.path().to_path_buf();
+        let mapped = root.join(pkg::NAMESPACE_STR).join(pkg::MAPPED);
+        assert_eq!(
+            std::fs::metadata(&mapped).unwrap().len(),
+            pkg::R1_LEN as u64,
+            "r1 should be installed at its full size"
+        );
+
+        let mut kid = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "cli::tests::live_pull_leaves_a_memory_mapped_file_readable",
+                "--exact",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, &mapped)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn the reader");
+
+        // Only pull once the mapping exists, or the test proves nothing. The
+        // child is a test binary, so its stdout carries libtest's own chatter
+        // before ours — scan for the marker rather than assuming it comes first.
+        fn wait_for(out: &mut impl std::io::BufRead, marker: &str) -> Option<String> {
+            let mut line = String::new();
+            while {
+                line.clear();
+                std::io::BufRead::read_line(out, &mut line).unwrap_or(0) > 0
+            } {
+                if line.starts_with(marker) {
+                    return Some(line.trim_end().to_string());
+                }
+            }
+            None
+        }
+
+        // Everything from here reaps the child before asserting: a panic
+        // between the spawn and the wait would leave it holding its mapping.
+        let mut out = std::io::BufReader::new(kid.stdout.take().unwrap());
+        let mapped_ok = wait_for(&mut out, "MAPPED").is_some();
+        if !mapped_ok {
+            kid.kill().ok();
+            kid.wait().ok();
+            panic!("the child never reported a mapping");
+        }
+
+        let pull = Args {
+            domain: Some(root.clone()),
+            home: Some(root.clone()),
+            verbose: false,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+        let mut output = Vec::new();
+        let pulled = async {
+            let result = init(pull).await?;
+            print(result, &mut output, &mut Vec::new())?;
+            Ok::<_, Error>(())
+        }
+        .await;
+        if pulled.is_err() {
+            kid.kill().ok();
+            kid.wait().ok();
+        }
+        pulled?;
+        let report = String::from_utf8(output).unwrap();
+        let landed_r2 = report.contains(pkg::R2_TOP_HASH);
+        let shrank = std::fs::metadata(&mapped).unwrap().len() < pkg::R1_LEN as u64;
+        if !(landed_r2 && shrank) {
+            kid.kill().ok();
+            kid.wait().ok();
+            assert!(landed_r2, "the pull should land r2, got: {report}");
+            assert!(shrank, "r2 should be the shorter file");
+        }
+
+        // Now let the reader touch its mapping. Under a copy-based write this
+        // is where it dies on SIGBUS.
+        use std::io::Write as _;
+        kid.stdin.take().unwrap().write_all(b"\n").ok();
+        let read = wait_for(&mut out, "READ");
+        let status = kid.wait().expect("reader should be reapable");
+
+        assert!(
+            read.is_some(),
+            "the mapped reader never completed its read — the pull killed it: {status:?}"
+        );
+        assert!(
+            status.success(),
+            "the mapped reader did not exit cleanly: {status:?}"
+        );
+        Ok(())
+    }
+
     /// A real `SIGKILL` in the middle of a real pull.
     ///
     /// Every other interruption in this workspace is an error return — a fetch
