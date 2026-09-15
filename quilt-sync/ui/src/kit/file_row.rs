@@ -96,7 +96,7 @@ pub fn FileRow(
             // is what a reader needs to hear before choosing to open it. No handler
             // of its own — a native button turns Enter and Space into a click, and
             // that click bubbles to the row above, which is the one handler.
-            <button class=style::path title=full_path>{path}</button>
+            <button type="button" class=style::path title=full_path>{path}</button>
             // Stops propagation, or going to the package would also open the file.
             <a
                 class=style::tag

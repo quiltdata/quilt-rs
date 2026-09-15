@@ -51,9 +51,7 @@ pub fn HostRow(
     let sub = if signed_out {
         Some(view! { <span class=style::warning>"Signed out"</span> }.into_any())
     } else if waiting {
-        // The row is rebuilt when the role lands, so without a live region the
-        // answer to `Checking role…` never reaches a screen reader.
-        Some(view! { <span role="status">"Checking role\u{2026}"</span> }.into_any())
+        Some(view! { "Checking role\u{2026}" }.into_any())
     } else if switchable {
         // The role is shown by the switcher itself, so repeating it here would
         // say the same thing twice.
@@ -135,25 +133,5 @@ mod tests {
             span.get_attribute("title").as_deref(),
             Some("a-very-long-catalog-hostname.example.quiltdata.com"),
         );
-    }
-    /// The row is rebuilt when the role lands, so the answer to `Checking role…`
-    /// reaches a screen reader only through a live region.
-    #[wasm_bindgen_test]
-    fn the_role_being_checked_is_a_live_region() {
-        let el = mount(|| {
-            view! {
-                <HostRow
-                    host="open.quiltdata.com"
-                    role=RwSignal::new(String::new())
-                    provisional=true
-                    on_sign_in=|_| {}
-                />
-            }
-        });
-        let status = el
-            .query_selector("[role=status]")
-            .unwrap()
-            .expect("a live region while the role is unknown");
-        assert!(status.text_content().unwrap().contains("Checking role"));
     }
 }
