@@ -9,6 +9,18 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.39.0-alpha1]
+
+### Fixed
+
+- A pull no longer disturbs a process that has a package file open. The working-tree write was a copy onto the destination, which truncates the file and refills it — so a reader that had the file memory-mapped died with `SIGBUS` when it read past the new end, and one reloading mid-write could see a half-written file. Mapping package files is ordinary practice (HDF5, Zarr, Arrow, `numpy` `mmap_mode`), so a pull arriving mid-analysis could take the analysis down with it. Writes now complete in a staging file under `.quilt/` and are renamed into place, so a file holds one revision's bytes or the other's and never a prefix of either (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- An interrupted pull is retryable instead of permanently stuck. The apply deleted every path it was about to update and then re-fetched it, so a failure in between — a dropped connection, a credential expiring, a kill, power loss — left those paths gone from the working tree *and* dropped from tracking. The retry read the gap as a local delete against a remote modification, which is a true conflict, and refused; every later attempt reached the same verdict, leaving no way out but editing `data.json` by hand. The apply now fetches and stages the whole update before writing any of it, then writes over the live files and deletes what the new revision drops. Interrupted before the writes — which is where nearly all of the time goes — the working tree is untouched and a retry is an ordinary update (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- A pull no longer reports a conflict between a local edit and a remote change that are byte-identical. The two were compared by hash, and a hash carries the algorithm that produced it: the local side is computed in the algorithm the host declares while the remote's is whatever wrote it, so identical content compared unequal whenever the two disagreed, and the pull blocked on a file that needed no resolution at all. The comparison now re-derives the local hash in the remote row's own algorithm (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
+### Changed
+
+- **Breaking:** `flow::classify_pull` takes a fourth argument, `&Reconciled`, produced by the new `flow::identical_to_latest`. Callers run the pass and hand it the result. The pass is what makes a byte-identical local edit comparable against a remote row in a different checksum algorithm, and carrying its result in a type only it can construct means a caller cannot classify without it — an empty set would silently restore the old, wrong comparison (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
 ## [v0.38.0] - 2026-09-11
 
 ### Changed
