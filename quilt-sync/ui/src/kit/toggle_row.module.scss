@@ -121,6 +121,8 @@
   display: block;
   margin-top: 1px;
   color: var(--q-fgColor-muted);
+  /* A sentence, not a label: the same measure as a banner's message. */
+  max-width: 70ch;
 }
 
 .root.disabled .sublabel {

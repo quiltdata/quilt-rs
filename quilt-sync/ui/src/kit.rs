@@ -90,3 +90,73 @@ pub use text_input::TextInput;
 pub use toggle_row::ToggleRow;
 pub use zero_line::ZeroLine;
 pub use zero_line::ZeroLineSkeleton;
+
+#[cfg(test)]
+mod tests {
+    /// Every `selector { body }` pair. Correct only for a flat stylesheet, which
+    /// the kit's are; callers name the rules they want rather than sweep the file.
+    fn rules(sheet: &str) -> impl Iterator<Item = (&str, &str)> {
+        sheet.match_indices('{').filter_map(move |(open, _)| {
+            let before = &sheet[..open];
+            let start = before
+                .rfind(['}', ';'])
+                .map_or(0, |i| i + 1)
+                .max(before.rfind("*/").map_or(0, |i| i + 2));
+            let body = sheet[open + 1..].split('}').next()?;
+            Some((before[start..].trim(), body))
+        })
+    }
+
+    /// Whether a selector list picks out `class`, allowing for grouping and for
+    /// compound selectors such as `.root.disabled .sublabel`.
+    fn selects(selector: &str, class: &str) -> bool {
+        selector
+            .split(',')
+            .filter_map(|one| one.split_whitespace().last())
+            .any(|last| last == class)
+    }
+
+    /// The two elements read as sentences rather than labels carry a measure.
+    ///
+    /// The band is pinned, not the number: any cap inside 65-75ch passes, a cap in
+    /// pixels does not.
+    #[test]
+    fn prose_is_capped_to_a_readable_measure() {
+        const PROSE: [(&str, &str, &str); 2] = [
+            ("banner", ".message", include_str!("kit/banner.module.scss")),
+            (
+                "toggle_row",
+                ".sublabel",
+                include_str!("kit/toggle_row.module.scss"),
+            ),
+        ];
+
+        for (component, class, sheet) in PROSE {
+            let Some((_, rule)) = rules(sheet).find(|(selector, _)| selects(selector, class))
+            else {
+                panic!("{component} has no `{class}` rule")
+            };
+            let cap = rule
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("max-width:"))
+                .unwrap_or_else(|| {
+                    panic!("{component}'s `{class}` is prose and has no measure: {rule}")
+                })
+                .trim()
+                .trim_end_matches(';');
+            let width: f32 = cap
+                .strip_suffix("ch")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{component}'s `{class}` caps at `{cap}`, which is not a character count"
+                    )
+                })
+                .parse()
+                .expect("a number of characters");
+            assert!(
+                (65.0..=75.0).contains(&width),
+                "{component}'s `{class}` caps at {width}ch, outside the readable 65-75"
+            );
+        }
+    }
+}

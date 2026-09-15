@@ -60,6 +60,8 @@
   min-width: 0;
   margin: 0;
   line-height: var(--q-line-body);
+  /* Prose: held to a readable measure. In `ch` because it counts characters. */
+  max-width: 70ch;
 }
 
 /* Inherits the tone's text colour rather than going muted. On a tinted fill a grey
