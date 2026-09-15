@@ -1090,15 +1090,10 @@ fn MainPageRegions(
     }
 }
 
-/// The appbar's Refresh, with the click's own feedback.
+/// The appbar's Refresh. `loading` spins it and disables it, so a second press
+/// cannot send a second read.
 ///
-/// `loading` is not decoration. `Transition` deliberately holds the old body
-/// while the light phase re-reads, so a press moves nothing on screen until the
-/// first row redraws — and the page's own rule is that every operation owns a
-/// visible indicator (`kit/page_layout.rs`). `Button` disables itself while
-/// loading, which also stops a second read going out (qhq-8mgw.69).
-///
-/// Split out of `MainPage` so it can be mounted without a Tauri host.
+/// Separate from `MainPage` so it mounts without a Tauri host.
 fn refresh_button(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
     view! {
         <Button
@@ -1115,17 +1110,11 @@ fn refresh_button(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
     .into_any()
 }
 
-/// Ends the spin when the light phase has answered.
+/// Clears `refreshing` when `ready` goes true.
 ///
-/// The light phase and not the heavy one: the heavy phase already reports itself,
-/// one row settling at a time, and holding the spinner across both would leave it
-/// turning long after the page started moving again.
-///
-/// Takes `ready` rather than the resources themselves, so the rule can be driven
-/// from a test without a Tauri host. The caller's `ready` must mean "no read is
-/// outstanding" and not "both resources hold a value": a refetching resource keeps
-/// its previous value until the new one lands, so the second question is true for
-/// the whole of a refresh.
+/// `ready` means no read is outstanding, never "both resources hold a value": a
+/// refetching `LocalResource` keeps its previous value until the new one lands, so
+/// that second question is true for the whole of a refresh.
 fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
     Effect::new(move |_| {
         if ready.get() {
@@ -1137,11 +1126,9 @@ fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
-    // Light-phase reads still outstanding, counted the way the heavy phase counts
-    // its own (`PackageStore::in_flight`). It has to be a count and not "both
-    // resources hold a value": a refetching resource KEEPS its previous value until
-    // the new one lands, so that question answers yes for the whole of a refresh
-    // and the first of the two answers would end the press early.
+    // Light-phase reads still out, counted as the heavy phase counts its own
+    // (`PackageStore::in_flight`). The heavy phase reports itself by rows settling,
+    // so the spin covers the light phase alone.
     let outstanding = RwSignal::new(0usize);
     let packages = LocalResource::new(move || {
         reload.track();
@@ -1172,8 +1159,6 @@ pub fn MainPage() -> impl IntoView {
         }
     });
     let navigate = use_navigate();
-    // The press has to show at once, so it is set by the press rather than inferred
-    // from a read starting. The last read answering takes it away.
     let refreshing = RwSignal::new(false);
     end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
 
@@ -4075,13 +4060,8 @@ mod tests {
             "the placeholder must not survive the answer"
         );
     }
-    /// qhq-8mgw.69. The press has to show at once, because nothing else does:
-    /// `Transition` holds the old body while the light phase re-reads, so the
-    /// page is frozen until the first row redraws.
-    ///
-    /// Asserted through `aria-busy` and `disabled` rather than through the
-    /// signal, because those are what `Button`'s `loading` actually produces —
-    /// a test on the signal alone would pass with the prop left unwired.
+    /// `aria-busy` and `disabled` on the element rather than the signal: those are
+    /// what `Button`'s `loading` produces, so an unwired prop reddens this.
     #[wasm_bindgen_test]
     async fn refresh_reports_itself_busy_the_moment_it_is_pressed() {
         let reload = Trigger::new();
@@ -4114,14 +4094,8 @@ mod tests {
         );
     }
 
-    /// The refresh-from-a-loaded-page path, which is the normal one and the one
-    /// that broke the first version of this.
-    ///
-    /// A refetching `LocalResource` keeps its previous value until the new one
-    /// lands, so "both resources hold a value" is true for the whole of a refresh
-    /// — the first of the two answers used to end the press while the other was
-    /// still out. Counting outstanding reads cannot say yes early, and this drives
-    /// the count through the same three steps a real refresh takes.
+    /// The path a refresh from a loaded page takes. Both resources read as present
+    /// throughout one, so only the count tells one answer from both.
     #[wasm_bindgen_test]
     async fn a_refresh_from_a_loaded_page_spins_until_the_last_read_answers() {
         let outstanding = RwSignal::new(0usize);
@@ -4150,11 +4124,8 @@ mod tests {
         );
     }
 
-    /// The other half: the spin ends, and only when the light phase has answered.
-    ///
-    /// Driven through a plain signal rather than the resources, so the rule is
-    /// pinned without a Tauri host. A version that cleared unconditionally would
-    /// pass the second assertion and fail the first.
+    /// The ending rule alone. A version that cleared unconditionally passes the
+    /// second assertion and fails the first.
     #[wasm_bindgen_test]
     async fn the_spin_ends_when_the_light_phase_answers_and_not_before() {
         let refreshing = RwSignal::new(true);
