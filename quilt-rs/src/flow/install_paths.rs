@@ -296,59 +296,70 @@ pub(crate) async fn install_paths_over(
     // touching a concurrent apply's.
     let run_staging = paths.staging_dir().join(uuid::Uuid::new_v4().to_string());
     storage.create_dir_all(&run_staging).await?;
-    let mut staged: Vec<(PathBuf, PathBuf, ManifestRow)> = Vec::new();
+    // Fetching and staging, as one fallible phase. Every `?` in here — a
+    // missing manifest row, a failed fetch, an unparseable physical key, a
+    // relative object path — lands on the single cleanup below, so none of them
+    // can strand the staged set. Scoping it this way rather than sweeping after
+    // each call is what makes "no error leaks a staging directory" a property of
+    // the shape instead of a list of call sites to remember.
+    let staging: Res<Vec<(PathBuf, PathBuf, ManifestRow)>> = async {
+        let mut staged: Vec<(PathBuf, PathBuf, ManifestRow)> = Vec::new();
 
-    for path in entries_paths {
-        // TODO: Consider using a hashmap or treemap for manifest.rows
-        let row = manifest
-            .get_record(path)
-            .ok_or(ManifestError::Table(format!(
-                "path \"{}\" not found",
-                path.display()
-            )))?;
+        for path in entries_paths {
+            // TODO: Consider using a hashmap or treemap for manifest.rows
+            let row = manifest
+                .get_record(path)
+                .ok_or(ManifestError::Table(format!(
+                    "path \"{}\" not found",
+                    path.display()
+                )))?;
 
-        let object_dest = paths.object(row.hash.digest());
+            let object_dest = paths.object(row.hash.digest());
 
-        if storage.exists(&object_dest).await {
-            debug!("✔️ Object already in cache: {}", object_dest.display());
-        } else {
-            cache_immutable_object(
-                storage,
-                remote,
-                remote_uri.origin.as_ref(),
-                &object_dest,
-                &row.physical_key.parse()?,
-            )
-            .await?;
-            debug!("✔️ Cached object: {}", object_dest.display());
-        }
-
-        // Diagnostic only: the `file://` URL the row *would* carry if rows were
-        // rewritten to the object store (they are not — see above). Logged and
-        // discarded; the error arm still asserts `object_dest` is absolute.
-        let place = Url::from_file_path(&object_dest)
-            .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
-            .to_string();
-        debug!(
-            "✔️ Path {} converted to a `place` {}",
-            object_dest.display(),
-            place
-        );
-        // The row goes in unchanged — `physical_key` and all.
-        entries.insert(row.logical_key.clone(), row.clone());
-
-        // Staged, not written: the working tree stays wholly at its current
-        // revision until every file is ready.
-        let staged_path = match stage_object(storage, &object_dest, &run_staging).await {
-            Ok(path) => path,
-            Err(err) => {
-                let _ = storage.remove_dir_all(&run_staging).await;
-                return Err(err);
+            if storage.exists(&object_dest).await {
+                debug!("✔️ Object already in cache: {}", object_dest.display());
+            } else {
+                cache_immutable_object(
+                    storage,
+                    remote,
+                    remote_uri.origin.as_ref(),
+                    &object_dest,
+                    &row.physical_key.parse()?,
+                )
+                .await?;
+                debug!("✔️ Cached object: {}", object_dest.display());
             }
-        };
-        staged.push((staged_path, working_dir.join(&row.logical_key), row.clone()));
-        debug!("✔️ Staged {}", row.logical_key.display());
+
+            // Diagnostic only: the `file://` URL the row *would* carry if rows were
+            // rewritten to the object store (they are not — see above). Logged and
+            // discarded; the error arm still asserts `object_dest` is absolute.
+            let place = Url::from_file_path(&object_dest)
+                .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
+                .to_string();
+            debug!(
+                "✔️ Path {} converted to a `place` {}",
+                object_dest.display(),
+                place
+            );
+            // The row goes in unchanged — `physical_key` and all.
+            entries.insert(row.logical_key.clone(), row.clone());
+
+            // Staged, not written: the working tree stays wholly at its current
+            // revision until every file is ready.
+            let staged_path = stage_object(storage, &object_dest, &run_staging).await?;
+            staged.push((staged_path, working_dir.join(&row.logical_key), row.clone()));
+            debug!("✔️ Staged {}", row.logical_key.display());
+        }
+        Ok(staged)
     }
+    .await;
+    let staged = match staging {
+        Ok(staged) => staged,
+        Err(err) => {
+            let _ = storage.remove_dir_all(&run_staging).await;
+            return Err(err);
+        }
+    };
 
     // The swap. Everything above this line is fetching and copying, and none of
     // it touched the working tree: interrupted anywhere earlier — which is where
