@@ -13,6 +13,8 @@ use leptos_router::hooks::use_navigate;
 use super::accounts::sign_in_href;
 use crate::commands::AccountHostData;
 use crate::commands::MainPagePackageData;
+use crate::commands::PausedPackageData;
+use crate::commands::PausedReasonData;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
@@ -285,6 +287,52 @@ fn precedence(state: &PackageState) -> u8 {
     }
 }
 
+/// One package's row: its words, its detail if it has one, and its button if the
+/// state names an operation.
+fn package_row(
+    namespace: &str,
+    state: &PackageState,
+    pause_messages: StoredValue<HashMap<String, String>>,
+    navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
+) -> AnyView {
+    let rendered = render(state, Site::QueueRow);
+    // Only a pause has one. `PackageState::Paused` says a sync stopped; this says
+    // what stopped it, and is the only account of that anywhere in the app.
+    let detail = matches!(state, PackageState::Paused)
+        .then(|| pause_messages.with_value(|map| map.get(namespace).cloned()))
+        .flatten();
+    // `None` renders a row with no button, the honest answer for a state the app has
+    // no operation to fix. Not invented here.
+    let action = rendered
+        .action
+        .map(|verb| package_action(verb, namespace, navigate));
+    view! {
+        <QueueRow
+            namespace=namespace.to_owned()
+            state=rendered.words
+            tone=rendered.tone
+            action=action
+            detail=detail
+        />
+    }
+    .into_any()
+}
+
+/// Namespace to the message of the pause that stopped it.
+///
+/// Only `Other` is kept. Every other reason resolved into a state of its own before
+/// the row was built, so a message beside one of those would explain a state the row
+/// is not in.
+pub fn pause_messages(paused: &[PausedPackageData]) -> HashMap<String, String> {
+    paused
+        .iter()
+        .filter_map(|entry| match &entry.reason {
+            PausedReasonData::Other { message } => Some((entry.namespace.clone(), message.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// `Everything is Latest — 43 packages`. One string, because the singular case
 /// is not a plural rule `ZeroLine` can apply.
 fn zero_line_text(total: usize) -> String {
@@ -403,7 +451,15 @@ pub fn QueueRegion(
     /// Re-check exactly these namespaces. The page owns the store and the call;
     /// the queue only knows which packages a cause speaks for.
     retry: Callback<Vec<String>>,
+    /// Namespace to the message of the pause that stopped it, from the watcher
+    /// payload. Empty when that read failed, which leaves a paused row saying only
+    /// that it stopped.
+    #[prop(optional)]
+    pause_messages: HashMap<String, String>,
 ) -> impl IntoView {
+    // Stored so both the region's closure and each row's can read it: a `HashMap`
+    // captured by move lands in one of them and leaves the other `FnOnce`.
+    let pause_messages = StoredValue::new(pause_messages);
     // Created ONCE per construction, outside the closure below — that placement
     // is R4 and R6 in one line. A settle re-runs the closure and finds the
     // signal a group already has; a refetch builds a new `QueueRegion` and with
@@ -554,26 +610,12 @@ pub fn QueueRegion(
                                     .into_any()
                             }
                             QueueItem::Package { namespace, state } => {
-                                let rendered = render(&state, Site::QueueRow);
-                                // `None` renders a row with no button, the honest answer for a
-                                // state the app has no operation to fix. Not invented here.
-                                if let Some(verb) = rendered.action {
-                                    let action = package_action(verb, &namespace, navigate.clone());
-                                    view! {
-                                        <QueueRow
-                                            namespace=namespace
-                                            state=rendered.words
-                                            tone=rendered.tone
-                                            action=action
-                                        />
-                                    }
-                                        .into_any()
-                                } else {
-                                    view! {
-                                        <QueueRow namespace=namespace state=rendered.words tone=rendered.tone />
-                                    }
-                                        .into_any()
-                                }
+                                package_row(
+                                    &namespace,
+                                    &state,
+                                    pause_messages,
+                                    navigate.clone(),
+                                )
                             }
                         }
                     />
@@ -1875,6 +1917,112 @@ mod tests {
             order,
             vec!["a/conflict", "a/paused", "a/unread"],
             "a pause must be named, and named in its lattice position"
+        );
+    }
+    /// The rejection shape, with the newlines that make it readable.
+    const REJECTION: &str = concat!(
+        "package does not satisfy the workflow:\n",
+        "  - a commit message is required by this workflow, but none was provided",
+    );
+
+    fn mount_region_paused(
+        packages: Signal<Vec<MainPagePackageData>>,
+        pause_messages: HashMap<String, String>,
+    ) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <QueueRegion
+                    packages=packages
+                    hosts=Vec::new()
+                    in_flight=Signal::stored(false)
+                    total=Signal::derive(move || packages.get().len())
+                    unchecked=Signal::stored(Vec::new())
+                    retry=Callback::new(|_| ())
+                    pause_messages=pause_messages
+                />
+            }
+        })
+    }
+
+    /// Only `Other` survives the map. Every other reason resolved into a state of
+    /// its own before the row was built, so its message would explain a state the
+    /// row is not in.
+    #[wasm_bindgen_test]
+    fn only_a_reason_with_no_state_of_its_own_keeps_its_message() {
+        let paused = vec![
+            PausedPackageData {
+                namespace: "a/other".to_string(),
+                reason: PausedReasonData::Other {
+                    message: "workflow rejected metadata".to_string(),
+                },
+            },
+            PausedPackageData {
+                namespace: "a/diverged".to_string(),
+                reason: PausedReasonData::Diverged,
+            },
+            PausedPackageData {
+                namespace: "a/conflict".to_string(),
+                reason: PausedReasonData::PullConflict {
+                    files: vec!["one.csv".to_string()],
+                },
+            },
+        ];
+        let map = pause_messages(&paused);
+        assert_eq!(
+            map.get("a/other").map(String::as_str),
+            Some("workflow rejected metadata")
+        );
+        assert!(!map.contains_key("a/diverged"));
+        assert!(!map.contains_key("a/conflict"));
+    }
+
+    /// The row says what stopped it, keeping the engine's own line breaks.
+    #[wasm_bindgen_test]
+    fn a_paused_row_carries_the_message_that_stopped_it() {
+        let packages = Signal::stored(vec![pkg("team/imaging", PackageState::Paused, None)]);
+        let el = mount_region_paused(
+            packages,
+            HashMap::from([("team/imaging".to_string(), REJECTION.to_string())]),
+        );
+
+        let detail = el
+            .query_selector("[class*=detail]")
+            .unwrap()
+            .expect("a paused row states its reason");
+        assert_eq!(
+            detail.text_content().as_deref(),
+            Some(REJECTION),
+            "verbatim, newlines included"
+        );
+    }
+
+    /// A pause whose reason has a state of its own never reaches the map, but the
+    /// row must not pick a message up by namespace either.
+    #[wasm_bindgen_test]
+    fn a_row_in_another_state_takes_no_message() {
+        let packages = Signal::stored(vec![pkg("team/imaging", PackageState::Diverged, None)]);
+        let el = mount_region_paused(
+            packages,
+            HashMap::from([("team/imaging".to_string(), REJECTION.to_string())]),
+        );
+
+        assert!(
+            el.query_selector("[class*=detail]").unwrap().is_none(),
+            "the message explains a pause, and this row is not paused"
+        );
+    }
+
+    /// Without the watcher read there is no map, and the row says only that it
+    /// stopped — which is where every paused row stood before this existed.
+    #[wasm_bindgen_test]
+    fn a_paused_row_with_no_message_still_draws() {
+        let packages = Signal::stored(vec![pkg("team/imaging", PackageState::Paused, None)]);
+        let el = mount_region_paused(packages, HashMap::new());
+
+        assert!(el.query_selector("[class*=detail]").unwrap().is_none());
+        assert!(
+            el.text_content().unwrap().contains("Sync paused"),
+            "the state is still named"
         );
     }
 }

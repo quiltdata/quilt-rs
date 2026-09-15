@@ -188,12 +188,14 @@ fn PausedWithReason() -> impl IntoView {
                         namespace="user/package-b"
                         state="2 files changed"
                         tone=StateTone::Neutral
-                        action=view! {
-                            <Button variant=ButtonVariant::Primary on_click=|_| ()>
-                                "Publish"
-                            </Button>
-                        }
-                            .into_any()
+                        action=Some(
+                            view! {
+                                <Button variant=ButtonVariant::Primary on_click=|_| ()>
+                                    "Publish"
+                                </Button>
+                            }
+                                .into_any(),
+                        )
                     />
                 </div>
             </Card>

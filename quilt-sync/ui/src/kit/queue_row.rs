@@ -41,11 +41,22 @@ pub fn QueueRow(
     /// The one thing to do — a `Button`, passed in rather than named, because the row
     /// has no business knowing whether `Publish` is primary here. Absent on a
     /// sub-row, whose action belongs to the cause above it.
-    #[prop(optional)]
+    ///
+    /// `optional_no_strip`, like `detail`: the caller decides whether a state names
+    /// an operation and already holds the `Option` that answer comes in.
+    #[prop(optional_no_strip)]
     action: Option<AnyView>,
     /// Indented, as one of the packages revealed by an expanded `CauseRow`.
     #[prop(optional)]
     sub: bool,
+    /// A second line under the first, for a state whose account of itself is longer
+    /// than a label. Engine prose, so it is shown verbatim and its line breaks kept.
+    ///
+    /// `optional_no_strip`, like `MainPageRegions::on_store`: the queue's own caller
+    /// already holds an `Option`, and the plain form would make the builder demand a
+    /// bare `String`.
+    #[prop(optional_no_strip)]
+    detail: Option<String>,
 ) -> impl IntoView {
     let class = if sub {
         format!("{} {}", style::root, style::sub)
@@ -57,15 +68,18 @@ pub fn QueueRow(
     let full_namespace = namespace.clone();
     view! {
         <div class=class>
-            // The list bullet, filling the column `CauseRow` uses for its expander.
-            // Empty of text, so it says nothing to a screen reader — the row's own
-            // words are the content and a bullet is not one of them.
-            <span class=style::bullet></span>
-            <span class=style::namespace title=full_namespace>{namespace}</span>
-            {state
-                .zip(tone)
-                .map(|(state, tone)| view! { <StateLabel tone=tone>{state}</StateLabel> })}
-            {action.map(|action| view! { <span class=style::action>{action}</span> })}
+            <div class=style::line>
+                // The list bullet, filling the column `CauseRow` uses for its expander.
+                // Empty of text, so it says nothing to a screen reader — the row's own
+                // words are the content and a bullet is not one of them.
+                <span class=style::bullet></span>
+                <span class=style::namespace title=full_namespace>{namespace}</span>
+                {state
+                    .zip(tone)
+                    .map(|(state, tone)| view! { <StateLabel tone=tone>{state}</StateLabel> })}
+                {action.map(|action| view! { <span class=style::action>{action}</span> })}
+            </div>
+            {detail.map(|detail| view! { <p class=style::detail>{detail}</p> })}
         </div>
     }
 }
@@ -81,14 +95,16 @@ pub fn QueueRow(
 pub fn QueueRowSkeleton() -> impl IntoView {
     view! {
         <div class=style::root>
-            <span class=style::bullet></span>
-            <span class=style::namespace>
-                <SkeletonBox width="32%" />
-            </span>
-            <SkeletonBox width="120px" height="22px" />
-            <span class=style::action>
-                <SkeletonBox width="76px" height="32px" />
-            </span>
+            <div class=style::line>
+                <span class=style::bullet></span>
+                <span class=style::namespace>
+                    <SkeletonBox width="32%" />
+                </span>
+                <SkeletonBox width="120px" height="22px" />
+                <span class=style::action>
+                    <SkeletonBox width="76px" height="32px" />
+                </span>
+            </div>
         </div>
     }
 }

@@ -673,6 +673,11 @@ fn MainPageRegions(
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
     // expanders (R6) — so a view signal created inside it would reset on every
     // Refresh and throw a reader of the feed back to Packages.
+    // Held here rather than inside the Autosync card, for the reason the accounts
+    // read is: the queue joins against this payload for a paused package's message.
+    let watcher_reload = Trigger::new();
+    let watcher =
+        autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher);
     let view_selected = RwSignal::new(PACKAGES_VIEW.to_string());
     // R2, and the same reason `view_selected` is here: a refetch rebuilds the
     // resolved subtree, so a signal created inside it would clear the reader's
@@ -717,7 +722,7 @@ fn MainPageRegions(
         // Outside every boundary, so both cards are constructed once and each one
         // owns when it blanks.
         <div class=style::strip>
-            <autosync::AutosyncCard refresh=reload />
+            <autosync::AutosyncCard reload=watcher_reload watcher=watcher />
             <Transition fallback=|| ()>
                 {move || Suspend::new(async move {
                     match accounts.await {
@@ -863,6 +868,12 @@ fn MainPageRegions(
                         // attributed to a host and those packages fall to rows of
                         // their own. What is unknown is which hosts are signed out.
                         let hosts = accounts.await.map(|data| data.hosts).unwrap_or_default();
+                        // Same arm, same reason. A failed read leaves every paused row
+                        // without its message, which is where they stood before.
+                        let pause_messages = watcher
+                            .await
+                            .map(|data| queue::pause_messages(&data.paused))
+                            .unwrap_or_default();
                         view! {
                             // No wrapper and no margin: `PageLayout`'s column owns
                             // the gap between regions, and the queue is a direct
@@ -879,6 +890,7 @@ fn MainPageRegions(
                                 total=total
                                 unchecked=unchecked
                                 retry=retry
+                                pause_messages=pause_messages
                             />
                             <div class=style::list_region>
                             {list_toolbar(
