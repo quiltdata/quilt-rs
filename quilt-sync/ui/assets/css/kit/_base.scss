@@ -33,6 +33,24 @@ body {
   background: var(--q-bgColor-page);
 }
 
+/* Native chrome — the `<select>` popup the kit hands to the OS, form-control
+ * internals, the list card's scrollbar — paints from `color-scheme` rather than from
+ * our tokens.
+ *
+ * On the v2 SURFACES, never on `:root`. The root's scheme decides the canvas, and
+ * `qui-v2` marks a reader who opted in rather than a page that is showing — so a
+ * root rule turned the canvas dark under v1's unswitched black ink the moment that
+ * reader opened a v1 page. The document stays light; a v2 page paints its own ground
+ * and carries its own scheme. */
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] [data-v2-page],
+:root.qui-v2[data-theme="dark"] [data-home-frame] {
+  color-scheme: dark;
+}
+
 /* Every button here is styled, so strip native chrome: one that forgets its
  * module renders as bare text — a visible reminder rather than a subtly-wrong
  * native widget. */

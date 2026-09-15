@@ -18,6 +18,11 @@ body {
  * the content column and every scene renders ~1000px wide while claiming to show a
  * region at the width the real page gives it — which is the one thing a scene
  * exists to be honest about. */
+/* The harness's own surface, which is not a v2 page and so needs saying. */
+:root[data-theme="dark"] body {
+  color-scheme: dark;
+}
+
 .g-shell {
   display: flex;
   gap: var(--q-space-6);
