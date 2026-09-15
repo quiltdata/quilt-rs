@@ -65,3 +65,63 @@ pub fn SearchInput(
         </div>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// Nothing to clear until there is something, so the control is not there either.
+    #[wasm_bindgen_test]
+    async fn the_clear_control_appears_only_with_something_to_clear() {
+        let value = RwSignal::new(String::new());
+        let el = mount(move || view! { <SearchInput value=value aria_label="Search packages" /> });
+        assert!(
+            el.query_selector("[class*=clear]").unwrap().is_none(),
+            "an empty field offers nothing"
+        );
+
+        value.set("rna".to_string());
+        leptos::task::tick().await;
+        assert!(el.query_selector("[class*=clear]").unwrap().is_some());
+    }
+
+    #[wasm_bindgen_test]
+    async fn clearing_empties_the_callers_signal() {
+        let value = RwSignal::new("rna".to_string());
+        let el = mount(move || view! { <SearchInput value=value aria_label="Search packages" /> });
+        let clear: web_sys::HtmlElement = el
+            .query_selector("[class*=clear]")
+            .unwrap()
+            .expect("the clear control")
+            .dyn_into()
+            .unwrap();
+        clear.click();
+        leptos::task::tick().await;
+        assert_eq!(value.get_untracked(), "");
+    }
+
+    /// The placeholder disappears the moment the user types, so the name cannot be it.
+    #[wasm_bindgen_test]
+    fn the_field_carries_a_name_that_is_never_drawn() {
+        let value = RwSignal::new(String::new());
+        let el = mount(move || {
+            view! { <SearchInput value=value aria_label="Search packages" placeholder="Search…" /> }
+        });
+        let input = el.query_selector("input").unwrap().expect("the field");
+        assert_eq!(
+            input.get_attribute("aria-label").as_deref(),
+            Some("Search packages")
+        );
+    }
+}

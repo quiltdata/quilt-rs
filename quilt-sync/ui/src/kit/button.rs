@@ -96,3 +96,112 @@ pub fn Button(
         </button>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    fn click(el: &web_sys::Element) {
+        let el: web_sys::HtmlElement = el.clone().dyn_into().unwrap();
+        el.click();
+    }
+
+    fn button(el: &web_sys::Element) -> web_sys::Element {
+        el.query_selector("button").unwrap().expect("the button")
+    }
+
+    /// `loading` implies `disabled`. Its doc says a caller never has to set both and a
+    /// loading button must not be clickable twice.
+    #[wasm_bindgen_test]
+    async fn a_loading_button_is_disabled_busy_and_inert() {
+        let clicks = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <Button loading=true on_click=move |_| clicks.update(|n| *n += 1)>
+                    "Publish"
+                </Button>
+            }
+        });
+        let btn = button(&el);
+        assert!(btn.has_attribute("disabled"));
+        assert_eq!(btn.get_attribute("aria-busy").as_deref(), Some("true"));
+
+        click(&btn);
+        leptos::task::tick().await;
+        assert_eq!(clicks.get_untracked(), 0, "a second read must not go out");
+    }
+
+    /// Disabled is enforced in the handler as well as by the attribute: the attribute
+    /// alone is a promise the DOM keeps, and this is the one the component makes.
+    #[wasm_bindgen_test]
+    async fn a_disabled_button_does_not_call_its_handler() {
+        let clicks = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <Button disabled=true on_click=move |_| clicks.update(|n| *n += 1)>
+                    "Publish"
+                </Button>
+            }
+        });
+        click(&button(&el));
+        leptos::task::tick().await;
+        assert_eq!(clicks.get_untracked(), 0);
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_enabled_button_calls_its_handler_once() {
+        let clicks = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <Button on_click=move |_| clicks.update(|n| *n += 1)>"Publish"</Button>
+            }
+        });
+        click(&button(&el));
+        leptos::task::tick().await;
+        assert_eq!(clicks.get_untracked(), 1);
+    }
+
+    /// The leading visual and the spinner are one slot, which is what stops an iconed
+    /// button changing width when work starts. The icon stays in the DOM and the
+    /// stylesheet hides it, so the swap costs no re-render.
+    #[wasm_bindgen_test]
+    fn the_leading_visual_keeps_its_slot_while_loading() {
+        let el = mount(|| {
+            view! {
+                <Button
+                    loading=true
+                    leading_visual=view! { <svg /> }.into_any()
+                    on_click=|_| {}
+                >
+                    "Refresh"
+                </Button>
+            }
+        });
+        assert!(
+            el.query_selector("[class*=icon]").unwrap().is_some(),
+            "the slot is kept, not emptied"
+        );
+        assert!(
+            button(&el).class_name().contains("loading"),
+            "and the stylesheet is what hides it"
+        );
+    }
+
+    /// Inside a form the default would submit it.
+    #[wasm_bindgen_test]
+    fn a_button_is_never_a_submit() {
+        let el = mount(|| view! { <Button on_click=|_| {}>"Publish"</Button> });
+        assert_eq!(button(&el).get_attribute("type").as_deref(), Some("button"));
+    }
+}

@@ -155,3 +155,97 @@ pub fn FormControl(
         </div>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// The whole reason `control` is a closure taking a [`ControlId`]: the label and the
+    /// field cannot come apart, because the field's own signature demands the id.
+    #[wasm_bindgen_test]
+    fn the_label_points_at_the_control_it_named() {
+        let el = mount(|| {
+            view! {
+                <FormControl label="Package name" control=|id| {
+                    let (control_id, described_by) = id.into_attrs();
+                    view! { <input id=control_id aria-describedby=described_by /> }.into_any()
+                } />
+            }
+        });
+        let label = el.query_selector("label").unwrap().expect("a label");
+        let target = label.get_attribute("for").expect("a `for`");
+        let control = el
+            .query_selector(&format!("#{target}"))
+            .unwrap()
+            .expect("the control it points at");
+        assert_eq!(control.tag_name(), "INPUT");
+    }
+
+    /// `aria-describedby` names the validation id even with no message showing: one can
+    /// appear on any keystroke, and pointing at an absent id is defined to be ignored.
+    #[wasm_bindgen_test]
+    fn the_description_names_the_error_before_there_is_one() {
+        let el = mount(|| {
+            view! {
+                <FormControl
+                    label="Package name"
+                    caption="Use owner/name"
+                    control=|id| {
+                        let (control_id, described_by) = id.into_attrs();
+                        view! { <input id=control_id aria-describedby=described_by /> }.into_any()
+                    }
+                />
+            }
+        });
+        let described = el
+            .query_selector("input")
+            .unwrap()
+            .unwrap()
+            .get_attribute("aria-describedby")
+            .expect("a description");
+        let caption_id = el
+            .query_selector("[class*=caption]")
+            .unwrap()
+            .expect("the caption")
+            .get_attribute("id")
+            .unwrap();
+        assert!(described.contains(&caption_id), "{described}");
+        assert_eq!(
+            described.split_whitespace().count(),
+            2,
+            "the caption and the message that is not there yet: {described}"
+        );
+    }
+
+    /// The word, not an asterisk: an asterisk is a convention you have to have learned.
+    #[wasm_bindgen_test]
+    fn a_required_field_says_the_word() {
+        let el = mount(|| {
+            view! {
+                <FormControl label="Package name" required=true control=|id| {
+                    let (control_id, described_by) = id.into_attrs();
+                    view! { <input id=control_id aria-describedby=described_by /> }.into_any()
+                } />
+            }
+        });
+        let label = el
+            .query_selector("label")
+            .unwrap()
+            .unwrap()
+            .text_content()
+            .unwrap();
+        assert!(label.contains("required"), "{label}");
+        assert!(!label.contains('*'), "{label}");
+    }
+}

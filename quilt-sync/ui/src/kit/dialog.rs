@@ -76,3 +76,115 @@ pub fn Dialog(
         </dialog>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// Yields to the event loop, not just to the reactive system. `close` is queued as
+    /// a task rather than fired synchronously, so a `tick` alone never sees it.
+    async fn next_task() {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            drop(
+                web_sys::window()
+                    .unwrap()
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 0),
+            );
+        });
+        drop(wasm_bindgen_futures::JsFuture::from(promise).await);
+    }
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// `show_modal`, never `show`: the non-modal form gets no focus trap, no Escape and
+    /// no backdrop, which is the whole reason for being here.
+    #[wasm_bindgen_test]
+    async fn the_signal_opens_and_closes_the_dialog() {
+        let open = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <Dialog open=open title="Create package" footer=view! { "footer" }.into_any()>
+                    "body"
+                </Dialog>
+            }
+        });
+        let dialog: web_sys::HtmlDialogElement = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the dialog")
+            .dyn_into()
+            .unwrap();
+        assert!(!dialog.open(), "closed until the caller says otherwise");
+
+        open.set(true);
+        leptos::task::tick().await;
+        assert!(dialog.open());
+
+        open.set(false);
+        leptos::task::tick().await;
+        assert!(!dialog.open());
+    }
+
+    /// The write-back. Escape closes the element without touching the signal, so
+    /// without this the next open would do nothing.
+    #[wasm_bindgen_test]
+    async fn closing_the_element_writes_back_to_the_signal() {
+        let open = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <Dialog open=open title="Create package" footer=view! { "footer" }.into_any()>
+                    "body"
+                </Dialog>
+            }
+        });
+        let dialog: web_sys::HtmlDialogElement = el
+            .query_selector("dialog")
+            .unwrap()
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        // Opened through the signal, as a caller does: `close()` on a dialog that was
+        // never open fires nothing, and the write-back is what this is about.
+        open.set(true);
+        leptos::task::tick().await;
+        assert!(dialog.open(), "open before closing it");
+
+        dialog.close();
+        next_task().await;
+        leptos::task::tick().await;
+        assert!(
+            !open.get_untracked(),
+            "an Escape that left the signal true would jam the next open"
+        );
+    }
+
+    /// Named twice: `aria-label` is what a screen reader announces when the modal
+    /// opens, and the heading is what a sighted reader sees first.
+    #[wasm_bindgen_test]
+    fn the_dialog_is_named_for_both_readers() {
+        let open = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <Dialog open=open title="Create package" footer=view! { "footer" }.into_any()>
+                    "body"
+                </Dialog>
+            }
+        });
+        let dialog = el.query_selector("dialog").unwrap().unwrap();
+        assert_eq!(
+            dialog.get_attribute("aria-label").as_deref(),
+            Some("Create package")
+        );
+        let heading = el.query_selector("h2").unwrap().expect("a visible title");
+        assert_eq!(heading.text_content().as_deref(), Some("Create package"));
+    }
+}
