@@ -62,10 +62,12 @@ pub fn HostRow(
         Some(view! { {move || format!("Role: {}", role.get())} }.into_any())
     };
 
+    // Ellipsised by the stylesheet, so the whole value rides in `title`.
+    let full_host = host.clone();
     view! {
         <div class=style::root>
             <span class=style::text>
-                <span class=style::host>{host}</span>
+                <span class=style::host title=full_host>{host}</span>
                 {sub
                     .map(|line| {
                         let class = if waiting {
@@ -91,5 +93,45 @@ pub fn HostRow(
                 }}
             </span>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// `main_page.rs`'s pattern: mount a view into a fresh, attached `div` and
+    /// hand back the element to query against.
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// A catalog host is a domain, and a long one truncates.
+    #[wasm_bindgen_test]
+    fn the_truncating_host_carries_its_whole_value() {
+        let el = mount(|| {
+            view! {
+                <HostRow
+                    host="a-very-long-catalog-hostname.example.quiltdata.com"
+                    role=RwSignal::new("analyst".to_string())
+                    on_sign_in=|_| {}
+                />
+            }
+        });
+        let span = el
+            .query_selector("[class*=host]")
+            .unwrap()
+            .expect("the host");
+        assert_eq!(
+            span.get_attribute("title").as_deref(),
+            Some("a-very-long-catalog-hostname.example.quiltdata.com"),
+        );
     }
 }
