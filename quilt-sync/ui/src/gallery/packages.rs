@@ -139,7 +139,7 @@ fn EdgesStory() -> impl IntoView {
                     tone=StateTone::Success
                 />
             </Cell>
-            <Cell full=true label="provisional — the light phase's guess, dimmed and dashed until confirmed">
+            <Cell full=true label="provisional — the guess dims and the label dashes; the timestamp does not, because it is not part of the guess">
                 <div class="g-rows">
                     <PackageRow
                         namespace="user/package-a"

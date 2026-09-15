@@ -89,7 +89,14 @@
  * looser — its floor is 0.57 — so one value covers both themes.
  *
  * Below 0.71 in light the text stops meeting AA, and the honest next move is a
- * different treatment rather than more opacity. */
-.provisional {
+ * different treatment rather than more opacity.
+ *
+ * Not on the row itself, and `.time` is the reason. That measurement was taken
+ * against the label's tone pair and never covered the row's own muted text: the
+ * timestamp is `--q-fgColor-muted`, 6.6:1 on the card, and 0.75 of it is 3.66:1.
+ * The timestamp is also not part of what is provisional — the STATE is the guess,
+ * and the time came off the same read either way — so it keeps full strength and
+ * everything that is a guess dims. */
+.provisional > *:not(.time) {
   opacity: 0.75;
 }

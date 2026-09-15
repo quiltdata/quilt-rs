@@ -53,7 +53,9 @@ pub fn Select(
         <div class=class>
             {prefix
                 .map(|text| view! { <span class=style::prefix aria-hidden="true">{text}</span> })}
-            <span class=style::value>{move || selected.get()}</span>
+            // `aria-hidden`, like the prefix and the caret: this is the closed state
+            // we drew, and the real `select` underneath already reports the value.
+            <span class=style::value aria-hidden="true">{move || selected.get()}</span>
             <span class=style::caret aria-hidden="true">
                 <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"
                     stroke-linecap="round" stroke-linejoin="round">
@@ -78,5 +80,41 @@ pub fn Select(
                     .collect_view()}
             </select>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    /// The closed state is ours; the value belongs to the `select` underneath it.
+    /// Both exposed, a reader hears the bucket twice.
+    #[wasm_bindgen_test]
+    fn the_drawn_value_is_hidden_from_the_accessibility_tree() {
+        let el = mount(|| {
+            view! {
+                <Select
+                    naming=Naming::Hidden("Bucket".to_string())
+                    options=vec!["one".to_string(), "two".to_string()]
+                    selected=RwSignal::new("one".to_string())
+                />
+            }
+        });
+        let drawn = el
+            .query_selector("[class*=value]")
+            .unwrap()
+            .expect("the drawn value");
+        assert_eq!(drawn.get_attribute("aria-hidden").as_deref(), Some("true"));
     }
 }
