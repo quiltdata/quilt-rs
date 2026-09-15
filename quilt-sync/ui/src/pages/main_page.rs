@@ -1090,6 +1090,47 @@ fn MainPageRegions(
     }
 }
 
+/// The appbar's Refresh, with the click's own feedback.
+///
+/// `loading` is not decoration. `Transition` deliberately holds the old body
+/// while the light phase re-reads, so a press moves nothing on screen until the
+/// first row redraws — and the page's own rule is that every operation owns a
+/// visible indicator (`kit/page_layout.rs`). `Button` disables itself while
+/// loading, which also stops a second read going out (qhq-8mgw.69).
+///
+/// Split out of `MainPage` so it can be mounted without a Tauri host.
+fn refresh_button(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
+    view! {
+        <Button
+            leading_visual=icons::sync()
+            loading=refreshing
+            on_click=move |_| {
+                refreshing.set(true);
+                reload.notify();
+            }
+        >
+            "Refresh"
+        </Button>
+    }
+    .into_any()
+}
+
+/// Ends the spin when the light phase has answered.
+///
+/// The light phase and not the heavy one: the heavy phase already reports itself,
+/// one row settling at a time, and holding the spinner across both would leave it
+/// turning long after the page started moving again.
+///
+/// Takes `ready` rather than the resources themselves, so the rule can be driven
+/// from a test without a Tauri host.
+fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
+    Effect::new(move |_| {
+        if ready.get() {
+            refreshing.set(false);
+        }
+    });
+}
+
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
@@ -1112,12 +1153,16 @@ pub fn MainPage() -> impl IntoView {
         commands::get_main_page_accounts()
     });
     let navigate = use_navigate();
+    // The press has to show at once; the light phase answering takes it away.
+    let refreshing = RwSignal::new(false);
+    end_spin_when_ready(
+        refreshing,
+        Signal::derive(move || packages.get().is_some() && accounts.get().is_some()),
+    );
 
     view! {
         <PageLayout actions=view! {
-            <Button leading_visual=icons::sync() on_click=move |_| reload.notify()>
-                "Refresh"
-            </Button>
+            {refresh_button(reload, refreshing)}
             // The only way back to Settings from here. `/` redirects straight back to
             // this page while the experiment is on, so the logo is not an escape.
             <Button
@@ -4011,6 +4056,70 @@ mod tests {
         assert!(
             el.query_selector("[class*=placeholder]").unwrap().is_none(),
             "the placeholder must not survive the answer"
+        );
+    }
+    /// qhq-8mgw.69. The press has to show at once, because nothing else does:
+    /// `Transition` holds the old body while the light phase re-reads, so the
+    /// page is frozen until the first row redraws.
+    ///
+    /// Asserted through `aria-busy` and `disabled` rather than through the
+    /// signal, because those are what `Button`'s `loading` actually produces —
+    /// a test on the signal alone would pass with the prop left unwired.
+    #[wasm_bindgen_test]
+    async fn refresh_reports_itself_busy_the_moment_it_is_pressed() {
+        let reload = Trigger::new();
+        let refreshing = RwSignal::new(false);
+        let el = mount(move || refresh_button(reload, refreshing));
+
+        let button: web_sys::HtmlElement = el
+            .query_selector("button")
+            .unwrap()
+            .expect("the Refresh button")
+            .dyn_into()
+            .unwrap();
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("false"),
+            "at rest it is not busy"
+        );
+
+        button.click();
+        leptos::task::tick().await;
+
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("true"),
+            "a press that moves nothing on screen has to say so itself"
+        );
+        assert!(
+            button.has_attribute("disabled"),
+            "and a second press must not send a second read"
+        );
+    }
+
+    /// The other half: the spin ends, and only when the light phase has answered.
+    ///
+    /// Driven through a plain signal rather than the resources, so the rule is
+    /// pinned without a Tauri host. A version that cleared unconditionally would
+    /// pass the second assertion and fail the first.
+    #[wasm_bindgen_test]
+    async fn the_spin_ends_when_the_light_phase_answers_and_not_before() {
+        let refreshing = RwSignal::new(true);
+        let ready = RwSignal::new(false);
+        end_spin_when_ready(refreshing, ready.into());
+        leptos::task::tick().await;
+
+        assert!(
+            refreshing.get_untracked(),
+            "still reading: the spinner stays"
+        );
+
+        ready.set(true);
+        leptos::task::tick().await;
+
+        assert!(
+            !refreshing.get_untracked(),
+            "the light phase answered, so the press is finished"
         );
     }
 }
