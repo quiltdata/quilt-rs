@@ -50,6 +50,11 @@ cargo install trunk stylance-cli       # the page bundler and the CSS-module com
 `just start` additionally needs `cargo install tauri-cli` and Tauri's platform
 dependencies, listed at <https://tauri.app/start/prerequisites/>.
 
+The two can run at the same time. They build into separate directories, `ui/dist`
+for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
+target it is given to `<dist>/index.html` and a shared directory would leave
+whichever rebuilt last owning the page both of them serve.
+
 All cargo commands work on the entire workspace by default. Use the `-p` flag to
 target specific packages:
 
