@@ -292,15 +292,22 @@ fn precedence(state: &PackageState) -> u8 {
 fn package_row(
     namespace: &str,
     state: &PackageState,
-    pause_messages: StoredValue<HashMap<String, String>>,
+    pause_messages: Signal<HashMap<String, String>>,
     navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
 ) -> AnyView {
     let rendered = render(state, Site::QueueRow);
     // Only a pause has one. `PackageState::Paused` says a sync stopped; this says
     // what stopped it, and is the only account of that anywhere in the app.
-    let detail = matches!(state, PackageState::Paused)
-        .then(|| pause_messages.with_value(|map| map.get(namespace).cloned()))
-        .flatten();
+    //
+    // Derived rather than resolved here: the message arrives on a payload of its own,
+    // and reading it at the draw site keeps a watcher reload out of the subtree.
+    let paused = matches!(state, PackageState::Paused);
+    let key = namespace.to_owned();
+    let detail = Signal::derive(move || {
+        paused
+            .then(|| pause_messages.with(|map| map.get(&key).cloned()))
+            .flatten()
+    });
     // `None` renders a row with no button, the honest answer for a state the app has
     // no operation to fix. Not invented here.
     let action = rendered
@@ -452,14 +459,11 @@ pub fn QueueRegion(
     /// the queue only knows which packages a cause speaks for.
     retry: Callback<Vec<String>>,
     /// Namespace to the message of the pause that stopped it, from the watcher
-    /// payload. Empty when that read failed, which leaves a paused row saying only
-    /// that it stopped.
-    #[prop(optional)]
-    pause_messages: HashMap<String, String>,
+    /// payload. Empty while that read is out or when it failed, which leaves a paused
+    /// row saying only that it stopped.
+    #[prop(optional, into)]
+    pause_messages: Signal<HashMap<String, String>>,
 ) -> impl IntoView {
-    // Stored so both the region's closure and each row's can read it: a `HashMap`
-    // captured by move lands in one of them and leaves the other `FnOnce`.
-    let pause_messages = StoredValue::new(pause_messages);
     // Created ONCE per construction, outside the closure below — that placement
     // is R4 and R6 in one line. A settle re-runs the closure and finds the
     // signal a group already has; a refetch builds a new `QueueRegion` and with
@@ -1929,11 +1933,19 @@ mod tests {
         packages: Signal<Vec<MainPagePackageData>>,
         pause_messages: HashMap<String, String>,
     ) -> web_sys::Element {
+        mount_region_with_pauses(packages, Vec::new(), Signal::stored(pause_messages))
+    }
+
+    fn mount_region_with_pauses(
+        packages: Signal<Vec<MainPagePackageData>>,
+        hosts: Vec<AccountHostData>,
+        pause_messages: Signal<HashMap<String, String>>,
+    ) -> web_sys::Element {
         mount(move || {
             view! {
                 <QueueRegion
                     packages=packages
-                    hosts=Vec::new()
+                    hosts=hosts
                     in_flight=Signal::stored(false)
                     total=Signal::derive(move || packages.get().len())
                     unchecked=Signal::stored(Vec::new())
@@ -2023,6 +2035,38 @@ mod tests {
         assert!(
             el.text_content().unwrap().contains("Sync paused"),
             "the state is still named"
+        );
+    }
+    /// The watcher reloads on a deadline, on the window coming back and after a
+    /// toggle write. None of those touched the package list, so none may rebuild the
+    /// queue: a rebuild re-collapses every expanded cause (R6), which at a 30s pull
+    /// interval would close a group the reader had just opened.
+    #[wasm_bindgen_test]
+    async fn a_new_pause_map_leaves_an_expanded_cause_open() {
+        let pauses = RwSignal::new(HashMap::new());
+        let el = mount_region_with_pauses(
+            Signal::stored(two_signed_out()),
+            one_signed_out(),
+            pauses.into(),
+        );
+
+        click(&expander(&el));
+        leptos::task::tick().await;
+        assert!(
+            el.text_content().unwrap().contains("a/one"),
+            "expanded to begin with"
+        );
+
+        // What a watcher reload delivers: the same question, answered again.
+        pauses.set(HashMap::from([(
+            "somewhere/else".to_string(),
+            "workflow rejected".to_string(),
+        )]));
+        leptos::task::tick().await;
+
+        assert!(
+            el.text_content().unwrap().contains("a/one"),
+            "a watcher reload must not close what the reader opened"
         );
     }
 }

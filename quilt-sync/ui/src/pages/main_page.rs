@@ -678,6 +678,20 @@ fn MainPageRegions(
     let watcher_reload = Trigger::new();
     let watcher =
         autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher);
+    // A signal, NOT awaited beside `hosts` below. The watcher reloads on a deadline,
+    // on the window coming back and after a toggle write; awaiting it inside that
+    // `Suspend` would rebuild the queue on each, re-collapsing every expanded cause
+    // (R6) several times a minute. Read where it is drawn, so only the line changes.
+    let pause_messages = Signal::derive(move || {
+        watcher
+            .get()
+            .and_then(|data| {
+                data.as_ref()
+                    .ok()
+                    .map(|data| queue::pause_messages(&data.paused))
+            })
+            .unwrap_or_default()
+    });
     let view_selected = RwSignal::new(PACKAGES_VIEW.to_string());
     // R2, and the same reason `view_selected` is here: a refetch rebuilds the
     // resolved subtree, so a signal created inside it would clear the reader's
@@ -868,12 +882,6 @@ fn MainPageRegions(
                         // attributed to a host and those packages fall to rows of
                         // their own. What is unknown is which hosts are signed out.
                         let hosts = accounts.await.map(|data| data.hosts).unwrap_or_default();
-                        // Same arm, same reason. A failed read leaves every paused row
-                        // without its message, which is where they stood before.
-                        let pause_messages = watcher
-                            .await
-                            .map(|data| queue::pause_messages(&data.paused))
-                            .unwrap_or_default();
                         view! {
                             // No wrapper and no margin: `PageLayout`'s column owns
                             // the gap between regions, and the queue is a direct

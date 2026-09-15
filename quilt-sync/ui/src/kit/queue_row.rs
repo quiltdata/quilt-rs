@@ -52,11 +52,9 @@ pub fn QueueRow(
     /// A second line under the first, for a state whose account of itself is longer
     /// than a label. Engine prose, so it is shown verbatim and its line breaks kept.
     ///
-    /// `optional_no_strip`, like `MainPageRegions::on_store`: the queue's own caller
-    /// already holds an `Option`, and the plain form would make the builder demand a
-    /// bare `String`.
-    #[prop(optional_no_strip)]
-    detail: Option<String>,
+    /// Reactive: it arrives on a payload of its own, after the row is drawn.
+    #[prop(optional, into)]
+    detail: MaybeProp<String>,
 ) -> impl IntoView {
     let class = if sub {
         format!("{} {}", style::root, style::sub)
@@ -79,7 +77,7 @@ pub fn QueueRow(
                     .map(|(state, tone)| view! { <StateLabel tone=tone>{state}</StateLabel> })}
                 {action.map(|action| view! { <span class=style::action>{action}</span> })}
             </div>
-            {detail.map(|detail| view! { <p class=style::detail>{detail}</p> })}
+            {move || detail.get().map(|detail| view! { <p class=style::detail>{detail}</p> })}
         </div>
     }
 }
