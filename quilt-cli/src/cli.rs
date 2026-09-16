@@ -593,6 +593,54 @@ mod tests {
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
 
+    /// Nothing else pins these strings, and a consumer branching on them
+    /// cannot see a rename. This table is the contract.
+    #[test]
+    fn error_kinds_are_stable() {
+        let cases: Vec<(Error, &str)> = vec![
+            (Error::Domain, "domain"),
+            (Error::Home, "home"),
+            (Error::NamespaceRequired, "namespace_required"),
+            (Error::WorkflowEmpty, "workflow_empty"),
+            (Error::WorkflowRequiresBucket, "workflow_requires_bucket"),
+            (
+                Error::CommitMetaInvalid("[]".to_string()),
+                "commit_meta_invalid",
+            ),
+            (Error::Test("probe".to_string()), "internal"),
+            (
+                Error::NamespaceNotFound(("demo", "sales").into()),
+                "namespace_not_found",
+            ),
+            (
+                Error::LoginRequired("open.quiltdata.com".parse().expect("valid host")),
+                "login_required",
+            ),
+            (
+                Error::Json(
+                    serde_json::from_str::<serde_json::Value>("{").expect_err("malformed JSON"),
+                ),
+                "invalid_json",
+            ),
+            (Error::Io(std::io::Error::other("boom")), "io"),
+            (
+                Error::Quilt(quilt_rs::Error::Uri(quilt_uri::UriError::Package(
+                    "bad".to_string(),
+                ))),
+                "invalid_uri",
+            ),
+            (
+                Error::Quilt(quilt_rs::Error::Lineage(quilt_rs::LineageError::Missing)),
+                "lineage",
+            ),
+            (Error::Quilt(quilt_rs::Error::Unimplemented), "quilt_error"),
+        ];
+
+        for (err, expected) in cases {
+            assert_eq!(err.kind(), expected, "kind for {err:?}");
+        }
+    }
+
     #[test]
     fn commit_workflow_intent_omit_maps_to_bucket_default() {
         assert_eq!(
