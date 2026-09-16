@@ -1833,6 +1833,106 @@ mod tests {
         Ok(())
     }
 
+    /// The only place the whole `--json` chain is joined: a real command's
+    /// output travelling through `init` and `print` in JSON mode. Every other
+    /// JSON test calls `to_json` on a hand-built `Output`, so the flag, the
+    /// `Format` it selects, and the printer that reads it are each proven
+    /// separately and never together.
+    ///
+    /// Covers the commands reachable without a remote; `browse`, `install`,
+    /// `login`, `pull`, `push` and `role` all need one.
+    #[test(tokio::test)]
+    async fn json_mode_emits_one_parseable_object_per_local_command() -> Result<(), Error> {
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
+        let dir = temp_dir.path().to_path_buf();
+
+        let args = |command| Args {
+            domain: Some(dir.clone()),
+            home: Some(dir.clone()),
+            verbose: false,
+            json: true,
+            command,
+        };
+        let pkg = || PackageRef {
+            namespace: Some("test/pkg".to_string()),
+        };
+
+        let source = dir.join("source");
+        std::fs::create_dir_all(&source)?;
+        std::fs::write(source.join("data.csv"), "a,b\n1,2")?;
+
+        let commands = vec![
+            (
+                "create",
+                Commands::Create {
+                    namespace: "test/pkg".to_string(),
+                    source: Some(source.clone()),
+                    message: Some("first".to_string()),
+                },
+            ),
+            ("list", Commands::List),
+            ("status", Commands::Status { pkg: pkg() }),
+            ("log", Commands::Log { pkg: pkg() }),
+            ("uninstall", Commands::Uninstall { pkg: pkg() }),
+        ];
+
+        for (name, command) in commands {
+            let mut stdout = Vec::new();
+            let mut stderr = Vec::new();
+
+            let result = init(args(command)).await?;
+            print(result, Format::Json, &mut stdout, &mut stderr)?;
+
+            let parsed: serde_json::Value = serde_json::from_slice(&stdout).unwrap_or_else(|err| {
+                panic!(
+                    "`{name} --json` emitted unparseable stdout ({err}): {}",
+                    String::from_utf8_lossy(&stdout)
+                )
+            });
+            assert!(
+                parsed.is_object(),
+                "`{name} --json` emitted {parsed}, not a bare object"
+            );
+            assert!(
+                stderr.is_empty(),
+                "`{name} --json` wrote to stderr: {}",
+                String::from_utf8_lossy(&stderr)
+            );
+        }
+
+        Ok(())
+    }
+
+    /// The failure half of the same chain, end to end rather than against a
+    /// stand-in: stdout carries nothing a consumer could half-parse, and the
+    /// error object on stderr has a kind to branch on.
+    #[test(tokio::test)]
+    async fn json_mode_failure_leaves_stdout_empty_and_stderr_parseable() -> Result<(), Error> {
+        let (_, temp_dir) = create_model_in_temp_dir().await?;
+        let args = Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            json: true,
+            command: Commands::Status {
+                pkg: PackageRef {
+                    namespace: Some("no/such".to_string()),
+                },
+            },
+        };
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        print(init(args).await?, Format::Json, &mut stdout, &mut stderr)?;
+
+        assert!(stdout.is_empty(), "stdout must stay empty on failure");
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&stderr).expect("stderr carries parseable JSON");
+        assert_eq!(parsed["error"]["kind"], "namespace_not_found");
+
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_install_invalid() -> Result<(), Error> {
         use crate::cli::fixtures::packages::invalid as pkg;
