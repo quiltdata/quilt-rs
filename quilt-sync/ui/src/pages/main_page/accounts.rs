@@ -25,12 +25,18 @@ use crate::kit::Card;
 use crate::kit::HostRow;
 
 /// Where the [Sign in] button goes. `pages/login.rs` reads both parameters from
-/// the query string; `back` is what returns the user to this page afterwards.
+/// the query string; `back` is where login returns the user afterwards.
+///
+/// `back` is `/`, not `/main`: `/` renders whichever main page is switched on, so
+/// it comes back here for a reader who has this one, and it is a route the
+/// backend can read. OAuth login parses `back` in `routes::Paths` — an address
+/// only the client router knows is not a way back at all.
 ///
 /// `pub(super)`, not private: the queue's own `[Sign in]` (§4.3) reuses this
 /// rather than writing a second copy of the format string.
 pub(super) fn sign_in_href(host: &str) -> String {
-    format!("/login?host={host}&back=/main")
+    let back = urlencoding::encode("/");
+    format!("/login?host={host}&back={back}")
 }
 
 /// The card, on one payload — the shape [`AutosyncBody`](super::autosync) has,
@@ -448,9 +454,11 @@ mod tests {
     fn the_sign_in_link_carries_the_host_and_the_way_back() {
         // R6. `pages/login.rs` reads `host` and `back` from the query string, so a
         // link missing either lands the user on a login page that cannot come back.
+        // `back` is `/` and percent-encoded, as every other login link in the app
+        // builds it — `routes::Paths` in the backend has to parse it for OAuth.
         assert_eq!(
             sign_in_href("custom.registry.io"),
-            "/login?host=custom.registry.io&back=/main"
+            "/login?host=custom.registry.io&back=%2F"
         );
     }
     #[wasm_bindgen_test]

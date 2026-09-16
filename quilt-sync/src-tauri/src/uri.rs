@@ -100,6 +100,24 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
     })
 }
 
+/// Where a deep-link login lands when the callback names a page, and where it
+/// lands when it does not.
+///
+/// The default is `/`, which renders whichever main page the reader has switched
+/// on. Naming a specific page here would land half the readers on the other one.
+/// An unreadable redirect gets the same default rather than an error: the login
+/// itself succeeded, and dropping the user nowhere is worse than dropping them
+/// home.
+fn landing_after_login(redirect: Option<&str>) -> routes::Paths {
+    redirect
+        .and_then(|r| {
+            r.parse::<routes::Paths>()
+                .map_err(|err| warn!("Failed to parse redirect '{}': {}", r, err))
+                .ok()
+        })
+        .unwrap_or(routes::Paths::Home)
+}
+
 /// Handle `quilt://auth/callback?code=...&host=...&redirect=...` deep link
 #[allow(
     clippy::too_many_lines,
@@ -112,15 +130,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let host = auth_params.host.clone();
     let host_str = host.to_string();
     let state = auth_params.state;
-    let redirect_path: routes::Paths = auth_params
-        .redirect
-        .as_deref()
-        .and_then(|r| {
-            r.parse::<routes::Paths>()
-                .map_err(|err| warn!("Failed to parse redirect '{}': {}", r, err))
-                .ok()
-        })
-        .unwrap_or(routes::Paths::InstalledPackagesList);
+    let redirect_path = landing_after_login(auth_params.redirect.as_deref());
 
     tauri::async_runtime::spawn(async move {
         let oauth_state = handle.state::<OAuthState>();
@@ -413,5 +423,28 @@ mod tests {
         let url = Url::parse("quilt://auth/callback?error=server_error").unwrap();
         let err = parse_auth_params(&url).unwrap_err();
         assert!(err.to_string().contains("server_error"));
+    }
+
+    #[test]
+    fn a_callback_with_no_redirect_lands_home() {
+        assert_eq!(landing_after_login(None), routes::Paths::Home);
+    }
+
+    #[test]
+    fn a_callback_that_names_a_page_lands_there() {
+        assert_eq!(
+            landing_after_login(Some("/settings")),
+            routes::Paths::Settings
+        );
+    }
+
+    #[test]
+    fn an_unreadable_redirect_lands_home_rather_than_nowhere() {
+        // The login succeeded by this point, so there is no failure to report to
+        // the user — only a choice of page.
+        assert_eq!(
+            landing_after_login(Some("/not-a-page")),
+            routes::Paths::Home
+        );
     }
 }

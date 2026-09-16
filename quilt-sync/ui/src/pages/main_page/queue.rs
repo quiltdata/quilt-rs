@@ -1310,7 +1310,7 @@ mod tests {
         // builds from `sign_in_href` directly rather than through this match.
         assert_eq!(
             sign_in_href("custom.registry.io"),
-            "/login?host=custom.registry.io&back=/main"
+            "/login?host=custom.registry.io&back=%2F"
         );
     }
 

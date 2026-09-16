@@ -166,6 +166,9 @@ fn parse_s3_package_uri(location: &str) -> Result<quilt_uri::S3PackageUri, Error
 #[derive(Debug, PartialEq, Clone, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum Paths {
+    /// `/`, which renders whichever main page the reader has switched on.
+    #[serde(rename = "home")]
+    Home,
     #[serde(rename = "commit")]
     Commit(quilt_uri::Namespace, EntriesFilter),
     #[serde(rename = "installed_package")]
@@ -189,6 +192,9 @@ pub enum Paths {
 impl fmt::Display for Paths {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Paths::Home => {
+                write!(f, "/")
+            }
             Paths::Commit(namespace, filter) => {
                 let filter_str = filter.to_string();
                 if filter_str.is_empty() {
@@ -276,6 +282,11 @@ fn format_namespace_filter_query(
 pub fn from_url(path: Paths, mut url: Url) -> url::Url {
     url.set_fragment(None);
     match path {
+        Paths::Home => {
+            url.set_path("/");
+            url.set_query(None);
+            url
+        }
         Paths::Commit(ref namespace, ref filter) => {
             url.set_path("/commit");
             url.set_query(Some(&format_namespace_filter_query(namespace, filter)));
@@ -337,6 +348,9 @@ impl str::FromStr for Paths {
     fn from_str(location: &str) -> Result<Self, Self::Err> {
         let page = parse_page(location)?;
         match page.as_str() {
+            // `/` has one empty trailing segment, so this is the root and not a
+            // missing page.
+            "" => Ok(Paths::Home),
             "commit" => {
                 let namespace = parse_namespace(location)?;
                 let filter = parse_filter(location)?;
@@ -463,6 +477,20 @@ mod tests {
             route,
             Paths::InstalledPackage(("foo", "bar").into(), filter)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_home() -> Result<()> {
+        let page_url = from_url(Paths::Home, Url::parse("http://test:1234/settings")?);
+        let page_url_str = page_url.as_str();
+        assert_eq!(page_url_str, "http://test:1234/");
+
+        let route: Paths = page_url_str.parse()?;
+
+        assert_eq!(route, Paths::Home);
+        assert_eq!(format!("{route}"), "/");
 
         Ok(())
     }
@@ -630,6 +658,9 @@ mod tests {
 
         let list_path = Paths::InstalledPackagesList;
         assert_eq!(list_path.pathname(), "installed_packages_list");
+
+        let home_path = Paths::Home;
+        assert_eq!(home_path.pathname(), "home");
 
         let merge_path = Paths::Merge(("secret", "repo").into());
         assert_eq!(merge_path.pathname(), "merge");
