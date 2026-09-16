@@ -89,6 +89,11 @@ and stay human-readable, exit 2), the payload goes to stderr as
 status is unchanged. `kind` is a stable identifier to branch on; `message` is the
 same prose the human form prints.
 
+stderr is also the log stream, so the error object is not necessarily the whole
+of it: a warning at the default level, or INFO lines under `-v`, are written
+there first. The object is always a single line and always the last one, so
+read it with `tail -n 1` rather than parsing the stream whole.
+
 Commands keep stdout reserved for command output by default. Add `-v` or
 `--verbose` to show INFO-level logs on stderr; set `RUST_LOG` for target-specific
 filtering.
