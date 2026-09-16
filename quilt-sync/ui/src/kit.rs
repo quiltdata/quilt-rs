@@ -92,6 +92,7 @@ pub use dialog::Dialog;
 pub use entry_group::EntryGroup;
 pub use entry_row::DIFFERS_TITLE;
 pub use entry_row::EntryRow;
+pub use entry_row::EntrySelection;
 pub use file_row::FileRow;
 pub use file_row::FileRowSkeleton;
 pub use form_control::ControlId;

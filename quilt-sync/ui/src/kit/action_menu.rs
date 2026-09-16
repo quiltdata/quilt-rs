@@ -13,11 +13,17 @@
 //! native element for *run one of these* — and it is not a form control, so
 //! nothing it does can disagree with a `<select>`.
 //!
-//! # No `role="menu"`, deliberately
+//! # No `role="menu"`, and no `aria-haspopup`, deliberately
 //!
 //! `role="menu"` promises arrow-key navigation, and hand-writing roving focus is
 //! the specific thing the rule forbids. These are buttons on a surface, reached
 //! with Tab, in the order they are read. The promise and the behaviour match.
+//!
+//! `aria-haspopup` goes the same way: its `true` is defined as synonymous with
+//! `menu`, so setting it would make exactly the promise the paragraph above
+//! declines. What the trigger *does* carry is `aria-expanded` and
+//! `aria-controls` — it says that it opens something, which of it is open, and
+//! which surface it means, none of which claim a keyboard model.
 //!
 //! # A disabled command says why
 //!
@@ -100,15 +106,19 @@ pub fn ActionMenu(
     let open = RwSignal::new(false);
     let surface_label = aria_label.clone();
 
-    let trigger = view! {
-        <IconButton
-            icon=icons::overflow()
-            aria_label=aria_label
-            variant=IconButtonVariant::Invisible
-            on_click=move |_| open.update(|o| *o = !*o)
-        />
-    }
-    .into_any();
+    let trigger = move |surface_id: String| {
+        view! {
+            <IconButton
+                icon=icons::overflow()
+                aria_label=aria_label
+                variant=IconButtonVariant::Invisible
+                aria_expanded=open
+                aria_controls=surface_id
+                on_click=move |_| open.update(|o| *o = !*o)
+            />
+        }
+        .into_any()
+    };
 
     let items = actions
         .into_iter()

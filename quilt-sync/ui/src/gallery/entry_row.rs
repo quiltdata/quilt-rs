@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Story;
 use crate::kit::EntryRow;
+use crate::kit::EntrySelection;
 use crate::kit::MenuAction;
 use crate::kit::state_label::StateTone;
 
@@ -19,6 +20,7 @@ fn menu() -> Vec<MenuAction> {
 #[component]
 pub fn EntryRowStories() -> impl IntoView {
     let ticked = RwSignal::new(false);
+    let long = RwSignal::new(false);
 
     view! {
         <Story
@@ -54,9 +56,10 @@ pub fn EntryRowStories() -> impl IntoView {
                     name="raw/plate-07.csv"
                     state="Not downloaded"
                     size="4.1 MB"
-                    selectable=true
-                    selected=ticked
-                    on_toggle=Callback::new(move |next| ticked.set(next))
+                    selection=EntrySelection::new(
+                        ticked,
+                        Callback::new(move |next| ticked.set(next)),
+                    )
                     actions=menu()
                 />
             </Cell>
@@ -103,7 +106,10 @@ pub fn EntryRowStories() -> impl IntoView {
                     name="investigations/2026-09-15-installed-package-page/verdicts-and-handoff-with-a-very-long-leaf-name.md"
                     state="Not downloaded"
                     size="31 KB"
-                    selectable=true
+                    selection=EntrySelection::new(
+                        long,
+                        Callback::new(move |next| long.set(next)),
+                    )
                     actions=menu()
                 />
             </Cell>

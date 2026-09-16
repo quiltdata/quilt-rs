@@ -7,19 +7,47 @@ use crate::Story;
 use crate::kit::CheckState;
 use crate::kit::EntryGroup;
 use crate::kit::EntryRow;
+use crate::kit::EntrySelection;
+
+/// Enough rows to scroll the heading against. Downloaded, so none of them
+/// carries a box — the point of the cell is the heading, not the selection.
+fn notes() -> AnyView {
+    view! {
+        <EntryRow name="ernest-thread.md" size="12 KB" />
+        <EntryRow name="caihong-upload.md" size="8 KB" />
+        <EntryRow name="plate-notes.md" size="4 KB" />
+        <EntryRow name="handoff.md" size="31 KB" />
+        <EntryRow name="requirements.md" size="33 KB" />
+        <EntryRow name="design.md" size="30 KB" />
+    }
+    .into_any()
+}
 
 #[component]
 pub fn EntryGroupStories() -> impl IntoView {
     let open = RwSignal::new(true);
     let shut = RwSignal::new(false);
     let scroller = RwSignal::new(true);
-    let picked = RwSignal::new(1_usize);
+    // Three real ticks, so the group's box is derived from its rows rather than
+    // asserted beside them — a heading that disagrees with what is under it is
+    // the mock that teaches the wrong thing.
+    let rows = [
+        RwSignal::new(false),
+        RwSignal::new(true),
+        RwSignal::new(false),
+    ];
+    let picked = Signal::derive(move || rows.iter().filter(|r| r.get()).count());
 
     let state = Signal::derive(move || match picked.get() {
         0 => CheckState::Off,
-        n if n >= 3 => CheckState::On,
+        n if n >= rows.len() => CheckState::On,
         _ => CheckState::Mixed,
     });
+
+    let selection = move |index: usize| {
+        let row = rows[index];
+        EntrySelection::new(row, Callback::new(move |next| row.set(next)))
+    };
 
     view! {
         <Story
@@ -41,17 +69,36 @@ pub fn EntryGroupStories() -> impl IntoView {
                   Scroll the last cell: the heading sticks, and it costs 29px against a \
                   32px row, which at the height floor is most of a row per heading."
         >
-            <Cell full=true label="expanded · tri-state box — click it">
+            <Cell full=true label="expanded · tri-state box — tick a row, then the heading">
                 <EntryGroup
                     name="raw/"
                     count=Signal::derive(|| 3)
                     open=open
                     state=state
-                    on_toggle=move |next| picked.set(if next { 3 } else { 0 })
+                    on_toggle=move |next| {
+                        for row in rows {
+                            row.set(next);
+                        }
+                    }
                 >
-                    <EntryRow name="plate-06.csv" state="Not downloaded" size="4.0 MB" selectable=true />
-                    <EntryRow name="plate-07.csv" state="Not downloaded" size="4.1 MB" selectable=true />
-                    <EntryRow name="plate-08.csv" state="Not downloaded" size="3.9 MB" selectable=true />
+                    <EntryRow
+                        name="plate-06.csv"
+                        state="Not downloaded"
+                        size="4.0 MB"
+                        selection=selection(0)
+                    />
+                    <EntryRow
+                        name="plate-07.csv"
+                        state="Not downloaded"
+                        size="4.1 MB"
+                        selection=selection(1)
+                    />
+                    <EntryRow
+                        name="plate-08.csv"
+                        state="Not downloaded"
+                        size="3.9 MB"
+                        selection=selection(2)
+                    />
                 </EntryGroup>
             </Cell>
             <Cell full=true label="collapsed — the rows are not in the DOM">
@@ -74,12 +121,7 @@ pub fn EntryGroupStories() -> impl IntoView {
                         state=Signal::derive(|| CheckState::Off)
                         on_toggle=|_| ()
                     >
-                        <EntryRow name="ernest-thread.md" size="12 KB" />
-                        <EntryRow name="caihong-upload.md" size="8 KB" />
-                        <EntryRow name="plate-notes.md" size="4 KB" />
-                        <EntryRow name="handoff.md" size="31 KB" />
-                        <EntryRow name="requirements.md" size="33 KB" />
-                        <EntryRow name="design.md" size="30 KB" />
+                        {notes()}
                     </EntryGroup>
                 </div>
             </Cell>

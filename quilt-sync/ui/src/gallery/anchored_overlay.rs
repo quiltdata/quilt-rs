@@ -17,11 +17,21 @@ fn ago(ms: f64) -> f64 {
     js_sys::Date::now() - ms
 }
 
-fn trigger(label: &'static str, open: RwSignal<bool>) -> AnyView {
-    view! {
-        <Button on_click=move |_| open.update(|o| *o = !*o)>{label}</Button>
+/// Every trigger owes `aria-expanded` and `aria-controls`; the overlay hands the
+/// id over precisely so a caller can wire them.
+fn trigger(label: &'static str, open: RwSignal<bool>) -> impl FnOnce(String) -> AnyView {
+    move |surface_id| {
+        view! {
+            <Button
+                on_click=move |_| open.update(|o| *o = !*o)
+                aria_expanded=open
+                aria_controls=surface_id
+            >
+                {label}
+            </Button>
+        }
+        .into_any()
     }
-    .into_any()
 }
 
 #[component]

@@ -50,6 +50,14 @@ pub fn Button(
     /// never has to set both, and a loading button must not be clickable twice.
     #[prop(optional, into)]
     loading: MaybeProp<bool>,
+    /// Whether what this button opens is open. Set it whenever the button opens
+    /// something — see [`AnchoredOverlay`](super::AnchoredOverlay), which hands
+    /// its trigger the id to point at.
+    #[prop(optional, into)]
+    aria_expanded: MaybeProp<bool>,
+    /// The id of what it opens.
+    #[prop(optional, into)]
+    aria_controls: MaybeProp<String>,
     children: Children,
 ) -> impl IntoView {
     let is_loading = Signal::derive(move || loading.get().unwrap_or(false));
@@ -85,6 +93,8 @@ pub fn Button(
             class=class
             disabled=move || is_disabled.get()
             aria-busy=move || if is_loading.get() { "true" } else { "false" }
+            aria-expanded=move || aria_expanded.get().map(|v| v.to_string())
+            aria-controls=move || aria_controls.get()
             on:click=move |ev| {
                 if !is_disabled.get() {
                     on_click(ev);

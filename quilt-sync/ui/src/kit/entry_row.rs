@@ -23,6 +23,11 @@
 //! made *select all 56* disagree with *download 17*. An unselectable row keeps
 //! the column's width so the names still line up.
 //!
+//! Selectability is **one value**, not a flag beside two optional halves:
+//! [`EntrySelection`] carries the state and the callback together, so a box that
+//! accepts clicks and discards them cannot be built. Same reason
+//! [`CheckState`](super::CheckState) is an enum.
+//!
 //! # The `<label>` stops before the overflow
 //!
 //! Clicking the row toggles its box, which wants a `<label>` around the row —
@@ -39,6 +44,26 @@ use super::StateLabel;
 use super::state_label::StateTone;
 
 stylance::import_crate_style!(style, "src/kit/entry_row.module.scss");
+
+/// A row's tick: where it stands, and what to do when it moves.
+///
+/// A row is selectable exactly when it has one of these. There is no way to say
+/// "selectable" without saying what that means.
+#[derive(Clone, Copy)]
+pub struct EntrySelection {
+    pub selected: Signal<bool>,
+    pub on_toggle: Callback<bool>,
+}
+
+impl EntrySelection {
+    #[must_use]
+    pub fn new(selected: impl Into<Signal<bool>>, on_toggle: Callback<bool>) -> Self {
+        Self {
+            selected: selected.into(),
+            on_toggle,
+        }
+    }
+}
 
 /// What a marked row's `title` says. One sentence, in the page's own words —
 /// no `remote`, no `diverged`, and no platform named as the other place.
@@ -60,11 +85,10 @@ pub fn EntryRow(
     /// Already formatted — the kit has no opinion about units.
     #[prop(into)]
     size: String,
-    /// Whether this file can be downloaded, and therefore ticked.
+    /// Present when this file can be downloaded, and therefore ticked. Absent
+    /// leaves the column open and draws no box.
     #[prop(optional)]
-    selectable: bool,
-    #[prop(optional, into)] selected: MaybeProp<bool>,
-    #[prop(optional, into)] on_toggle: Option<Callback<bool>>,
+    selection: Option<EntrySelection>,
     /// The two revisions disagree about this file. **Information, never a
     /// control** — resolution happens at revision level, so there is nothing to
     /// click here and the marking must not look like the state beside it.
@@ -74,7 +98,6 @@ pub fn EntryRow(
     #[prop(optional)]
     actions: Vec<MenuAction>,
 ) -> impl IntoView {
-    let is_selected = Signal::derive(move || selected.get().unwrap_or(false));
     let full_name = name.clone();
 
     let class = if differs {
@@ -96,20 +119,17 @@ pub fn EntryRow(
                 // sits under its group's box rather than a triangle's width to
                 // the left of it.
                 <span class=style::gutter />
-                {if selectable {
-                    view! {
-                        <Checkbox
-                            state=Signal::derive(move || is_selected.get().into())
-                            on_toggle=move |next| {
-                                if let Some(toggle) = on_toggle {
-                                    toggle.run(next);
-                                }
-                            }
-                        />
+                {match selection {
+                    Some(EntrySelection { selected, on_toggle }) => {
+                        view! {
+                            <Checkbox
+                                state=Signal::derive(move || selected.get().into())
+                                on_toggle=move |next| on_toggle.run(next)
+                            />
+                        }
+                            .into_any()
                     }
-                        .into_any()
-                } else {
-                    view! { <span class=style::nobox /> }.into_any()
+                    None => view! { <span class=style::nobox /> }.into_any(),
                 }}
                 <span class=style::name title=full_name>{name}</span>
                 // A fixed slot, so a size lands in the same column whether or not
