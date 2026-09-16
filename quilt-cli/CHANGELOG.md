@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.32.0-alpha1] - 2026-09-16
+
+### Added
+
+- `--json` works on every command, not just `list` and `status`, so a script or an agent can read any result without parsing tables — `quilt push --json | jq .hash`. Failures are machine-readable too: `{"error": {"kind": "...", "message": "..."}}` on stderr, with a stable `kind` to branch on instead of matching English
+
 ## [v0.31.2] - 2026-09-15
 
 ### Fixed

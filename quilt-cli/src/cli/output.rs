@@ -11,13 +11,11 @@ pub enum Format {
 
 /// A command output that can render itself for a person or for a program.
 ///
-/// The `to_json` default is transitional. It is removed once every command has
-/// a real payload, and from then on an output without one does not compile —
-/// which is what keeps `--json` universal without a checklist to maintain.
+/// `to_json` has no default on purpose: an output that cannot describe itself
+/// to a machine does not compile, which is what keeps `--json` universal
+/// without a checklist to maintain.
 pub trait Render: std::fmt::Display {
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({ "message": self.to_string() })
-    }
+    fn to_json(&self) -> serde_json::Value;
 }
 
 pub enum Std {

@@ -78,9 +78,15 @@ Run `quilt <command> --help` for arguments.
   Defaults to `~/QuiltSync` on first use and is persisted in the domain
   lineage. Pass `--home` only to store packages somewhere else.
 
-`list` and `status` accept `--json` for a machine-readable form, so
-`quilt list --json | jq` works. Field names are stable; the human tables are
-not, so parse the JSON rather than the tables.
+Every command accepts `--json` for a machine-readable form, before or after the
+subcommand, so `quilt list --json | jq` and `quilt --json list | jq` both work.
+Field names are stable; the human tables are not, so parse the JSON rather than
+the tables.
+
+On failure the payload goes to stderr as
+`{"error": {"kind": "...", "message": "..."}}`, stdout stays empty, and the exit
+status is unchanged. `kind` is a stable identifier to branch on; `message` is the
+same prose the human form prints.
 
 Commands keep stdout reserved for command output by default. Add `-v` or
 `--verbose` to show INFO-level logs on stderr; set `RUST_LOG` for target-specific
