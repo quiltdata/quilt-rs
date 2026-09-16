@@ -33,7 +33,7 @@ pub fn Merge() -> impl IntoView {
                 match data.await {
                     Ok(d) => {
                         let ns = d.namespace.clone();
-                        let pkg_href = format!("/installed-package?namespace={ns}&filter=unmodified");
+                        let pkg_href = crate::routes::package_page_href(&ns);
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
                                 href: "/".to_string(),
@@ -87,7 +87,7 @@ fn MergeContent(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
-                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        &crate::routes::package_page_href(&ns),
                         NavigateOptions::default(),
                     );
                 }
@@ -112,7 +112,7 @@ fn MergeContent(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
-                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        &crate::routes::package_page_href(&ns),
                         NavigateOptions::default(),
                     );
                 }

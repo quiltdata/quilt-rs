@@ -352,7 +352,7 @@ fn CommitContent(
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
-                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        &crate::routes::package_page_href(&ns),
                         NavigateOptions::default(),
                     );
                 }

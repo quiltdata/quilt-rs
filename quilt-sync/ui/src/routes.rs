@@ -70,11 +70,17 @@ mod tests {
             "/commit?namespace=team%2Fa%23b",
             "`#` would otherwise truncate the query at a fragment"
         );
-        assert_eq!(
-            commit_href("team/a=b"),
-            "/commit?namespace=team%2Fa%3Db",
-            "`=` would otherwise land inside the value unescaped"
-        );
+    }
+
+    /// `=` is **not** one of the above, and the distinction is worth a test of
+    /// its own rather than a line in the one before it: a parser splits a pair
+    /// on its *first* `=`, so a later one stays in the value and a raw
+    /// `team/a=b` already round-tripped. It is encoded because encoding the
+    /// whole value is what makes that true of every parser rather than of the
+    /// two this app happens to use — not because it was losing data.
+    #[test]
+    fn an_equals_is_encoded_for_uniformity_not_because_it_split() {
+        assert_eq!(commit_href("team/a=b"), "/commit?namespace=team%2Fa%3Db");
     }
 
     /// `filter` has to survive whatever the namespace contains — a raw `&` in
