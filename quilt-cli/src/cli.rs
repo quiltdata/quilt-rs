@@ -504,7 +504,7 @@ pub enum Error {
         r"
 Please visit https://{0}/code to get your code.
 Then run:
-> quilt_rs login --host {0} --code YOUR_CODE"
+> quilt login --host {0} --code YOUR_CODE"
     )]
     LoginRequired(Host),
 
@@ -595,6 +595,24 @@ mod tests {
 
     /// Nothing else pins these strings, and a consumer branching on them
     /// cannot see a rename. This table is the contract.
+    /// The hint is a command the reader is meant to run, and since #941 it also
+    /// travels inside a machine-readable `error.message` that an agent may echo
+    /// verbatim. `quilt_rs` is the library crate and ships no binary.
+    #[test]
+    fn login_required_hint_names_the_binary_not_the_crate() {
+        let message =
+            Error::LoginRequired("open.quiltdata.com".parse().expect("valid host")).to_string();
+
+        assert!(
+            message.contains("> quilt login --host open.quiltdata.com"),
+            "hint should name the `quilt` binary: {message}"
+        );
+        assert!(
+            !message.contains("quilt_rs login"),
+            "hint must not name the library crate: {message}"
+        );
+    }
+
     #[test]
     fn error_kinds_are_stable() {
         let cases: Vec<(Error, &str)> = vec![
