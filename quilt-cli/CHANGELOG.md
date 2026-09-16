@@ -15,6 +15,10 @@
 
 - `--json` works on every command, not just `list` and `status`, so a script or an agent can read any result without parsing tables — `quilt push --json | jq .hash`. Failures are machine-readable too: `{"error": {"kind": "...", "message": "..."}}` on stderr, with a stable `kind` to branch on instead of matching English
 
+### Changed
+
+- A failure raised before a command runs — an unreadable domain, a rejected flag combination — now prints as a plain message on stderr, the same as any other command failure, instead of a decorated tracing line (`ERROR quilt: Failed to run command: ...`)
+
 ## [v0.31.2] - 2026-09-15
 
 ### Fixed

@@ -83,7 +83,8 @@ subcommand, so `quilt list --json | jq` and `quilt --json list | jq` both work.
 Field names are stable; the human tables are not, so parse the JSON rather than
 the tables.
 
-On failure the payload goes to stderr as
+On any failure the command itself reports (argument errors come from the parser
+and stay human-readable, exit 2), the payload goes to stderr as
 `{"error": {"kind": "...", "message": "..."}}`, stdout stays empty, and the exit
 status is unchanged. `kind` is a stable identifier to branch on; `message` is the
 same prose the human form prints.
