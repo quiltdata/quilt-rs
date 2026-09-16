@@ -4,6 +4,7 @@ use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Debug)]
@@ -25,6 +26,14 @@ impl std::fmt::Display for Output {
             "Created package \"{}\"",
             self.installed_package.namespace
         )
+    }
+}
+
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "namespace": self.installed_package.namespace.to_string(),
+        })
     }
 }
 
@@ -53,6 +62,7 @@ mod tests {
     use test_log::test;
 
     use crate::cli::model::create_model_in_temp_dir;
+    use crate::cli::output::Render;
     use crate::cli::status;
 
     #[test(tokio::test)]
@@ -150,6 +160,22 @@ mod tests {
             status_output.status.changes.is_empty(),
             "Package created with source should have clean status"
         );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn json_carries_the_namespace() -> Result<(), Error> {
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+
+        let output = m
+            .create(Input {
+                namespace: ("test", "pkg").into(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        assert_eq!(output.to_json().to_string(), r#"{"namespace":"test/pkg"}"#);
         Ok(())
     }
 }

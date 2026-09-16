@@ -4,6 +4,7 @@ use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Debug)]
@@ -37,6 +38,24 @@ impl std::fmt::Display for Output {
             }
         }
         write!(f, "{}", output.join("\n"))
+    }
+}
+
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "namespace": self.installed_package.namespace.to_string(),
+            "paths": self
+                .paths
+                .iter()
+                // Unlike every other payload's keys, these are the caller's
+                // own `&path=` and `--path` values echoed back unfiltered —
+                // never matched against the manifest. A non-UTF-8 argument
+                // renders lossily here; it also matches no manifest key, so
+                // it installs nothing.
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        })
     }
 }
 
@@ -266,6 +285,59 @@ mod tests {
             assert!(paths.contains_key(&timestamp_logical_key));
         }
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn json_carries_namespace_and_paths() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let created = m
+            .create(create::Input {
+                namespace: ("test", "pkg").into(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        let output = Output {
+            installed_package: created.installed_package,
+            paths: vec![std::path::PathBuf::from("data/one.csv")],
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"]}"#
+        );
+        Ok(())
+    }
+
+    /// A copy that installed no paths reports `[]`, not a missing key.
+    #[test(tokio::test)]
+    async fn json_paths_are_an_empty_list_when_none_installed() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let created = m
+            .create(create::Input {
+                namespace: ("test", "bare").into(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        let output = Output {
+            installed_package: created.installed_package,
+            paths: Vec::new(),
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"namespace":"test/bare","paths":[]}"#
+        );
         Ok(())
     }
 }

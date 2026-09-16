@@ -3,6 +3,7 @@ use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Debug)]
@@ -18,6 +19,12 @@ pub struct Output {
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Undid the last commit; now at \"{}\"", self.commit.hash)
+    }
+}
+
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "hash": &self.commit.hash })
     }
 }
 
@@ -49,6 +56,7 @@ mod tests {
     use crate::cli::create;
     use crate::cli::model::Model;
     use crate::cli::model::create_model_in_temp_dir;
+    use crate::cli::output::Render;
     use quilt_rs::flow::UserMeta;
     use quilt_rs::io::storage::ByteStream;
     use quilt_rs::io::storage::LocalStorage;
@@ -684,5 +692,18 @@ mod tests {
         assert_eq!(tokio::fs::read(home.join("value.txt")).await?, b"first");
         assert!(changes(&cli_model, &namespace).await?.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn json_carries_the_restored_hash() {
+        let output = Output {
+            commit: CommitState {
+                timestamp: std::time::SystemTime::UNIX_EPOCH.into(),
+                hash: "abc123".to_string(),
+                prev_hashes: vec!["older".to_string()],
+            },
+        };
+
+        assert_eq!(output.to_json().to_string(), r#"{"hash":"abc123"}"#);
     }
 }

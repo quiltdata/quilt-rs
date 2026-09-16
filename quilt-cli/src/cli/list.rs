@@ -5,6 +5,7 @@ use tabled::settings::Span;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 /// Rendered in the `bucket` cell of a package with no remote.
@@ -41,21 +42,6 @@ impl Output {
         Self {
             installed_packages_list,
         }
-    }
-
-    fn to_json(&self) -> String {
-        let packages: Vec<_> = self
-            .installed_packages_list
-            .iter()
-            .map(|package| {
-                serde_json::json!({
-                    "bucket": package.bucket.as_deref(),
-                    "namespace": package.namespace.to_string(),
-                    "status": package.status,
-                })
-            })
-            .collect();
-        serde_json::json!({ "packages": packages }).to_string()
     }
 }
 
@@ -107,15 +93,25 @@ impl std::fmt::Display for Output {
     }
 }
 
-pub async fn command(m: impl Commands, json: bool) -> Std {
-    match m.list().await {
-        Ok(output) => Std::Out(if json {
-            output.to_json()
-        } else {
-            output.to_string()
-        }),
-        Err(error) => Std::Err(error),
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        let packages: Vec<_> = self
+            .installed_packages_list
+            .iter()
+            .map(|package| {
+                serde_json::json!({
+                    "bucket": package.bucket.as_deref(),
+                    "namespace": package.namespace.to_string(),
+                    "status": package.status,
+                })
+            })
+            .collect();
+        serde_json::json!({ "packages": packages })
     }
+}
+
+pub async fn command(m: impl Commands) -> Std {
+    Std::from_result(m.list().await)
 }
 
 /// Lists installed packages from the local domain — no network, one read of
@@ -181,7 +177,7 @@ mod tests {
     fn test_json_empty_list() {
         let output = Output::new(Vec::new());
 
-        assert_eq!(output.to_json(), r#"{"packages":[]}"#);
+        assert_eq!(output.to_json().to_string(), r#"{"packages":[]}"#);
     }
 
     #[test]
@@ -192,7 +188,7 @@ mod tests {
         ]);
 
         assert_eq!(
-            output.to_json(),
+            output.to_json().to_string(),
             r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date"},{"bucket":null,"namespace":"example/scratch","status":"local"}]}"#
         );
     }
@@ -316,7 +312,8 @@ mod tests {
         let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 
-        if let Std::Out(output) = command(m, false).await {
+        if let Std::Out(output) = command(m).await {
+            let output = output.to_string();
             assert!(output.contains(pkg::BUCKET));
             assert!(output.contains(pkg::NAMESPACE_STR));
             assert!(output.contains("up_to_date"));

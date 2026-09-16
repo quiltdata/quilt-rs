@@ -10,33 +10,58 @@ use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 mod cli;
 
+use cli::Args;
+use cli::Error;
+use cli::Format;
+use cli::Std;
 use cli::print;
 
 #[tokio::main]
 async fn main() {
-    let args = cli::Args::parse();
+    let args = Args::parse();
     init_logging(args.verbose);
-    match cli::init(args).await {
-        Ok(result) => {
-            let failed = matches!(&result, cli::Std::Err(_));
-            let stdout = io::stdout();
-            let stderr = io::stderr();
-            let mut stdout_handle = stdout.lock();
-            let mut stderr_handle = stderr.lock();
+    let format = format_from_args(&args);
 
-            if let Err(err) = print(result, &mut stdout_handle, &mut stderr_handle) {
-                log::error!("Failed to print output: {err}");
-                std::process::exit(1);
-            }
+    // An error raised before dispatch — an unreadable domain, a rejected flag
+    // combination — is a command failure like any other. It used to go out as a
+    // tracing line, which under `--json` would hand a consumer prose where it
+    // expects an object.
+    let result = to_std(cli::init(args).await);
 
-            if failed {
-                std::process::exit(1);
-            }
-        }
-        Err(err) => {
-            log::error!("Failed to run command: {err}");
-            std::process::exit(1);
-        }
+    let failed = matches!(&result, Std::Err(_));
+    let stdout = io::stdout();
+    let stderr = io::stderr();
+    let mut stdout_handle = stdout.lock();
+    let mut stderr_handle = stderr.lock();
+
+    if let Err(err) = print(result, format, &mut stdout_handle, &mut stderr_handle) {
+        log::error!("Failed to print output: {err}");
+        std::process::exit(1);
+    }
+
+    if failed {
+        std::process::exit(1);
+    }
+}
+
+/// Which format a run uses, decided once from the global `--json` flag before
+/// `args` is consumed by [`cli::init`].
+fn format_from_args(args: &Args) -> Format {
+    if args.json {
+        Format::Json
+    } else {
+        Format::Text
+    }
+}
+
+/// Route `init`'s pre-dispatch failure into the same [`Std::Err`] shape a
+/// command's own failure takes, so `--json` sees an object on either path.
+/// Pulled out of `main` so a future tidy-up that restores the old
+/// `log::error!` arm here fails a test instead of shipping silently.
+fn to_std(result: Result<Std, Error>) -> Std {
+    match result {
+        Ok(result) => result,
+        Err(err) => Std::Err(err),
     }
 }
 
@@ -80,5 +105,33 @@ mod tests {
         let filter = build_filter(Some("warn"), true);
 
         assert_eq!(filter.max_level_hint(), Some(LevelFilter::WARN));
+    }
+
+    #[test]
+    fn format_from_args_is_json_only_when_flag_is_set() {
+        let json = Args::parse_from(["quilt", "--json", "list"]);
+        assert_eq!(format_from_args(&json), Format::Json);
+
+        let text = Args::parse_from(["quilt", "list"]);
+        assert_eq!(format_from_args(&text), Format::Text);
+    }
+
+    /// The regression this guards: a pre-dispatch failure used to print as a
+    /// tracing line instead of routing through [`Std::Err`] like every other
+    /// command failure. A tidy-up that brings that arm back would fail this.
+    #[test]
+    fn to_std_routes_pre_dispatch_error_the_same_as_a_command_error() {
+        assert!(matches!(
+            to_std(Err(Error::Domain)),
+            Std::Err(Error::Domain)
+        ));
+    }
+
+    #[test]
+    fn to_std_passes_a_successful_init_through_unchanged() {
+        assert!(matches!(
+            to_std(Ok(Std::Err(Error::Home))),
+            Std::Err(Error::Home)
+        ));
     }
 }

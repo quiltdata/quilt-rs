@@ -6,6 +6,7 @@ use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 use crate::cli::text::printable;
 use crate::cli::text::printable_line;
@@ -58,6 +59,29 @@ impl std::fmt::Display for Output {
             write!(f, "\nLatest revision: {}", printable(message))?;
         }
         Ok(())
+    }
+}
+
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        let paths = |list: &[PathBuf]| {
+            list.iter()
+                // Lossless only because these are manifest keys, which are
+                // UTF-8 by the format's nature. `display()` would silently
+                // mangle a path that was not.
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+        };
+
+        serde_json::json!({
+            "hash": &self.hash,
+            "manifest_uri": self.report.manifest_uri.to_string(),
+            "added": paths(&self.report.added),
+            "added_not_fetched": paths(&self.report.added_not_fetched),
+            "updated": paths(&self.report.updated),
+            "removed": paths(&self.report.removed),
+            "message": self.report.message.as_deref(),
+        })
     }
 }
 
@@ -129,5 +153,38 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    fn manifest_uri(hash: &str) -> quilt_uri::ManifestUri {
+        quilt_uri::ManifestUri {
+            origin: None,
+            bucket: "bucket".to_string(),
+            namespace: ("demo", "sales").into(),
+            hash: hash.to_string(),
+        }
+    }
+
+    /// All four groups are always present, so a consumer indexes without
+    /// existence checks — and the URI carries the full hash, never the
+    /// abbreviated form `ManifestUri::display` produces.
+    #[test]
+    fn json_always_lists_four_groups_and_a_full_uri() {
+        let hash = "0123456789abcdef";
+        let output = Output {
+            hash: hash.to_string(),
+            report: quilt_rs::flow::PullReport {
+                manifest_uri: manifest_uri(hash),
+                added: vec![std::path::PathBuf::from("new.csv")],
+                added_not_fetched: Vec::new(),
+                updated: Vec::new(),
+                removed: Vec::new(),
+                message: None,
+            },
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","added":["new.csv"],"added_not_fetched":[],"updated":[],"removed":[],"message":null}"#
+        );
     }
 }
