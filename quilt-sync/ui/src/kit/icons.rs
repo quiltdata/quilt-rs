@@ -1,12 +1,17 @@
 //! The kit's glyphs, drawn once and used by both binaries.
 //!
-//! Two so far, the appbar's pair. Each is a 16-unit `viewBox` filled with
-//! `currentColor` and hidden from assistive tech: the control that holds it
-//! carries the name. Paths are Octicons v19 `gear-16` and `sync-16`,
-//! MIT License, Copyright (c) GitHub Inc. — <https://github.com/primer/octicons>.
-//! Filled paths rather than 1.4px strokes because at 15px a stroked gear's
-//! spokes read as a sun. The kit owns these two because four files had each
-//! drawn their own copy.
+//! The appbar's pair, plus the four the installed-package page needs. Each is a
+//! 16-unit `viewBox` filled with `currentColor` and hidden from assistive tech:
+//! the control that holds it carries the name.
+//!
+//! Paths are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
+//! `chevron-down-16`, `chevron-right-16` and `kebab-horizontal-16` — MIT
+//! License, Copyright (c) GitHub Inc. —
+//! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
+//! because at 15px a stroked gear's spokes read as a sun.
+//!
+//! The kit owns them because four files had each drawn their own copy of the
+//! first two, and the page below would have made it six.
 
 // Octicons' licence, reproduced as its terms require:
 //
@@ -51,6 +56,50 @@ pub fn sync() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
             <path d="M1.705 8.005a.75.75 0 0 1 .834.656 5.5 5.5 0 0 0 9.592 2.97l-1.204-1.204a.25.25 0 0 1 .177-.427h3.646a.25.25 0 0 1 .25.25v3.646a.25.25 0 0 1-.427.177l-1.38-1.38A7.002 7.002 0 0 1 1.05 8.84a.75.75 0 0 1 .656-.834ZM8 2.5a5.487 5.487 0 0 0-4.131 1.869l1.204 1.204A.25.25 0 0 1 4.896 6H1.25A.25.25 0 0 1 1 5.75V2.104a.25.25 0 0 1 .427-.177l1.38 1.38A7.002 7.002 0 0 1 14.95 7.16a.75.75 0 0 1-1.49.178A5.5 5.5 0 0 0 8 2.5Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// The page above. `BackLink`'s only glyph.
+#[must_use]
+pub fn chevron_left() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.75.75 0 1 1 1.06 1.06L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// An expanded disclosure.
+#[must_use]
+pub fn chevron_down() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M12.78 5.22a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 6.28a.75.75 0 0 1 1.06-1.06L8 8.94l3.72-3.72a.75.75 0 0 1 1.06 0Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// A collapsed disclosure.
+#[must_use]
+pub fn chevron_right() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// More actions. The overflow trigger, on a header and on every row.
+#[must_use]
+pub fn overflow() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
         </svg>
     }
     .into_any()

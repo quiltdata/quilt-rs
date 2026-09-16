@@ -1,0 +1,63 @@
+/*
+ * ActionMenu. Commands on an anchored surface.
+ */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: var(--q-space-1) var(--q-space-2);
+  border: 0;
+  border-radius: var(--q-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--q-text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover:not(:disabled) {
+  background: var(--q-overlay-hover);
+}
+
+.item:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: calc(var(--q-focus-outlineOffset) * -1);
+}
+
+/* Colour is the second channel, never the first: the word is what says the
+ * command destroys something, which is why the confirmation repeats it in full
+ * prose. */
+.item.danger {
+  color: var(--q-fgColor-danger);
+}
+
+.item:disabled {
+  color: var(--q-fgColor-disabled);
+  cursor: not-allowed;
+}
+
+/* A rule, not a gap: the separated group is a different kind of command, and a
+ * gap alone reads as loose spacing. */
+.item.separated {
+  margin-top: var(--q-space-1);
+  border-top: 1px solid var(--q-borderColor-muted);
+  border-radius: 0 0 var(--q-radius) var(--q-radius);
+  padding-top: var(--q-space-2);
+}
+
+/* Why the command is unavailable, under it. Wraps: it is a sentence, and half a
+ * reason is no reason. */
+.reason {
+  color: var(--q-fgColor-disabled);
+  white-space: normal;
+}

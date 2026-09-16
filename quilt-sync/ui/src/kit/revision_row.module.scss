@@ -1,0 +1,37 @@
+/*
+ * RevisionRow. A message over a time.
+ *
+ * Two lines and not one: a commit message is unbounded and a time is not, so
+ * putting them on one line would spend the message's width on a value that never
+ * needs it.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Ellipsised rather than wrapped. A revisions list is a column of these, and one
+ * four-line message in it would push the rest out of the overlay — so the whole
+ * value rides in `title` instead. */
+.message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-text-body);
+}
+
+.empty {
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  font-style: italic;
+}
+
+.when {
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}

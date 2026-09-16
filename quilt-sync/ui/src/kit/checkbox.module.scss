@@ -1,0 +1,99 @@
+/*
+ * Checkbox. The real input, off-screen; a drawn box beside it.
+ *
+ * Off-screen rather than `appearance: none` with a pseudo-element, because a
+ * pseudo-element on a replaced input is unreliable across the three webviews
+ * and this needs none. These rules began as `ToggleRow`'s and were lifted here
+ * unchanged, so the toggles look exactly as they did.
+ */
+
+.root {
+  display: inline-flex;
+  flex: none;
+}
+
+/* Focusable, labelled, in the accessibility tree — but not drawn. */
+.input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--q-borderColor-emphasis);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.indicator svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* One glyph is shown at a time and the other is hidden, rather than the Rust
+ * choosing: the box must not rebuild its subtree to change state, and a swap in
+ * the markup is a rebuild. */
+.tick,
+.dash {
+  display: none;
+}
+
+.input:checked + .indicator .tick {
+  display: inline;
+}
+
+.input:indeterminate + .indicator .dash {
+  display: inline;
+}
+
+/* `:indeterminate` wins over `:checked` in the DOM's own rendering, so it must
+ * win here too — a box that drew both would be the disagreement `CheckState`
+ * exists to prevent. */
+.input:indeterminate + .indicator .tick {
+  display: none;
+}
+
+.input:checked + .indicator,
+.input:indeterminate + .indicator {
+  background: var(--q-bgColor-accent-emphasis);
+  border-color: var(--q-bgColor-accent-emphasis);
+  /* Safe in both themes: `--blue-contrast` is #fff in each, so the glyph never
+   * needs a per-theme value. */
+  color: var(--q-fgColor-onEmphasis);
+}
+
+.root:hover .indicator {
+  border-color: var(--q-fgColor-muted);
+}
+
+/* The ring goes on the box, because the input it belongs to is off-screen. */
+.input:focus-visible + .indicator {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+.input:disabled + .indicator,
+.root:hover .input:disabled + .indicator {
+  border-color: var(--q-borderColor-muted);
+  background: var(--q-overlay-hover);
+}
+
+.input:checked:disabled + .indicator,
+.input:indeterminate:disabled + .indicator {
+  background: var(--q-fgColor-disabled);
+  border-color: var(--q-fgColor-disabled);
+}

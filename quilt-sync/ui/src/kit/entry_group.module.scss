@@ -1,0 +1,74 @@
+/*
+ * EntryGroup. A sticky heading over its rows.
+ */
+
+.root {
+  /* Same as the rows it holds: a group is only correct in a block parent
+   * without this, and the list it lives in is a flex column. */
+  width: 100%;
+  min-width: 0;
+}
+
+/* Sticky against the list's own scroll, so the folder you are reading inside
+ * stays named while you move through it.
+ *
+ * It costs 29px against a 32px row, which at the height floor is most of a row
+ * per heading — the reason collapsing by default is still an open question. */
+.head {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: var(--q-space-2);
+  padding: var(--q-space-1) var(--q-space-3);
+  background: var(--q-bgColor-inset);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+  position: sticky;
+  top: 0;
+  /* Above the rows it scrolls over, and below the overlay that opens from one. */
+  z-index: 1;
+}
+
+/* The gutter's width exactly, and the same value the rows leave empty, so a
+ * file's box sits directly under its group's. */
+.disclose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--q-entry-gutter, 16px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--q-fgColor-muted);
+  cursor: pointer;
+}
+
+.disclose svg {
+  width: 12px;
+  height: 12px;
+}
+
+.disclose:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+/* Monospace, because it is a path fragment and the rows under it are paths too.
+ * If the rows ever stop being monospace, this follows them — two typefaces
+ * alternating down one list is worse than either. */
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+}
+
+/* Neither upper-cased nor tracked — it is a number, and spacing digits apart
+ * makes them read as separate figures. */
+.count {
+  margin-left: auto;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}

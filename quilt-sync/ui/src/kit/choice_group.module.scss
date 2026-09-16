@@ -1,0 +1,104 @@
+/*
+ * ChoiceGroup. A drawn label, a column of radios, and the consequence.
+ *
+ * The radio is drawn the way `Checkbox` draws its box — real input off-screen,
+ * an indicator beside it — so a choice and a checkbox on the same pane are the
+ * same size and take the focus ring the same way.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.root.disabled {
+  color: var(--q-fgColor-disabled);
+}
+
+/* The system's Label, matching `PaneSection` and `Card`. */
+.label {
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--q-fgColor-muted);
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  font-size: var(--q-text-body);
+  cursor: pointer;
+}
+
+.root.disabled .choice {
+  cursor: not-allowed;
+}
+
+.input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.indicator {
+  display: inline-flex;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--q-borderColor-emphasis);
+  /* The one round thing in the kit, and deliberately: a radio that shares the
+   * checkbox's 4px corners stops saying "one of these" at a glance. */
+  border-radius: 50%;
+  background: var(--q-bgColor-default);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+/* The dot is an inset shadow rather than a pseudo-element, for the same reason
+ * the box is not `appearance: none`: one fewer thing to render three ways. */
+.input:checked + .indicator {
+  border-color: var(--q-bgColor-accent-emphasis);
+  box-shadow: inset 0 0 0 4px var(--q-bgColor-accent-emphasis);
+}
+
+.choice:hover .indicator {
+  border-color: var(--q-fgColor-muted);
+}
+
+.input:focus-visible + .indicator {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+.input:disabled + .indicator {
+  border-color: var(--q-borderColor-muted);
+  background: var(--q-overlay-hover);
+}
+
+.input:checked:disabled + .indicator {
+  border-color: var(--q-fgColor-disabled);
+  box-shadow: inset 0 0 0 4px var(--q-fgColor-disabled);
+}
+
+/* The consequence, not a hint: it states what is true now, so it sits under the
+ * choice it describes rather than under the label. */
+.caption {
+  margin: 0;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  max-width: 60ch;
+}
+
+.root.disabled .caption {
+  color: var(--q-fgColor-disabled);
+}

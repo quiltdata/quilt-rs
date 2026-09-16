@@ -42,20 +42,30 @@ pub(crate) use quilt_sync_ui::kit;
 // One module per component. Adding a story means adding a file here and one line
 // in `Gallery` below — there is no registry to keep in step.
 mod gallery {
+    pub mod action_menu;
+    pub mod anchored_overlay;
+    pub mod back_link;
     pub mod button;
     pub mod card;
+    pub mod checkbox;
+    pub mod choice_group;
     pub mod countdown;
+    pub mod entry_group;
+    pub mod entry_row;
     pub mod feedback;
     pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
     pub mod packages;
     pub mod page;
+    pub mod pane_section;
     pub mod queue;
     pub mod recent_files;
+    pub mod revision_row;
     pub mod search_input;
     pub mod segmented_control;
     pub mod select;
+    pub mod select_all;
     pub mod skeleton;
     pub mod state_label;
     pub mod state_strip;
@@ -65,9 +75,16 @@ mod gallery {
 
 use leptos::prelude::*;
 
+use crate::gallery::action_menu::ActionMenuStories;
+use crate::gallery::anchored_overlay::AnchoredOverlayStories;
+use crate::gallery::back_link::BackLinkStories;
 use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
+use crate::gallery::checkbox::CheckboxStories;
+use crate::gallery::choice_group::ChoiceGroupStories;
 use crate::gallery::countdown::CountdownStories;
+use crate::gallery::entry_group::EntryGroupStories;
+use crate::gallery::entry_row::EntryRowStories;
 use crate::gallery::feedback::BannerScene;
 use crate::gallery::feedback::FeedbackStories;
 use crate::gallery::forms::DialogScene;
@@ -77,13 +94,16 @@ use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
 use crate::gallery::page::PageScene;
+use crate::gallery::pane_section::PaneSectionStories;
 use crate::gallery::queue::QueueScene;
 use crate::gallery::queue::QueueStories;
 use crate::gallery::recent_files::RecentFilesScene;
 use crate::gallery::recent_files::RecentFilesStories;
+use crate::gallery::revision_row::RevisionRowStories;
 use crate::gallery::search_input::SearchInputStories;
 use crate::gallery::segmented_control::SegmentedControlStories;
 use crate::gallery::select::SelectStories;
+use crate::gallery::select_all::SelectAllStories;
 use crate::gallery::skeleton::SkeletonStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
@@ -157,6 +177,19 @@ fn Gallery() -> impl IntoView {
                 ("SkeletonBox", view! { <SkeletonStories /> }.into_any()),
                 ("Feedback", view! { <FeedbackStories /> }.into_any()),
                 ("Forms", view! { <FormsStories /> }.into_any()),
+                ("Checkbox", view! { <CheckboxStories /> }.into_any()),
+                ("BackLink", view! { <BackLinkStories /> }.into_any()),
+                (
+                    "AnchoredOverlay",
+                    view! { <AnchoredOverlayStories /> }.into_any(),
+                ),
+                ("ActionMenu", view! { <ActionMenuStories /> }.into_any()),
+                ("PaneSection", view! { <PaneSectionStories /> }.into_any()),
+                ("RevisionRow", view! { <RevisionRowStories /> }.into_any()),
+                ("ChoiceGroup", view! { <ChoiceGroupStories /> }.into_any()),
+                ("SelectAll", view! { <SelectAllStories /> }.into_any()),
+                ("EntryRow", view! { <EntryRowStories /> }.into_any()),
+                ("EntryGroup", view! { <EntryGroupStories /> }.into_any()),
             ],
         ),
         (

@@ -5,6 +5,8 @@
 
 use leptos::prelude::*;
 
+use super::Checkbox;
+
 stylance::import_crate_style!(style, "src/kit/toggle_row.module.scss");
 
 #[component]
@@ -39,19 +41,13 @@ pub fn ToggleRow(
         <div class=class>
             // Only this part is a label, so only this part toggles.
             <label class=style::main>
-                <input
-                    type="checkbox"
-                    class=style::input
-                    prop:checked=move || checked.get()
-                    disabled=move || is_disabled.get()
-                    on:change=move |ev| checked.set(event_target_checked(&ev))
+                // No `aria_label`: this `<label>` is the box's name, and a second
+                // one would win over the words the reader can actually see.
+                <Checkbox
+                    state=Signal::derive(move || checked.get().into())
+                    on_toggle=move |next| checked.set(next)
+                    disabled=is_disabled
                 />
-                <span class=style::indicator aria-hidden="true">
-                    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M2.5 6.25 4.75 8.5 9.5 3.75" />
-                    </svg>
-                </span>
                 <span class=style::text>
                     <span class=style::label>{label}</span>
                     <span class=style::sublabel>{sublabel}</span>
