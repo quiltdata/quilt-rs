@@ -48,6 +48,11 @@ impl Render for Output {
             "paths": self
                 .paths
                 .iter()
+                // Unlike every other payload's keys, these are the caller's
+                // own `&path=` and `--path` values echoed back unfiltered —
+                // never matched against the manifest. A non-UTF-8 argument
+                // renders lossily here; it also matches no manifest key, so
+                // it installs nothing.
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
         })

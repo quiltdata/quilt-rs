@@ -94,6 +94,9 @@ impl Render for Output {
             .iter()
             .map(|row| {
                 serde_json::json!({
+                    // Lossless only because manifest keys are UTF-8 — they come from a
+                    // JSONL manifest, which cannot carry anything else. `display()`
+                    // would silently mangle a key that was not.
                     "logical_key": row.logical_key.display().to_string(),
                     "physical_key": &row.physical_key,
                     "size": row.size,

@@ -66,6 +66,9 @@ impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
         let paths = |list: &[PathBuf]| {
             list.iter()
+                // Lossless only because these are manifest keys, which are
+                // UTF-8 by the format's nature. `display()` would silently
+                // mangle a path that was not.
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>()
         };

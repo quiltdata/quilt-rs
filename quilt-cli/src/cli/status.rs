@@ -78,6 +78,8 @@ impl Render for Output {
             .changes
             .iter()
             .map(|(path, change)| JsonChange {
+                // Lossless only because these are manifest keys, which the
+                // JSONL manifest format cannot express as anything but UTF-8.
                 path: path.display().to_string(),
                 status: match change {
                     Change::Modified(_) => "modified",
