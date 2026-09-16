@@ -20,7 +20,11 @@ impl std::fmt::Display for Output {
     }
 }
 
-impl Render for Output {}
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "namespace": self.namespace.to_string() })
+    }
+}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.uninstall(args).await)
@@ -42,6 +46,7 @@ mod tests {
 
     use crate::cli::fixtures::packages::default as pkg;
     use crate::cli::model::install_package_into_temp_dir;
+    use crate::cli::output::Render;
 
     /// Verifies that uninstall removes an installed package:
     ///   * installs a package
@@ -86,5 +91,14 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn json_carries_the_namespace() {
+        let output = Output {
+            namespace: ("test", "pkg").into(),
+        };
+
+        assert_eq!(output.to_json().to_string(), r#"{"namespace":"test/pkg"}"#);
     }
 }
