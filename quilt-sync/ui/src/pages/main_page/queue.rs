@@ -412,9 +412,8 @@ fn zero_line_text(total: usize) -> String {
 /// that drifts points the gallery's rows at pages the app does not use.
 pub fn action_href(action: PackageAction, namespace: &str) -> String {
     match action {
-        PackageAction::Publish => format!("/commit?namespace={namespace}"), // content.rs:195
-        // components/buttons/merge.rs:10
-        PackageAction::Resolve => format!("/merge?namespace={namespace}"),
+        PackageAction::Publish => crate::routes::commit_href(namespace),
+        PackageAction::Resolve => crate::routes::merge_href(namespace),
         // Shared with the list row's own link — `super::package_page_href`.
         PackageAction::GetLatest | PackageAction::ChooseS3Bucket => {
             super::package_page_href(namespace)
@@ -1292,19 +1291,19 @@ mod tests {
         // substring match cannot tell a missing namespace from a present one.
         assert_eq!(
             action_href(PackageAction::Publish, "org/pkg"),
-            "/commit?namespace=org/pkg"
+            "/commit?namespace=org%2Fpkg"
         );
         assert_eq!(
             action_href(PackageAction::Resolve, "org/pkg"),
-            "/merge?namespace=org/pkg"
+            "/merge?namespace=org%2Fpkg"
         );
         assert_eq!(
             action_href(PackageAction::GetLatest, "org/pkg"),
-            "/installed-package?namespace=org/pkg&filter=unmodified"
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified"
         );
         assert_eq!(
             action_href(PackageAction::ChooseS3Bucket, "org/pkg"),
-            "/installed-package?namespace=org/pkg&filter=unmodified"
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified"
         );
         // The fifth label ruling 5 names: `[Sign in]`, which `cause_trailing`
         // builds from `sign_in_href` directly rather than through this match.
@@ -1358,7 +1357,7 @@ mod tests {
         assert!(
             row.get_attribute("href")
                 .unwrap_or_default()
-                .contains("a/one"),
+                .contains("a%2Fone"),
             "and it carries the package it is about"
         );
     }

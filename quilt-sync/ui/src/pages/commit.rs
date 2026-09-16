@@ -59,10 +59,7 @@ pub fn Commit() -> impl IntoView {
                 match data.await {
                     Ok(d) => {
                         let ns = d.namespace.clone();
-                        let pkg_href = format!(
-                            "/installed-package?namespace={}&filter=unmodified",
-                            d.namespace
-                        );
+                        let pkg_href = crate::routes::package_page_href(&d.namespace);
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
                                 href: "/".to_string(),

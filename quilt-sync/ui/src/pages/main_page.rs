@@ -37,6 +37,7 @@ use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
+use crate::routes::package_page_href;
 use grouping::ListRowData;
 use grouping::PackageGroup;
 
@@ -323,18 +324,6 @@ impl PackageStore {
             .cloned()
             .collect()
     }
-}
-
-/// The package's own page, `namespace` in the query string because
-/// `installed_package` reads it with `use_query_map` and a bare path leaves it
-/// empty. Shared by the list row's own link below and by `queue::action_href`'s
-/// `[Get latest]` / `[Choose S3 bucket]` arms, which land here because neither
-/// action has a page of its own (v1 puts `Pull` in its status banner and
-/// `SetRemote` in its toolbar, both on this page). `installed_packages_list.rs`
-/// (v1, read-only) builds the identical string by hand — this helper is v2's
-/// only copy.
-fn package_page_href(namespace: &str) -> String {
-    format!("/installed-package?namespace={namespace}&filter=unmodified")
 }
 
 /// What one heavy-phase call does when it returns: the state write, and the
@@ -3019,7 +3008,7 @@ mod tests {
         // unscoped `contains` here would pass even if the page opened on the
         // feed.
         assert!(
-            el.query_selector("a[href*='namespace=user/plate-07']")
+            el.query_selector("a[href*='namespace=user%2Fplate-07']")
                 .unwrap()
                 .is_some(),
             "the packages view is the default (R4)"
@@ -3452,7 +3441,7 @@ mod tests {
         // A bare path is the bug this pins: the package page reads the namespace from the
         // query string and reports "Invalid namespace" when it is absent.
         assert!(
-            href.contains("namespace=user/plate-07"),
+            href.contains("namespace=user%2Fplate-07"),
             "href must carry the namespace, got: {href}"
         );
     }
@@ -3717,13 +3706,13 @@ mod tests {
         type_search(&el, "plate-07");
         sleep_ms(20).await;
         assert!(
-            el.query_selector("a[href*='namespace=user/plate-07']")
+            el.query_selector("a[href*='namespace=user%2Fplate-07']")
                 .unwrap()
                 .is_some(),
             "the matching row stays"
         );
         assert!(
-            el.query_selector("a[href*='namespace=user/plate-08']")
+            el.query_selector("a[href*='namespace=user%2Fplate-08']")
                 .unwrap()
                 .is_none(),
             "the non-matching row is dropped"

@@ -239,7 +239,7 @@ mod tests {
         // The same bug `a_row_links_to_its_own_package` pins for the packages view:
         // the package page reads its namespace from the query string.
         assert!(
-            href.contains("namespace=user/alpha"),
+            href.contains("namespace=user%2Falpha"),
             "href must carry the namespace, got: {href}"
         );
     }

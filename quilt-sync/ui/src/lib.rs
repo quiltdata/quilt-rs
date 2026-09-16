@@ -52,6 +52,7 @@ pub mod error_handler;
 pub mod kit;
 pub mod pages;
 pub mod panic_report;
+pub mod routes;
 pub mod tauri;
 pub mod theme;
 pub mod util;

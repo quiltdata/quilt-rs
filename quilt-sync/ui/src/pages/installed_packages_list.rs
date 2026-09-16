@@ -444,10 +444,7 @@ fn PackageItem(
         }
     });
 
-    let pkg_href = format!(
-        "/installed-package?namespace={}&filter=unmodified",
-        data.namespace
-    );
+    let pkg_href = crate::routes::package_page_href(&data.namespace);
 
     let namespace_display = data.namespace.clone();
     let remote_display = data.remote_display.clone();

@@ -7,7 +7,7 @@ const KIND: ButtonKind = ButtonKind::Merge;
 #[component]
 #[allow(clippy::needless_pass_by_value)]
 pub fn Merge(namespace: String, #[prop(optional)] small: bool) -> impl IntoView {
-    let href = format!("/merge?namespace={namespace}");
+    let href = crate::routes::merge_href(&namespace);
 
     view! {
         <IconLink href=href icon=KIND.icon() small=small primary=true>
@@ -37,7 +37,7 @@ mod tests {
         let link = el.query_selector("a").unwrap().unwrap();
         assert_eq!(
             link.get_attribute("href").unwrap(),
-            "/merge?namespace=user/pkg"
+            "/merge?namespace=user%2Fpkg"
         );
     }
 

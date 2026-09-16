@@ -192,7 +192,7 @@ pub(super) fn InstalledPackageContent(
     });
 
     // Commit button: primary when no remote entries are checked
-    let commit_href = format!("/commit?namespace={namespace}");
+    let commit_href = crate::routes::commit_href(&namespace);
     let commit_href_clone = commit_href.clone();
 
     let ns_for_status = namespace.clone();
