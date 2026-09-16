@@ -85,7 +85,32 @@ impl std::fmt::Display for Output {
     }
 }
 
-impl Render for Output {}
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        let header = &self.manifest.header;
+        let entries: Vec<_> = self
+            .manifest
+            .rows
+            .iter()
+            .map(|row| {
+                serde_json::json!({
+                    "logical_key": row.logical_key.display().to_string(),
+                    "physical_key": &row.physical_key,
+                    "size": row.size,
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "header": {
+                "message": header.message.as_deref(),
+                "user_meta": &header.user_meta,
+                "workflow": &header.workflow,
+            },
+            "entries": entries,
+        })
+    }
+}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.browse(args).await)
@@ -160,5 +185,55 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn json_carries_header_and_entries_in_manifest_vocabulary() {
+        let output = Output {
+            manifest: quilt_rs::manifest::Manifest {
+                header: quilt_rs::manifest::ManifestHeader {
+                    version: "v0".to_string(),
+                    message: Some("initial".to_string()),
+                    user_meta: Some(serde_json::json!({"owner": "team"})),
+                    workflow: None,
+                },
+                rows: vec![quilt_rs::manifest::ManifestRow {
+                    logical_key: std::path::PathBuf::from("data/one.csv"),
+                    physical_key: "s3://bucket/one.csv".to_string(),
+                    hash: quilt_rs::object_hash::ObjectHash::default(),
+                    size: 42,
+                    meta: None,
+                }],
+            },
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"header":{"message":"initial","user_meta":{"owner":"team"},"workflow":null},"entries":[{"logical_key":"data/one.csv","physical_key":"s3://bucket/one.csv","size":42}]}"#
+        );
+    }
+
+    /// `∅` is a table affordance and would be indistinguishable from a real
+    /// value; JSON says `null`.
+    #[test]
+    fn json_uses_null_not_the_empty_set_sentinel() {
+        let output = Output {
+            manifest: quilt_rs::manifest::Manifest {
+                header: quilt_rs::manifest::ManifestHeader {
+                    version: "v0".to_string(),
+                    message: None,
+                    user_meta: None,
+                    workflow: None,
+                },
+                rows: Vec::new(),
+            },
+        };
+
+        let rendered = output.to_json().to_string();
+        assert_eq!(
+            rendered,
+            r#"{"header":{"message":null,"user_meta":null,"workflow":null},"entries":[]}"#
+        );
+        assert!(!rendered.contains('\u{2205}'));
     }
 }

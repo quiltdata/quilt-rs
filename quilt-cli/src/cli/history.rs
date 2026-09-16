@@ -38,7 +38,22 @@ impl std::fmt::Display for Output {
     }
 }
 
-impl Render for Output {}
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        let revisions: Vec<_> = self
+            .revisions
+            .iter()
+            .map(|revision| {
+                serde_json::json!({
+                    "hash": &revision.hash,
+                    "obtained": revision.obtained.to_rfc3339(),
+                    "message": revision.message.as_deref(),
+                })
+            })
+            .collect();
+        serde_json::json!({ "revisions": revisions })
+    }
+}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.log(args).await)
@@ -274,5 +289,39 @@ mod tests {
             expected
         );
         Ok(())
+    }
+
+    fn revision(hash: &str, message: Option<&str>) -> quilt_rs::flow::Revision {
+        quilt_rs::flow::Revision {
+            hash: hash.to_string(),
+            obtained: std::time::SystemTime::UNIX_EPOCH.into(),
+            message: message.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn json_empty_history() {
+        let output = Output {
+            revisions: Vec::new(),
+        };
+
+        assert_eq!(output.to_json().to_string(), r#"{"revisions":[]}"#);
+    }
+
+    /// The table shows eight characters and a zoneless local-looking time.
+    /// Neither is usable as input, so JSON carries the full hash and RFC 3339.
+    #[test]
+    fn json_carries_full_hashes_and_rfc3339_times() {
+        let output = Output {
+            revisions: vec![
+                revision("0123456789abcdef", Some("first")),
+                revision("fedcba9876543210", None),
+            ],
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"revisions":[{"hash":"0123456789abcdef","obtained":"1970-01-01T00:00:00+00:00","message":"first"},{"hash":"fedcba9876543210","obtained":"1970-01-01T00:00:00+00:00","message":null}]}"#
+        );
     }
 }
