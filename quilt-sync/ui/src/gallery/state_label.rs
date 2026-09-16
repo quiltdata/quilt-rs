@@ -12,10 +12,9 @@ use crate::kit::StateTone;
 /// Reviewing this list *is* reviewing the vocabulary: words that read badly here
 /// read badly on the page.
 ///
-/// Twelve labels, eleven states: `Not the latest` and `Newer revision available` are
-/// the same state, `behind`, worded for a list row and for a queue row. Both appear
-/// here because `StateLabel` renders both; only the first can appear on a
-/// `PackageRow`.
+/// Eleven labels, one per state, and all of them the list's. The queue words the
+/// same states as clauses and draws them as prose rather than in a chip, so none of
+/// its wordings can appear in this component at all.
 ///
 /// The last two are the pair worth reading together, because they are one word apart
 /// and claim different things: `Sync paused` says the syncing stopped for this
@@ -28,7 +27,6 @@ use crate::kit::StateTone;
 const STATES: &[(&str, StateTone)] = &[
     ("Latest", StateTone::Success),
     ("Not the latest", StateTone::Attention),
-    ("Newer revision available", StateTone::Attention),
     ("2 files changed", StateTone::Neutral),
     ("conflicts in 2 files", StateTone::Danger),
     ("Changed in both places", StateTone::Danger),
@@ -132,7 +130,7 @@ fn GreyscaleStory() -> impl IntoView {
                 </StateLabel>
             </Cell>
             <Cell label="does not truncate — it pushes">
-                <StateLabel tone=StateTone::Attention>"Newer revision available"</StateLabel>
+                <StateLabel tone=StateTone::Attention>"Revision not published"</StateLabel>
             </Cell>
         </Story>
     }

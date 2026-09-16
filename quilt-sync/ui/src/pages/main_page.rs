@@ -3433,7 +3433,7 @@ mod tests {
         let text = el.text_content().unwrap();
         assert!(text.contains("Not the latest"), "got: {text}");
         assert!(
-            !text.contains("Newer revision available"),
+            !text.contains("has a newer revision"),
             "that is the queue's wording; a list row must not use it"
         );
     }

@@ -36,10 +36,9 @@ pub fn PackageRowStories() -> impl IntoView {
 }
 
 /// The nine states again, but on a row — which is where they are actually read, and
-/// where the ragged left edge of the state column becomes visible.
-///
-/// Nine, not ten: `behind` renders as `Not the latest` here and as
-/// `Newer revision available` on a queue row, so only the first can appear in this story.
+/// where the ragged left edge of the state column becomes visible. The queue's own
+/// wordings are clauses and never render in a chip, so every label here is the
+/// list's.
 #[component]
 fn StatesStory() -> impl IntoView {
     let states: Vec<(&str, StateTone, f64)> = vec![
@@ -99,10 +98,9 @@ fn EdgesStory() -> impl IntoView {
                   inside the column. \
                   \
                   The state phrase in the truncation cells is `Changed in both places`, 22 \
-                  characters, which is the widest label a LIST row can carry. It is not the \
-                  widest label in the kit — `Newer revision available` is 24 — but that one \
-                  only ever renders on a queue row, so sizing this column against it would \
-                  be testing a case that cannot occur."
+                  characters, which is the widest label a list row can carry — and since \
+                  the queue draws its own words as prose rather than in a chip, it is the \
+                  widest this component ever has to hold."
         >
             <Cell full=true label="long namespace truncates right, state keeps its place">
                 <PackageRow

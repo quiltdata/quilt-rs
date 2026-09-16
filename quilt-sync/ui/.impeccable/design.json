@@ -325,7 +325,7 @@
       "kind": "chip",
       "refersTo": "state-label-attention",
       "description": "A state that needs a decision, shown in its provisional form: a dashed edge while the page is still resolving the row's true state. Two channels, because a dashed edge alone on a 20px chip is findable only by someone already looking.",
-      "html": "<span class=\"ds-state2 ds-state2--attention ds-state2--provisional\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M8 1.9 15.1 14.1H0.9Z\"/></svg>Newer revision available</span>",
+      "html": "<span class=\"ds-state2 ds-state2--attention ds-state2--provisional\"><svg viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M8 1.9 15.1 14.1H0.9Z\"/></svg>Not the latest</span>",
       "css": ".ds-state2 { display: inline-flex; align-items: center; flex: none; gap: 5px; padding: 0 var(--q-space-2, 8px) 0 6px; border: 1px solid var(--tone-edge); border-radius: var(--q-radius, 4px); background: var(--tone-fill); color: var(--tone-text); font-size: var(--q-text-body, 14px); line-height: 20px; white-space: nowrap; } .ds-state2 svg { flex: none; width: 12px; height: 12px; color: var(--tone-mark); } .ds-state2--attention { --tone-fill: var(--q-bgColor-attention-muted, #ffde003d); --tone-edge: var(--q-borderColor-attention-muted, #e9c162); --tone-text: var(--q-fgColor-attention-onMuted, #4f3422); --tone-mark: var(--q-fgColor-attention, #ab6400); } .ds-state2--provisional { border-style: dashed; opacity: 0.75; }"
     },
     {
