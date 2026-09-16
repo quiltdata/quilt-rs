@@ -167,11 +167,14 @@ pub fn QueueRowSkeleton() -> impl IntoView {
         <div class=style::root>
             <div class=style::line>
                 <span class=format!("{} {}", style::bullet, style::dot)></span>
+                // A width in px and not a percentage: `.namespace` is `flex: none`,
+                // so the span sizes to this box and a percentage would have nothing
+                // to resolve against — it collapses the column to nothing.
                 <span class=style::namespace>
-                    <SkeletonBox width="32%" />
+                    <SkeletonBox width="120px" />
                 </span>
                 <span class=style::clause>
-                    <SkeletonBox width="60%" />
+                    <SkeletonBox width="55%" />
                 </span>
                 <span class=style::action>
                     <SkeletonBox width="76px" height="20px" />
