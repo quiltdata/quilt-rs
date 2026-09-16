@@ -8,14 +8,13 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
+use crate::gallery::queue::row;
 use crate::kit::Card;
 use crate::kit::GroupHeading;
-use crate::kit::PackageAction;
 use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
-use crate::kit::QueueRow;
+use crate::kit::PackageState;
 use crate::kit::QueueRowSkeleton;
-use crate::kit::Remedy;
 use crate::kit::SkeletonBox;
 use crate::kit::StateTone;
 
@@ -132,15 +131,12 @@ fn Rows() -> impl IntoView {
                             <QueueRowSkeleton />
                             <QueueRowSkeleton />
                         </div>
-                        <QueueRow
-                            namespace="org/dataset-c"
-                            state="has conflicts in 2 files"
-                            tone=StateTone::Danger
-                            remedy=Some(Remedy {
-                                action: PackageAction::Publish,
-                                href: "/commit?namespace=org/dataset-c".to_string(),
-                            })
-                        />
+                        {row(
+                            "org/dataset-c",
+                            &PackageState::PullConflict {
+                                files: vec!["a.csv".to_string(), "b.csv".to_string()],
+                            },
+                        )}
                     </div>
                 </Card>
             </Cell>

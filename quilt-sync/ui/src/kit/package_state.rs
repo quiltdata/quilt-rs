@@ -6,9 +6,10 @@
 //! different places** — which is why [`render`] takes a [`Site`] and not just a
 //! state.
 //!
-//! The words are a property of the state AND where it draws. `Behind` and
-//! `RoleDenied` are the two that differ by site; every other state says the same
-//! thing wherever it draws.
+//! The words are a property of the state AND where it draws, and every state in the
+//! vocabulary differs across the three: a list row names it in a chip, a queue row
+//! continues the sentence its package name started, and a shared cause is a heading
+//! above the packages it holds.
 
 use serde::Deserialize;
 
@@ -56,8 +57,8 @@ pub enum PackageState {
     Unknown,
 }
 
-/// Where a label is being drawn. Not decoration: two states word themselves
-/// differently here, so a mapping keyed on state alone is wrong.
+/// Where a state is being drawn. Not decoration: every state words itself
+/// differently across these, so a mapping keyed on state alone is wrong.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Site {
     /// A row in the package list, which is quiet and pairs against `Latest`.
@@ -312,64 +313,107 @@ mod tests {
         assert_eq!(rendered.action, None);
     }
 
-    /// Every state with the clause the queue words it as.
+    /// Every state as the queue draws it: the clause, the tone and the verb.
     ///
     /// A table rather than a test each, because the property being asserted belongs
-    /// to the whole vocabulary: all of it has to read after a package's name. A
-    /// state that keeps its list-row noun phrase is what this catches.
-    fn queue_clauses() -> Vec<(PackageState, &'static str)> {
+    /// to the whole vocabulary — all of it has to read after a package's name, and
+    /// the queue is the only site where a wrong tone or a wrong verb is visible to
+    /// a user, since it is the only one that offers to act.
+    fn queue_mapping() -> Vec<(PackageState, &'static str, StateTone, Option<PackageAction>)> {
+        use PackageAction::*;
+        use StateTone::*;
         vec![
-            (PackageState::Latest, "is up to date"),
-            (PackageState::Behind, "has a newer revision"),
+            (PackageState::Latest, "is up to date", Success, None),
+            (
+                PackageState::Behind,
+                "has a newer revision",
+                Attention,
+                Some(GetLatest),
+            ),
             (
                 PackageState::PendingChanges { files: 1 },
                 "has 1 changed file",
+                Neutral,
+                Some(Publish),
             ),
             (
                 PackageState::PendingChanges { files: 2 },
                 "has 2 changed files",
+                Neutral,
+                Some(Publish),
             ),
             (
                 PackageState::PendingCommit,
                 "has a revision it has not published",
+                Attention,
+                Some(Publish),
             ),
-            (PackageState::Diverged, "changed in both places"),
+            (
+                PackageState::Diverged,
+                "changed in both places",
+                Danger,
+                Some(Resolve),
+            ),
             (
                 PackageState::PullConflict {
                     files: vec!["a.csv".to_string()],
                 },
                 "has a conflict in 1 file",
+                Danger,
+                Some(Publish),
             ),
             (
                 PackageState::PullConflict {
                     files: vec!["a.csv".to_string(), "b.csv".to_string()],
                 },
                 "has conflicts in 2 files",
+                Danger,
+                Some(Publish),
             ),
             (
                 PackageState::RoleDenied {
                     role: Some("analyst".to_string()),
                 },
                 "cannot be read as analyst",
+                Danger,
+                None,
             ),
-            (PackageState::RoleDenied { role: None }, "cannot be read"),
-            (PackageState::NoRemote, "has no S3 bucket yet"),
-            (PackageState::Unpublished, "has never been published"),
-            (PackageState::Paused, "has stopped syncing"),
-            (PackageState::Unknown, "cannot be checked"),
+            (
+                PackageState::RoleDenied { role: None },
+                "cannot be read",
+                Danger,
+                None,
+            ),
+            (
+                PackageState::NoRemote,
+                "has no S3 bucket yet",
+                Attention,
+                Some(ChooseS3Bucket),
+            ),
+            (
+                PackageState::Unpublished,
+                "has never been published",
+                Attention,
+                Some(Publish),
+            ),
+            (PackageState::Paused, "has stopped syncing", Danger, None),
+            (PackageState::Unknown, "cannot be checked", Danger, None),
         ]
     }
 
     #[wasm_bindgen_test]
     fn the_queue_words_every_state_as_a_clause_about_the_package() {
-        for (state, clause) in queue_clauses() {
-            assert_eq!(render(&state, Site::QueueRow).words, clause, "{state:?}");
+        for (state, clause, tone, action) in queue_mapping() {
+            let rendered = render(&state, Site::QueueRow);
+            assert_eq!(rendered.words, clause, "{state:?}");
+            assert_eq!(rendered.tone, tone, "{state:?}");
+            assert_eq!(rendered.action, action, "{state:?}");
         }
     }
 
     #[wasm_bindgen_test]
     fn a_queue_clause_never_opens_with_a_capital() {
-        for (state, _) in queue_clauses() {
+        for (state, ..) in queue_mapping() {
             let words = render(&state, Site::QueueRow).words;
             let opener = words.chars().next().expect("a state always says something");
             assert!(
@@ -536,8 +580,10 @@ mod tests {
         reason = "a table of expected outputs; its length is data, not branching"
     )]
     #[wasm_bindgen_test]
-    fn renders_complete_mapping_for_all_state_and_site_combinations() {
-        // Table-driven test: verify words, tone, and action for every (state, site) pair.
+    fn renders_the_list_rows_mapping_state_by_state() {
+        // The queue site has a table of its own — `queue_mapping`, which covers every
+        // state — and the cause site has `a_shared_cause_names_the_role_and_still_
+        // reads_as_a_heading`. This one is the list's.
         // Each row is (state, site, expected_words, expected_tone, expected_action).
         let cases = vec![
             (
@@ -548,23 +594,9 @@ mod tests {
                 None,
             ),
             (
-                PackageState::Latest,
-                Site::QueueRow,
-                "is up to date",
-                StateTone::Success,
-                None,
-            ),
-            (
                 PackageState::Behind,
                 Site::ListRow,
                 "Not the latest",
-                StateTone::Attention,
-                Some(PackageAction::GetLatest),
-            ),
-            (
-                PackageState::Behind,
-                Site::QueueRow,
-                "has a newer revision",
                 StateTone::Attention,
                 Some(PackageAction::GetLatest),
             ),
@@ -624,25 +656,9 @@ mod tests {
                 None,
             ),
             (
-                PackageState::RoleDenied {
-                    role: Some("analyst".to_string()),
-                },
-                Site::QueueRow,
-                "cannot be read as analyst",
-                StateTone::Danger,
-                None,
-            ),
-            (
                 PackageState::RoleDenied { role: None },
                 Site::ListRow,
                 "No access",
-                StateTone::Danger,
-                None,
-            ),
-            (
-                PackageState::RoleDenied { role: None },
-                Site::QueueRow,
-                "cannot be read",
                 StateTone::Danger,
                 None,
             ),

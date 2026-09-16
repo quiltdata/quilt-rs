@@ -91,9 +91,13 @@ pub fn QueueRow(
 ) -> impl IntoView {
     // Both or neither, enforced here rather than at each of the three places the pair
     // draws — the glyph, the edge rule and the clause.
-    let (state, tone) = match (state, tone) {
-        (Some(state), Some(tone)) => (Some(state), Some(tone)),
-        _ => (None, None),
+    let (state, tone) = state.zip(tone).unzip();
+
+    // Split once: the verb draws inside the row and the destination wraps it, and
+    // neither exists without the other.
+    let (verb, href) = match remedy {
+        Some(Remedy { action, href }) => (Some(action), Some(href)),
+        None => (None, None),
     };
 
     let mut class = String::from(style::root);
@@ -104,6 +108,10 @@ pub fn QueueRow(
     if let Some(tone) = tone {
         class.push(' ');
         class.push_str(tone_class(tone));
+    }
+    if href.is_some() {
+        class.push(' ');
+        class.push_str(style::linked);
     }
 
     // The column `CauseRow` uses for its expander, and never blank: a gap there reads
@@ -118,16 +126,15 @@ pub fn QueueRow(
 
     // Ellipsised by the stylesheet, so the whole value rides in `title`.
     let full_namespace = namespace.clone();
-    let href = remedy.as_ref().map(|remedy| remedy.href.clone());
     let line = view! {
         {bullet}
         <span class=style::namespace title=full_namespace>{namespace}</span>
         {state.map(|state| view! { <span class=style::clause>{state}</span> })}
-        {remedy
-            .map(|remedy| {
+        {verb
+            .map(|verb| {
                 view! {
                     <span class=style::action>
-                        {remedy.action.label()}
+                        {verb.label()}
                         // Decoration: the link is already announced as one, and
                         // "right arrow" after every verb is noise.
                         <span aria-hidden="true">"\u{2192}"</span>
@@ -136,21 +143,21 @@ pub fn QueueRow(
             })}
     };
 
+    // The ROW is the link, not the line inside it: `PackageRow` is an anchor at its
+    // root for the same reason, and the two kinds of row share a region. An anchor
+    // around the line alone would leave the row's own padding and its tone rule
+    // outside the target, so the tint would blink off between rows and a click in
+    // the gap would do nothing.
+    let body = view! {
+        <div class=style::line>{line}</div>
+        {move || detail.get().map(|detail| view! { <p class=style::detail>{detail}</p> })}
+    };
+
     view! {
-        <div class=class>
-            {match href {
-                Some(href) => {
-                    view! {
-                        <a class=format!("{} {}", style::line, style::linked) href=href>
-                            {line}
-                        </a>
-                    }
-                        .into_any()
-                }
-                None => view! { <div class=style::line>{line}</div> }.into_any(),
-            }}
-            {move || detail.get().map(|detail| view! { <p class=style::detail>{detail}</p> })}
-        </div>
+        {match href {
+            Some(href) => view! { <a class=class href=href>{body}</a> }.into_any(),
+            None => view! { <div class=class>{body}</div> }.into_any(),
+        }}
     }
 }
 
@@ -269,6 +276,29 @@ mod tests {
         assert!(
             el.query_selector("svg").unwrap().is_some(),
             "the tone has a second channel"
+        );
+    }
+
+    /// The glyph is one of the tone's two channels; this is the other. Deleting the
+    /// tone class from the row leaves the glyph intact and the edge rule unmatched,
+    /// which looks nearly right and halves what a reader who cannot separate the
+    /// four hues is given.
+    #[wasm_bindgen_test]
+    fn the_tone_also_reaches_the_row_that_draws_its_edge_rule() {
+        let el = mount(|| {
+            view! {
+                <QueueRow
+                    namespace="org/dataset-c"
+                    state="has conflicts in 2 files"
+                    tone=StateTone::Danger
+                />
+            }
+        });
+        let root = el.first_element_child().expect("the row");
+        let class = root.get_attribute("class").unwrap_or_default();
+        assert!(
+            class.contains(style::danger),
+            "the edge rule hangs off the tone class, and it is not on the row: {class}"
         );
     }
 

@@ -31,11 +31,12 @@
   min-height: calc(var(--q-control-height) + 2 * var(--q-space-1));
 }
 
-/* The row IS the link, so the document conventions have to be switched off
- * explicitly — colour and underline both, as in `package_row.module.scss`. The tint
- * is the only affordance and there is no hover underline to go with it; the focus
- * ring comes from the baseline's global `:focus-visible`, which lands here because
- * this is the focusable element. */
+/* On `.root`, so the whole row is the target — its padding and its tone rule
+ * included. The row IS an anchor, so the document conventions have to be switched
+ * off explicitly, colour and underline both, as in `package_row.module.scss`. The
+ * tint is the only affordance and there is no hover underline to go with it; the
+ * focus ring comes from the baseline's global `:focus-visible`, which lands here
+ * because this is the focusable element. */
 .linked {
   color: var(--q-fgColor-default);
   text-decoration: none;
@@ -131,13 +132,15 @@
 }
 
 /* Takes the space the namespace does not use, and gives way first: a shrink factor
- * of 100 against the name's 1, so a narrowing row eats the clause and only starts on
- * the name once the clause is gone. A name clipped mid-owner is unrecognisable; a
- * clause clipped at its end is still readable up to the cut. */
+ * of 100 against the name's 1, so the clause absorbs all but a hundredth of any
+ * deficit. Flexbox distributes proportionally rather than in sequence, so the name
+ * does give up a sliver at the same time — but measured against the gallery's
+ * longest name, the clause starts clipping at a 722px line and the name not until
+ * 622px, by which point the clause is down to 24px of its 220. A name clipped
+ * mid-owner is unrecognisable; a clause clipped at its end is still readable up to
+ * the cut. */
 .clause {
-  flex-grow: 1;
-  flex-shrink: 100;
-  flex-basis: auto;
+  flex: 1 100 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

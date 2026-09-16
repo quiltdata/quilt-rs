@@ -525,18 +525,21 @@ The row is the link. Every state that names an operation names a page that
 performs it, so a queue row has exactly one destination and the whole row goes
 there; the verb rides along as text at the right edge rather than as a button,
 because a button promises the operation happens on press and none of them do.
-One tab stop per row either way. Verbs hug their labels, so the right edges line
-up and the left ones follow the verb's length. A state that names no operation
-has nowhere to send anyone, and its row stays inert.
+One tab stop per row, where the old button was one. Verbs hug their labels, so
+the right edges line up and the left ones follow the verb's length. A state that
+names no operation has nowhere to send anyone: its row is not a link, carries no
+verb, and takes no tab stop at all — the paused row's detail text is read rather
+than tabbed to.
 
 The state reads as a **clause after the name** — `org/dataset-c` then `has
 conflicts in 2 files` — rather than as a chip beside it. The name keeps default
 ink at weight 600 and the clause is muted, which is the treatment the host row
 already uses above its sub-line. The words are the vocabulary's, chosen at the
 queue site; the list keeps its chips and its noun phrases. When the row narrows
-the clause gives way first and the name only begins to clip once the clause is
-gone: a name cut mid-owner is unrecognisable, while a clause cut at its end is
-still readable up to the cut.
+the clause gives way first — it absorbs all but a hundredth of the deficit — and
+the name holds its full width until the clause is nearly gone: a name cut
+mid-owner is unrecognisable, while a clause cut at its end is still readable up
+to the cut.
 
 The tone the chip used to carry draws **twice**: a rule on the row's edge, inset
 by the row's own padding so a column of rows shows separate marks rather than one

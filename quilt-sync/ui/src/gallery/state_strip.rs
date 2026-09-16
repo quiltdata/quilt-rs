@@ -10,13 +10,12 @@
 use leptos::prelude::*;
 
 use crate::Scene;
+use crate::gallery::queue::row;
 use crate::kit::Button;
 use crate::kit::Card;
 use crate::kit::Countdown;
 use crate::kit::HostRow;
-use crate::kit::PackageAction;
-use crate::kit::QueueRow;
-use crate::kit::Remedy;
+use crate::kit::PackageState;
 use crate::kit::StateLabel;
 use crate::kit::StateTone;
 use crate::kit::ToggleRow;
@@ -140,18 +139,18 @@ pub fn StateStripRegion() -> impl IntoView {
 /// All six `PausedReason` variants require an action, and every one already has a
 /// queue row that carries it:
 ///
-/// | Reason | Queue row | Action |
+/// | Reason | Queue row | Remedy |
 /// |---|---|---|
-/// | `PendingChanges` | `2 files changed` | `[Publish]` |
-/// | `PendingCommit` | `Revision not published` | `[Publish]` |
-/// | `Diverged` | `Changed in both places` | `[Resolve]` |
-/// | `PullConflict(files)` | `conflicts in N files` | `[Publish]` |
-/// | `RoleDenied { role }` | `No access as analyst` | points at Accounts |
+/// | `PendingChanges` | `has N changed files` | `Publish` |
+/// | `PendingCommit` | `has a revision it has not published` | `Publish` |
+/// | `Diverged` | `changed in both places` | `Resolve` |
+/// | `PullConflict(files)` | `has conflicts in N files` | `Publish` |
+/// | `RoleDenied { role }` | `cannot be read as analyst` | points at Accounts |
 /// | `Other(msg)` | the message | whatever it names |
 ///
 /// `RoleDenied` says outright that *"retrying cannot help — the role has to change
 /// first"*, and `Other` is documented as non-transient. So there is no reason for which
-/// "resume" is the fix, and a `[Resume]` button would offer to retry something that
+/// "resume" is the fix, and a `Resume` control would offer to retry something that
 /// will pause again on the next tick.
 ///
 /// It follows that **a pause is never its own queue row.** It is a consequence of a
@@ -217,15 +216,7 @@ fn PausedWithReason() -> impl IntoView {
             </div>
             <Card title="Needs your attention" count=1>
                 <div>
-                    <QueueRow
-                        namespace="user/package-b"
-                        state="has 2 changed files"
-                        tone=StateTone::Neutral
-                        remedy=Some(Remedy {
-                            action: PackageAction::Publish,
-                            href: "/commit?namespace=user/package-b".to_string(),
-                        })
-                    />
+                    {row("user/package-b", &PackageState::PendingChanges { files: 2 })}
                 </div>
             </Card>
         </Scene>

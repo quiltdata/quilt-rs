@@ -16,7 +16,6 @@ use crate::kit::PackageState;
 use crate::kit::QueueRow;
 use crate::kit::Remedy;
 use crate::kit::Site;
-use crate::kit::StateTone;
 use crate::kit::ZeroLine;
 use crate::kit::render;
 use quilt_sync_ui::pages::action_href;
@@ -64,8 +63,18 @@ const REJECTION: &str = concat!(
 const BAD_CONFIG: &str = "Invalid workflows config: missing required key 'version'";
 
 /// A row as the page builds one — the vocabulary's words and tone, and the remedy
-/// pointing wherever the page would point it.
-fn row(namespace: &'static str, state: &PackageState) -> AnyView {
+/// pointing wherever the page would point it. Nothing here is hand-written, so a
+/// gallery row cannot say something the app would not.
+pub(crate) fn row(namespace: &'static str, state: &PackageState) -> AnyView {
+    detailed_row(namespace, state, None)
+}
+
+/// The same, with the second line only a pause carries.
+pub(crate) fn detailed_row(
+    namespace: &'static str,
+    state: &PackageState,
+    detail: Option<String>,
+) -> AnyView {
     let rendered = render(state, Site::QueueRow);
     let remedy = rendered.action.map(|action| Remedy {
         action,
@@ -77,6 +86,7 @@ fn row(namespace: &'static str, state: &PackageState) -> AnyView {
             state=rendered.words
             tone=rendered.tone
             remedy=remedy
+            detail=detail
         />
     }
     .into_any()
@@ -151,28 +161,21 @@ fn QueueRowStory() -> impl IntoView {
                 {row("org/dataset-x", &PackageState::Unknown)}
             </Cell>
             <Cell full=true label="Sync paused — the engine's own words, kept verbatim">
-                <QueueRow
-                    namespace="team/imaging-cohort-b"
-                    state="has stopped syncing"
-                    tone=StateTone::Danger
-                    detail=Some(REJECTION.to_string())
-                />
+                {detailed_row(
+                    "team/imaging-cohort-b",
+                    &PackageState::Paused,
+                    Some(REJECTION.to_string()),
+                )}
             </Cell>
             <Cell full=true label="Sync paused — a one-line reason">
-                <QueueRow
-                    namespace="org/dataset-c"
-                    state="has stopped syncing"
-                    tone=StateTone::Danger
-                    detail=Some(BAD_CONFIG.to_string())
-                />
+                {detailed_row("org/dataset-c", &PackageState::Paused, Some(BAD_CONFIG.to_string()))}
             </Cell>
             <Cell wide=true label="narrow · the rejection wraps, and keeps its own line breaks">
-                <QueueRow
-                    namespace="team/imaging-cohort-b"
-                    state="has stopped syncing"
-                    tone=StateTone::Danger
-                    detail=Some(REJECTION.to_string())
-                />
+                {detailed_row(
+                    "team/imaging-cohort-b",
+                    &PackageState::Paused,
+                    Some(REJECTION.to_string()),
+                )}
             </Cell>
             <Cell full=true label="sub-row — no state, no remedy, indented, and a bullet rather than a glyph">
                 <QueueRow namespace="team/rnaseq-batch-2026-07-31" sub=true />
@@ -279,13 +282,16 @@ pub fn QueueRegion() -> impl IntoView {
 
     // Derived, never written — 11 + 3 + 5 + the paused row. The mock's hand-written
     // (17) is off against its own rows, which is what this closure exists to avoid.
-    let total = move || 11 + 3 + actionable().len() + 1;
+    // Bound once rather than rebuilt on every read of the card's count: `actionable`
+    // allocates.
+    let actionable = actionable();
+    let total = 11 + 3 + actionable.len() + 1;
 
     view! {
         // One wrapper child, so `Card`'s between-children hairline does not fire: a
         // queue is a list of decisions, and dividing every row would make it read as a
         // table of data.
-        <Card title="Needs your attention" count=total()>
+        <Card title="Needs your attention" count=total>
             <div>
                 <CauseRow
                     text="Signed out from custom.registry.io"
@@ -317,24 +323,23 @@ pub fn QueueRegion() -> impl IntoView {
                         .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
                         .collect_view()}
                 </Show>
-                {actionable()
-                    .into_iter()
+                {actionable
+                    .iter()
                     .take(1)
-                    .map(|(namespace, state)| row(namespace, &state))
+                    .map(|(namespace, state)| row(namespace, state))
                     .collect_view()}
                 // Precedence row 3, between the conflict above and everything below,
                 // and the only row here that goes nowhere: nothing in the app can
                 // restart a sync the remote refused.
-                <QueueRow
-                    namespace="team/imaging-cohort-b"
-                    state="has stopped syncing"
-                    tone=StateTone::Danger
-                    detail=Some(REJECTION.to_string())
-                />
-                {actionable()
-                    .into_iter()
+                {detailed_row(
+                    "team/imaging-cohort-b",
+                    &PackageState::Paused,
+                    Some(REJECTION.to_string()),
+                )}
+                {actionable
+                    .iter()
                     .skip(1)
-                    .map(|(namespace, state)| row(namespace, &state))
+                    .map(|(namespace, state)| row(namespace, state))
                     .collect_view()}
             </div>
         </Card>

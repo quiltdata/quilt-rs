@@ -1328,12 +1328,17 @@ mod tests {
         );
         // `:not([aria-expanded])` skips the cause row's expander, which is also a
         // button — selecting the first button here tests the expander instead.
+        let sign_in = denied
+            .query_selector("button:not([aria-expanded])")
+            .unwrap()
+            .expect("the cause's own action is still a control");
         assert!(
-            denied
-                .query_selector("button:not([aria-expanded])")
-                .unwrap()
-                .is_some(),
-            "the cause's own action is still a control"
+            !sign_in
+                .get_attribute("class")
+                .unwrap_or_default()
+                .contains("primary"),
+            "and still a default one: it is host-scoped, and explains rows rather \
+             than resolving one"
         );
 
         let publishable = mount_region(
