@@ -71,11 +71,64 @@ body {
 
 .g-section { margin-bottom: var(--q-space-8); }
 /* Sentence case at the lead size: Card titles are 14px uppercase, and a gallery
- * heading set the same way reads as part of the scene it introduces. */
-.g-section h2 {
+ * heading set the same way reads as part of the scene it introduces.
+ *
+ * `h3`, not `h2`: the tier heading above it is the `h2`, so the outline runs
+ * page -> tier -> section without a skipped level. */
+.g-section h3 {
   font-size: var(--q-text-lead);
   font-weight: 600;
   margin: 0 0 3px;
+}
+
+/* Tier separator. The four tiers are what a section IS — one component, several
+ * wired together, a region, a page — so the break between them has to be louder
+ * than the break between two sections inside one. A rule plus the title size
+ * does it without a second colour. */
+.g-tier {
+  margin: var(--q-space-8) 0 var(--q-space-6);
+  padding-top: var(--q-space-4);
+  border-top: 2px solid var(--q-borderColor-emphasis);
+}
+
+/* The first tier opens the page, so it needs no separator from the header. */
+.g-tier:first-of-type {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.g-tier__name {
+  font-size: var(--q-text-title);
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+
+.g-tier__rule {
+  margin: 0;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  max-width: 60ch;
+}
+
+/* Matches the system's Label token exactly — 600 / 0.07em / upper-cased in CSS,
+ * never typed in capitals. A near-miss here is how two labels drift apart. */
+.g-nav__tier {
+  margin: var(--q-space-4) 0 var(--q-space-1);
+  padding-left: var(--q-space-3);
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.g-nav__tier a {
+  color: var(--q-fgColor-default);
+  text-decoration: none;
+}
+
+.g-nav ul {
+  margin-top: 0;
 }
 .g-note { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 80ch; }
 
