@@ -30,7 +30,11 @@ impl std::fmt::Display for Output {
     }
 }
 
-impl Render for Output {}
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "hash": &self.commit.hash })
+    }
+}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.commit(args).await)
@@ -104,6 +108,7 @@ mod tests {
     use crate::cli::create;
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
+    use crate::cli::output::Render;
 
     use quilt_rs::io::storage::ByteStream;
 
@@ -543,5 +548,18 @@ mod tests {
             "b9853f32d9b87b28a617a51acbdb3dffdb0974053a3415dedfef3950c6e239ef"
         );
         Ok(())
+    }
+
+    #[test]
+    fn json_carries_the_hash_and_no_timestamp() {
+        let output = Output {
+            commit: CommitState {
+                timestamp: std::time::SystemTime::UNIX_EPOCH.into(),
+                hash: "abc123".to_string(),
+                prev_hashes: vec!["older".to_string()],
+            },
+        };
+
+        assert_eq!(output.to_json().to_string(), r#"{"hash":"abc123"}"#);
     }
 }
