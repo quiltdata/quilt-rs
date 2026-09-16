@@ -493,11 +493,16 @@ select.
 
 ### State Label
 
-The signature component: the state vocabulary made visual. An inline chip
-carrying a 12px glyph and a short phrase, with four tones. Each tone sets four
-private custom properties and the layout paints from them, so no rule in the
-component names a colour and a high-contrast or colourblind-safe variant is a
-tier-two change alone.
+The state vocabulary made visual **in the list**. An inline chip carrying a 12px
+glyph and a short phrase, with four tones. Each tone sets four private custom
+properties and the layout paints from them, so no rule in the component names a
+colour and a high-contrast or colourblind-safe variant is a tier-two change
+alone.
+
+The queue draws the same vocabulary as prose rather than in a chip, so every
+label this component holds is a list row's — and the sites word a state
+differently on purpose, which is why the vocabulary's own function takes a site
+as well as a state.
 
 - **Never truncates and never shrinks.** Every state in the vocabulary is short
   by design, and half a state is worse than a state that pushes the row:
