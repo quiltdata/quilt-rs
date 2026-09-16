@@ -593,8 +593,6 @@ mod tests {
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
 
-    /// Nothing else pins these strings, and a consumer branching on them
-    /// cannot see a rename. This table is the contract.
     /// The hint is a command the reader is meant to run, and since #941 it also
     /// travels inside a machine-readable `error.message` that an agent may echo
     /// verbatim. `quilt_rs` is the library crate and ships no binary.
@@ -613,6 +611,8 @@ mod tests {
         );
     }
 
+    /// Nothing else pins these strings, and a consumer branching on them
+    /// cannot see a rename. This table is the contract.
     #[test]
     fn error_kinds_are_stable() {
         let cases: Vec<(Error, &str)> = vec![
