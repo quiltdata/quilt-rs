@@ -1,36 +1,70 @@
 //! One package needing a decision.
 //!
-//! # The only row in the design that carries a text button
+//! # The row is the link
 //!
-//! And it is the payoff for the rule that stripped buttons off the list rows, not an
-//! exception to it. The rule is that an action appears **where its condition is
-//! true**: a queue row exists *because* the package needs the action, so the button
-//! and the row are the same fact. On today's list, `Publish` renders on 43 rows and
-//! applies to two — the other 41 are disabled chrome the user has to interpret.
+//! Every state that names an operation names a page that performs it — `Publish`
+//! opens the commit page, `Resolve` the merge page, the other two the package's own —
+//! so a row has exactly one destination and the whole row goes there. The verb rides
+//! along as text rather than as a button, because a button promises the operation
+//! happens on press and none of these do. One tab stop per row either way, and the
+//! accent stays free for a page that has something to spend it on.
 //!
-//! # Inert apart from its action
+//! A state that names no operation — a refused sync, a denial, a package this build
+//! cannot read — has nowhere to send anyone, and its row stays inert.
 //!
-//! The row does not navigate. The list below is where you go to a package; the queue
-//! is where you decide about one, and a row that both navigated and carried a button
-//! would put two meanings on one target. That also keeps the tab order honest — one
-//! stop per row, and it is the button.
+//! # The state reads as a clause
+//!
+//! `org/dataset-c` then `has conflicts in 2 files`, rather than a name beside a chip.
+//! The words are [`render`](super::render)'s at [`Site::QueueRow`](super::Site), which
+//! is where the queue's grammar is chosen; this file only draws them.
+//!
+//! The tone the chip used to carry moves to two channels: a rule on the row's edge,
+//! which is what makes a column of rows scannable, and the tone's own glyph in the
+//! leading column. Two, because the four tone hues are lightness-matched on purpose —
+//! in greyscale the edge rule says nothing at all.
 
 use leptos::prelude::*;
 
+use super::PackageAction;
 use super::SkeletonBox;
-use super::StateLabel;
 use super::state_label::StateTone;
 
 stylance::import_crate_style!(style, "src/kit/queue_row.module.scss");
+
+/// What to do about a row, and where doing it happens.
+///
+/// One value rather than two props, because a row has somewhere to go exactly when
+/// it has an operation on offer — as two independent `Option`s they could disagree,
+/// and a link with no verb or a verb with no link is a row that lies.
+///
+/// The verb is a [`PackageAction`] and not its label, so the words stay the
+/// vocabulary's. A caller free to pass a string is a caller free to put `Resolve` on
+/// a pull conflict, which is the one pairing the design record corrects twice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remedy {
+    pub action: PackageAction,
+    /// The page that performs it, already resolved — routes belong to the page, not
+    /// to the kit.
+    pub href: String,
+}
+
+/// The tone's own class, which sets the edge rule's and the glyph's colour.
+fn tone_class(tone: StateTone) -> &'static str {
+    match tone {
+        StateTone::Success => style::success,
+        StateTone::Neutral => style::neutral,
+        StateTone::Attention => style::attention,
+        StateTone::Danger => style::danger,
+    }
+}
 
 #[component]
 pub fn QueueRow(
     /// `owner/name`. Truncates right, as in `PackageRow`.
     #[prop(into)]
     namespace: String,
-    /// The state and its tone. **Both or neither** — the label renders only when both
-    /// are given, which is what stops a tone from being set without the words that
-    /// carry the meaning.
+    /// The state's words and its tone. **Both or neither** — a tone with no words is
+    /// a colour that means nothing, and words with no tone have no edge to sit on.
     ///
     /// Neither, for a sub-row: expanding `Signed out — 11 packages` answers *which*
     /// packages, and repeating `Signed out` on all eleven is exactly the redundancy
@@ -38,14 +72,13 @@ pub fn QueueRow(
     #[prop(optional, into)]
     state: Option<String>,
     #[prop(optional, into)] tone: Option<StateTone>,
-    /// The one thing to do — a `Button`, passed in rather than named, because the row
-    /// has no business knowing whether `Publish` is primary here. Absent on a
-    /// sub-row, whose action belongs to the cause above it.
+    /// What to do and where. Absent when the state names no operation, and the row is
+    /// then not a link.
     ///
-    /// `optional_no_strip`, like `detail`: the caller decides whether a state names
-    /// an operation and already holds the `Option` that answer comes in.
+    /// `optional_no_strip`, like `detail`: the caller decides whether a state names an
+    /// operation and already holds the `Option` that answer comes in.
     #[prop(optional_no_strip)]
-    action: Option<AnyView>,
+    remedy: Option<Remedy>,
     /// Indented, as one of the packages revealed by an expanded `CauseRow`.
     #[prop(optional)]
     sub: bool,
@@ -56,27 +89,66 @@ pub fn QueueRow(
     #[prop(optional, into)]
     detail: MaybeProp<String>,
 ) -> impl IntoView {
-    let class = if sub {
-        format!("{} {}", style::root, style::sub)
-    } else {
-        style::root.to_string()
+    // Both or neither, enforced here rather than at each of the three places the pair
+    // draws — the glyph, the edge rule and the clause.
+    let (state, tone) = match (state, tone) {
+        (Some(state), Some(tone)) => (Some(state), Some(tone)),
+        _ => (None, None),
+    };
+
+    let mut class = String::from(style::root);
+    if sub {
+        class.push(' ');
+        class.push_str(style::sub);
+    }
+    if let Some(tone) = tone {
+        class.push(' ');
+        class.push_str(tone_class(tone));
+    }
+
+    // The column `CauseRow` uses for its expander, and never blank: a gap there reads
+    // as an element that failed to draw. It holds the tone's silhouette when the row
+    // has a state, and a plain bullet when it is only a name.
+    let bullet = match tone {
+        Some(tone) => view! { <span class=style::bullet>{tone.glyph()}</span> }.into_any(),
+        None => {
+            view! { <span class=format!("{} {}", style::bullet, style::dot)></span> }.into_any()
+        }
     };
 
     // Ellipsised by the stylesheet, so the whole value rides in `title`.
     let full_namespace = namespace.clone();
+    let href = remedy.as_ref().map(|remedy| remedy.href.clone());
+    let line = view! {
+        {bullet}
+        <span class=style::namespace title=full_namespace>{namespace}</span>
+        {state.map(|state| view! { <span class=style::clause>{state}</span> })}
+        {remedy
+            .map(|remedy| {
+                view! {
+                    <span class=style::action>
+                        {remedy.action.label()}
+                        // Decoration: the link is already announced as one, and
+                        // "right arrow" after every verb is noise.
+                        <span aria-hidden="true">"\u{2192}"</span>
+                    </span>
+                }
+            })}
+    };
+
     view! {
         <div class=class>
-            <div class=style::line>
-                // The list bullet, filling the column `CauseRow` uses for its expander.
-                // Empty of text, so it says nothing to a screen reader — the row's own
-                // words are the content and a bullet is not one of them.
-                <span class=style::bullet></span>
-                <span class=style::namespace title=full_namespace>{namespace}</span>
-                {state
-                    .zip(tone)
-                    .map(|(state, tone)| view! { <StateLabel tone=tone>{state}</StateLabel> })}
-                {action.map(|action| view! { <span class=style::action>{action}</span> })}
-            </div>
+            {match href {
+                Some(href) => {
+                    view! {
+                        <a class=format!("{} {}", style::line, style::linked) href=href>
+                            {line}
+                        </a>
+                    }
+                        .into_any()
+                }
+                None => view! { <div class=style::line>{line}</div> }.into_any(),
+            }}
             {move || detail.get().map(|detail| view! { <p class=style::detail>{detail}</p> })}
         </div>
     }
@@ -94,13 +166,15 @@ pub fn QueueRowSkeleton() -> impl IntoView {
     view! {
         <div class=style::root>
             <div class=style::line>
-                <span class=style::bullet></span>
+                <span class=format!("{} {}", style::bullet, style::dot)></span>
                 <span class=style::namespace>
                     <SkeletonBox width="32%" />
                 </span>
-                <SkeletonBox width="120px" height="22px" />
+                <span class=style::clause>
+                    <SkeletonBox width="60%" />
+                </span>
                 <span class=style::action>
-                    <SkeletonBox width="76px" height="32px" />
+                    <SkeletonBox width="76px" height="20px" />
                 </span>
             </div>
         </div>
@@ -110,6 +184,7 @@ pub fn QueueRowSkeleton() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kit::PackageAction;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -122,6 +197,84 @@ mod tests {
         doc.body().unwrap().append_child(&container).unwrap();
         leptos::mount::mount_to(container.clone(), f).forget();
         container.into()
+    }
+
+    /// The row is the link, so the whole of it goes to the page that fixes the state
+    /// — and the verb still says which page that is.
+    #[wasm_bindgen_test]
+    fn a_row_with_a_remedy_is_a_link_to_the_page_that_fixes_it() {
+        let el = mount(|| {
+            view! {
+                <QueueRow
+                    namespace="org/dataset-c"
+                    state="has conflicts in 2 files"
+                    tone=StateTone::Danger
+                    remedy=Some(Remedy {
+                        action: PackageAction::Publish,
+                        href: "/commit?namespace=org/dataset-c".to_string(),
+                    })
+                />
+            }
+        });
+        let link = el
+            .query_selector("a")
+            .unwrap()
+            .expect("the row is the link");
+        assert_eq!(
+            link.get_attribute("href").as_deref(),
+            Some("/commit?namespace=org/dataset-c")
+        );
+        assert!(
+            link.text_content().unwrap().contains("Publish"),
+            "the remedy is named, not only linked"
+        );
+    }
+
+    /// Nothing in the app restarts a sync the remote refused, so this row has
+    /// nowhere to go and must not offer to take the reader anywhere.
+    #[wasm_bindgen_test]
+    fn a_row_with_no_remedy_is_not_a_link() {
+        let el = mount(|| {
+            view! {
+                <QueueRow
+                    namespace="team/imaging-cohort-b"
+                    state="has stopped syncing"
+                    tone=StateTone::Danger
+                />
+            }
+        });
+        assert!(
+            el.query_selector("a").unwrap().is_none(),
+            "a row with no operation on offer is inert"
+        );
+    }
+
+    /// The four tones are lightness-matched on purpose, so hue carries no
+    /// information in greyscale and none for a reader who cannot separate the hues.
+    /// Deleting the glyph leaves a row that still looks right and says less.
+    #[wasm_bindgen_test]
+    fn the_tone_draws_a_glyph_and_not_only_a_colour() {
+        let el = mount(|| {
+            view! {
+                <QueueRow
+                    namespace="org/dataset-c"
+                    state="has conflicts in 2 files"
+                    tone=StateTone::Danger
+                />
+            }
+        });
+        assert!(
+            el.query_selector("svg").unwrap().is_some(),
+            "the tone has a second channel"
+        );
+    }
+
+    /// A package revealed by an expanded cause has no state of its own — the cause
+    /// above it holds the one they share — so there is no tone to draw.
+    #[wasm_bindgen_test]
+    fn a_sub_row_has_no_tone_to_draw() {
+        let el = mount(|| view! { <QueueRow namespace="user/package-x" sub=true /> });
+        assert!(el.query_selector("svg").unwrap().is_none());
     }
 
     /// A queue row asks the reader to act on this package, so its name must survive.

@@ -521,12 +521,27 @@ noise.
 
 ### Queue Row
 
-The only row in the kit that carries a text button, and the payoff for stripping
-buttons off the list rows rather than an exception to it. A queue row exists
-because the package needs the action, so the button and the row are the same
-fact. The row does not navigate, so there is no hover tint and one tab stop per
-row, which is the button. Actions hug their labels at the right edge, so the
-right edges line up and the left ones follow the verb's length.
+The row is the link. Every state that names an operation names a page that
+performs it, so a queue row has exactly one destination and the whole row goes
+there; the verb rides along as text at the right edge rather than as a button,
+because a button promises the operation happens on press and none of them do.
+One tab stop per row either way. Verbs hug their labels, so the right edges line
+up and the left ones follow the verb's length. A state that names no operation
+has nowhere to send anyone, and its row stays inert.
+
+The state reads as a **clause after the name** — `org/dataset-c` then `has
+conflicts in 2 files` — rather than as a chip beside it. The name keeps default
+ink at weight 600 and the clause is muted, which is the treatment the host row
+already uses above its sub-line. The words are the vocabulary's, chosen at the
+queue site; the list keeps its chips and its noun phrases.
+
+The tone the chip used to carry draws **twice**: a rule on the row's edge, inset
+by the row's own padding so a column of rows shows separate marks rather than one
+unbroken band, and the tone's glyph in the leading column. Two channels and not
+one, because the four tone hues are lightness-matched on purpose — in greyscale
+the edge rule is four identical greys. The leading column is the one a cause row
+fills with its expander, which is what keeps a cause and a package aligned on
+their text; a row with no state of its own carries a plain bullet there instead.
 
 A row may carry a **detail line** beneath its first, for a state whose account of
 itself is longer than a label. Today one state uses it: a paused sync, whose

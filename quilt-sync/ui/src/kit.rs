@@ -90,6 +90,7 @@ pub use package_state::render;
 pub use page_layout::PageLayout;
 pub use queue_row::QueueRow;
 pub use queue_row::QueueRowSkeleton;
+pub use queue_row::Remedy;
 pub use relative_time::RelativeTime;
 pub use search_input::SearchInput;
 pub use segmented_control::SegmentedControl;

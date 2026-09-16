@@ -22,7 +22,7 @@ mod accounts;
 mod autosync;
 mod create_package;
 mod grouping;
-mod queue;
+pub mod queue;
 mod recent_files;
 
 use std::collections::HashMap;
@@ -472,8 +472,7 @@ fn PackageList(packages: Vec<ListRowData>, store: PackageStore) -> impl IntoView
 /// over-reports, and an unconfirmed denial is not a fact about the bucket.
 ///
 /// The words are `render`'s, at the site that states a shared cause once
-/// (`Site::QueueRow`, `kit/package_state.rs:143`). `GroupHeading` draws the
-/// dash.
+/// (`Site::Cause`). `GroupHeading` draws the dash.
 fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -> Option<String> {
     if group_by != GROUP_BUCKET || group.rows.is_empty() {
         return None;
@@ -488,7 +487,7 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
         if !matches!(state, PackageState::RoleDenied { .. }) {
             return None;
         }
-        let words = render(&state, Site::QueueRow).words;
+        let words = render(&state, Site::Cause).words;
         match &cause {
             None => cause = Some(words),
             Some(existing) if *existing == words => {}
@@ -2711,7 +2710,7 @@ mod tests {
 
         let queue = queue_text(&el).expect("the queue has something to say");
         assert!(
-            queue.contains("1 file changed"),
+            queue.contains("has 1 changed file"),
             "the queue names it: {queue}"
         );
         assert!(queue.contains("Publish"), "beside its action: {queue}");

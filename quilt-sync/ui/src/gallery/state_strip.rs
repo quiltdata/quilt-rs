@@ -11,11 +11,12 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::kit::Button;
-use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::Countdown;
 use crate::kit::HostRow;
+use crate::kit::PackageAction;
 use crate::kit::QueueRow;
+use crate::kit::Remedy;
 use crate::kit::StateLabel;
 use crate::kit::StateTone;
 use crate::kit::ToggleRow;
@@ -218,16 +219,12 @@ fn PausedWithReason() -> impl IntoView {
                 <div>
                     <QueueRow
                         namespace="user/package-b"
-                        state="2 files changed"
+                        state="has 2 changed files"
                         tone=StateTone::Neutral
-                        action=Some(
-                            view! {
-                                <Button variant=ButtonVariant::Primary on_click=|_| ()>
-                                    "Publish"
-                                </Button>
-                            }
-                                .into_any(),
-                        )
+                        remedy=Some(Remedy {
+                            action: PackageAction::Publish,
+                            href: "/commit?namespace=user/package-b".to_string(),
+                        })
                     />
                 </div>
             </Card>
