@@ -1,10 +1,10 @@
 /*
  * Queue row. Namespace, state as a clause, the remedy as text.
  *
- * The tone draws twice — a rule on the row's edge and a glyph in the leading column
- * — and both hang off `--tone-mark`, which the four tone classes at the foot of this
- * file set. One channel would be colour alone, and the tone hues are lightness-
- * matched by design: in greyscale the rule is four identical greys.
+ * The tone is a rule on the row's edge and nothing else, drawn from `--tone-mark`,
+ * which the four tone classes at the foot of this file set. Colour alone, and that is
+ * allowed here because it carries nothing on its own: the clause states the row's
+ * state in words, so the rule is emphasis over text that already says it.
  */
 
 /* A column, because a row may carry a detail line under its first one.
@@ -96,18 +96,9 @@
   align-self: stretch;
 }
 
-/* The tone's second channel, and the one that survives desaturation: tick, dot,
- * triangle, cross. 14px rather than the chip's 12px — it is alone here, with no
- * label beside it to be read instead. */
-.bullet svg {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  color: var(--tone-mark);
-}
-
-/* A row with no state of its own gets a plain bullet instead — it is one of a set of
- * names, and that is what a bullet is for. */
+/* A row with no state of its own gets a plain bullet — it is one of a set of names,
+ * and that is what a bullet is for. A row that has a state leaves this column empty:
+ * its edge rule and its clause already mark it. */
 .dot::before {
   content: "";
   width: 4px;

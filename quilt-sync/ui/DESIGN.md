@@ -541,13 +541,20 @@ the name holds its full width until the clause is nearly gone: a name cut
 mid-owner is unrecognisable, while a clause cut at its end is still readable up
 to the cut.
 
-The tone the chip used to carry draws **twice**: a rule on the row's edge, inset
-by the row's own padding so a column of rows shows separate marks rather than one
-unbroken band, and the tone's glyph in the leading column. Two channels and not
-one, because the four tone hues are lightness-matched on purpose — in greyscale
-the edge rule is four identical greys. The leading column is the one a cause row
-fills with its expander, which is what keeps a cause and a package aligned on
-their text; a row with no state of its own carries a plain bullet there instead.
+The tone the chip used to carry becomes a **rule on the row's edge**, inset by the
+row's own padding so a column of rows shows separate marks rather than one
+unbroken band. Colour and nothing else, which is allowed here because the colour
+carries nothing on its own: the clause states the row's state in words, so two
+rows of different severity read differently with the colour taken away. The chip
+needed a glyph beside it because its words were a short label doing the same job
+as its tint; these words are the whole account.
+
+The leading column — the one a cause row fills with its expander, which is what
+keeps a cause and a package aligned on their text — stays open and stays empty.
+A row that has a state is marked twice already, by its edge rule and by its
+clause; a third marker there would say nothing the other two do not. Only a row
+that is a bare name, one of the packages an expanded cause speaks for, carries
+a bullet.
 
 A row may carry a **detail line** beneath its first, for a state whose account of
 itself is longer than a label. Today one state uses it: a paused sync, whose
@@ -585,7 +592,10 @@ translate is exempt because it is instantaneous and carries no transition.
 **The Two Channels Rule.** Every meaningful distinction is carried twice. A tone
 is a colour and a glyph silhouette, so it survives desaturation. A provisional
 row is a dashed edge and a dim, so it is findable by someone who is not already
-looking for it.
+looking for it. The test is whether the channel carries meaning on its own: a
+queue row's edge rule is colour and nothing else, and that is allowed, because
+the clause beside it states the row's state in words. Take the colour away and
+the row still says everything it said.
 
 **The Platform Owns The Keyboard Rule.** Where a native element exists, wrap it
 rather than rebuild it. Native select, native radios, native checkbox. This is

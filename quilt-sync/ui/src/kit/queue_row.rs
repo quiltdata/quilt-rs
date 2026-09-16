@@ -18,10 +18,12 @@
 //! The words are [`render`](super::render)'s at [`Site::QueueRow`](super::Site), which
 //! is where the queue's grammar is chosen; this file only draws them.
 //!
-//! The tone the chip used to carry moves to two channels: a rule on the row's edge,
-//! which is what makes a column of rows scannable, and the tone's own glyph in the
-//! leading column. Two, because the four tone hues are lightness-matched on purpose —
-//! in greyscale the edge rule says nothing at all.
+//! The tone the chip used to carry moves to a rule on the row's edge, which is what
+//! makes a column of rows scannable. Colour is all it is, and that is enough here
+//! precisely because it carries nothing: the clause states the row's state in words,
+//! so two rows of different severity always read differently with the colour taken
+//! away. The chip needed a glyph beside it because its words were a short label
+//! doing the same job as its tint; these words are the whole account.
 
 use leptos::prelude::*;
 
@@ -114,11 +116,15 @@ pub fn QueueRow(
         class.push_str(style::linked);
     }
 
-    // The column `CauseRow` uses for its expander, and never blank: a gap there reads
-    // as an element that failed to draw. It holds the tone's silhouette when the row
-    // has a state, and a plain bullet when it is only a name.
+    // The column `CauseRow` fills with its expander, held open so a cause and a
+    // package start their text at the same x.
+    //
+    // Empty on a row that has a state: the edge rule marks it, the clause names it,
+    // and a glyph or a bullet here would be a third marker saying nothing the other
+    // two do not. A row that is only a name gets a bullet, which is the one case
+    // where a list marker is the only marker there is.
     let bullet = match tone {
-        Some(tone) => view! { <span class=style::bullet>{tone.glyph()}</span> }.into_any(),
+        Some(_) => view! { <span class=style::bullet></span> }.into_any(),
         None => {
             view! { <span class=format!("{} {}", style::bullet, style::dot)></span> }.into_any()
         }
@@ -259,30 +265,9 @@ mod tests {
         );
     }
 
-    /// The four tones are lightness-matched on purpose, so hue carries no
-    /// information in greyscale and none for a reader who cannot separate the hues.
-    /// Deleting the glyph leaves a row that still looks right and says less.
-    #[wasm_bindgen_test]
-    fn the_tone_draws_a_glyph_and_not_only_a_colour() {
-        let el = mount(|| {
-            view! {
-                <QueueRow
-                    namespace="org/dataset-c"
-                    state="has conflicts in 2 files"
-                    tone=StateTone::Danger
-                />
-            }
-        });
-        assert!(
-            el.query_selector("svg").unwrap().is_some(),
-            "the tone has a second channel"
-        );
-    }
-
-    /// The glyph is one of the tone's two channels; this is the other. Deleting the
-    /// tone class from the row leaves the glyph intact and the edge rule unmatched,
-    /// which looks nearly right and halves what a reader who cannot separate the
-    /// four hues is given.
+    /// The edge rule is the tone's only channel, and it hangs off this class.
+    /// Dropping it leaves a row that reads correctly — the clause says everything —
+    /// and loses the mark that makes a column of them scannable.
     #[wasm_bindgen_test]
     fn the_tone_also_reaches_the_row_that_draws_its_edge_rule() {
         let el = mount(|| {
@@ -302,12 +287,37 @@ mod tests {
         );
     }
 
-    /// A package revealed by an expanded cause has no state of its own — the cause
-    /// above it holds the one they share — so there is no tone to draw.
+    /// The leading column holds a list marker only where there is nothing else to
+    /// mark the row: a package revealed by an expanded cause is a bare name, while a
+    /// row with a state has an edge rule and a clause already.
     #[wasm_bindgen_test]
-    fn a_sub_row_has_no_tone_to_draw() {
-        let el = mount(|| view! { <QueueRow namespace="user/package-x" sub=true /> });
-        assert!(el.query_selector("svg").unwrap().is_none());
+    fn only_a_bare_name_carries_a_bullet() {
+        let named = mount(|| view! { <QueueRow namespace="user/package-x" sub=true /> });
+        assert!(
+            named
+                .query_selector(&format!("[class*={}]", style::dot))
+                .unwrap()
+                .is_some(),
+            "a package under a cause is one of a set of names, and a bullet is what \
+             marks one"
+        );
+
+        let stated = mount(|| {
+            view! {
+                <QueueRow
+                    namespace="org/dataset-c"
+                    state="has conflicts in 2 files"
+                    tone=StateTone::Danger
+                />
+            }
+        });
+        assert!(
+            stated
+                .query_selector(&format!("[class*={}]", style::dot))
+                .unwrap()
+                .is_none(),
+            "a third marker beside the edge rule and the clause"
+        );
     }
 
     /// A queue row asks the reader to act on this package, so its name must survive.

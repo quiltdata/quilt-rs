@@ -137,15 +137,17 @@ fn QueueRowStory() -> impl IntoView {
                   \
                   The state reads as a clause after the name rather than as a chip beside \
                   it: name at weight 600 in default ink, clause muted, which is the \
-                  treatment HostRow already uses. The tone that was the chip's job now \
-                  draws twice — a rule on the row's edge, inset so a column of rows shows \
-                  separate marks rather than one band, and the tone's glyph in the leading \
-                  column. Two channels, because the four tone hues are lightness-matched \
-                  and the rule alone is four identical greys in greyscale. \
+                  treatment HostRow already uses. The tone that was the chip's job is now \
+                  a rule on the row's edge, inset so a column of rows shows separate marks \
+                  rather than one band. Colour and nothing else, which is allowed because \
+                  the colour carries nothing on its own — the clause says the state in \
+                  words, and the chip needed a glyph only because its words were a short \
+                  label doing the same job as its tint. \
                   \
-                  That leading column is CauseRow's expander column, which is what keeps a \
-                  cause and a package aligned on their text. A row with no state of its \
-                  own gets a plain bullet there instead."
+                  The leading column is CauseRow's expander column, which is what keeps a \
+                  cause and a package aligned on their text. It stays empty on a row that \
+                  has a state — the edge rule and the clause mark it twice already — and \
+                  carries a bullet only on a row that is a bare name."
         >
             {actionable()
                 .into_iter()
@@ -177,7 +179,7 @@ fn QueueRowStory() -> impl IntoView {
                     Some(REJECTION.to_string()),
                 )}
             </Cell>
-            <Cell full=true label="sub-row — no state, no remedy, indented, and a bullet rather than a glyph">
+            <Cell full=true label="sub-row — a bare name: no state, no remedy, indented, and the one row that keeps a bullet">
                 <QueueRow namespace="team/rnaseq-batch-2026-07-31" sub=true />
             </Cell>
             <Cell full=true label="long namespace truncates before the clause does">
