@@ -41,7 +41,18 @@ impl std::fmt::Display for Output {
     }
 }
 
-impl Render for Output {}
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "namespace": self.installed_package.namespace.to_string(),
+            "paths": self
+                .paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        })
+    }
+}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.install(args).await)
@@ -269,6 +280,59 @@ mod tests {
             assert!(paths.contains_key(&timestamp_logical_key));
         }
 
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn json_carries_namespace_and_paths() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let created = m
+            .create(create::Input {
+                namespace: ("test", "pkg").into(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        let output = Output {
+            installed_package: created.installed_package,
+            paths: vec![std::path::PathBuf::from("data/one.csv")],
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"]}"#
+        );
+        Ok(())
+    }
+
+    /// A copy that installed no paths reports `[]`, not a missing key.
+    #[test(tokio::test)]
+    async fn json_paths_are_an_empty_list_when_none_installed() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let created = m
+            .create(create::Input {
+                namespace: ("test", "bare").into(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        let output = Output {
+            installed_package: created.installed_package,
+            paths: Vec::new(),
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"namespace":"test/bare","paths":[]}"#
+        );
         Ok(())
     }
 }
