@@ -1872,11 +1872,27 @@ mod tests {
             ),
             ("list", Commands::List),
             ("status", Commands::Status { pkg: pkg() }),
+            (
+                "commit",
+                Commands::Commit {
+                    message: "second".to_string(),
+                    user_meta: None,
+                    pkg: pkg(),
+                    workflow: None,
+                    no_workflow: true,
+                },
+            ),
             ("log", Commands::Log { pkg: pkg() }),
+            ("undo-commit", Commands::UndoCommit { pkg: pkg() }),
             ("uninstall", Commands::Uninstall { pkg: pkg() }),
         ];
 
         for (name, command) in commands {
+            // `commit` refuses an unchanged tree, so give it one edit to find.
+            if name == "commit" {
+                std::fs::write(dir.join("test/pkg/data.csv"), "a,b\n3,4")?;
+            }
+
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
 
