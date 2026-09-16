@@ -326,10 +326,8 @@ pub fn AutosyncCard(
                 match watcher.await {
                     Ok(data) => view! { <AutosyncBody data=data reload=reload /> }.into_any(),
                     Err(err) => {
-                        // The card still draws. Its own doc argued for rendering
-                        // nothing, on the grounds that a failed read asserts nothing —
-                        // but an absent card asserts something too, and the wrong
-                        // thing: that this machine has no autosync.
+                        // An absent card claims this machine has no autosync, which
+                        // is a stronger statement than the failed read supports.
                         web_sys::console::error_1(
                             &format!("get_main_page_watcher failed: {err}").into(),
                         );
@@ -709,8 +707,7 @@ mod tests {
         sleep_ms(50).await;
         assert_eq!(fired.get_untracked() - before, 1);
     }
-    /// A card that is not drawn says something, and the wrong thing: that this
-    /// machine has no autosync. It keeps its title and states the failure instead.
+    /// An absent card claims this machine has no autosync.
     #[wasm_bindgen_test]
     async fn a_failed_read_draws_the_card_and_says_so() {
         let reload = Trigger::new();
@@ -729,8 +726,7 @@ mod tests {
         assert!(text.contains("Try again"), "{text}");
     }
 
-    /// The retry is the one affordance the failure offers, so it has to fetch. The
-    /// call count is its only observable.
+    /// The call count is the retry's only observable.
     #[wasm_bindgen_test]
     async fn try_again_reads_again() {
         let calls = RwSignal::new(0);

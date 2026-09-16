@@ -88,6 +88,7 @@ use crate::gallery::skeleton::SkeletonStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
 use crate::gallery::state_strip::StateStripScene;
+use crate::gallery::state_strip::StripErrorScene;
 use crate::gallery::toggle_row::ToggleRowStories;
 use crate::gallery::unchecked::UncheckedScene;
 use kit::Button;
@@ -154,6 +155,10 @@ fn Gallery() -> impl IntoView {
         (
             "Scene · autosync paused",
             view! { <PausedScene /> }.into_any(),
+        ),
+        (
+            "Scene · a strip that could not load",
+            view! { <StripErrorScene /> }.into_any(),
         ),
         (
             "Scene · list toolbar",

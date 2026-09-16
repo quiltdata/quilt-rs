@@ -76,9 +76,8 @@ const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
 /// manufactures a state the page does not know.
 const FILES_FETCH_ERROR_WORDS: &str = "Could not load your files.";
 
-/// The strip's two reads, which used to fail into nothing at all. A card that is not
-/// drawn cannot be told from an account with no autosync and a machine with no
-/// sessions, which is the blank R1 forbids.
+/// An undrawn card is indistinguishable from no autosync and no sessions — the blank
+/// R1 forbids.
 const AUTOSYNC_ERROR_WORDS: &str = "Could not load autosync.";
 const ACCOUNTS_ERROR_WORDS: &str = "Could not load your accounts.";
 
@@ -109,12 +108,9 @@ fn render_fetch_error(retry: Trigger) -> impl IntoView {
     fetch_error_body(FETCH_ERROR_WORDS, retry)
 }
 
-/// The sentence and its retry as ONE child of the card: `Card` draws a hairline
-/// between any two of its children, and a rule between a failure and the button that
-/// answers it would read as two unrelated things.
+/// One child, because `Card` rules between any two of its own.
 ///
-/// `retry` is the read's own trigger, never the page's — a card that could not read
-/// asks for its own read again, not for everything.
+/// `retry` is the failed read's trigger, never the page's.
 fn fetch_error_body(words: &'static str, retry: Trigger) -> AnyView {
     view! {
         <div class=style::card_error>
@@ -125,8 +121,7 @@ fn fetch_error_body(words: &'static str, retry: Trigger) -> AnyView {
     .into_any()
 }
 
-/// A strip card that could not read what it draws. It keeps its title, because the
-/// title is how the reader tells this card from the one beside it.
+/// Titled, since the title is what tells this card from the one beside it.
 pub(super) fn fetch_error_card(
     title: &'static str,
     words: &'static str,
@@ -693,8 +688,7 @@ fn MainPageRegions(
     accounts: LocalResource<Result<MainPageAccountsData, String>>,
     /// The page's reload trigger, which every resource here tracks.
     reload: Trigger,
-    /// Each read's own retry, for the failure state that offers one. Optional
-    /// because a test that never fails a read never presses one.
+    /// Each read's own retry. Optional: a test with no failing read presses neither.
     #[prop(optional)]
     packages_retry: Trigger,
     #[prop(optional)] accounts_retry: Trigger,
@@ -800,10 +794,9 @@ fn MainPageRegions(
                                 .into_any()
                         }
                         Err(err) => {
-                            // Logged here, once. The card still draws: asserting
-                            // anything about a user's sessions on a failed read would
-                            // be a manufactured state, and drawing nothing is its own
-                            // false claim — that there are no sessions.
+                            // Logged once, here. The card says it could not read:
+                            // rows would claim sessions it has not seen, and no card
+                            // claims there are none.
                             web_sys::console::error_1(
                                 &format!("get_main_page_accounts failed: {err}").into(),
                             );
@@ -1208,9 +1201,8 @@ pub fn MainPage() -> impl IntoView {
     // (`PackageStore::in_flight`). The heavy phase reports itself by rows settling,
     // so the spin covers the light phase alone.
     let outstanding = RwSignal::new(0usize);
-    // A retry trigger per read, beside the page's. `watcher_resource` already takes
-    // two for the same reason: a card that could not read asks for its own read
-    // again, and a page-wide trigger would refetch three things it did not ask about.
+    // One retry per read, beside the page's — the two triggers `watcher_resource`
+    // already takes. A page-wide one refetches three reads nobody asked about.
     let packages_retry = Trigger::new();
     let accounts_retry = Trigger::new();
     let packages = LocalResource::new(move || {
@@ -2860,9 +2852,8 @@ mod tests {
     async fn a_failed_accounts_read_still_draws_the_queue_and_the_list() {
         // The other direction. Without host facts no cause can be attributed to a
         // host, so the signed-out package falls to a row of its own rather than
-        // vanishing — and the Accounts card says it could not read, rather than
-        // drawing no rows (which asserts the user has no sessions) or vanishing
-        // (which asserts there is no such card).
+        // vanishing — and the Accounts card says it could not read, where no rows
+        // would claim no sessions and no card would claim no such card.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -4248,13 +4239,8 @@ mod tests {
             "the light phase answered, so the press is finished"
         );
     }
-    /// A card that could not read asks for its OWN read again. On the page-wide
-    /// trigger, one card's Try again refetched the packages, the feed and the
-    /// watcher as well — three reads the reader did not ask about.
-    ///
-    /// What this pins is which trigger the card's retry notifies: the resources are
-    /// the test's own, so wiring the card back to `reload` fails it. The page's own
-    /// resource definitions live a level up in `MainPage` and are not covered here.
+    /// Pins which trigger a card's retry notifies. The resources here are the test's,
+    /// so `MainPage`'s own definitions are out of scope.
     #[wasm_bindgen_test]
     async fn one_cards_retry_does_not_refetch_the_others() {
         let package_reads = RwSignal::new(0);
@@ -4290,8 +4276,7 @@ mod tests {
         let (packages_before, accounts_before) =
             (package_reads.get_untracked(), account_reads.get_untracked());
 
-        // By card, not by position: the Autosync read has no Tauri host here either,
-        // so the strip holds two failed cards and two retries.
+        // By card, not position: both strip reads fail without a Tauri host.
         let cards = strip_of(&el).query_selector_all("section").unwrap();
         let accounts_card: web_sys::Element = (0..cards.length())
             .filter_map(|i| cards.get(i))

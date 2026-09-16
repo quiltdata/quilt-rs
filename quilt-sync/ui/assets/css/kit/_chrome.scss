@@ -174,3 +174,17 @@ body {
  * lets a card shrink below 300px rather than overflowing a narrow window. */
 .g-strip { display: flex; gap: var(--q-space-3); flex-wrap: wrap; }
 .g-strip > * { flex: 1 1 300px; min-width: 0; }
+
+/* The page's own `.card_error`, which the app bundle carries and this one does not.
+ * Kept in step by the scene beside it; the page's rule is the source. */
+.g-card-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--q-space-3);
+}
+
+.g-card-error p {
+  margin: 0;
+  max-width: 70ch;
+}

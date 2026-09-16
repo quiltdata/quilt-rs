@@ -93,8 +93,7 @@
   padding: 0;
 }
 
-/* A strip card that could not read what it draws: the sentence, then the one thing
- * that can be done about it. */
+/* A failed read: the sentence, then its retry. */
 .card_error {
   display: flex;
   flex-direction: column;
