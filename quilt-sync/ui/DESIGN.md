@@ -493,11 +493,16 @@ select.
 
 ### State Label
 
-The signature component: the state vocabulary made visual. An inline chip
-carrying a 12px glyph and a short phrase, with four tones. Each tone sets four
-private custom properties and the layout paints from them, so no rule in the
-component names a colour and a high-contrast or colourblind-safe variant is a
-tier-two change alone.
+The state vocabulary made visual **in the list**. An inline chip carrying a 12px
+glyph and a short phrase, with four tones. Each tone sets four private custom
+properties and the layout paints from them, so no rule in the component names a
+colour and a high-contrast or colourblind-safe variant is a tier-two change
+alone.
+
+The queue draws the same vocabulary as prose rather than in a chip, so every
+label this component holds is a list row's — and the sites word a state
+differently on purpose, which is why the vocabulary's own function takes a site
+as well as a state.
 
 - **Never truncates and never shrinks.** Every state in the vocabulary is short
   by design, and half a state is worse than a state that pushes the row:
@@ -521,12 +526,40 @@ noise.
 
 ### Queue Row
 
-The only row in the kit that carries a text button, and the payoff for stripping
-buttons off the list rows rather than an exception to it. A queue row exists
-because the package needs the action, so the button and the row are the same
-fact. The row does not navigate, so there is no hover tint and one tab stop per
-row, which is the button. Actions hug their labels at the right edge, so the
-right edges line up and the left ones follow the verb's length.
+The row is the link. Every state that names an operation names a page that
+performs it, so a queue row has exactly one destination and the whole row goes
+there; the verb rides along as text at the right edge rather than as a button,
+because a button promises the operation happens on press and none of them do.
+One tab stop per row, where the old button was one. Verbs hug their labels, so
+the right edges line up and the left ones follow the verb's length. A state that
+names no operation has nowhere to send anyone: its row is not a link, carries no
+verb, and takes no tab stop at all — the paused row's detail text is read rather
+than tabbed to.
+
+The state reads as a **clause after the name** — `org/dataset-c` then `has
+conflicts in 2 files` — rather than as a chip beside it. The name keeps default
+ink at weight 600 and the clause is muted, which is the treatment the host row
+already uses above its sub-line. The words are the vocabulary's, chosen at the
+queue site; the list keeps its chips and its noun phrases. When the row narrows
+the clause gives way first — it absorbs all but a hundredth of the deficit — and
+the name holds its full width until the clause is nearly gone: a name cut
+mid-owner is unrecognisable, while a clause cut at its end is still readable up
+to the cut.
+
+The tone the chip used to carry becomes a **rule on the row's edge**, inset by the
+row's own padding so a column of rows shows separate marks rather than one
+unbroken band. Colour and nothing else, which is allowed here because the colour
+carries nothing on its own: the clause states the row's state in words, so two
+rows of different severity read differently with the colour taken away. The chip
+needed a glyph beside it because its words were a short label doing the same job
+as its tint; these words are the whole account.
+
+The leading column — the one a cause row fills with its expander, which is what
+keeps a cause and a package aligned on their text — stays open and stays empty.
+A row that has a state is marked twice already, by its edge rule and by its
+clause; a third marker there would say nothing the other two do not. Only a row
+that is a bare name, one of the packages an expanded cause speaks for, carries
+a bullet.
 
 A row may carry a **detail line** beneath its first, for a state whose account of
 itself is longer than a label. Today one state uses it: a paused sync, whose
@@ -564,7 +597,10 @@ translate is exempt because it is instantaneous and carries no transition.
 **The Two Channels Rule.** Every meaningful distinction is carried twice. A tone
 is a colour and a glyph silhouette, so it survives desaturation. A provisional
 row is a dashed edge and a dim, so it is findable by someone who is not already
-looking for it.
+looking for it. The test is whether the channel carries meaning on its own: a
+queue row's edge rule is colour and nothing else, and that is allowed, because
+the clause beside it states the row's state in words. Take the colour away and
+the row still says everything it said.
 
 **The Platform Owns The Keyboard Rule.** Where a native element exists, wrap it
 rather than rebuild it. Native select, native radios, native checkbox. This is

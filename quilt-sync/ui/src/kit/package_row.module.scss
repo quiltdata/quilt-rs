@@ -60,7 +60,7 @@
 }
 
 /* The state sits hard right and is deliberately NOT a fixed column. Fixing it
- * would need ~160px for "Newer revision available" and waste that on the forty
+ * would need ~150px for "Changed in both places" and waste that on the forty
  * rows that say "Latest"; leaving it ragged means the forty identical boxes form
  * a pattern and the three that differ break it, which is what scanning a list
  * actually uses. */

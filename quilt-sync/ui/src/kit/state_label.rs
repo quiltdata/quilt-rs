@@ -28,13 +28,13 @@
 //! does it want you (`Attention`), or is it broken (`Danger`). A fifth tone would
 //! have to answer a question nothing asks.
 //!
-//! # Nine states, ten labels
+//! # The list's words, and only the list's
 //!
-//! `behind` renders as `Not the latest` on a list row and as
-//! `Newer revision available` on a queue row — quiet where it pairs against
-//! `Latest`, inviting where it sits beside the action it offers. So the words are a
+//! `behind` renders as `Not the latest` here and as `has a newer revision` in the
+//! queue, which draws its states as prose rather than in a chip. So the words are a
 //! property of the state **and where it draws**, never of the state alone, which is
-//! why they live in the page's mapping function and not on this component.
+//! why they live in the vocabulary's own mapping function and not on this component
+//! — and why every label this component ever holds is a list row's.
 
 use leptos::prelude::*;
 
@@ -47,7 +47,7 @@ pub enum StateTone {
     Success,
     /// A fact, not a problem. `2 files changed`.
     Neutral,
-    /// Waiting on you. `Newer revision available`, `Not published yet`.
+    /// Waiting on you. `Not the latest`, `Not published yet`.
     Attention,
     /// Something is wrong and the row cannot fix it. `No access`, `conflicts in 2
     /// files`.
@@ -114,7 +114,7 @@ impl StateTone {
 #[component]
 pub fn StateLabel(
     tone: StateTone,
-    /// The state, in the page's words — `Latest`, `Newer revision available`,
+    /// The state, in the page's words — `Latest`, `Not the latest`,
     /// `Changed in both places`. From the vocabulary, not a status enum
     /// stringified, and not a sentence.
     ///

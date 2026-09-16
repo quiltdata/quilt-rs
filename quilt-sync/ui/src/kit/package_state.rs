@@ -6,9 +6,10 @@
 //! different places** — which is why [`render`] takes a [`Site`] and not just a
 //! state.
 //!
-//! The words are a property of the state AND where it draws. `Behind` and
-//! `RoleDenied` are the two that differ by site; every other state says the same
-//! thing wherever it draws.
+//! The words are a property of the state AND where it draws, and every state in the
+//! vocabulary differs across the three: a list row names it in a chip, a queue row
+//! continues the sentence its package name started, and a shared cause is a heading
+//! above the packages it holds.
 
 use serde::Deserialize;
 
@@ -56,14 +57,21 @@ pub enum PackageState {
     Unknown,
 }
 
-/// Where a label is being drawn. Not decoration: two states word themselves
-/// differently here, so a mapping keyed on state alone is wrong.
+/// Where a state is being drawn. Not decoration: every state words itself
+/// differently across these, so a mapping keyed on state alone is wrong.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Site {
     /// A row in the package list, which is quiet and pairs against `Latest`.
     ListRow,
-    /// A row in the attention queue, which sits beside the action it offers.
+    /// A row in the attention queue, which reads as a clause after the package's
+    /// name.
     QueueRow,
+    /// A cause several packages share, stated once above them — as the heading of a
+    /// queue group, or as the annotation on a bucket heading in the list. A heading
+    /// and not a clause, so it words itself as the list does, except that it names
+    /// the role a denial was refused under: the whole point of stating a cause once
+    /// is that there is room to say which one.
+    Cause,
 }
 
 /// The operation a state offers, as a closed set.
@@ -108,106 +116,165 @@ pub struct Rendered {
 
 /// The vocabulary, in one place.
 ///
+/// Three functions and not one match, because only one of the three things a state
+/// resolves to depends on where it draws. Severity and the operation on offer are
+/// properties of the state itself; the words are a property of the state AND the
+/// site, which is why the clause table below has two arms per state and the other
+/// two tables have one. Folded into a single `(state, site)` match, every tone and
+/// every action would be written twice and could drift apart in the gap.
+#[must_use]
+pub fn render(state: &PackageState, site: Site) -> Rendered {
+    Rendered {
+        words: words(state, site),
+        tone: tone(state),
+        action: action(state),
+    }
+}
+
+/// The words, which are the only part that depends on the site.
+///
+/// The list names a state: a short noun phrase in a chip beside the package, and a
+/// shared cause is worded the same way for the same reason — it is a heading. The
+/// queue row continues a sentence the package name started — `org/dataset-c` + `has
+/// conflicts in 2 files` — so its words open lower-case and read as a clause about
+/// that package. A state whose queue arm reads as a noun phrase is a bug the tests
+/// catch two ways: the whole mapping, and the opening capital.
+///
 /// Counts are interpolated from the data here rather than sent as their own number
 /// (§1): `PullConflict` counts the paths it was given, so the label cannot disagree
 /// with the list it describes.
-#[must_use]
-pub fn render(state: &PackageState, site: Site) -> Rendered {
-    let (words, tone, action) = match (state, site) {
-        (PackageState::Latest, _) => ("Latest".to_string(), StateTone::Success, None),
+fn words(state: &PackageState, site: Site) -> String {
+    match (state, site) {
+        // The one state a cause words differently from the list, and the reason the
+        // site exists: a heading has room to name the role, a chip does not. Every
+        // other state falls through to the list's phrasing at the foot of the match.
+        (PackageState::RoleDenied { role: Some(role) }, Site::Cause) => {
+            format!("No access as {role}")
+        }
 
-        (PackageState::Behind, Site::ListRow) => (
-            "Not the latest".to_string(),
-            StateTone::Attention,
-            Some(PackageAction::GetLatest),
-        ),
-        (PackageState::Behind, Site::QueueRow) => (
-            "Newer revision available".to_string(),
-            StateTone::Attention,
-            Some(PackageAction::GetLatest),
-        ),
+        (PackageState::Latest, Site::ListRow) => "Latest".to_string(),
+        // Never drawn: the queue is the states that need a decision. Worded anyway,
+        // because a function that returns words for every state cannot have a hole.
+        (PackageState::Latest, Site::QueueRow) => "is up to date".to_string(),
 
-        (PackageState::PendingChanges { files: 1 }, _) => (
-            "1 file changed".to_string(),
-            StateTone::Neutral,
-            Some(PackageAction::Publish),
-        ),
-        (PackageState::PendingChanges { files }, _) => (
-            format!("{files} files changed"),
-            StateTone::Neutral,
-            Some(PackageAction::Publish),
-        ),
+        (PackageState::Behind, Site::ListRow) => "Not the latest".to_string(),
+        (PackageState::Behind, Site::QueueRow) => "has a newer revision".to_string(),
 
-        (PackageState::PendingCommit, _) => (
-            "Revision not published".to_string(),
-            StateTone::Attention,
-            Some(PackageAction::Publish),
-        ),
+        (PackageState::PendingChanges { files: 1 }, Site::ListRow) => "1 file changed".to_string(),
+        (PackageState::PendingChanges { files: 1 }, Site::QueueRow) => {
+            "has 1 changed file".to_string()
+        }
+        (PackageState::PendingChanges { files }, Site::ListRow) => {
+            format!("{files} files changed")
+        }
+        (PackageState::PendingChanges { files }, Site::QueueRow) => {
+            format!("has {files} changed files")
+        }
 
-        (PackageState::Diverged, _) => (
-            "Changed in both places".to_string(),
-            StateTone::Danger,
-            Some(PackageAction::Resolve),
-        ),
+        (PackageState::PendingCommit, Site::ListRow) => "Revision not published".to_string(),
+        (PackageState::PendingCommit, Site::QueueRow) => {
+            "has a revision it has not published".to_string()
+        }
 
-        // `Publish`, not `Resolve`: the merge page cannot resolve a conflict until
-        // the local changes are committed, so publishing is the step that unblocks.
-        (PackageState::PullConflict { files }, _) if files.len() == 1 => (
-            "conflict in 1 file".to_string(),
-            StateTone::Danger,
-            Some(PackageAction::Publish),
-        ),
-        (PackageState::PullConflict { files }, _) => (
-            format!("conflicts in {} files", files.len()),
-            StateTone::Danger,
-            Some(PackageAction::Publish),
-        ),
+        (PackageState::Diverged, Site::ListRow) => "Changed in both places".to_string(),
+        (PackageState::Diverged, Site::QueueRow) => "changed in both places".to_string(),
+
+        (PackageState::PullConflict { files }, Site::ListRow) if files.len() == 1 => {
+            "conflict in 1 file".to_string()
+        }
+        (PackageState::PullConflict { files }, Site::QueueRow) if files.len() == 1 => {
+            "has a conflict in 1 file".to_string()
+        }
+        (PackageState::PullConflict { files }, Site::ListRow) => {
+            format!("conflicts in {} files", files.len())
+        }
+        (PackageState::PullConflict { files }, Site::QueueRow) => {
+            format!("has conflicts in {} files", files.len())
+        }
 
         // The list never names the role, and the queue can't when the role query
         // behind it failed — named or not, the denial is the same denial.
-        (PackageState::RoleDenied { .. }, Site::ListRow)
-        | (PackageState::RoleDenied { role: None }, Site::QueueRow) => {
-            ("No access".to_string(), StateTone::Danger, None)
-        }
+        (PackageState::RoleDenied { .. }, Site::ListRow) => "No access".to_string(),
+        (PackageState::RoleDenied { role: None }, Site::QueueRow) => "cannot be read".to_string(),
         // The queue states a shared cause once, so this one names the role.
         (PackageState::RoleDenied { role: Some(role) }, Site::QueueRow) => {
-            (format!("No access as {role}"), StateTone::Danger, None)
+            format!("cannot be read as {role}")
         }
 
-        (PackageState::NoRemote, _) => (
-            "No S3 bucket yet".to_string(),
-            StateTone::Attention,
-            Some(PackageAction::ChooseS3Bucket),
-        ),
+        (PackageState::NoRemote, Site::ListRow) => "No S3 bucket yet".to_string(),
+        (PackageState::NoRemote, Site::QueueRow) => "has no S3 bucket yet".to_string(),
 
-        (PackageState::Unpublished, _) => (
-            "Not published yet".to_string(),
-            StateTone::Attention,
-            Some(PackageAction::Publish),
-        ),
+        (PackageState::Unpublished, Site::ListRow) => "Not published yet".to_string(),
+        (PackageState::Unpublished, Site::QueueRow) => "has never been published".to_string(),
 
         // Fixed words, never the backend's message as the label: the vocabulary
-        // stays UI-owned, and the message renders as detail beside this. No action
-        // — the fix is a workflow rule or a misconfiguration, not an operation the
-        // app exposes.
-        // Danger, not Attention: `StateTone`'s own split is "waiting on you"
-        // versus "wrong and the row cannot fix it", and there is no resume — see
-        // `commands/main_page.rs`. No action for the same reason; §5's lattice
-        // gives this row `[Dismiss]`, which names an operation the product does
-        // not have, exactly as its `[Merge]` did at row 5.
+        // stays UI-owned, and the message renders as detail beside this.
         //
-        // Distinct words from `Unknown`'s "Sync stopped" because the claims
-        // differ: there, the upstream state could not be read at all; here it was
-        // read and the syncing is what stopped.
-        (PackageState::Paused, _) => ("Sync paused".to_string(), StateTone::Danger, None),
+        // Distinct words from `Unknown` because the claims differ: there, the
+        // upstream state could not be read at all; here it was read and the syncing
+        // is what stopped.
+        (PackageState::Paused, Site::ListRow) => "Sync paused".to_string(),
+        (PackageState::Paused, Site::QueueRow) => "has stopped syncing".to_string(),
 
-        (PackageState::Unknown, _) => ("Sync stopped".to_string(), StateTone::Danger, None),
-    };
+        (PackageState::Unknown, Site::ListRow) => "Sync stopped".to_string(),
+        (PackageState::Unknown, Site::QueueRow) => "cannot be checked".to_string(),
 
-    Rendered {
-        words,
-        tone,
-        action,
+        // Every remaining cause. Delegated rather than written out, because a
+        // heading and a chip want the same noun phrase; the arms above still force
+        // a new state to answer for both of the sites that choose their own words.
+        (state, Site::Cause) => words(state, Site::ListRow),
+    }
+}
+
+/// How loud the state is, wherever it draws.
+fn tone(state: &PackageState) -> StateTone {
+    match state {
+        PackageState::Latest => StateTone::Success,
+
+        PackageState::PendingChanges { .. } => StateTone::Neutral,
+
+        PackageState::Behind
+        | PackageState::PendingCommit
+        | PackageState::NoRemote
+        | PackageState::Unpublished => StateTone::Attention,
+
+        // Danger and not Attention for the last three: `StateTone`'s own split is
+        // "waiting on you" versus "wrong, and the row cannot fix it", and neither a
+        // refused bucket nor a stopped sync is waiting on anybody.
+        PackageState::Diverged
+        | PackageState::PullConflict { .. }
+        | PackageState::RoleDenied { .. }
+        | PackageState::Paused
+        | PackageState::Unknown => StateTone::Danger,
+    }
+}
+
+/// The operation the state offers, wherever it draws.
+fn action(state: &PackageState) -> Option<PackageAction> {
+    match state {
+        PackageState::Behind => Some(PackageAction::GetLatest),
+
+        // `Publish` for the conflict too, and not `Resolve`: the merge page cannot
+        // resolve one until the local changes are committed, so publishing is the
+        // step that unblocks it. Publishing lands the package in `Diverged`, which
+        // is the state below — and that one does offer `Resolve`.
+        PackageState::PendingChanges { .. }
+        | PackageState::PendingCommit
+        | PackageState::Unpublished
+        | PackageState::PullConflict { .. } => Some(PackageAction::Publish),
+
+        PackageState::Diverged => Some(PackageAction::Resolve),
+
+        PackageState::NoRemote => Some(PackageAction::ChooseS3Bucket),
+
+        // Nothing on offer. A denial is fixed at the host, and there is no resume for
+        // a pause — see `commands/main_page.rs`. §5's lattice gives the pause row
+        // `[Dismiss]`, which names an operation the product does not have, exactly as
+        // its `[Merge]` did at row 5.
+        PackageState::Latest
+        | PackageState::RoleDenied { .. }
+        | PackageState::Paused
+        | PackageState::Unknown => None,
     }
 }
 
@@ -220,7 +287,7 @@ mod tests {
     fn behind_is_quiet_on_a_list_row_and_inviting_on_a_queue_row() {
         let s = PackageState::Behind;
         assert_eq!(render(&s, Site::ListRow).words, "Not the latest");
-        assert_eq!(render(&s, Site::QueueRow).words, "Newer revision available");
+        assert_eq!(render(&s, Site::QueueRow).words, "has a newer revision");
     }
 
     #[wasm_bindgen_test]
@@ -241,9 +308,147 @@ mod tests {
         // The queue names the role when it can and says what the list says when it
         // cannot; it never renders "No access as " with nothing after it.
         let rendered = render(&PackageState::RoleDenied { role: None }, Site::QueueRow);
-        assert_eq!(rendered.words, "No access");
+        assert_eq!(rendered.words, "cannot be read");
         assert_eq!(rendered.tone, StateTone::Danger);
         assert_eq!(rendered.action, None);
+    }
+
+    /// Every state as the queue draws it: the clause, the tone and the verb.
+    ///
+    /// A table rather than a test each, because the property being asserted belongs
+    /// to the whole vocabulary — all of it has to read after a package's name, and
+    /// the queue is the only site where a wrong tone or a wrong verb is visible to
+    /// a user, since it is the only one that offers to act.
+    fn queue_mapping() -> Vec<(PackageState, &'static str, StateTone, Option<PackageAction>)> {
+        use PackageAction::*;
+        use StateTone::*;
+        vec![
+            (PackageState::Latest, "is up to date", Success, None),
+            (
+                PackageState::Behind,
+                "has a newer revision",
+                Attention,
+                Some(GetLatest),
+            ),
+            (
+                PackageState::PendingChanges { files: 1 },
+                "has 1 changed file",
+                Neutral,
+                Some(Publish),
+            ),
+            (
+                PackageState::PendingChanges { files: 2 },
+                "has 2 changed files",
+                Neutral,
+                Some(Publish),
+            ),
+            (
+                PackageState::PendingCommit,
+                "has a revision it has not published",
+                Attention,
+                Some(Publish),
+            ),
+            (
+                PackageState::Diverged,
+                "changed in both places",
+                Danger,
+                Some(Resolve),
+            ),
+            (
+                PackageState::PullConflict {
+                    files: vec!["a.csv".to_string()],
+                },
+                "has a conflict in 1 file",
+                Danger,
+                Some(Publish),
+            ),
+            (
+                PackageState::PullConflict {
+                    files: vec!["a.csv".to_string(), "b.csv".to_string()],
+                },
+                "has conflicts in 2 files",
+                Danger,
+                Some(Publish),
+            ),
+            (
+                PackageState::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+                "cannot be read as analyst",
+                Danger,
+                None,
+            ),
+            (
+                PackageState::RoleDenied { role: None },
+                "cannot be read",
+                Danger,
+                None,
+            ),
+            (
+                PackageState::NoRemote,
+                "has no S3 bucket yet",
+                Attention,
+                Some(ChooseS3Bucket),
+            ),
+            (
+                PackageState::Unpublished,
+                "has never been published",
+                Attention,
+                Some(Publish),
+            ),
+            (PackageState::Paused, "has stopped syncing", Danger, None),
+            (PackageState::Unknown, "cannot be checked", Danger, None),
+        ]
+    }
+
+    #[wasm_bindgen_test]
+    fn the_queue_words_every_state_as_a_clause_about_the_package() {
+        for (state, clause, tone, action) in queue_mapping() {
+            let rendered = render(&state, Site::QueueRow);
+            assert_eq!(rendered.words, clause, "{state:?}");
+            assert_eq!(rendered.tone, tone, "{state:?}");
+            assert_eq!(rendered.action, action, "{state:?}");
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn a_queue_clause_never_opens_with_a_capital() {
+        for (state, ..) in queue_mapping() {
+            let words = render(&state, Site::QueueRow).words;
+            let opener = words.chars().next().expect("a state always says something");
+            assert!(
+                !opener.is_uppercase(),
+                "{words:?} opens a sentence of its own, but it is drawn as the \
+                 continuation of the package name before it"
+            );
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn a_shared_cause_names_the_role_and_still_reads_as_a_heading() {
+        // A cause is stated once above the packages it holds, with the host and the
+        // bucket appended by the page — so it is a heading, and a clause about a
+        // package would not survive being read as one.
+        let named = PackageState::RoleDenied {
+            role: Some("analyst".to_string()),
+        };
+        assert_eq!(render(&named, Site::Cause).words, "No access as analyst");
+        assert_eq!(
+            render(&PackageState::RoleDenied { role: None }, Site::Cause).words,
+            "No access",
+            "the denial stands even when the role query behind the wording failed"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_stopped_sync_and_an_unreadable_state_still_make_different_claims() {
+        // Merging these two arms is the change this catches. One says syncing
+        // stopped for a package whose state was read; the other says the state
+        // could not be read at all.
+        assert_ne!(
+            render(&PackageState::Paused, Site::QueueRow).words,
+            render(&PackageState::Unknown, Site::QueueRow).words
+        );
     }
 
     #[wasm_bindgen_test]
@@ -356,7 +561,7 @@ mod tests {
             PackageState::Unknown,
         ];
         for state in &all {
-            for site in [Site::ListRow, Site::QueueRow] {
+            for site in [Site::ListRow, Site::QueueRow, Site::Cause] {
                 let words = render(state, site).words.to_lowercase();
                 for bad in BANNED {
                     assert!(
@@ -375,8 +580,10 @@ mod tests {
         reason = "a table of expected outputs; its length is data, not branching"
     )]
     #[wasm_bindgen_test]
-    fn renders_complete_mapping_for_all_state_and_site_combinations() {
-        // Table-driven test: verify words, tone, and action for every (state, site) pair.
+    fn renders_the_list_rows_mapping_state_by_state() {
+        // The queue site has a table of its own — `queue_mapping`, which covers every
+        // state — and the cause site has `a_shared_cause_names_the_role_and_still_
+        // reads_as_a_heading`. This one is the list's.
         // Each row is (state, site, expected_words, expected_tone, expected_action).
         let cases = vec![
             (
@@ -387,23 +594,9 @@ mod tests {
                 None,
             ),
             (
-                PackageState::Latest,
-                Site::QueueRow,
-                "Latest",
-                StateTone::Success,
-                None,
-            ),
-            (
                 PackageState::Behind,
                 Site::ListRow,
                 "Not the latest",
-                StateTone::Attention,
-                Some(PackageAction::GetLatest),
-            ),
-            (
-                PackageState::Behind,
-                Site::QueueRow,
-                "Newer revision available",
                 StateTone::Attention,
                 Some(PackageAction::GetLatest),
             ),
@@ -463,24 +656,8 @@ mod tests {
                 None,
             ),
             (
-                PackageState::RoleDenied {
-                    role: Some("analyst".to_string()),
-                },
-                Site::QueueRow,
-                "No access as analyst",
-                StateTone::Danger,
-                None,
-            ),
-            (
                 PackageState::RoleDenied { role: None },
                 Site::ListRow,
-                "No access",
-                StateTone::Danger,
-                None,
-            ),
-            (
-                PackageState::RoleDenied { role: None },
-                Site::QueueRow,
                 "No access",
                 StateTone::Danger,
                 None,

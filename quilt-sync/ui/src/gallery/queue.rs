@@ -10,57 +10,44 @@ use crate::Cell;
 use crate::Scene;
 use crate::Story;
 use crate::kit::Button;
-use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CauseRow;
+use crate::kit::PackageState;
 use crate::kit::QueueRow;
-use crate::kit::StateTone;
+use crate::kit::Remedy;
+use crate::kit::Site;
 use crate::kit::ZeroLine;
+use crate::kit::render;
+use quilt_sync_ui::pages::action_href;
 
-/// The six actions, each paired with the state that produces it. This table *is* the
-/// precedence lattice's visible half, and two of the pairings are corrections worth
-/// re-reading rather than trusting from memory:
+/// The five states that name an operation, in precedence order. Real states rather
+/// than hand-written words: the gallery draws them through `render`, so a row here
+/// cannot say something the app would not.
 ///
-/// - `conflicts in N files` offers **`Publish`**, not `Resolve`. A pull conflict is
-///   not resolvable on the merge page until the changes are committed, so publishing
-///   commits the local version and lands the package in `Diverged` — at which point
-///   the row becomes `Changed in both places` and *does* offer `Resolve`. Two steps,
-///   each one click, with the state explicit at both.
-/// - `Changed in both places` offers **`Resolve`**, not `Merge`. No merge operation
-///   exists: resolving is a binary package-level choice, and a button labelled Merge
-///   promises git semantics the product deliberately does not have.
-const ACTIONS: &[(&str, &str, StateTone, &str)] = &[
-    (
-        "org/dataset-c",
-        "conflicts in 2 files",
-        StateTone::Danger,
-        "Publish",
-    ),
-    (
-        "team/dataset-f",
-        "Changed in both places",
-        StateTone::Danger,
-        "Resolve",
-    ),
-    (
-        "user/package-e",
-        "Newer revision available",
-        StateTone::Attention,
-        "Get latest",
-    ),
-    (
-        "user/package-b",
-        "2 files changed",
-        StateTone::Neutral,
-        "Publish",
-    ),
-    (
-        "local/my-data",
-        "No S3 bucket yet",
-        StateTone::Attention,
-        "Choose S3 bucket",
-    ),
-];
+/// Two of the pairings are corrections worth re-reading rather than trusting from
+/// memory, and both live in `kit/package_state.rs` where the verbs are chosen:
+///
+/// - a pull conflict offers **`Publish`**, not `Resolve`. It is not resolvable on
+///   the merge page until the changes are committed, so publishing commits the local
+///   version and lands the package in `Diverged` — at which point the row says
+///   `changed in both places` and *does* offer `Resolve`.
+/// - `Diverged` offers **`Resolve`**, not `Merge`. No merge operation exists:
+///   resolving is a binary package-level choice, and a button labelled Merge promises
+///   git semantics the product deliberately does not have.
+fn actionable() -> Vec<(&'static str, PackageState)> {
+    vec![
+        (
+            "org/dataset-c",
+            PackageState::PullConflict {
+                files: vec!["a.csv".to_string(), "b.csv".to_string()],
+            },
+        ),
+        ("team/dataset-f", PackageState::Diverged),
+        ("user/package-e", PackageState::Behind),
+        ("user/package-b", PackageState::PendingChanges { files: 2 }),
+        ("local/my-data", PackageState::NoRemote),
+    ]
+}
 
 /// A workflow rejection, verbatim. `WorkflowValidationError::Rejected` renders its
 /// violations one per line, so the row has to keep the newlines: flattened, the reader
@@ -75,11 +62,32 @@ const REJECTION: &str = concat!(
 /// The other shape: one line, from a malformed `.quilt/workflows/config.yml`.
 const BAD_CONFIG: &str = "Invalid workflows config: missing required key 'version'";
 
-fn action(label: &'static str, variant: ButtonVariant) -> AnyView {
+/// A row as the page builds one — the vocabulary's words and tone, and the remedy
+/// pointing wherever the page would point it. Nothing here is hand-written, so a
+/// gallery row cannot say something the app would not.
+pub(crate) fn row(namespace: &'static str, state: &PackageState) -> AnyView {
+    detailed_row(namespace, state, None)
+}
+
+/// The same, with the second line only a pause carries.
+pub(crate) fn detailed_row(
+    namespace: &'static str,
+    state: &PackageState,
+    detail: Option<String>,
+) -> AnyView {
+    let rendered = render(state, Site::QueueRow);
+    let remedy = rendered.action.map(|action| Remedy {
+        action,
+        href: action_href(action, namespace),
+    });
     view! {
-        <Button variant=variant on_click=|_| ()>
-            {label}
-        </Button>
+        <QueueRow
+            namespace=namespace
+            state=rendered.words
+            tone=rendered.tone
+            remedy=remedy
+            detail=detail
+        />
     }
     .into_any()
 }
@@ -121,108 +129,67 @@ fn QueueRowStory() -> impl IntoView {
     view! {
         <Story
             title="QueueRow"
-            note="The only row in the design that carries a text button, and it is the \
-                  payoff for the rule that stripped buttons off the list rows rather than \
-                  an exception to it: a queue row exists BECAUSE the package needs the \
-                  action, so the button and the row are the same fact. On today's list, \
-                  Publish renders on 43 rows and applies to two. \
+            note="The row IS the link. Every verb here opens a page — Publish the commit \
+                  page, Resolve the merge page, the other two the package's own — so a \
+                  button would promise an operation that does not happen on press. The \
+                  verb stays as text at the right edge, one tab stop per row, and the \
+                  accent this page never spends stays unspent. \
                   \
-                  The row does not navigate — the list below is where you go to a \
-                  package, the queue is where you decide about one — so there is no hover \
-                  tint promising otherwise, and one tab stop per row, which is the button. \
-                  Actions hug their labels at the region's right edge, so the right edges \
-                  line up and the left ones follow the verb's length — and the leading \
-                  bullet fills the column a CauseRow uses for its expander, which is what \
-                  keeps a cause and a package aligned on their text."
+                  The state reads as a clause after the name rather than as a chip beside \
+                  it: name at weight 600 in default ink, clause muted, which is the \
+                  treatment HostRow already uses. The tone that was the chip's job is now \
+                  a rule on the row's edge, inset so a column of rows shows separate marks \
+                  rather than one band. Colour and nothing else, which is allowed because \
+                  the colour carries nothing on its own — the clause says the state in \
+                  words, and the chip needed a glyph only because its words were a short \
+                  label doing the same job as its tint. \
+                  \
+                  The leading column is CauseRow's expander column, which is what keeps a \
+                  cause and a package aligned on their text. It stays empty on a row that \
+                  has a state — the edge rule and the clause mark it twice already — and \
+                  carries a bullet only on a row that is a bare name."
         >
-            {ACTIONS
-                .iter()
-                .map(|&(namespace, state, tone, label)| {
-                    view! {
-                        <Cell full=true label=label>
-                            <QueueRow
-                                namespace=namespace
-                                state=state
-                                tone=tone
-                                action=Some(action(label, ButtonVariant::Primary))
-                            />
-                        </Cell>
-                    }
+            {actionable()
+                .into_iter()
+                .map(|(namespace, state)| {
+                    let label = render(&state, Site::QueueRow)
+                        .action
+                        .expect("every state in this table names an operation")
+                        .label();
+                    view! { <Cell full=true label=label>{row(namespace, &state)}</Cell> }
                 })
                 .collect_view()}
-            <Cell full=true label="Sign in — the sixth action, when a host is a whole cause">
-                <QueueRow
-                    namespace="custom.registry.io"
-                    state="No access"
-                    tone=StateTone::Danger
-                    action=Some(action("Sign in", ButtonVariant::Default))
-                />
-            </Cell>
-            <Cell full=true label="default variant — the row takes what it is given; the page passes Primary for every package action and Default for a cause's">
-                <QueueRow
-                    namespace="user/package-b"
-                    state="2 files changed"
-                    tone=StateTone::Neutral
-                    action=Some(action("Publish", ButtonVariant::Default))
-                />
-            </Cell>
-            <Cell full=true label="action disabled — a pull check in flight">
-                <QueueRow
-                    namespace="user/package-e"
-                    state="Newer revision available"
-                    tone=StateTone::Attention
-                    action=Some(
-                        view! {
-                            <Button on_click=|_| () disabled=true>
-                                "Get latest"
-                            </Button>
-                        }
-                            .into_any(),
-                    )
-                />
+            <Cell full=true label="no operation — the row is inert, and does not pretend to link">
+                {row("org/dataset-x", &PackageState::Unknown)}
             </Cell>
             <Cell full=true label="Sync paused — the engine's own words, kept verbatim">
-                <QueueRow
-                    namespace="team/imaging-cohort-b"
-                    state="Sync paused"
-                    tone=StateTone::Danger
-                    detail=Some(REJECTION.to_string())
-                />
+                {detailed_row(
+                    "team/imaging-cohort-b",
+                    &PackageState::Paused,
+                    Some(REJECTION.to_string()),
+                )}
             </Cell>
             <Cell full=true label="Sync paused — a one-line reason">
-                <QueueRow
-                    namespace="org/dataset-c"
-                    state="Sync paused"
-                    tone=StateTone::Danger
-                    detail=Some(BAD_CONFIG.to_string())
-                />
+                {detailed_row("org/dataset-c", &PackageState::Paused, Some(BAD_CONFIG.to_string()))}
             </Cell>
             <Cell wide=true label="narrow · the rejection wraps, and keeps its own line breaks">
-                <QueueRow
-                    namespace="team/imaging-cohort-b"
-                    state="Sync paused"
-                    tone=StateTone::Danger
-                    detail=Some(REJECTION.to_string())
-                />
+                {detailed_row(
+                    "team/imaging-cohort-b",
+                    &PackageState::Paused,
+                    Some(REJECTION.to_string()),
+                )}
             </Cell>
-            <Cell full=true label="sub-row — no state, no action, indented">
+            <Cell full=true label="sub-row — a bare name: no state, no remedy, indented, and the one row that keeps a bullet">
                 <QueueRow namespace="team/rnaseq-batch-2026-07-31" sub=true />
             </Cell>
-            <Cell full=true label="long namespace truncates, the action keeps its column">
-                <QueueRow
-                    namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix"
-                    state="Changed in both places"
-                    tone=StateTone::Danger
-                    action=Some(action("Resolve", ButtonVariant::Primary))
-                />
+            <Cell full=true label="long namespace truncates before the clause does">
+                {row(
+                    "team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix",
+                    &PackageState::Diverged,
+                )}
             </Cell>
             <Cell wide=true label="narrow — two columns">
-                <QueueRow
-                    namespace="local/my-data"
-                    state="No S3 bucket yet"
-                    tone=StateTone::Attention
-                    action=Some(action("Choose S3 bucket", ButtonVariant::Primary))
-                />
+                {row("local/my-data", &PackageState::NoRemote)}
             </Cell>
         </Story>
     }
@@ -317,13 +284,16 @@ pub fn QueueRegion() -> impl IntoView {
 
     // Derived, never written — 11 + 3 + 5 + the paused row. The mock's hand-written
     // (17) is off against its own rows, which is what this closure exists to avoid.
-    let total = move || 11 + 3 + ACTIONS.len() + 1;
+    // Bound once rather than rebuilt on every read of the card's count: `actionable`
+    // allocates.
+    let actionable = actionable();
+    let total = 11 + 3 + actionable.len() + 1;
 
     view! {
         // One wrapper child, so `Card`'s between-children hairline does not fire: a
         // queue is a list of decisions, and dividing every row would make it read as a
         // table of data.
-        <Card title="Needs your attention" count=total()>
+        <Card title="Needs your attention" count=total>
             <div>
                 <CauseRow
                     text="Signed out from custom.registry.io"
@@ -355,42 +325,23 @@ pub fn QueueRegion() -> impl IntoView {
                         .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
                         .collect_view()}
                 </Show>
-                {ACTIONS
+                {actionable
                     .iter()
                     .take(1)
-                    .map(|&(namespace, state, tone, label)| {
-                        view! {
-                            <QueueRow
-                                namespace=namespace
-                                state=state
-                                tone=tone
-                                action=Some(action(label, ButtonVariant::Primary))
-                            />
-                        }
-                    })
+                    .map(|(namespace, state)| row(namespace, state))
                     .collect_view()}
                 // Precedence row 3, between the conflict above and everything below,
-                // and the only row here with no button: nothing in the app can restart
-                // a sync the remote refused.
-                <QueueRow
-                    namespace="team/imaging-cohort-b"
-                    state="Sync paused"
-                    tone=StateTone::Danger
-                    detail=Some(REJECTION.to_string())
-                />
-                {ACTIONS
+                // and the only row here that goes nowhere: nothing in the app can
+                // restart a sync the remote refused.
+                {detailed_row(
+                    "team/imaging-cohort-b",
+                    &PackageState::Paused,
+                    Some(REJECTION.to_string()),
+                )}
+                {actionable
                     .iter()
                     .skip(1)
-                    .map(|&(namespace, state, tone, label)| {
-                        view! {
-                            <QueueRow
-                                namespace=namespace
-                                state=state
-                                tone=tone
-                                action=Some(action(label, ButtonVariant::Primary))
-                            />
-                        }
-                    })
+                    .map(|(namespace, state)| row(namespace, state))
                     .collect_view()}
             </div>
         </Card>
@@ -407,13 +358,18 @@ pub fn QueueScene() -> impl IntoView {
                   in vertical space, because the region above the package list is the \
                   thing this design spends to buy. \
                   \
-                  Read down the buttons: five different verbs, one per row, each true of \
-                  the row it sits on. That column is what replaces 43 rows of Publish. \
+                  Read down the verbs: five of them, one per row, each true of the row it \
+                  sits on. That column is what replaces 43 rows of Publish. Each row is a \
+                  link to the page that performs its verb, so the verb is text and not a \
+                  button — nothing here acts on press. \
+                  \
+                  Read down the left edge too: the tone marks band rather than scatter, \
+                  because the severe states sort first and Latest never enters the queue. \
                   \
                   The paused row is the exception and costs the most height: it carries \
-                  the engine's own rejection instead of a button, because no operation \
-                  here can restart a sync the remote refused. It is allowed to take the \
-                  room — that text is the only account of why the package stopped."
+                  the engine's own rejection and goes nowhere, because no operation here \
+                  can restart a sync the remote refused. It is allowed to take the room — \
+                  that text is the only account of why the package stopped."
         >
             <QueueRegion />
         </Scene>

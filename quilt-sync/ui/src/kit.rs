@@ -90,6 +90,7 @@ pub use package_state::render;
 pub use page_layout::PageLayout;
 pub use queue_row::QueueRow;
 pub use queue_row::QueueRowSkeleton;
+pub use queue_row::Remedy;
 pub use relative_time::RelativeTime;
 pub use search_input::SearchInput;
 pub use segmented_control::SegmentedControl;
@@ -177,6 +178,39 @@ mod tests {
             );
         }
     }
+    /// An ellipsis is a promise the box can end up narrower than its text, and a
+    /// flex item does not get that for free: its automatic minimum size is its
+    /// max-content width. Two ways to allow it — clear the minimum with
+    /// `min-width: 0`, or clamp it with a `max-width`, which is what a file row's
+    /// package tag does at 30%.
+    ///
+    /// With neither, the text never ellipsises: the item holds its full width and
+    /// the row overflows its card instead. Measured at a 700px window before this
+    /// test existed — a queue row's name held 485px against a 414px line.
+    #[test]
+    fn a_column_that_ellipsises_can_end_up_narrower_than_its_text() {
+        const SHEETS: [(&str, &str); 4] = [
+            ("queue_row", include_str!("kit/queue_row.module.scss")),
+            ("package_row", include_str!("kit/package_row.module.scss")),
+            ("file_row", include_str!("kit/file_row.module.scss")),
+            ("cause_row", include_str!("kit/cause_row.module.scss")),
+        ];
+
+        for (component, sheet) in SHEETS {
+            for (selector, body) in rules(sheet) {
+                if !body.contains("text-overflow: ellipsis") {
+                    continue;
+                }
+                assert!(
+                    body.contains("min-width: 0") || body.contains("max-width:"),
+                    "{component}'s `{selector}` ellipsises, but nothing lets it get \
+                     narrower than its own text — it will push the row instead: \
+                     {body}"
+                );
+            }
+        }
+    }
+
     /// A queue row's detail is engine prose, and a workflow rejection is a sentence
     /// followed by one indented line per broken rule. Collapsing the whitespace loses
     /// which rules those are.

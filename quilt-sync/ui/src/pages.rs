@@ -16,6 +16,10 @@ pub use installed_package::InstalledPackage;
 pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
 pub use main_page::MainPage;
+// For the gallery, which is a second binary against this library and draws the same
+// queue rows. Re-exported one function rather than opening the page's module: a
+// second copy of the map in the gallery is a copy that drifts.
+pub use main_page::queue::action_href;
 pub use merge::Merge;
 pub use not_found::NotFound;
 pub use remote_package::RemotePackage;

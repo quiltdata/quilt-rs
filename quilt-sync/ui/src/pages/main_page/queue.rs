@@ -17,12 +17,12 @@ use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
 use crate::commands::PausedReasonData;
 use crate::kit::Button;
-use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CauseRow;
 use crate::kit::PackageAction;
 use crate::kit::PackageState;
 use crate::kit::QueueRow;
+use crate::kit::Remedy;
 use crate::kit::Site;
 use crate::kit::ZeroLine;
 use crate::kit::render;
@@ -245,9 +245,8 @@ pub fn derive_queue(
 }
 
 /// Ruling 5's cause text. Every word for the denial itself comes from
-/// `render(&state, Site::QueueRow)` — `"No access as {role}"` or, when the
-/// role query behind the wording failed, `"No access"` — the same words
-/// `kit/package_state.rs` gives a per-package `RoleDenied` row. The host and
+/// `render(&state, Site::Cause)` — `"No access as {role}"` or, when the
+/// role query behind the wording failed, `"No access"`. The host and
 /// bucket clauses appended here are the one exception: composed from a host
 /// or bucket name, which the vocabulary never names. Drops the ` on {host}`
 /// clause when the package has no host; ` in s3://{bucket}` never drops,
@@ -255,7 +254,7 @@ pub fn derive_queue(
 /// that is present. The count is never part of this string — `CauseRow`
 /// renders `— N packages` itself from `members.len()`.
 fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> String {
-    let words = render(state, Site::QueueRow).words;
+    let words = render(state, Site::Cause).words;
     match host {
         Some(host) => format!("{words} on {host} in s3://{bucket}"),
         None => format!("{words} in s3://{bucket}"),
@@ -335,13 +334,12 @@ fn cause_item(
     .into_any()
 }
 
-/// One package's row: its words, its detail if it has one, and its button if the
+/// One package's row: its words, its detail if it has one, and its remedy if the
 /// state names an operation.
 fn package_row(
     namespace: &str,
     state: &PackageState,
     pause_messages: Signal<HashMap<String, String>>,
-    navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
 ) -> AnyView {
     let rendered = render(state, Site::QueueRow);
     // Only a pause has one. `PackageState::Paused` says a sync stopped; this says
@@ -356,17 +354,18 @@ fn package_row(
             .then(|| pause_messages.with(|map| map.get(&key).cloned()))
             .flatten()
     });
-    // `None` renders a row with no button, the honest answer for a state the app has
-    // no operation to fix. Not invented here.
-    let action = rendered
-        .action
-        .map(|verb| package_action(verb, namespace, navigate));
+    // `None` renders an inert row, the honest answer for a state the app has no
+    // operation to fix. Not invented here.
+    let remedy = rendered.action.map(|action| Remedy {
+        action,
+        href: action_href(action, namespace),
+    });
     view! {
         <QueueRow
             namespace=namespace.to_owned()
             state=rendered.words
             tone=rendered.tone
-            action=action
+            remedy=remedy
             detail=detail
         />
     }
@@ -407,7 +406,11 @@ fn zero_line_text(total: usize) -> String {
 ///
 /// Exhaustive over [`PackageAction`], so a verb added to the vocabulary file
 /// stops this build rather than reaching a wasm render path.
-fn action_href(action: PackageAction, namespace: &str) -> String {
+///
+/// `pub` for the gallery, which is a second binary against this library and draws
+/// the same rows — without this it would need a second copy of the map, and a copy
+/// that drifts points the gallery's rows at pages the app does not use.
+pub fn action_href(action: PackageAction, namespace: &str) -> String {
     match action {
         PackageAction::Publish => format!("/commit?namespace={namespace}"), // content.rs:195
         // components/buttons/merge.rs:10
@@ -417,32 +420,6 @@ fn action_href(action: PackageAction, namespace: &str) -> String {
             super::package_page_href(namespace)
         }
     }
-}
-
-/// A package row's `[Publish]` / `[Resolve]` / `[Get latest]` / `[Choose S3
-/// bucket]` — whichever `render`'s `Rendered.action` names. The click
-/// navigates; there is no mutation here.
-///
-/// Primary, and it is the one place on this page that is. A queue row exists
-/// BECAUSE the package needs this action, so the button and the row are the same
-/// fact — and the queue is bounded by definition, holding only what needs
-/// attention, so the accent stays scarce. A cause's `[Sign in]` stays default:
-/// that one is host-scoped and explains the rows rather than resolving one.
-fn package_action(
-    action: PackageAction,
-    namespace: &str,
-    navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
-) -> AnyView {
-    let target = action_href(action, namespace);
-    view! {
-        <Button
-            variant=ButtonVariant::Primary
-            on_click=move |_| navigate(&target, NavigateOptions::default())
-        >
-            {action.label()}
-        </Button>
-    }
-    .into_any()
 }
 
 /// A cause's trailing slot: `[Sign in]` for a signed-out host, or the pointer
@@ -638,12 +615,7 @@ pub fn QueueRegion(
                             QueueItem::Package { namespace, state } => {
                                 view! {
                                     <li>
-                                        {package_row(
-                                            &namespace,
-                                            &state,
-                                            pause_messages,
-                                            navigate.clone(),
-                                        )}
+                                        {package_row(&namespace, &state, pause_messages)}
                                     </li>
                                 }
                                     .into_any()
@@ -1255,7 +1227,7 @@ mod tests {
             Signal::stored(true),
         );
         let text = el.text_content().unwrap();
-        assert!(text.contains("Changed in both places"), "got: {text}");
+        assert!(text.contains("changed in both places"), "got: {text}");
         assert!(text.contains("Resolve"), "got: {text}");
         assert!(
             !text.contains("Everything is Latest"),
@@ -1343,30 +1315,30 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn a_package_row_action_is_primary_and_a_cause_action_is_not() {
-        // The one accent on this page. A queue row exists because the package
-        // needs its action, so that button is the page's point; a cause's
-        // `[Sign in]` is host-scoped and explains rows rather than resolving one,
-        // so it stays default. The pair is the unit — either alone would pass
-        // against a variant applied to every button or to none.
+    fn a_package_row_is_a_link_and_a_cause_keeps_its_button() {
+        // The pair is the unit. A queue row's verb always opens a page, so the row
+        // is the link and there is no button to style; a cause's `[Sign in]` is
+        // host-scoped and acts where it stands, so it stays a button. Either half
+        // alone would pass against a region that had turned everything into one or
+        // the other.
         let denied = mount_region(
             Signal::stored(two_signed_out()),
             one_signed_out(),
             Signal::stored(false),
         );
         // `:not([aria-expanded])` skips the cause row's expander, which is also a
-        // button and is also default — selecting the first button here tests the
-        // expander instead and passes however the action is styled.
+        // button — selecting the first button here tests the expander instead.
         let sign_in = denied
             .query_selector("button:not([aria-expanded])")
             .unwrap()
-            .expect("the cause's own action");
+            .expect("the cause's own action is still a control");
         assert!(
             !sign_in
                 .get_attribute("class")
                 .unwrap_or_default()
                 .contains("primary"),
-            "a cause action is default"
+            "and still a default one: it is host-scoped, and explains rows rather \
+             than resolving one"
         );
 
         let publishable = mount_region(
@@ -1374,16 +1346,20 @@ mod tests {
             one_signed_in(),
             Signal::stored(false),
         );
-        let action = publishable
-            .query_selector("button")
+        assert_eq!(
+            publishable.query_selector_all("button").unwrap().length(),
+            0,
+            "nothing on a package row presses"
+        );
+        let row = publishable
+            .query_selector("a")
             .unwrap()
-            .expect("the package's own action");
+            .expect("the package row is the link");
         assert!(
-            action
-                .get_attribute("class")
+            row.get_attribute("href")
                 .unwrap_or_default()
-                .contains("primary"),
-            "a package action is primary"
+                .contains("a/one"),
+            "and it carries the package it is about"
         );
     }
 
@@ -1399,11 +1375,19 @@ mod tests {
             Signal::stored(false),
         );
         let text = el.text_content().unwrap();
-        assert!(text.contains("Sync stopped"), "render's own words: {text}");
+        assert!(
+            text.contains("cannot be checked"),
+            "render's own words: {text}"
+        );
         assert_eq!(
             el.query_selector_all("button").unwrap().length(),
             0,
             "no cause here (signed in) and no action on this state — no button at all"
+        );
+        assert_eq!(
+            el.query_selector_all("a").unwrap().length(),
+            0,
+            "and nowhere to send anyone: the row does not link either"
         );
     }
 
@@ -1484,16 +1468,16 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_per_package_row_uses_the_queues_wording_not_the_lists() {
-        // `render(state, Site::QueueRow)` exists precisely because two states word
-        // themselves differently by site: the list says "Not the latest", the queue
-        // says "Newer revision available" because it sits beside its action.
+        // `render(state, Site::QueueRow)` exists precisely because the two sites
+        // word themselves differently: the list names a state in a chip, the queue
+        // continues the sentence the package name started.
         let el = mount_region(
             Signal::stored(one_behind()),
             one_signed_in(),
             Signal::stored(false),
         );
         let text = el.text_content().unwrap();
-        assert!(text.contains("Newer revision available"), "got: {text}");
+        assert!(text.contains("has a newer revision"), "got: {text}");
         assert!(
             !text.contains("Not the latest"),
             "that is the list's wording: {text}"
@@ -1514,7 +1498,7 @@ mod tests {
         )]);
         let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
         assert!(
-            !el.text_content().unwrap().contains("1 file changed"),
+            !el.text_content().unwrap().contains("has 1 changed file"),
             "nothing to say yet"
         );
 
@@ -1526,7 +1510,7 @@ mod tests {
         leptos::task::tick().await;
 
         let text = el.text_content().unwrap();
-        assert!(text.contains("1 file changed"), "got: {text}");
+        assert!(text.contains("has 1 changed file"), "got: {text}");
         assert!(
             text.contains("Publish"),
             "beside the one thing to do: {text}"
@@ -1554,7 +1538,7 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Newer revision available"),
+            text.contains("has a newer revision"),
             "the settle landed: {text}"
         );
         assert!(
@@ -1628,15 +1612,13 @@ mod tests {
         // The other half of the keyed diff, and the failure an identity-only key
         // would have shipped: `<For>` builds a child once per key and never
         // calls the children function again for a key it already holds, so a
-        // row keyed on its namespace alone would still be saying "Newer
-        // revision available" over a package that has since conflicted — with
-        // the `[Get latest]` button that goes with it.
+        // row keyed on its namespace alone would still be saying "has a newer
+        // revision" over a package that has since conflicted — with the
+        // `Get latest` link that goes with it.
         let packages = RwSignal::new(vec![pkg("a/one", PackageState::Behind, Some("h.io"))]);
         let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
         assert!(
-            el.text_content()
-                .unwrap()
-                .contains("Newer revision available"),
+            el.text_content().unwrap().contains("has a newer revision"),
             "before: {}",
             el.text_content().unwrap()
         );
@@ -1649,9 +1631,9 @@ mod tests {
         leptos::task::tick().await;
 
         let text = el.text_content().unwrap();
-        assert!(text.contains("conflict in 1 file"), "after: {text}");
+        assert!(text.contains("has a conflict in 1 file"), "after: {text}");
         assert!(
-            !text.contains("Newer revision available"),
+            !text.contains("has a newer revision"),
             "the old words are gone, not merely joined: {text}"
         );
     }
@@ -2060,7 +2042,7 @@ mod tests {
 
         assert!(el.query_selector("[class*=detail]").unwrap().is_none());
         assert!(
-            el.text_content().unwrap().contains("Sync paused"),
+            el.text_content().unwrap().contains("has stopped syncing"),
             "the state is still named"
         );
     }

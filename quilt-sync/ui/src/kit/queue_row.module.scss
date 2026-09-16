@@ -1,13 +1,16 @@
 /*
- * Queue row. Namespace, state, one action.
+ * Queue row. Namespace, state as a clause, the remedy as text.
  *
- * No hover tint and no pointer cursor, unlike the list rows: nothing here responds
- * to a click on the row, and a tint that promises otherwise is a lie. The button
- * has its own hover.
+ * The tone is a rule on the row's edge and nothing else, drawn from `--tone-mark`,
+ * which the four tone classes at the foot of this file set. Colour alone, and that is
+ * allowed here because it carries nothing on its own: the clause states the row's
+ * state in words, so the rule is emphasis over text that already says it.
  */
 
-/* A column, because a row may carry a detail line under its first one. */
+/* A column, because a row may carry a detail line under its first one.
+ * `relative` for the edge rule, which is absolute so that it can inset. */
 .root {
+  position: relative;
   display: flex;
   flex-direction: column;
   /* Same reason as the list rows: a flex item's automatic minimum size is its
@@ -23,8 +26,44 @@
   width: 100%;
   min-width: 0;
   gap: var(--q-space-2);
-  /* A control plus its 4px padding, so rows with and without a Button match. */
+  /* A control plus its 4px padding. No queue row carries a control any more, but
+   * `CauseRow` still does, and the two kinds of row alternate down one list. */
   min-height: calc(var(--q-control-height) + 2 * var(--q-space-1));
+}
+
+/* On `.root`, so the whole row is the target — its padding and its tone rule
+ * included. The row IS an anchor, so the document conventions have to be switched
+ * off explicitly, colour and underline both, as in `package_row.module.scss`. The
+ * tint is the only affordance and there is no hover underline to go with it; the
+ * focus ring comes from the baseline's global `:focus-visible`, which lands here
+ * because this is the focusable element. */
+.linked {
+  color: var(--q-fgColor-default);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.linked:hover {
+  background: var(--q-overlay-hover);
+}
+
+/* The tone's first channel. Inset by the row's own vertical padding, so a column of
+ * rows carries separate marks rather than one unbroken band down the region.
+ *
+ * On the tone classes and not on `.root`, so a row with no state draws no rule
+ * instead of an invisible one. */
+.success::before,
+.neutral::before,
+.attention::before,
+.danger::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--q-space-1);
+  bottom: var(--q-space-1);
+  width: var(--q-space-1);
+  border-radius: var(--q-radius);
+  background: var(--tone-mark);
 }
 
 /* The pause's own message, from the engine rather than from this vocabulary.
@@ -41,13 +80,13 @@
   max-width: 70ch;
 }
 
-/* The disclosure column, occupied by a bullet rather than left empty. Same 24px as
- * `CauseRow`'s expander, so a cause and a package start their text at the same x and
- * the parent is not indented past its own children.
+/* The disclosure column, never left empty. Same 24px as `CauseRow`'s expander, so a
+ * cause and a package start their text at the same x and the parent is not indented
+ * past its own children.
  *
- * A bullet rather than blank space because the column is structural: with it, the
- * region reads as one list whose items either expand or do not. Blank space read as a
- * missing element. */
+ * Occupied rather than blank because the column is structural: with something in it,
+ * the region reads as one list whose items either expand or do not. Blank space read
+ * as a missing element. */
 .bullet {
   flex: none;
   display: flex;
@@ -57,7 +96,10 @@
   align-self: stretch;
 }
 
-.bullet::before {
+/* A row with no state of its own gets a plain bullet — it is one of a set of names,
+ * and that is what a bullet is for. A row that has a state leaves this column empty:
+ * its edge rule and its clause already mark it. */
+.dot::before {
   content: "";
   width: 4px;
   height: 4px;
@@ -65,29 +107,47 @@
   background: var(--q-borderColor-emphasis);
 }
 
-/* Truncates right. The namespace is the row's subject, so it yields space to the
- * state and the action rather than the other way round — those two are why the row
- * is here at all, and a clipped verb is worse than a clipped name. */
+/* The row's subject: at weight 600 in default ink against a muted clause, which is
+ * the treatment `HostRow` already uses for a host above its sub-line.
+ *
+ * It shrinks, but last — see `.clause`. `min-width: 0` because a flex item's
+ * automatic minimum size is its max-content width, and without clearing it the name
+ * pushes the row past its card instead of ellipsising. */
 .namespace {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* A fixed column, unlike `PackageRow`'s ragged one, and for the opposite reason.
- * There the labels repeat and the odd one out should break the pattern; here every
- * row differs and the buttons are what the eye travels down.
- *
- * No fixed width: the action hugs its label and sits at the region's right edge, so
+/* Takes the space the namespace does not use, and gives way first: a shrink factor
+ * of 100 against the name's 1, so the clause absorbs all but a hundredth of any
+ * deficit. Flexbox distributes proportionally rather than in sequence, so the name
+ * does give up a sliver at the same time — but measured against the gallery's
+ * longest name, the clause starts clipping at a 722px line and the name not until
+ * 622px, by which point the clause is down to 24px of its 220. A name clipped
+ * mid-owner is unrecognisable; a clause clipped at its end is still readable up to
+ * the cut. */
+.clause {
+  flex: 1 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--q-fgColor-muted);
+}
+
+/* No fixed width: the remedy hugs its verb and sits at the region's right edge, so
  * the RIGHT edges form the straight line and the left edges follow the verb's length.
  * A fixed column would align the left edges too, at the cost of padding every short
- * verb out to the width of `Choose S3 bucket` — which buys tidiness with space, and
- * makes the state labels sit further from the namespace they describe. */
+ * verb out to the width of `Choose S3 bucket`. */
 .action {
   flex: none;
   display: flex;
+  align-items: center;
+  gap: var(--q-space-1);
 }
 
 /* An expanded cause's packages, indented by exactly one column — the disclosure width
@@ -98,3 +158,8 @@
   padding-left: calc(var(--q-control-height-sm) + var(--q-space-2));
   color: var(--q-fgColor-muted);
 }
+
+.success { --tone-mark: var(--q-fgColor-success); }
+.neutral { --tone-mark: var(--q-fgColor-neutral); }
+.attention { --tone-mark: var(--q-fgColor-attention); }
+.danger { --tone-mark: var(--q-fgColor-danger); }
