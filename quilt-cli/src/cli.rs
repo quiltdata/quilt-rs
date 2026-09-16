@@ -633,6 +633,27 @@ mod tests {
                 Error::Quilt(quilt_rs::Error::Lineage(quilt_rs::LineageError::Missing)),
                 "lineage",
             ),
+            (
+                Error::Quilt(quilt_rs::Error::Auth(
+                    "open.quiltdata.com".parse().expect("valid host"),
+                    quilt_rs::AuthError::TokensRead("boom".to_string()),
+                )),
+                "auth",
+            ),
+            (
+                Error::Quilt(quilt_rs::Error::Login(quilt_rs::LoginError::NoSession(
+                    None,
+                ))),
+                "login",
+            ),
+            (
+                Error::Quilt(quilt_rs::Error::WorkflowValidation(
+                    quilt_rs::WorkflowValidationError::Rejected(
+                        quilt_rs::workflow::RuleViolation::WorkflowRequired.into(),
+                    ),
+                )),
+                "workflow_validation",
+            ),
             (Error::Quilt(quilt_rs::Error::Unimplemented), "quilt_error"),
         ];
 

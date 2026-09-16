@@ -135,6 +135,66 @@ mod tests {
         );
     }
 
+    /// [`Render::to_json`] returns `serde_json::Value`, not a bare-object type,
+    /// so nothing at the type level stops a future command from returning
+    /// `json!([…])` or `json!(null)`. The spec and the README promise an
+    /// object; this pins that promise against a representative sample of the
+    /// real `Output` types (spanning a bare hash, a hash-plus-bool-plus-uri
+    /// shape, and a nested-report shape) rather than changing the trait's
+    /// return type, which would force a signature change onto every impl for
+    /// a guarantee one test can buy.
+    #[test]
+    fn to_json_is_always_a_bare_object() {
+        use crate::cli::commit;
+        use crate::cli::pull;
+        use crate::cli::push;
+        use crate::cli::status;
+        use crate::cli::undo_commit;
+        use quilt_rs::lineage::CommitState;
+        use quilt_rs::lineage::InstalledPackageStatus;
+
+        let commit_out = commit::Output {
+            commit: CommitState::default(),
+        };
+        assert!(commit_out.to_json().is_object());
+
+        let undo_commit_out = undo_commit::Output {
+            commit: CommitState::default(),
+        };
+        assert!(undo_commit_out.to_json().is_object());
+
+        let manifest_uri = quilt_uri::ManifestUri {
+            origin: None,
+            bucket: "bucket".to_string(),
+            namespace: ("demo", "sales").into(),
+            hash: "abc123".to_string(),
+        };
+        let push_out = push::Output {
+            hash: "abc123".to_string(),
+            manifest_uri: manifest_uri.clone(),
+            certified_latest: true,
+        };
+        assert!(push_out.to_json().is_object());
+
+        let pull_out = pull::Output {
+            hash: "abc123".to_string(),
+            report: quilt_rs::flow::PullReport {
+                manifest_uri,
+                added: Vec::new(),
+                added_not_fetched: Vec::new(),
+                updated: Vec::new(),
+                removed: Vec::new(),
+                message: None,
+            },
+        };
+        assert!(pull_out.to_json().is_object());
+
+        let status_out = status::Output {
+            status: InstalledPackageStatus::default(),
+        };
+        assert!(status_out.to_json().is_object());
+    }
+
     #[test]
     fn text_format_still_prints_display() {
         let mut stdout = Vec::new();
