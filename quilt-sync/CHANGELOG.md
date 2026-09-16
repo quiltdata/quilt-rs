@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Every link to a package whose name contains `&` or `#` now carries the whole name. The name went into the address unescaped, so it ended at that character — `team/a&b` arrived as `team/a`, and anything after a `#` was dropped — on every link and redirect to a package's own page, its commit page and its merge page, from both the current main page and the new one (<https://github.com/quiltdata/quilt-rs/pull/945>)
 - Signing in through your browser returns you to the page you started from. It could only return you to a page it had a name for, and the page the app opens on was not one of them, so it always finished on the installed packages list — which shows only with **New main page** on (Settings → Experimental), where signing in from the new page landed you on the old one (<https://github.com/quiltdata/quilt-rs/pull/944>)
 - The buttons on a package's status banner keep their size when the message beside them is long. They used to be squeezed by it, narrowing as the text grew (<https://github.com/quiltdata/quilt-rs/pull/942>)
 

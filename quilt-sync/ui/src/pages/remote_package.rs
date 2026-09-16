@@ -19,7 +19,7 @@ pub fn RemotePackage() -> impl IntoView {
 
             // Navigate to the installed package page
             let ns = &result.namespace;
-            let base = format!("/installed-package?namespace={ns}&filter=unmodified");
+            let base = crate::routes::package_page_href(ns);
             let path = match &result.banner {
                 Some(commands::RemoteBanner::DifferentVersion {
                     requested_hash,

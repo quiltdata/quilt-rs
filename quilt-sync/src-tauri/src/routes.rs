@@ -721,6 +721,33 @@ mod tests {
         Ok(())
     }
 
+    /// The frontend percent-encodes a namespace into its hrefs
+    /// (`ui/src/routes.rs`), and one of those hrefs travels here as a `back`.
+    /// So the query this parser reads is not only the one `Display` above
+    /// writes — it is also the encoded spelling of the same address, and the
+    /// two have to mean one package.
+    #[test]
+    fn an_encoded_namespace_parses_to_the_same_package() -> Result<()> {
+        let encoded: Paths = "/installed-package?namespace=foo%2Fbar&filter=unmodified".parse()?;
+        assert_eq!(
+            encoded,
+            Paths::InstalledPackage(
+                ("foo", "bar").into(),
+                EntriesFilter::for_installed_package()
+            )
+        );
+
+        // And a namespace holding a character that would otherwise end the
+        // parameter — the defect the frontend's encoding exists for.
+        let amp: Paths = "/commit?namespace=team%2Fa%26b".parse()?;
+        assert_eq!(
+            amp,
+            Paths::Commit(("team", "a&b").into(), EntriesFilter::default())
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn test_login_with_encoded_back() -> Result<()> {
         let host: Host = "test.quilt.dev".parse()?;

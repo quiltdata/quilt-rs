@@ -55,10 +55,7 @@ pub(super) fn StatusBanner(
         remote_state_banner(&status, host.is_some(), no_access_reason.as_deref())
     {
         let login_href = offers_login.then(|| {
-            let back = format!(
-                "/installed-package?namespace={}&filter=unmodified",
-                urlencoding::encode(&ns)
-            );
+            let back = crate::routes::package_page_href(&ns);
             format!(
                 "/login?host={}&back={}",
                 host.as_deref().unwrap_or_default(),
