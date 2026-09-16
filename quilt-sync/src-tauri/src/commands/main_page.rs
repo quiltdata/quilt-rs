@@ -133,14 +133,14 @@ impl From<&PausedReason> for PausedDto {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedPackage {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub reason: PausedDto,
 }
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackage {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub state: PackageStateDto,
     /// Epoch milliseconds. The backend being generous with a format the UI can use
     /// directly, rather than the UI carrying date arithmetic.
@@ -496,7 +496,7 @@ async fn mark_unreadable_buckets(m: &impl model::QuiltModel, roles: &RoleCache, 
 async fn load_rows(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
-    paused_reasons: &HashMap<String, PausedReason>,
+    paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<Vec<Row>, Error> {
     let list = m.get_installed_packages_list().await?;
     let mut rows = Vec::new();
@@ -518,7 +518,7 @@ async fn get_main_page_packages_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
-    paused_reasons: &HashMap<String, PausedReason>,
+    paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
     // COPIED from `package_list.rs:193` per `qhq-8mgw.1`. A load is the cadence
     // the role refresh is pinned to. A switch is server-side and global, so it can
@@ -569,9 +569,9 @@ async fn load_main_page_package(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
     installed_package: &quilt::InstalledPackage,
-    paused_reasons: &HashMap<String, PausedReason>,
+    paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<Row, Error> {
-    let namespace = installed_package.namespace.to_string();
+    let namespace = installed_package.namespace.clone();
 
     let lineage = m.get_installed_package_lineage(installed_package).await?;
     // Computed before `lineage` is moved by the `into()` below.
@@ -653,13 +653,10 @@ pub async fn get_main_page_packages(
     // through `PausedEvent` and `filter_map`ped away every pause with no
     // message — `PendingChanges`, `PendingCommit` and `Diverged` — so three of
     // the six reasons never reached this map at all.
-    let paused_reasons: HashMap<String, PausedReason> = watcher
-        .main_page_facts()
-        .await
-        .paused
-        .into_iter()
-        .map(|(namespace, reason)| (namespace.to_string(), reason))
-        .collect();
+    // Keyed by the type the watcher already hands over: this map used to flatten
+    // each key to a string, and every lookup below then had one too.
+    let paused_reasons: HashMap<quilt_uri::Namespace, PausedReason> =
+        watcher.main_page_facts().await.paused.into_iter().collect();
 
     let started = std::time::Instant::now();
     let result = get_main_page_packages_from_model(&*m, &roles, &tracing, &paused_reasons).await;
@@ -1051,7 +1048,7 @@ impl From<WatcherFacts> for MainPageWatcher {
                 .paused
                 .iter()
                 .map(|(namespace, reason)| PausedPackage {
-                    namespace: namespace.to_string(),
+                    namespace: namespace.clone(),
                     reason: PausedDto::from(reason),
                 })
                 .collect(),
@@ -1078,7 +1075,7 @@ pub async fn get_main_page_watcher(
 #[serde(rename_all = "camelCase")]
 pub struct MainPageFile {
     pub path: String,
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     /// Epoch milliseconds — see [`MainPagePackage::changed_at`]. Never `None`
     /// here: a path only exists in `lineage.paths` because it was installed or
     /// committed, and both of those write a timestamp.
@@ -1116,7 +1113,7 @@ async fn recent_files(m: &impl model::QuiltModel) -> Result<Vec<MainPageFile>, E
                 continue;
             }
         };
-        let namespace = installed_package.namespace.to_string();
+        let namespace = installed_package.namespace.clone();
         for (path, state) in &lineage.paths {
             files.push(MainPageFile {
                 path: path.to_string_lossy().into_owned(),
@@ -1234,7 +1231,8 @@ mod tests {
     #[test]
     fn a_paused_package_names_itself_and_its_reason() {
         let row = PausedPackage {
-            namespace: "team/plate-07".to_string(),
+            namespace: quilt_uri::Namespace::try_from("team/plate-07")
+                .expect("a valid fixture namespace"),
             reason: PausedDto::from(&PausedReason::Diverged),
         };
         assert_eq!(
@@ -1253,7 +1251,8 @@ mod tests {
             .enumerate()
             .map(|(i, host)| Row {
                 package: MainPagePackage {
-                    namespace: format!("team/pkg{i}"),
+                    namespace: quilt_uri::Namespace::try_from(format!("team/pkg{i}"))
+                        .expect("a valid fixture namespace"),
                     state: PackageStateDto::Latest,
                     changed_at: None,
                     bucket: None,
@@ -1888,7 +1887,10 @@ mod tests {
         m: &impl model::QuiltModel,
         paused: PausedReason,
     ) -> PackageStateDto {
-        let paused_reasons = HashMap::from([("team/one".to_string(), paused)]);
+        let paused_reasons = HashMap::from([(
+            quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
+            paused,
+        )]);
         let packages = get_main_page_packages_from_model(
             m,
             &RoleCache::default(),
@@ -1907,7 +1909,12 @@ mod tests {
         paused: Option<PausedReason>,
     ) -> MainPagePackage {
         let paused_reasons = paused
-            .map(|paused| HashMap::from([("team/one".to_string(), paused)]))
+            .map(|paused| {
+                HashMap::from([(
+                    quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
+                    paused,
+                )])
+            })
             .unwrap_or_default();
         let packages = get_main_page_packages_from_model(
             m,
@@ -2077,8 +2084,8 @@ mod tests {
         // with a message is the one that used to reach the wire verbatim, so it is
         // the fixture that can catch a regression.
         let m = mock_clean_roster();
-        let paused_reasons: HashMap<String, PausedReason> = HashMap::from([(
-            "team/one".to_string(),
+        let paused_reasons: HashMap<quilt_uri::Namespace, PausedReason> = HashMap::from([(
+            quilt_uri::Namespace::try_from("team/one").expect("a valid fixture namespace"),
             PausedReason::Other("workflow rejected metadata".to_string()),
         )]);
         let payload = get_main_page_packages_from_model(
@@ -2187,7 +2194,7 @@ mod tests {
 
     fn row<'a>(rows: &'a [MainPagePackage], namespace: &str) -> &'a MainPagePackage {
         rows.iter()
-            .find(|p| p.namespace == namespace)
+            .find(|p| p.namespace.to_string() == namespace)
             .expect("row present")
     }
 
@@ -2896,7 +2903,7 @@ mod tests {
         assert_eq!(payload.pull.activity, ToggleActivity::Paused);
         assert_eq!(payload.publish.activity, ToggleActivity::Paused);
         assert_eq!(payload.paused.len(), 1);
-        assert_eq!(payload.paused[0].namespace, "team/plate-07");
+        assert_eq!(payload.paused[0].namespace.to_string(), "team/plate-07");
         assert_eq!(
             payload.paused[0].reason,
             PausedDto::Other {
@@ -3100,7 +3107,8 @@ mod tests {
         let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(names, vec!["newest.csv", "old.csv", "older.csv"]);
         assert_eq!(
-            files[0].namespace, "user/beta",
+            files[0].namespace.to_string(),
+            "user/beta",
             "the owning package travels"
         );
     }
@@ -3143,7 +3151,7 @@ mod tests {
         let files = recent_files(&m).await.unwrap();
 
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].namespace, "user/alpha");
+        assert_eq!(files[0].namespace.to_string(), "user/alpha");
     }
 
     #[tokio::test]
@@ -3155,6 +3163,6 @@ mod tests {
         let files = recent_files(&m).await.unwrap();
 
         assert_eq!(files.len(), 1, "the readable package still arrives");
-        assert_eq!(files[0].namespace, "user/alpha");
+        assert_eq!(files[0].namespace.to_string(), "user/alpha");
     }
 }

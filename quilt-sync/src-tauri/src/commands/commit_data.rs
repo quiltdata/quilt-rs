@@ -32,7 +32,7 @@ use super::package_list::denied_mark;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeData {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
 }
 
@@ -58,7 +58,7 @@ async fn get_merge_data_from_model(
     }
 
     Ok(MergeData {
-        namespace: namespace.to_string(),
+        namespace: namespace.clone(),
         uri,
     })
 }
@@ -83,7 +83,7 @@ pub async fn get_merge_data(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
     pub status: String,
     pub message: String,
@@ -376,7 +376,7 @@ async fn get_commit_data_from_model(
             status: status_str.to_string(),
             junky_pattern: junky_map.get(filename).cloned(),
             ignored_by: None,
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
         });
         if entries_list.len() > 1000 {
             break;
@@ -400,7 +400,7 @@ async fn get_commit_data_from_model(
             .to_string(),
             junky_pattern: None,
             ignored_by: None,
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
         });
         if entries_list.len() > 1000 {
             break;
@@ -415,7 +415,7 @@ async fn get_commit_data_from_model(
             status: "pristine".to_string(),
             junky_pattern: None,
             ignored_by: Some(pattern.clone()),
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
         });
         if entries_list.len() > 1000 {
             break;
@@ -473,7 +473,7 @@ async fn get_commit_data_from_model(
     );
 
     Ok(CommitData {
-        namespace: namespace.to_string(),
+        namespace: namespace.clone(),
         uri: typed_uri,
         status: pkg_status_str.to_string(),
         message,
@@ -805,7 +805,7 @@ mod tests {
             .await
             .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
@@ -839,7 +839,7 @@ mod tests {
             .await
             .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
@@ -912,7 +912,8 @@ mod tests {
                     .map_err(|e| format!("page must open without a session ({described}): {e}"))?;
 
             assert_eq!(
-                data.namespace, "foo/bar",
+                data.namespace.to_string(),
+                "foo/bar",
                 "the page opened on cached lineage ({described})"
             );
             // The package's own origin, not whatever host the error carried:
@@ -971,7 +972,7 @@ mod tests {
             .await
             .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         assert!(
             data.entries.iter().any(|e| e.filename == "file.txt"),
             "the locally-computed change must still be listed"

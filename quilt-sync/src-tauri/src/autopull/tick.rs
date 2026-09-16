@@ -722,7 +722,7 @@ pub(crate) async fn run_once(
                 inner.reporter.report_status(
                     &namespace,
                     PackageStatusEvent {
-                        namespace: namespace.to_string(),
+                        namespace: namespace.clone(),
                         status: outcome.upstream.to_string(),
                         has_changes: outcome.has_changes,
                         fingerprint: outcome.fingerprint,
@@ -794,7 +794,7 @@ pub(crate) async fn run_once(
                 inner.reporter.report_status(
                     &namespace,
                     PackageStatusEvent {
-                        namespace: namespace.to_string(),
+                        namespace: namespace.clone(),
                         status: status.to_string(),
                         has_changes,
                         // No `InstalledPackageStatus` here — this is a

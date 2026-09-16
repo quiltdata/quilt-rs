@@ -53,11 +53,13 @@ impl Namespace {
     /// output, which is the one split this type exists to have already done.
     ///
     /// [`Display`]: std::fmt::Display
+    #[must_use]
     pub fn prefix(&self) -> &str {
         &self.prefix
     }
 
     /// The half after the `/`.
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
