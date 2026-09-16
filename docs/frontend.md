@@ -225,6 +225,12 @@ rather than on whichever page the link was written against. `/main` and
 `/installed-packages-list` stay addressable for looking at one specific page
 while both exist.
 
+A `back` handed to `/login` has to be a route `routes::Paths` can parse, not just
+one the client router knows. Code login navigates in the client and never asks,
+but OAuth stores `back` and the backend parses it when the callback arrives —
+anything it cannot read is logged and replaced by the default landing page. So
+every login link in the UI points at an address with a `Paths` variant behind it.
+
 ## Component Pattern
 
 Every page component follows the same structure:
