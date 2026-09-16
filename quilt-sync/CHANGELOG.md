@@ -20,6 +20,7 @@
 ### Changed
 
 - The new main page (Settings → Experimental → **New main page**, still off by default) is polished throughout. The current page is unchanged by all of it:
+  - Each row in **Needs your attention** is now a link to the page that fixes it, and says what is wrong as a sentence: `org/dataset-c has conflicts in 2 files`, with `Publish` on the right. The buttons are gone — every one of them only opened another page — and the severity that was a coloured chip is now a mark on the row's edge and a symbol beside the name, so it reads in greyscale too (<https://github.com/quiltdata/quilt-rs/pull/940>)
   - A paused package now says why it paused, under its row in **Needs your attention**; it used to say only `Sync paused` (<https://github.com/quiltdata/quilt-rs/pull/933>)
   - Refresh shows that it is working, and takes no second press until it is done (<https://github.com/quiltdata/quilt-rs/pull/929>)
   - Anything cut short to fit — a package name, a file path, a host, a group heading — shows its full value on hover (<https://github.com/quiltdata/quilt-rs/pull/930>)
