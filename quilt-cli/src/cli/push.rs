@@ -23,6 +23,7 @@ pub struct Input {
 #[derive(Debug)]
 pub struct Output {
     pub hash: String,
+    pub manifest_uri: quilt_uri::ManifestUri,
     pub certified_latest: bool,
 }
 
@@ -39,7 +40,15 @@ impl std::fmt::Display for Output {
     }
 }
 
-impl Render for Output {}
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "hash": &self.hash,
+            "manifest_uri": self.manifest_uri.to_string(),
+            "certified_latest": self.certified_latest,
+        })
+    }
+}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.push(args).await)
@@ -101,7 +110,8 @@ pub async fn model(
     )
     .await?;
     Ok(Output {
-        hash: outcome.manifest_uri.hash,
+        hash: outcome.manifest_uri.hash.clone(),
+        manifest_uri: outcome.manifest_uri,
         certified_latest: outcome.certified_latest,
     })
 }
@@ -638,5 +648,25 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn json_carries_hash_uri_and_certification() {
+        let hash = "0123456789abcdef";
+        let output = Output {
+            hash: hash.to_string(),
+            manifest_uri: quilt_uri::ManifestUri {
+                origin: None,
+                bucket: "bucket".to_string(),
+                namespace: ("demo", "sales").into(),
+                hash: hash.to_string(),
+            },
+            certified_latest: false,
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","certified_latest":false}"#
+        );
     }
 }
