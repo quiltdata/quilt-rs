@@ -533,7 +533,10 @@ The state reads as a **clause after the name** — `org/dataset-c` then `has
 conflicts in 2 files` — rather than as a chip beside it. The name keeps default
 ink at weight 600 and the clause is muted, which is the treatment the host row
 already uses above its sub-line. The words are the vocabulary's, chosen at the
-queue site; the list keeps its chips and its noun phrases.
+queue site; the list keeps its chips and its noun phrases. When the row narrows
+the clause gives way first and the name only begins to clip once the clause is
+gone: a name cut mid-owner is unrecognisable, while a clause cut at its end is
+still readable up to the cut.
 
 The tone the chip used to carry draws **twice**: a rule on the row's edge, inset
 by the row's own padding so a column of rows shows separate marks rather than one

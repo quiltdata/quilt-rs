@@ -115,22 +115,29 @@
   background: var(--q-borderColor-emphasis);
 }
 
-/* The row's subject, and kept whole: at weight 600 in default ink against a muted
- * clause, which is the treatment `HostRow` already uses for a host above its
- * sub-line. `flex: none` because the clause after it is what gives way — a name
- * clipped mid-owner is unrecognisable, and a clause clipped at the end is still
- * readable up to the cut. */
+/* The row's subject: at weight 600 in default ink against a muted clause, which is
+ * the treatment `HostRow` already uses for a host above its sub-line.
+ *
+ * It shrinks, but last — see `.clause`. `min-width: 0` because a flex item's
+ * automatic minimum size is its max-content width, and without clearing it the name
+ * pushes the row past its card instead of ellipsising. */
 .namespace {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Takes the space the namespace gave up, and truncates before the name does. */
+/* Takes the space the namespace does not use, and gives way first: a shrink factor
+ * of 100 against the name's 1, so a narrowing row eats the clause and only starts on
+ * the name once the clause is gone. A name clipped mid-owner is unrecognisable; a
+ * clause clipped at its end is still readable up to the cut. */
 .clause {
-  flex: 1 1 auto;
+  flex-grow: 1;
+  flex-shrink: 100;
+  flex-basis: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
