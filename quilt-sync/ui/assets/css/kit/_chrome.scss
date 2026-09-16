@@ -174,3 +174,248 @@ body {
  * lets a card shrink below 300px rather than overflowing a narrow window. */
 .g-strip { display: flex; gap: var(--q-space-3); flex-wrap: wrap; }
 .g-strip > * { flex: 1 1 300px; min-width: 0; }
+
+/* ── Installed package v2 ────────────────────────────────────────────────────
+ *
+ * Page layout, not gallery chrome — the same status as `.g-strip` above, and it
+ * moves into the regions' own stylesheets when the real page is built. It lives
+ * here because the regions are still gallery components.
+ *
+ * `g-ip-` rather than `g-mock-`: some of this IS the page's layout and survives;
+ * what does not survive is the row, the group head and the facets, which stand in
+ * for `EntryRow`, a collapsing `GroupHeading` and `FacetBar`. */
+
+/* Header ------------------------------------------------------------------- */
+
+.g-ip-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-1);
+  padding: var(--q-space-3);
+  border-bottom: 1px solid var(--q-borderColor-default);
+}
+
+.g-ip-trail { font-size: var(--q-text-body); color: var(--q-fgColor-accent); text-decoration: none; }
+
+.g-ip-headerbar { display: flex; align-items: center; gap: var(--q-space-2); flex-wrap: wrap; }
+
+/* The name takes the room and truncates; the state sits against it because it
+ * qualifies it. `min-width: 0` so a long namespace shortens rather than pushing
+ * the state and the action off the bar. */
+.g-ip-name {
+  margin: 0;
+  font-size: var(--q-text-lead);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Full-width header cells in the state scenes need the page's ground behind them,
+ * or the bar floats on the gallery's own surface and reads as a card. */
+.g-ip-headerframe {
+  width: 100%;
+  background: var(--q-bgColor-default);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+}
+
+.g-ip-headerframe .g-ip-header { border-bottom: 0; }
+
+/* The one element that keeps the header's right-hand controls right-aligned
+ * without the state label having to know how wide they are. */
+.g-ip-spacer { flex: 1 1 auto; }
+
+/* Panes -------------------------------------------------------------------- */
+
+.g-ip-panes { display: flex; gap: var(--q-space-3); min-height: 0; flex: 1 1 auto; align-items: stretch; }
+.g-ip-panes--narrow { flex-direction: column; }
+
+.g-ip-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The context pane is one thing, so it keeps one box. The file pane is three
+ * bands — a search that acts on all of it, the controls, and the list — so the
+ * boxes are inside it and search has none at all. */
+.g-ip-contextpane,
+.g-ip-listbox {
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+}
+
+.g-ip-filepane { gap: var(--q-space-2); }
+
+.g-ip-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  flex-wrap: wrap;
+  padding: 0 var(--q-space-3);
+  flex: 0 0 auto;
+}
+
+.g-ip-listbox {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+}
+
+/* The file pane takes the room, the context pane is fixed. That asymmetry is the
+ * design's whole argument: horizontal space is abundant (minWidth 1024) and
+ * vertical space is not (minHeight 560), so everything that is not the list is
+ * spent sideways. */
+.g-ip-filepane { flex: 1 1 auto; }
+
+/* The toolbar's own left edge is the rows' left edge; `ListToolbar` sets no
+ * horizontal padding of its own. */
+
+.g-ip-contextpane { flex: 0 0 280px; padding: var(--q-space-3); gap: var(--q-space-4); }
+.g-ip-panes--narrow .g-ip-contextpane { flex: 0 0 auto; }
+
+/* `ListToolbar` brings its own padding and rule; the pane only has to stop it
+ * growing when the list scrolls. */
+.g-ip-pane > :first-child { flex: 0 0 auto; }
+
+/* List --------------------------------------------------------------------- */
+
+.g-ip-list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+
+.g-ip-grouphead {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: var(--q-space-1) var(--q-space-3);
+  background: var(--q-bgColor-inset);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+  position: sticky;
+  top: 0;
+}
+
+.g-ip-disclose {
+  flex: 0 0 var(--g-ip-gutter);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--q-fgColor-muted);
+  padding: 0;
+}
+
+.g-ip-groupname { font-family: var(--q-font-mono); font-size: var(--q-text-body); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-ip-groupcount { margin-left: auto; font-size: var(--q-text-body); color: var(--q-fgColor-muted); }
+.g-ip-hidden { display: none; }
+
+/* One line per entry. Two lines would halve how many survive the 560px fold,
+ * which is the whole reason grouping strips the common prefix from the name. */
+.g-ip-row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: 0 var(--q-space-3);
+  min-height: var(--q-control-height);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+  cursor: pointer;
+}
+
+.g-ip-row:hover { background: var(--q-bgColor-muted); }
+.g-ip-row__name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--q-text-body); }
+.g-ip-row__meta { flex: 0 0 auto; font-size: var(--q-text-body); color: var(--q-fgColor-muted); }
+.g-ip-row__size {
+  flex: 0 0 64px;
+  text-align: right;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A fixed slot, so a size is in the same column whether the row above it carries
+ * a state label or not. Sizes exist to be compared; ragged ones cannot be. */
+.g-ip-row__state {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 132px;
+}
+
+/* The bar the list is for, under it. Tried between the toolbar and the list and
+ * moved back: it bought no height there, because the bar does not disappear when
+ * it moves. */
+.g-ip-panefoot {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) var(--q-space-3);
+  border-top: 1px solid var(--q-borderColor-muted);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+/* Context pane blocks ------------------------------------------------------ */
+
+.g-ip-block { display: flex; flex-direction: column; gap: var(--q-space-2); align-items: flex-start; }
+.g-ip-block h4 { margin: 0; font-size: var(--q-text-body); text-transform: uppercase; letter-spacing: 0.04em; color: var(--q-fgColor-muted); }
+.g-ip-revmsg { margin: 0; font-size: var(--q-text-body); }
+.g-ip-revwhen { margin: 0; font-size: var(--q-text-body); color: var(--q-fgColor-muted); }
+.g-ip-choice { display: flex; align-items: center; gap: var(--q-space-2); font-size: var(--q-text-body); cursor: pointer; }
+.g-ip-consequence { margin: 0; font-size: var(--q-text-body); color: var(--q-fgColor-muted); }
+
+/* The marker a pending decision puts on the rows it touches. A word as well as a
+ * stripe: a stripe says "this one is special" and leaves the reader to guess
+ * which special thing it means. */
+.g-ip-row--differs { box-shadow: inset 3px 0 0 var(--q-fgColor-danger); background: var(--q-bgColor-danger-muted); }
+
+/* One side of the resolve choice: whose revision it is, what it says, when. The
+ * choice is binary and irreversible, and /merge asks it while showing neither. */
+.g-ip-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--q-space-2);
+  border: 1px solid var(--q-borderColor-muted);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-inset);
+}
+
+.g-ip-sidelabel { font-size: var(--q-text-body); color: var(--q-fgColor-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* Select-all lives in the toolbar now, leftmost, so it sits in the rows' own
+ * checkbox column. A checkbox and not a button because a button cannot say
+ * "unselect"; tri-state because "some" is a real answer. */
+/* One checkbox column through all three levels: select-all, a group, a file. The
+ * gutter is the disclosure triangle's column — empty for the other two — so the
+ * boxes line up and the triangle sits outside them rather than shoving the group's
+ * box right. `--g-ip-gutter` is the single number that keeps them honest. */
+.g-ip-filepane { --g-ip-gutter: 16px; --g-ip-indent: var(--q-space-3); }
+
+.g-ip-selectall {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  font-size: var(--q-text-body);
+  white-space: nowrap;
+  cursor: pointer;
+  padding-left: calc(var(--g-ip-gutter) + var(--q-space-2));
+}
+
+/* Search on its own row: a 100% basis makes `ListToolbar`'s own wrapping do the
+ * break, so there is still no breakpoint anywhere in this pane. */
+.g-ip-searchrow { display: flex; flex: 0 0 auto; }
+
+/* The field fills its row: it is the control that most wants width, and a short
+ * input floating in a full-width row reads as a mistake. */
+.g-ip-searchrow > * { flex: 1 1 auto; min-width: 0; }
+
+.g-ip-gutter { flex: 0 0 var(--g-ip-gutter); }
+
+/* Keeps a row whose file is already here aligned with one that can be ticked,
+ * without giving it a control that would have nothing to act on. */
+.g-ip-row__nobox { flex: 0 0 13px; }

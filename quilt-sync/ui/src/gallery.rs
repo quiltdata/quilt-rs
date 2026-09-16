@@ -48,6 +48,7 @@ mod gallery {
     pub mod feedback;
     pub mod forms;
     pub mod host_row;
+    pub mod installed_package;
     pub mod list_toolbar;
     pub mod packages;
     pub mod page;
@@ -73,6 +74,7 @@ use crate::gallery::feedback::FeedbackStories;
 use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
+use crate::gallery::installed_package::InstalledPackageStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
@@ -173,6 +175,10 @@ fn Gallery() -> impl IntoView {
             view! { <UncheckedScene /> }.into_any(),
         ),
         ("Scene · whole page", view! { <PageScene /> }.into_any()),
+        (
+            "Installed package v2",
+            view! { <InstalledPackageStories /> }.into_any(),
+        ),
     ];
 
     let index: Vec<&'static str> = sections.iter().map(|(label, _)| *label).collect();
