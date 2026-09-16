@@ -76,6 +76,11 @@ const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
 /// manufactures a state the page does not know.
 const FILES_FETCH_ERROR_WORDS: &str = "Could not load your files.";
 
+/// An undrawn card is indistinguishable from no autosync and no sessions — the blank
+/// R1 forbids.
+const AUTOSYNC_ERROR_WORDS: &str = "Could not load autosync.";
+const ACCOUNTS_ERROR_WORDS: &str = "Could not load your accounts.";
+
 /// The list region's two views, as the toggle names them. Consts because each
 /// string is the toggle's option, the value the selection signal holds, and the
 /// condition the region switches on — three uses that must not drift apart.
@@ -99,8 +104,30 @@ const SORT_NAME: &str = "Name";
 /// handled (`MainPage`'s `Err` arm below), not here: this is a view function,
 /// and view functions can re-run on every re-render, which would re-log the
 /// same failure each time.
-fn render_fetch_error() -> impl IntoView {
-    view! { <p>{FETCH_ERROR_WORDS}</p> }
+fn render_fetch_error(retry: Trigger) -> impl IntoView {
+    fetch_error_body(FETCH_ERROR_WORDS, retry)
+}
+
+/// One child, because `Card` rules between any two of its own.
+///
+/// `retry` is the failed read's trigger, never the page's.
+fn fetch_error_body(words: &'static str, retry: Trigger) -> AnyView {
+    view! {
+        <div class=style::card_error>
+            <p>{words}</p>
+            <Button on_click=move |_| retry.notify()>"Try again"</Button>
+        </div>
+    }
+    .into_any()
+}
+
+/// Titled, since the title is what tells this card from the one beside it.
+pub(super) fn fetch_error_card(
+    title: &'static str,
+    words: &'static str,
+    retry: Trigger,
+) -> AnyView {
+    view! { <Card title=title>{fetch_error_body(words, retry)}</Card> }.into_any()
 }
 
 /// The feed's failure branch. Same shape and same reasoning as
@@ -108,8 +135,8 @@ fn render_fetch_error() -> impl IntoView {
 /// backend's error text is logged once where the fetch result is handled — not
 /// here, because a view function can re-run on every re-render and would re-log
 /// the same failure each time.
-fn render_files_fetch_error() -> impl IntoView {
-    view! { <p>{FILES_FETCH_ERROR_WORDS}</p> }
+fn render_files_fetch_error(retry: Trigger) -> impl IntoView {
+    fetch_error_body(FILES_FETCH_ERROR_WORDS, retry)
 }
 
 /// A row's live state: the light phase's guess, replaced in place by the heavy
@@ -566,6 +593,7 @@ fn files_view(
     recent_files: LocalResource<Result<MainPageRecentFilesData, String>>,
     query: RwSignal<String>,
     group_files_by: RwSignal<String>,
+    retry: Trigger,
 ) -> AnyView {
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
@@ -598,7 +626,7 @@ fn files_view(
                         web_sys::console::error_1(
                             &format!("get_main_page_recent_files failed: {err}").into(),
                         );
-                        view! { <Card>{render_files_fetch_error()}</Card> }.into_any()
+                        view! { <Card>{render_files_fetch_error(retry)}</Card> }.into_any()
                     }
                 }
             })}
@@ -660,6 +688,10 @@ fn MainPageRegions(
     accounts: LocalResource<Result<MainPageAccountsData, String>>,
     /// The page's reload trigger, which every resource here tracks.
     reload: Trigger,
+    /// Each read's own retry. Optional: a test with no failing read presses neither.
+    #[prop(optional)]
+    packages_retry: Trigger,
+    #[prop(optional)] accounts_retry: Trigger,
     /// Handed the [`PackageStore`] the moment the page seeds one, so a test can
     /// drive a settle the way the heavy phase would. Read-only and one-shot: the
     /// page still owns the store and still seeds it from its own payload, so a
@@ -733,8 +765,10 @@ fn MainPageRegions(
     // is the guard *inside* the future, not the resource's laziness, that keeps
     // the command from being invoked on a page that never leaves Packages.
     // `reload` is tracked too, or Refresh would leave a stale feed on screen.
+    let files_retry = Trigger::new();
     let recent_files = LocalResource::new(move || {
         reload.track();
+        files_retry.track();
         let wanted = files_wanted.get();
         async move {
             if !wanted {
@@ -760,13 +794,13 @@ fn MainPageRegions(
                                 .into_any()
                         }
                         Err(err) => {
-                            // Logged here, once, and rendered as nothing: asserting
-                            // anything about a user's sessions on the strength of a
-                            // failed read would be a manufactured state.
+                            // Logged once, here. The card says it could not read:
+                            // rows would claim sessions it has not seen, and no card
+                            // claims there are none.
                             web_sys::console::error_1(
                                 &format!("get_main_page_accounts failed: {err}").into(),
                             );
-                            ().into_any()
+                            fetch_error_card("Accounts", ACCOUNTS_ERROR_WORDS, accounts_retry)
                         }
                     }
                 })}
@@ -1079,7 +1113,7 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query, group_files_by)}
+                                {files_view(recent_files, query, group_files_by, files_retry)}
                             </Show>
                             </div>
                         }
@@ -1111,9 +1145,11 @@ fn MainPageRegions(
                                 )}
                                 <Show
                                     when=move || view_selected.get() == FILES_VIEW
-                                    fallback=|| view! { <Card>{render_fetch_error()}</Card> }
+                                    fallback=move || {
+                                        view! { <Card>{render_fetch_error(packages_retry)}</Card> }
+                                    }
                                 >
-                                    {files_view(recent_files, query, group_files_by)}
+                                    {files_view(recent_files, query, group_files_by, files_retry)}
                                 </Show>
                             </div>
                         }
@@ -1165,8 +1201,13 @@ pub fn MainPage() -> impl IntoView {
     // (`PackageStore::in_flight`). The heavy phase reports itself by rows settling,
     // so the spin covers the light phase alone.
     let outstanding = RwSignal::new(0usize);
+    // One retry per read, beside the page's — the two triggers `watcher_resource`
+    // already takes. A page-wide one refetches three reads nobody asked about.
+    let packages_retry = Trigger::new();
+    let accounts_retry = Trigger::new();
     let packages = LocalResource::new(move || {
         reload.track();
+        packages_retry.track();
         async move {
             outstanding.update(|n| *n += 1);
             let answer = commands::get_main_page_packages().await;
@@ -1186,6 +1227,7 @@ pub fn MainPage() -> impl IntoView {
     // fetcher, which the regression routes around (qhq-8mgw.38).
     let accounts = LocalResource::new(move || {
         reload.track();
+        accounts_retry.track();
         async move {
             outstanding.update(|n| *n += 1);
             let answer = commands::get_main_page_accounts().await;
@@ -1211,7 +1253,13 @@ pub fn MainPage() -> impl IntoView {
         }
             .into_any()>
             <PackageStatusListener reload=reload />
-            <MainPageRegions packages=packages accounts=accounts reload=reload />
+            <MainPageRegions
+                packages=packages
+                accounts=accounts
+                reload=reload
+                packages_retry=packages_retry
+                accounts_retry=accounts_retry
+            />
         </PageLayout>
     }
 }
@@ -2804,8 +2852,8 @@ mod tests {
     async fn a_failed_accounts_read_still_draws_the_queue_and_the_list() {
         // The other direction. Without host facts no cause can be attributed to a
         // host, so the signed-out package falls to a row of its own rather than
-        // vanishing — and the Accounts card renders nothing at all rather than a
-        // card with no rows, which would assert the user has no sessions.
+        // vanishing — and the Accounts card says it could not read, where no rows
+        // would claim no sessions and no card would claim no such card.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -2828,9 +2876,18 @@ mod tests {
             !text.contains("Signed out from"),
             "nothing said any host was signed out: {text}"
         );
+        let strip = strip_of(&el).text_content().unwrap();
         assert!(
-            !strip_of(&el).text_content().unwrap().contains("Accounts"),
-            "no card, rather than an empty one: {text}"
+            strip.contains("Accounts") && strip.contains(ACCOUNTS_ERROR_WORDS),
+            "the card keeps its title and says what happened: {strip}"
+        );
+        assert!(
+            strip.contains("Try again"),
+            "and offers the one thing that can be done: {strip}"
+        );
+        assert!(
+            !strip.contains("Signed out"),
+            "without asserting anything about the sessions it could not read: {strip}"
         );
         assert_eq!(
             el.query_selector_all("a[href*=installed-package]")
@@ -3471,7 +3528,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_fetch_failure_shows_fixed_words_never_the_raw_error() {
-        let el = mount(render_fetch_error);
+        let el = mount(|| render_fetch_error(Trigger::new()));
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Could not load your packages."),
@@ -4053,6 +4110,7 @@ mod tests {
                 recent_files,
                 RwSignal::new(String::new()),
                 RwSignal::new(GROUP_NONE.to_string()),
+                Trigger::new(),
             )
         });
         leptos::task::tick().await;
@@ -4179,6 +4237,73 @@ mod tests {
         assert!(
             !refreshing.get_untracked(),
             "the light phase answered, so the press is finished"
+        );
+    }
+    /// Pins which trigger a card's retry notifies. The resources here are the test's,
+    /// so `MainPage`'s own definitions are out of scope.
+    #[wasm_bindgen_test]
+    async fn one_cards_retry_does_not_refetch_the_others() {
+        let package_reads = RwSignal::new(0);
+        let account_reads = RwSignal::new(0);
+        let reload = Trigger::new();
+        let packages_retry = Trigger::new();
+        let accounts_retry = Trigger::new();
+
+        let el = mount(move || {
+            let packages = LocalResource::new(move || {
+                reload.track();
+                packages_retry.track();
+                package_reads.update(|n| *n += 1);
+                async { Ok(two_packages_all_latest()) }
+            });
+            let accounts = LocalResource::new(move || {
+                reload.track();
+                accounts_retry.track();
+                account_reads.update(|n| *n += 1);
+                async { Err::<MainPageAccountsData, String>("nope".to_string()) }
+            });
+            view! {
+                <MainPageRegions
+                    packages=packages
+                    accounts=accounts
+                    reload=reload
+                    packages_retry=packages_retry
+                    accounts_retry=accounts_retry
+                />
+            }
+        });
+        sleep_ms(50).await;
+        let (packages_before, accounts_before) =
+            (package_reads.get_untracked(), account_reads.get_untracked());
+
+        // By card, not position: both strip reads fail without a Tauri host.
+        let cards = strip_of(&el).query_selector_all("section").unwrap();
+        let accounts_card: web_sys::Element = (0..cards.length())
+            .filter_map(|i| cards.get(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .find(|card| {
+                card.text_content()
+                    .is_some_and(|text| text.contains(ACCOUNTS_ERROR_WORDS))
+            })
+            .expect("the Accounts card, which failed");
+        let retry: web_sys::HtmlElement = accounts_card
+            .query_selector("button")
+            .unwrap()
+            .expect("its Try again")
+            .dyn_into()
+            .unwrap();
+        retry.click();
+        sleep_ms(200).await;
+
+        assert_eq!(
+            account_reads.get_untracked() - accounts_before,
+            1,
+            "the card that failed reads again"
+        );
+        assert_eq!(
+            package_reads.get_untracked(),
+            packages_before,
+            "and nothing else does"
         );
     }
 }

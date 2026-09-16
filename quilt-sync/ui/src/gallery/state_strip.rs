@@ -43,6 +43,38 @@ pub fn StateStripScene() -> impl IntoView {
 
 /// The region itself, so the whole-page scene composes this code rather than a copy of
 /// it. Two mockups of one region drift the first time either is edited.
+/// Both strip reads failing at once — the state the page had no drawing for at all.
+#[component]
+pub fn StripErrorScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · a strip that could not load"
+            note="Each card keeps its title and says what it could not read, because a card \
+                  that is not drawn says something too: that this machine has no autosync, \
+                  and that there are no sessions. Try again re-reads that card alone. \
+                  \
+                  Both at once is the worst case for height, which is why they are shown \
+                  together: it is the one arrangement where the strip says nothing useful \
+                  and still costs the queue its space."
+        >
+            <div class="g-strip">
+                <Card title="Autosync">
+                    <div class="g-card-error">
+                        <p>"Could not load autosync."</p>
+                        <Button on_click=|_| ()>"Try again"</Button>
+                    </div>
+                </Card>
+                <Card title="Accounts">
+                    <div class="g-card-error">
+                        <p>"Could not load your accounts."</p>
+                        <Button on_click=|_| ()>"Try again"</Button>
+                    </div>
+                </Card>
+            </div>
+        </Scene>
+    }
+}
+
 #[component]
 pub fn StateStripRegion() -> impl IntoView {
     let pull = RwSignal::new(true);
