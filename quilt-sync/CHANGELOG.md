@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.3-alpha1] - 2026-09-16
+
+### Fixed
+
+- The buttons on a package's status banner keep their size when the message beside them is long. They used to be squeezed by it, narrowing as the text grew (<https://github.com/quiltdata/quilt-rs/pull/942>)
+
 ## [v0.22.2] - 2026-09-15
 
 ### Fixed
