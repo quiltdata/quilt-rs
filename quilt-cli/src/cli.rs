@@ -34,6 +34,7 @@ mod uninstall;
 mod fixtures;
 
 use model::Model;
+pub use output::Format;
 pub use output::Std;
 pub use output::print;
 
@@ -153,6 +154,10 @@ pub struct Args {
     /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
     #[arg(short, long, global = true)]
     pub(crate) verbose: bool,
+
+    /// Print machine-readable JSON instead of human-readable text.
+    #[arg(long, global = true)]
+    pub(crate) json: bool,
 }
 
 /// The package a command acts on.
@@ -235,11 +240,7 @@ enum Commands {
         host: Host,
     },
     /// List installed packages
-    List {
-        /// Print machine-readable JSON
-        #[arg(long)]
-        json: bool,
-    },
+    List,
     /// List the revisions of a package this copy has, newest first.
     ///
     /// Ordered by when this copy obtained each revision, which is all that is
@@ -295,9 +296,6 @@ enum Commands {
     Status {
         #[command(flatten)]
         pkg: PackageRef,
-        /// Print machine-readable JSON
-        #[arg(long)]
-        json: bool,
     },
     /// Undo the newest commit, restoring the revision before it
     ///
@@ -410,9 +408,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List { json } => {
+        Commands::List => {
             log::info!("Listing installed packages");
-            Ok(list::command(m, json).await)
+            Ok(list::command(m).await)
         }
         Commands::Log { pkg } => {
             let namespace = pkg.resolve(&m).await?;
@@ -464,7 +462,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
-        Commands::Status { pkg, json } => {
+        Commands::Status { pkg } => {
             let namespace = pkg.resolve(&m).await?;
             let args = status::Input {
                 namespace,
@@ -472,7 +470,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             };
 
             log::debug!("Status {args:?}");
-            Ok(status::command(m, args, json).await)
+            Ok(status::command(m, args).await)
         }
         Commands::UndoCommit { pkg } => {
             let namespace = pkg.resolve(&m).await?;
@@ -549,6 +547,40 @@ impl From<quilt_rs::Error> for Error {
 impl From<quilt_uri::UriError> for Error {
     fn from(err: quilt_uri::UriError) -> Error {
         Error::Quilt(quilt_rs::Error::Uri(err))
+    }
+}
+
+impl Error {
+    /// A stable machine-readable discriminant for `--json` consumers, so a
+    /// caller can branch without matching English prose.
+    ///
+    /// Reaches one level into `quilt_rs::Error` for the variants a caller can
+    /// act on. Everything else is `quilt_error`: a new library variant lands in
+    /// the catch-all rather than breaking the build, and earns its own kind only
+    /// when something needs to branch on it.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Error::Domain => "domain",
+            Error::Home => "home",
+            Error::Quilt(err) => match err {
+                quilt_rs::Error::Uri(_) => "invalid_uri",
+                quilt_rs::Error::Auth(..) => "auth",
+                quilt_rs::Error::Login(_) => "login",
+                quilt_rs::Error::Lineage(_) => "lineage",
+                quilt_rs::Error::WorkflowValidation(_) => "workflow_validation",
+                _ => "quilt_error",
+            },
+            Error::LoginRequired(_) => "login_required",
+            Error::NamespaceNotFound(_) => "namespace_not_found",
+            Error::NamespaceRequired => "namespace_required",
+            Error::CommitMetaInvalid(_) => "commit_meta_invalid",
+            Error::WorkflowEmpty => "workflow_empty",
+            Error::WorkflowRequiresBucket => "workflow_requires_bucket",
+            Error::Json(_) => "invalid_json",
+            #[cfg(test)]
+            Error::Test(_) => "internal",
+            Error::Io(_) => "io",
+        }
     }
 }
 
@@ -632,20 +664,24 @@ mod tests {
         assert!(!default.verbose);
     }
 
+    /// `global = true` is what makes this additive: the shipped spelling keeps
+    /// working and the new one starts working.
     #[test]
-    fn json_flag_is_available_on_read_commands() {
-        let list = Args::try_parse_from(["quilt", "list", "--json"]).unwrap();
-        assert!(matches!(list.command, Commands::List { json: true }));
+    fn json_flag_parses_before_or_after_the_subcommand() {
+        let after = Args::try_parse_from(["quilt", "list", "--json"]).expect("parses");
+        assert!(after.json);
+        assert!(matches!(after.command, Commands::List));
 
-        let status =
-            Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"]).unwrap();
-        assert!(matches!(
-            status.command,
-            Commands::Status { json: true, .. }
-        ));
+        let before = Args::try_parse_from(["quilt", "--json", "list"]).expect("parses");
+        assert!(before.json);
+        assert!(matches!(before.command, Commands::List));
 
-        let default = Args::try_parse_from(["quilt", "list"]).unwrap();
-        assert!(matches!(default.command, Commands::List { json: false }));
+        let status = Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"])
+            .expect("parses");
+        assert!(status.json);
+
+        let default = Args::try_parse_from(["quilt", "list"]).expect("parses");
+        assert!(!default.json);
     }
 
     #[test]
@@ -655,7 +691,6 @@ mod tests {
             inferred.command,
             Commands::Status {
                 pkg: PackageRef { namespace: None },
-                json: false
             }
         ));
 
@@ -665,7 +700,6 @@ mod tests {
             explicit.command,
             Commands::Status {
                 pkg: PackageRef { namespace: Some(namespace) },
-                json: false
             } if namespace == "demo/sales"
         ));
     }
@@ -747,12 +781,13 @@ mod tests {
             home: None,
             domain: Some(domain_temp_dir.path().to_path_buf()),
             verbose: false,
-            command: Commands::List { json: false },
+            json: false,
+            command: Commands::List,
         };
 
         let mut output = Vec::new();
         let result = init(list_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         assert_eq!(
             String::from_utf8(output).unwrap(),
             "No installed packages\n"
@@ -810,6 +845,7 @@ mod tests {
             home,
             domain,
             verbose: false,
+            json: false,
             command: Commands::Install {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
@@ -818,7 +854,7 @@ mod tests {
         };
         let mut output = Vec::new();
         let result = init(install_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
             output_str,
@@ -841,6 +877,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             domain: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Commit {
                 message: pkg::MESSAGE.to_string(),
                 pkg: PackageRef {
@@ -855,7 +892,7 @@ mod tests {
         // Test init with valid arguments
         let mut output = Vec::new();
         let result = init(commit_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
             output_str,
@@ -875,6 +912,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Commit {
                 message: "Any message".to_string(),
                 pkg: PackageRef {
@@ -889,7 +927,7 @@ mod tests {
         // Test init with valid arguments
         let mut output = Vec::new();
         let result = init(commit_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
+        print(result, Format::Text, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "Package in/valid not found\n".to_string());
 
@@ -906,6 +944,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Push {
                 pkg: PackageRef {
                     namespace: Some("foo/bar".to_string()),
@@ -934,6 +973,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Push {
                 pkg: PackageRef {
                     namespace: Some("foo/bar".to_string()),
@@ -965,6 +1005,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Push {
                 pkg: PackageRef {
                     namespace: Some("foo/bar".to_string()),
@@ -978,7 +1019,7 @@ mod tests {
 
         let mut output = Vec::new();
         let result = init(push_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
+        print(result, Format::Text, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "Package foo/bar not found\n");
 
@@ -995,6 +1036,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1005,7 +1047,7 @@ mod tests {
         // Test init with valid arguments
         let mut output = Vec::new();
         let result = init(pull_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         // No file group: `install` ran with `paths: None`, so this copy tracks
         // nothing and every path the revision changed falls outside the touch
@@ -1046,6 +1088,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1055,7 +1098,7 @@ mod tests {
 
         let mut output = Vec::new();
         let result = init(pull_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
 
         assert_eq!(
@@ -1129,6 +1172,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1138,7 +1182,7 @@ mod tests {
 
         let mut output = Vec::new();
         let result = init(pull_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
 
         assert_eq!(
@@ -1285,6 +1329,7 @@ mod tests {
             domain: Some(root.clone()),
             home: Some(root.clone()),
             verbose: false,
+            json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1294,7 +1339,7 @@ mod tests {
         let mut output = Vec::new();
         let pulled = async {
             let result = init(pull).await?;
-            print(result, &mut output, &mut Vec::new())?;
+            print(result, Format::Text, &mut output, &mut Vec::new())?;
             Ok::<_, Error>(())
         }
         .await;
@@ -1363,6 +1408,7 @@ mod tests {
                 domain: Some(root.to_path_buf()),
                 home: Some(root.to_path_buf()),
                 verbose: false,
+                json: false,
                 command: Commands::Pull {
                     pkg: PackageRef {
                         namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1453,7 +1499,7 @@ mod tests {
         // exactly r2 rather than merely changing something.
         let mut output = Vec::new();
         let result = init(pull_args(&root)).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let report = String::from_utf8(output).unwrap();
         assert!(
             report.contains(pkg::R2_TOP_HASH),
@@ -1491,6 +1537,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1500,7 +1547,7 @@ mod tests {
 
         let mut output = Vec::new();
         let result = init(pull_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
 
         assert_eq!(
@@ -1552,6 +1599,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1565,7 +1613,7 @@ mod tests {
         let mut out = Vec::new();
         let mut errs = Vec::new();
         let result = init(pull_args).await?;
-        print(result, &mut out, &mut errs).ok();
+        print(result, Format::Text, &mut out, &mut errs).ok();
         let out = String::from_utf8(out).unwrap();
         let errs = String::from_utf8(errs).unwrap();
 
@@ -1591,6 +1639,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
                     namespace: Some("in/valid".to_string()),
@@ -1601,7 +1650,7 @@ mod tests {
         // Test init with invalid namespace
         let mut output = Vec::new();
         let result = init(pull_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
+        print(result, Format::Text, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "Package in/valid not found\n");
 
@@ -1618,6 +1667,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Uninstall {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
@@ -1628,7 +1678,7 @@ mod tests {
         // Test init with valid arguments
         let mut output = Vec::new();
         let result = init(uninstall_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
             output_str,
@@ -1647,6 +1697,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Uninstall {
                 pkg: PackageRef {
                     namespace: Some("in/valid".to_string()),
@@ -1657,7 +1708,7 @@ mod tests {
         // Test init with invalid namespace
         let mut output = Vec::new();
         let result = init(uninstall_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
+        print(result, Format::Text, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.ends_with("The given package is not installed: in/valid\n"));
 
@@ -1678,7 +1729,8 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
-            command: Commands::List { json: false },
+            json: false,
+            command: Commands::List,
         };
 
         // Default home initialization now reaches the same write-protected
@@ -1698,13 +1750,14 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
-            command: Commands::List { json: false },
+            json: false,
+            command: Commands::List,
         };
 
         // Test init with empty domain
         let mut output = Vec::new();
         let result = init(list_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, "No installed packages\n");
 
@@ -1724,6 +1777,7 @@ mod tests {
             domain,
             home,
             verbose: false,
+            json: false,
             command: Commands::Install {
                 namespace: None,
                 uri: pkg::URI.to_string(),
@@ -1734,7 +1788,7 @@ mod tests {
         // Test init with invalid URI
         let mut output = Vec::new();
         let result = init(install_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
+        print(result, Format::Text, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
             output_str,
@@ -1760,13 +1814,14 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Browse { uri },
         };
 
         // Test init with valid URI
         let mut output = Vec::new();
         let result = init(browse_args).await?;
-        print(result, &mut output, &mut Vec::new())?;
+        print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(output_str, format!("{}\n", get_browse_output()?));
 
@@ -1784,6 +1839,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            json: false,
             command: Commands::Browse {
                 uri: pkg::URI.to_string(),
             },
@@ -1792,7 +1848,7 @@ mod tests {
         // Test init with invalid URI
         let mut output = Vec::new();
         let result = init(browse_args).await?;
-        print(result, &mut Vec::new(), &mut output)?;
+        print(result, Format::Text, &mut Vec::new(), &mut output)?;
         let output_str = String::from_utf8(output).unwrap();
         assert_eq!(
             output_str,

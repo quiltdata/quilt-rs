@@ -1,5 +1,6 @@
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 use quilt_uri::Namespace;
@@ -36,6 +37,8 @@ impl std::fmt::Display for Output {
         Ok(())
     }
 }
+
+impl Render for Output {}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.log(args).await)

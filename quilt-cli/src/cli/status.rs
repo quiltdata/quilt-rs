@@ -6,6 +6,7 @@ use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Debug)]
@@ -70,8 +71,8 @@ impl std::fmt::Display for Output {
     }
 }
 
-impl Output {
-    fn to_json(&self) -> String {
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
         let changes: Vec<JsonChange> = self
             .status
             .changes
@@ -90,19 +91,11 @@ impl Output {
             "upstream_state": self.status.upstream_state,
             "changes": changes,
         })
-        .to_string()
     }
 }
 
-pub async fn command(m: impl Commands, args: Input, json: bool) -> Std {
-    match m.status(args).await {
-        Ok(output) => Std::Out(if json {
-            output.to_json()
-        } else {
-            output.to_string()
-        }),
-        Err(error) => Std::Err(error),
-    }
+pub async fn command(m: impl Commands, args: Input) -> Std {
+    Std::from_result(m.status(args).await)
 }
 
 async fn get_status(
@@ -149,7 +142,7 @@ mod tests {
         };
 
         assert_eq!(
-            output.to_json(),
+            output.to_json().to_string(),
             r#"{"upstream_state":"up_to_date","changes":[]}"#
         );
     }
@@ -179,7 +172,7 @@ mod tests {
         };
 
         assert_eq!(
-            output.to_json(),
+            output.to_json().to_string(),
             r#"{"upstream_state":"local","changes":[{"path":"edited.csv","status":"modified"},{"path":"fresh.csv","status":"added"},{"path":"gone.csv","status":"removed"}]}"#
         );
     }

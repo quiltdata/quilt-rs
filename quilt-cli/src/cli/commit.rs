@@ -7,6 +7,7 @@ use tracing::log;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Clone, Debug)]
@@ -28,6 +29,8 @@ impl std::fmt::Display for Output {
         write!(f, r#"New commit "{}" created"#, self.commit.hash)
     }
 }
+
+impl Render for Output {}
 
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.commit(args).await)

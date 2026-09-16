@@ -10,33 +10,42 @@ use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 
 mod cli;
 
+use cli::Format;
+use cli::Std;
 use cli::print;
 
 #[tokio::main]
 async fn main() {
     let args = cli::Args::parse();
     init_logging(args.verbose);
-    match cli::init(args).await {
-        Ok(result) => {
-            let failed = matches!(&result, cli::Std::Err(_));
-            let stdout = io::stdout();
-            let stderr = io::stderr();
-            let mut stdout_handle = stdout.lock();
-            let mut stderr_handle = stderr.lock();
+    let format = if args.json {
+        Format::Json
+    } else {
+        Format::Text
+    };
 
-            if let Err(err) = print(result, &mut stdout_handle, &mut stderr_handle) {
-                log::error!("Failed to print output: {err}");
-                std::process::exit(1);
-            }
+    // An error raised before dispatch — an unreadable domain, a rejected flag
+    // combination — is a command failure like any other. It used to go out as a
+    // tracing line, which under `--json` would hand a consumer prose where it
+    // expects an object.
+    let result = match cli::init(args).await {
+        Ok(result) => result,
+        Err(err) => Std::Err(err),
+    };
 
-            if failed {
-                std::process::exit(1);
-            }
-        }
-        Err(err) => {
-            log::error!("Failed to run command: {err}");
-            std::process::exit(1);
-        }
+    let failed = matches!(&result, Std::Err(_));
+    let stdout = io::stdout();
+    let stderr = io::stderr();
+    let mut stdout_handle = stdout.lock();
+    let mut stderr_handle = stderr.lock();
+
+    if let Err(err) = print(result, format, &mut stdout_handle, &mut stderr_handle) {
+        log::error!("Failed to print output: {err}");
+        std::process::exit(1);
+    }
+
+    if failed {
+        std::process::exit(1);
     }
 }
 
