@@ -52,6 +52,12 @@
   outline-offset: var(--q-focus-outlineOffset);
 }
 
+/* A box-shaped hole, matching the rows'. A group with nothing to select still
+ * has to start its name on the same x as one that has. */
+.nobox {
+  flex: 0 0 17px;
+}
+
 /* Monospace, because it is a path fragment and the rows under it are paths too.
  * If the rows ever stop being monospace, this follows them — two typefaces
  * alternating down one list is worse than either. */

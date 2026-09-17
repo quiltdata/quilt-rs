@@ -8,6 +8,9 @@
 .root {
   display: flex;
   align-items: center;
+  /* Between the label and the trailing menu. The label has its own gap inside;
+   * without this one the size and the dots touch. */
+  gap: var(--q-space-2);
   /* Fills its container and truncates inside, at any width — a row's job, not
    * its parent's. As a flex item without this it sizes to content, and a flex
    * item's automatic minimum is its max-content width, so a long path would push

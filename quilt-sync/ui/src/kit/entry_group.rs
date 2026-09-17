@@ -13,6 +13,14 @@
 //! grouping sparing the DOM, and a hidden subtree is still built — so hiding with
 //! CSS would have made that argument false while looking identical.
 //!
+//! # A group with nothing to select carries no box
+//!
+//! Only a downloadable row has a checkbox, so a group whose files are all
+//! present has none to tick. Its heading box would be a control that cannot act
+//! — the dead control [`Select`](super::Select) already refuses to be. Pass no
+//! [`GroupSelection`] and the column stays open so the names still line up, but
+//! nothing is drawn in it.
+//!
 //! # The heading cannot be a `<label>`
 //!
 //! It holds the disclosure `<button>`, and a `<label>` may not contain another
@@ -29,6 +37,28 @@ use super::icons;
 
 stylance::import_crate_style!(style, "src/kit/entry_group.module.scss");
 
+/// A group's tick: where its selectable rows stand, and what to do when the
+/// heading box moves.
+///
+/// A group has one exactly when at least one row under it can be downloaded.
+/// Same shape as [`EntrySelection`](super::EntrySelection), and for the same
+/// reason: there is no way to say "selectable" without saying what it means.
+#[derive(Clone, Copy)]
+pub struct GroupSelection {
+    pub state: Signal<CheckState>,
+    pub on_toggle: Callback<bool>,
+}
+
+impl GroupSelection {
+    #[must_use]
+    pub fn new(state: impl Into<Signal<CheckState>>, on_toggle: Callback<bool>) -> Self {
+        Self {
+            state: state.into(),
+            on_toggle,
+        }
+    }
+}
+
 #[component]
 pub fn EntryGroup(
     /// The folder this run of rows shares.
@@ -39,10 +69,10 @@ pub fn EntryGroup(
     #[prop(into)]
     count: Signal<usize>,
     open: RwSignal<bool>,
-    /// Off, On, or Mixed across the group's **selectable** rows.
-    #[prop(into)]
-    state: Signal<CheckState>,
-    on_toggle: impl Fn(bool) + 'static,
+    /// Present when at least one row under this heading can be downloaded.
+    /// Absent draws no box at all.
+    #[prop(optional)]
+    selection: Option<GroupSelection>,
     children: ChildrenFn,
 ) -> impl IntoView {
     let full_name = name.clone();
@@ -64,7 +94,19 @@ pub fn EntryGroup(
                 >
                     {move || if open.get() { icons::chevron_down() } else { icons::chevron_right() }}
                 </button>
-                <Checkbox state=state on_toggle=on_toggle aria_label=box_label />
+                {match selection {
+                    Some(GroupSelection { state, on_toggle }) => {
+                        view! {
+                            <Checkbox
+                                state=state
+                                on_toggle=move |next| on_toggle.run(next)
+                                aria_label=box_label
+                            />
+                        }
+                            .into_any()
+                    }
+                    None => view! { <span class=style::nobox /> }.into_any(),
+                }}
                 <span class=style::name title=full_name>{name}</span>
                 <span class=style::count>{move || count.get()}</span>
             </div>

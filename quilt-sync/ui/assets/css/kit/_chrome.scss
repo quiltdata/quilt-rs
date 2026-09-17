@@ -183,6 +183,10 @@ body {
 
 .g-inline { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* A column inside a cell, whose body is a flex row. For the cells that hold
+ * several rows with no container of their own. */
+.g-stack { display: flex; flex-direction: column; width: 100%; min-width: 0; }
+
 /* A stack of list rows inside ONE cell. `.g-cell__body` is a flex row, which is
  * right for putting controls side by side and wrong for a list — without this,
  * several rows in one cell lay out shoulder to shoulder and overflow. `width: 100%`
