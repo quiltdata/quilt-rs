@@ -33,3 +33,13 @@
   font-weight: 400;
   letter-spacing: 0;
 }
+
+/* Proximity has to do the grouping, and it cannot while both gaps are equal: a
+ * label sitting the same distance from the section above it as from its own
+ * content belongs to neither. So the space BETWEEN two sections is double the
+ * space INSIDE one — `gap` already contributes `space-2`, and this adds the
+ * second. Weight alone would not carry it; the nested label is deliberately the
+ * quieter of the two. */
+.root > .root + .root {
+  margin-top: var(--q-space-2);
+}
