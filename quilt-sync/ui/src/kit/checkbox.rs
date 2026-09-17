@@ -103,6 +103,51 @@ pub fn Checkbox(
 mod tests {
     use super::*;
 
+    /// This component's own stylesheet. The rules below are about layout, and
+    /// the wasm harness mounts no stylesheet at all — `element_from_point` in a
+    /// document with no CSS reports nothing, so the only place this is checkable
+    /// is the source. `sync_scope.rs` reads its own file for the same reason.
+    const STYLES: &str = include_str!("checkbox.module.scss");
+
+    /// The `.input` rule, without the rules that merely mention it.
+    fn input_rule() -> &'static str {
+        let start = STYLES.find("\n.input {").expect("an `.input` rule") + "\n.input {".len();
+        let end = start + STYLES[start..].find('}').expect("its closing brace");
+        &STYLES[start..end]
+    }
+
+    /// **A mouse aimed at the box must reach the input.**
+    ///
+    /// This shipped broken once. The input was parked off-screen, so the drawn
+    /// box was only clickable through a wrapping `<label>` — and the two callers
+    /// that cannot have one, a group heading holding a `<button>` and any
+    /// standalone box, took focus and ignored the mouse. It survived a browser
+    /// check because that check dispatched a click *at the input*, which passes
+    /// whether or not the input can be hit.
+    #[test]
+    fn the_input_covers_the_box_it_draws() {
+        let rule = input_rule();
+        for property in ["position: absolute", "inset: 0", "opacity: 0"] {
+            assert!(
+                rule.contains(property),
+                "`.input` must carry `{property}` — without it the drawn box is \
+                 paint the pointer passes straight through:\n{rule}",
+            );
+        }
+    }
+
+    /// The specific shape of the bug, named so nobody reintroduces it by
+    /// reaching for the usual visually-hidden recipe.
+    #[test]
+    fn the_input_is_not_hidden_off_screen() {
+        let rule = input_rule();
+        assert!(
+            !rule.contains("clip-path"),
+            "a clipped input is unreachable by pointer; it must be transparent \
+             and in place instead:\n{rule}",
+        );
+    }
+
     /// A click never asks for `Mixed`, and asks for `true` from both of the
     /// states that are not `On`.
     #[test]

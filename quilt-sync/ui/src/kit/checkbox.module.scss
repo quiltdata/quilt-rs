@@ -1,28 +1,45 @@
 /*
- * Checkbox. The real input, off-screen; a drawn box beside it.
+ * Checkbox. The real input, invisible and stretched over the box that is drawn
+ * in its place.
  *
- * Off-screen rather than `appearance: none` with a pseudo-element, because a
- * pseudo-element on a replaced input is unreliable across the three webviews
- * and this needs none. These rules began as `ToggleRow`'s and were lifted here
- * unchanged, so the toggles look exactly as they did.
+ * Not `appearance: none` with a pseudo-element, because a pseudo-element on a
+ * replaced input is unreliable across the three webviews. Not off-screen
+ * either, which is where these rules started: an off-screen input is only
+ * clickable through a `<label>`, and the two callers that cannot be wrapped in
+ * one — a group heading holding a disclosure `<button>`, and any standalone box
+ * — were left with a control that took focus and ignored the mouse.
+ *
+ * `Select` reached the same answer for the same reason: "the select itself is
+ * stretched over the whole wrapper at opacity 0 — a wrapping label would not
+ * have done it".
+ *
+ * Inside a `<label>` this still fires once. A label forwards a click to its
+ * control, and a click that lands on the control was never forwarded.
  */
 
 .root {
+  position: relative;
   display: inline-flex;
   flex: none;
 }
 
-/* Focusable, labelled, in the accessibility tree — but not drawn. */
+/* Focusable, labelled, in the accessibility tree, and over the box it draws —
+ * but invisible. */
 .input {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
+  opacity: 0;
+  cursor: pointer;
+  /* Above the indicator, so the pointer meets the input and not the paint. */
+  z-index: 1;
+}
+
+.input:disabled {
+  cursor: not-allowed;
 }
 
 .indicator {

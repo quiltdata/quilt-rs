@@ -47,12 +47,17 @@
 }
 
 /* A rule, not a gap: the separated group is a different kind of command, and a
- * gap alone reads as loose spacing. */
+ * gap alone reads as loose spacing.
+ *
+ * The spacing belongs to the rule, not to the item — the item keeps the same
+ * padding as every other one, so the last command is not visibly taller than
+ * the rest. Square top corners because a rounded corner over a border shows the
+ * border passing behind it. */
 .item.separated {
   margin-top: var(--q-space-1);
   border-top: 1px solid var(--q-borderColor-muted);
   border-radius: 0 0 var(--q-radius) var(--q-radius);
-  padding-top: var(--q-space-2);
+  padding-top: var(--q-space-1);
 }
 
 /* Why the command is unavailable, under it. Wraps: it is a sentence, and half a

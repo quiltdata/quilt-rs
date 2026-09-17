@@ -166,7 +166,7 @@ pub fn ActionMenu(
         .collect_view();
 
     view! {
-        <AnchoredOverlay trigger=trigger open=open aria_label=surface_label>
+        <AnchoredOverlay trigger=trigger open=open aria_label=surface_label tight=true>
             <div class=style::list>{items.clone()}</div>
         </AnchoredOverlay>
     }

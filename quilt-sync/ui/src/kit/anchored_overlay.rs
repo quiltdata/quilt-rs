@@ -71,11 +71,21 @@ pub fn AnchoredOverlay(
     /// in the top layer and no longer a descendant in the visual tree.
     #[prop(into)]
     aria_label: String,
+    /// Drop the surface's own padding, for contents that pad themselves and
+    /// need to reach its edge — a menu's items, whose hover highlight would
+    /// otherwise stop short of the surface it is drawn inside.
+    #[prop(optional)]
+    tight: bool,
     /// The surface's contents. Rendered once and kept: the popover hides and
     /// shows the same subtree, so a caller whose body changes drives it with a
     /// signal rather than expecting a rebuild.
     children: Children,
 ) -> impl IntoView {
+    let surface_class = if tight {
+        format!("{} {}", style::surface, style::tight)
+    } else {
+        String::from(style::surface)
+    };
     let anchor: NodeRef<leptos::html::Div> = NodeRef::new();
     let surface: NodeRef<leptos::html::Div> = NodeRef::new();
     let surface_id = unique_id("overlay");
@@ -150,7 +160,7 @@ pub fn AnchoredOverlay(
             <div
                 node_ref=surface
                 id=surface_id
-                class=style::surface
+                class=surface_class
                 // `auto`, not `manual`: `auto` is the one that brings light
                 // dismiss and Escape with it, which is the entire reason for
                 // using the platform's popover rather than a div.
