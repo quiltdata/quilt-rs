@@ -38,10 +38,16 @@ fn settled_group(open: RwSignal<bool>) -> AnyView {
     .into_any()
 }
 
-/// Root-level files, which are deliberately **not** a group: `(root)` names a
-/// directory that does not exist and reads as a real folder, so they render
-/// first and ungrouped. The absence of a heading is the design, not a gap.
-fn root_files(pending: RwSignal<bool>) -> AnyView {
+/// Root-level files above a group, which is the arrangement verdict 14
+/// describes: they render **first** and ungrouped, because `(root)` names a
+/// directory that does not exist and reads as a real folder.
+///
+/// Shown with a group under them rather than alone, because alone is
+/// misleading — the rows carry an empty disclosure gutter and a checkbox
+/// column, and with no heading anywhere in the cell those two columns look like
+/// an indent nobody asked for. They are there so a root file's box lands on the
+/// same x as a grouped file's, and that is only visible when both are present.
+fn root_files(pending: RwSignal<bool>, grouped: RwSignal<bool>) -> AnyView {
     view! {
         // A column, because a cell's body is a flex ROW and three loose rows
         // would sit beside each other. An `EntryGroup` brings its own.
@@ -59,6 +65,10 @@ fn root_files(pending: RwSignal<bool>) -> AnyView {
                     Callback::new(move |next| pending.set(next)),
                 )
             />
+            <EntryGroup name="raw/" count=Signal::derive(|| 2) open=grouped>
+                <EntryRow name="plate-06.csv" size="4.0 MB" />
+                <EntryRow name="plate-07.csv" size="4.1 MB" />
+            </EntryGroup>
         </div>
     }
     .into_any()
@@ -89,6 +99,7 @@ pub fn EntryGroupStories() -> impl IntoView {
     let settled = RwSignal::new(true);
     let pending = RwSignal::new(false);
     let collapsed_row = RwSignal::new(false);
+    let grouped = RwSignal::new(true);
     // Three real ticks, so the group's box is derived from its rows rather than
     // asserted beside them — a heading that disagrees with what is under it is
     // the mock that teaches the wrong thing.
@@ -105,6 +116,15 @@ pub fn EntryGroupStories() -> impl IntoView {
         _ => CheckState::Mixed,
     });
 
+    let picks = GroupSelection::new(
+        state,
+        Callback::new(move |next: bool| {
+            for row in rows {
+                row.set(next);
+            }
+        }),
+    );
+
     let selection = move |index: usize| {
         let row = rows[index];
         EntrySelection::new(row, Callback::new(move |next| row.set(next)))
@@ -116,19 +136,7 @@ pub fn EntryGroupStories() -> impl IntoView {
             note=NOTE
         >
             <Cell full=true label="expanded · tri-state box — tick a row, then the heading">
-                <EntryGroup
-                    name="raw/"
-                    count=Signal::derive(|| 3)
-                    open=open
-                    selection=GroupSelection::new(
-                        state,
-                        Callback::new(move |next: bool| {
-                            for row in rows {
-                                row.set(next);
-                            }
-                        }),
-                    )
-                >
+                <EntryGroup name="raw/" count=Signal::derive(|| 3) open=open selection=picks>
                     <EntryRow
                         name="plate-06.csv"
                         state="Not downloaded"
@@ -176,8 +184,8 @@ pub fn EntryGroupStories() -> impl IntoView {
             <Cell full=true label="every file already here — nothing to select, so no box">
                 {settled_group(settled)}
             </Cell>
-            <Cell full=true label="everything at the root — verdict 14 draws no heading at all">
-                {root_files(pending)}
+            <Cell full=true label="root files first, then a group — one column, and no (root) heading">
+                {root_files(pending, grouped)}
             </Cell>
             <Cell full=true label="sticky, against a short scroll">
                 <div style="width:100%;max-height:140px;overflow-y:auto">
