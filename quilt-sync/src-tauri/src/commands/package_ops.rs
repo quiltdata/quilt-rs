@@ -769,7 +769,7 @@ pub enum RemoteBanner {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePackageResult {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     /// `None` when the requested revision was installed/opened normally.
     pub banner: Option<RemoteBanner>,
 }
@@ -802,7 +802,7 @@ pub async fn handle_remote_package(
     let s3_uri: quilt_uri::S3PackageUri = uri
         .parse()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
-    let namespace = s3_uri.namespace.to_string();
+    let namespace = s3_uri.namespace.clone();
     let _ = &tracing;
 
     let outcome = model::install_package_only(&*m, &s3_uri)

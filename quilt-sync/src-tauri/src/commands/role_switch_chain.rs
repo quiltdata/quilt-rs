@@ -310,7 +310,7 @@ fn row<'a>(
 ) -> &'a InstalledPackageListItem {
     packages
         .iter()
-        .find(|item| item.namespace == namespace)
+        .find(|item| item.namespace.to_string() == namespace)
         .unwrap_or_else(|| panic!("{namespace} in roster"))
 }
 
@@ -539,7 +539,7 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         1,
         "only the denied namespace pauses, got {paused:?}"
     );
-    assert_eq!(paused[0].namespace, "team/locked");
+    assert_eq!(paused[0].namespace.to_string(), "team/locked");
     assert_eq!(paused[0].reason, "roleDenied");
     assert_eq!(
         paused[0].message.as_deref(),

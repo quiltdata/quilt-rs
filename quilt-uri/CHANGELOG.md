@@ -8,6 +8,13 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.4.1-alpha1] - 2026-09-17
+
+### Added
+
+- `Namespace::prefix()` and `Namespace::name()` lend the halves the type already validated. The struct had no `impl` block at all, so a caller wanting either had to split `Display`'s output — the split `try_from` has already done and already rejected a second slash for (<https://github.com/quiltdata/quilt-rs/pull/946>)
+- `Namespace` derives `Hash`, so it can key a map. A caller with a namespace per row previously had to key by a string spelling of it (<https://github.com/quiltdata/quilt-rs/pull/946>)
+
 ## [v0.4.0] - 2026-07-22
 
 ### Changed
