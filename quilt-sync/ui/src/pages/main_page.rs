@@ -429,28 +429,115 @@ pub(super) fn list_class() -> &'static str {
     style::list
 }
 
+/// Keyed on the namespace. Filtering drops rows out of the middle of the list,
+/// and a positional diff patches every node below the gap into a different
+/// logical row — rebuilding each row's three derived signals with it.
+///
+/// `packages` is a `Signal` so the rows reach the list without a closure above
+/// it being rebuilt to deliver them.
 #[component]
-fn PackageList(packages: Vec<ListRowData>, store: PackageStore) -> impl IntoView {
-    let rows = packages
-        .into_iter()
-        .filter_map(|row_data| {
-            // A namespace the store was not seeded with cannot happen from one
-            // payload — the rows and the store are built from the same packages —
-            // and drawing nothing is not worth a panic. The counter is unaffected
-            // either way: it counts the calls the resolve fired, not the rows.
-            let row = store.row(&row_data.namespace)?;
-            Some(view! {
-                <li>
-                    <PackageListRow
-                        namespace=row_data.namespace
-                        row=row
-                        changed_at=row_data.changed_at
-                    />
-                </li>
-            })
+fn PackageList(packages: Signal<Vec<ListRowData>>, store: PackageStore) -> impl IntoView {
+    view! {
+        <ul class=style::rows role="list">
+            <For
+                each=move || packages.get()
+                key=|row_data: &ListRowData| row_data.namespace.clone()
+                children=move |row_data| {
+                    // A namespace the store was not seeded with cannot happen from
+                    // one payload — the rows and the store are built from the same
+                    // packages — and drawing nothing is not worth a panic. The
+                    // counter is unaffected either way: it counts the calls the
+                    // resolve fired, not the rows.
+                    match store.row(&row_data.namespace) {
+                        Some(row) => {
+                            view! {
+                                <li>
+                                    <PackageListRow
+                                        namespace=row_data.namespace
+                                        row=row
+                                        changed_at=row_data.changed_at
+                                    />
+                                </li>
+                            }
+                                .into_any()
+                        }
+                        None => ().into_any(),
+                    }
+                }
+            />
+        </ul>
+    }
+}
+
+/// What the packages card draws. Held in a `Memo`, so only a change of shape
+/// re-renders the card.
+///
+/// That is load-bearing: a reactive closure's `rebuild` discards its whole
+/// subtree, so a `<For>` under a closure that re-runs per keystroke is destroyed
+/// before its key can do anything. The queue's `Shape` stands on the same fact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListShape {
+    /// No packages at all. Distinct from the empty search below: different
+    /// words, and the only one of the two with an action.
+    EmptyRoster,
+    /// Packages, none of them matching what was typed.
+    NoMatch,
+    /// The groups and their rows.
+    Groups,
+}
+
+/// One group's heading and its rows, built once per group title by the keyed
+/// `<For>` above.
+///
+/// The rows come from `arranged` rather than from the value the `<For>` hands
+/// in: a keyed child is built once per key, so a captured membership would never
+/// narrow.
+fn package_group(
+    title: Option<String>,
+    arranged: Memo<Vec<PackageGroup>>,
+    group_by: Signal<String>,
+    store: PackageStore,
+) -> AnyView {
+    let key = title.clone();
+    let rows = Signal::derive(move || {
+        arranged.with(|groups| {
+            groups
+                .iter()
+                .find(|group| group.title == key)
+                .map(|group| group.rows.clone())
+                .unwrap_or_default()
         })
-        .collect_view();
-    view! { <ul class=style::rows role="list">{rows}</ul> }
+    });
+    // The heading is its own reactive node: `group_annotation` reads the store's
+    // settled signals, and keeping that read here is what limits a settle to this
+    // one heading.
+    let heading = title.map(|heading| {
+        view! {
+            {move || {
+                let group = PackageGroup {
+                    title: Some(heading.clone()),
+                    rows: rows.get(),
+                };
+                // The count is the length of the rows that follow, always,
+                // including one. Never written by hand.
+                let count = group.rows.len();
+                let note = group_annotation(&group, store, &group_by.get());
+                let heading = heading.clone();
+                match note {
+                    Some(note) => {
+                        view! { <GroupHeading title=heading count=count annotation=note /> }
+                            .into_any()
+                    }
+                    None => view! { <GroupHeading title=heading count=count /> }.into_any(),
+                }
+            }}
+        }
+    });
+    view! {
+        {heading}
+        <PackageList packages=rows store=store />
+    }
+    .into_any()
 }
 
 /// The one cause every row in this group shares, or `None`.
@@ -960,44 +1047,69 @@ fn MainPageRegions(
                                     // `FnOnce`, and this fallback is rebuilt every
                                     // time the reader comes back to the view.
                                     let rows = rows.clone();
+                                    // The empty roster is a property of the
+                                    // payload, not of what a search left standing.
+                                    let roster_empty = rows.is_empty();
+                                    // Filter, then group, then sort within each
+                                    // group, in one place. Reads `query`,
+                                    // `group_packages_by` and `sort_by` and no
+                                    // store signal, so a settle never re-runs it.
+                                    //
+                                    // A `Memo`: the lists below read a value that
+                                    // is diffed rather than a subtree that is
+                                    // rebuilt (see [`ListShape`]).
+                                    let arranged = Memo::new(move |_| {
+                                        let text = query.get();
+                                        let filtered = grouping::filter_packages(
+                                            rows.clone(),
+                                            &text,
+                                        );
+                                        let group_by = group_packages_by.get();
+                                        let sort_by = sort_by.get();
+                                        let mut groups = grouping::group_packages(
+                                            filtered,
+                                            &group_by,
+                                        );
+                                        for group in &mut groups {
+                                            grouping::sort_within(&mut group.rows, &sort_by);
+                                        }
+                                        groups
+                                    });
+                                    // `group_packages` answers the `None` axis
+                                    // with one empty group, so "nothing matched"
+                                    // is every group empty rather than no group.
+                                    let shape = Memo::new(move |_| {
+                                        if roster_empty
+                                            && query.with(|text| text.trim().is_empty())
+                                        {
+                                            ListShape::EmptyRoster
+                                        } else if arranged
+                                            .with(|groups| {
+                                                groups.iter().all(|group| group.rows.is_empty())
+                                            })
+                                        {
+                                            ListShape::NoMatch
+                                        } else {
+                                            ListShape::Groups
+                                        }
+                                    });
                                     view! {
                                         <Card label="Packages">
-                                            // A search/group/sort re-arrangement, downstream
-                                            // of both the seed and the resolve's call
-                                            // loop above: this closure reads `query`,
-                                            // `group_packages_by` and `sort_by` and no
-                                            // store signal, so a settle (which writes
-                                            // only per-row signals) never re-runs it and
-                                            // the list is never rebuilt for that reason
-                                            // (§Loading).
-                                            //
-                                            // R4's order: filter, then group, then sort
-                                            // within each group. A heading and its rows
-                                            // are flat siblings here, never wrapped in a
-                                            // `div` per group — `Card`'s own
-                                            // `.body > * + *` rule
+                                            // A heading and its rows are flat siblings
+                                            // here, never wrapped in a `div` per group
+                                            // — `Card`'s own `.body > * + *` rule
                                             // (`kit/card.module.scss`) spaces any two
-                                            // direct children, and a wrapper would defeat
-                                            // that.
-                                            {move || {
-                                                let text = query.get();
-                                                let filtered = grouping::filter_packages(
-                                                    rows.clone(),
-                                                    &text,
-                                                );
-                                                if rows.is_empty() && text.trim().is_empty() {
-                                                    // qhq-8mgw.48: the empty ROSTER, which is
-                                                    // not the empty search below — different
-                                                    // words, and the only one of the two that
-                                                    // carries an action. A reader who has
-                                                    // typed something is answered about what
-                                                    // they typed, which is why this wants an
-                                                    // empty query and not merely no rows.
-                                                    //
-                                                    // Words and action are the gallery's, and
-                                                    // the action opens the dialog plan 8 built
-                                                    // — the scene predates it and drew an
-                                                    // inert button.
+                                            // direct children, and a wrapper would
+                                            // defeat that.
+                                            {move || match shape.get() {
+                                                ListShape::EmptyRoster => {
+                                                    // The empty roster, not the empty search
+                                                    // below — different words, and the only
+                                                    // one of the two with an action. A reader
+                                                    // who has typed something is answered
+                                                    // about what they typed, which is why
+                                                    // this wants an empty query and not
+                                                    // merely no rows.
                                                     view! {
                                                         <Blankslate
                                                             heading="No packages yet"
@@ -1014,86 +1126,45 @@ fn MainPageRegions(
                                                         />
                                                     }
                                                         .into_any()
-                                                } else if filtered.is_empty() && !text.trim().is_empty() {
+                                                }
+                                                ListShape::NoMatch => {
+                                                    // Its own closure: the words carry the
+                                                    // query, so they follow every keystroke
+                                                    // while the shape stands still.
                                                     view! {
-                                                        <Blankslate
-                                                            heading=format!(
-                                                                "No packages match \u{201c}{}\u{201d}",
-                                                                text.trim(),
-                                                            )
-                                                            description="Search covers the names of packages installed on this machine."
-                                                        />
+                                                        {move || {
+                                                            let text = query.get();
+                                                            view! {
+                                                                <Blankslate
+                                                                    heading=format!(
+                                                                        "No packages match \u{201c}{}\u{201d}",
+                                                                        text.trim(),
+                                                                    )
+                                                                    description="Search covers the names of packages installed on this machine."
+                                                                />
+                                                            }
+                                                        }}
                                                     }
                                                         .into_any()
-                                                } else {
-                                                    let group_by = group_packages_by.get();
-                                                    let mut groups = grouping::group_packages(
-                                                        filtered,
-                                                        &group_by,
-                                                    );
-                                                    for group in &mut groups {
-                                                        grouping::sort_within(&mut group.rows, &sort_by.get());
-                                                    }
-                                                    groups
-                                                        .into_iter()
-                                                        .map(|group| {
-                                                            // R1: never written by hand — the
-                                                            // count is the length of the rows
-                                                            // that follow, always, including one.
-                                                            let count = group.rows.len();
-                                                            // The heading is its own reactive
-                                                            // node, unlike the rest of this
-                                                            // closure (which reads only
-                                                            // `query`/`group_packages_by`/
-                                                            // `sort_by`): `group_annotation` reads
-                                                            // `PackageStore`'s settled signals, and
-                                                            // isolating that read here — rather
-                                                            // than in the closure that builds
-                                                            // `groups` — is what keeps a settle
-                                                            // from rebuilding anything but this one
-                                                            // heading.
-                                                            let heading = group.title.clone().map(|title| {
-                                                                let for_annotation = PackageGroup {
-                                                                    title: Some(title.clone()),
-                                                                    rows: group.rows.clone(),
-                                                                };
-                                                                let group_by = group_by.clone();
-                                                                view! {
-                                                                    {move || {
-                                                                        match group_annotation(
-                                                                            &for_annotation,
-                                                                            store,
-                                                                            &group_by,
-                                                                        ) {
-                                                                            Some(note) => {
-                                                                                view! {
-                                                                                    <GroupHeading
-                                                                                        title=title.clone()
-                                                                                        count=count
-                                                                                        annotation=note
-                                                                                    />
-                                                                                }
-                                                                                    .into_any()
-                                                                            }
-                                                                            None => {
-                                                                                view! {
-                                                                                    <GroupHeading
-                                                                                        title=title.clone()
-                                                                                        count=count
-                                                                                    />
-                                                                                }
-                                                                                    .into_any()
-                                                                            }
-                                                                        }
-                                                                    }}
-                                                                }
-                                                            });
-                                                            view! {
-                                                                {heading}
-                                                                <PackageList packages=group.rows store=store />
+                                                }
+                                                ListShape::Groups => {
+                                                    // Keyed on the title: a re-arrangement
+                                                    // reorders the groups, and a search
+                                                    // empties some out of existence.
+                                                    view! {
+                                                        <For
+                                                            each=move || arranged.get()
+                                                            key=|group: &PackageGroup| group.title.clone()
+                                                            children=move |group| {
+                                                                package_group(
+                                                                    group.title,
+                                                                    arranged,
+                                                                    group_packages_by.into(),
+                                                                    store,
+                                                                )
                                                             }
-                                                        })
-                                                        .collect_view()
+                                                        />
+                                                    }
                                                         .into_any()
                                                 }
                                             }}
@@ -1526,7 +1597,9 @@ mod tests {
         // nothing list-wide.
         let light = vec![pkg("user/plate-07", PackageState::Latest)];
         let store = PackageStore::seed(&light);
-        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
         assert!(el.text_content().unwrap().contains("Latest"));
 
         store
@@ -1590,7 +1663,9 @@ mod tests {
         ];
         let store = PackageStore::seed(&light);
 
-        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
         sleep_ms(50).await;
 
         assert_eq!(
@@ -3418,7 +3493,9 @@ mod tests {
     fn a_row_shows_the_list_wording_for_its_state() {
         let light = vec![pkg("user/plate-07", PackageState::Behind)];
         let store = PackageStore::seed(&light);
-        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
         let text = el.text_content().unwrap();
         assert!(text.contains("Not the latest"), "got: {text}");
         assert!(
@@ -3431,7 +3508,9 @@ mod tests {
     fn a_row_links_to_its_own_package() {
         let light = vec![pkg("user/plate-07", PackageState::Latest)];
         let store = PackageStore::seed(&light);
-        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
         let href = el
             .query_selector("a[href*=installed-package]")
             .unwrap()
@@ -3507,7 +3586,9 @@ mod tests {
     fn a_provisional_row_is_marked_provisional() {
         let light = vec![pkg("user/a", PackageState::Latest)];
         let store = PackageStore::seed(&light);
-        let el = mount(move || view! { <PackageList packages=rows_of(&light) store=store /> });
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
         assert!(
             el.query_selector("[class*=provisional]").unwrap().is_some(),
             "the light phase's guess is drawn dashed until the heavy phase confirms it"
@@ -4292,6 +4373,73 @@ mod tests {
             package_reads.get_untracked(),
             packages_before,
             "and nothing else does"
+        );
+    }
+
+    /// The `li` drawn for one row, found by the text it carries. Hands back the
+    /// element, since node identity is what the two tests below assert.
+    fn row_li(el: &web_sys::Element, needle: &str) -> web_sys::Element {
+        let items = el.query_selector_all("li").unwrap();
+        for i in 0..items.length() {
+            let item: web_sys::Element = items.item(i).unwrap().dyn_into().unwrap();
+            if item.text_content().unwrap_or_default().contains(needle) {
+                return item;
+            }
+        }
+        panic!("no row carrying {needle}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_narrowing_search_moves_the_row_it_leaves_standing_rather_than_rebuilding_it() {
+        // Dropping the row ABOVE the survivor is what tells the two diffs apart:
+        // a positional diff patches `plate-07`'s node into `plate-08` and
+        // discards `plate-08`'s own, rebuilding a row the search kept.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(two_packages_all_latest()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &two_packages_all_latest());
+        leptos::task::tick().await;
+
+        let before = row_li(&el, "plate-08");
+        type_search(&el, "plate-08");
+        sleep_ms(20).await;
+
+        let after = row_li(&el, "plate-08");
+        assert!(
+            before.is_same_node(Some(&after)),
+            "the surviving row keeps its node"
+        );
+        assert_eq!(
+            el.query_selector_all("li").unwrap().length(),
+            1,
+            "and the row that stopped matching is gone"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_narrowing_feed_search_moves_the_row_it_leaves_standing_too() {
+        // The feed's half, keyed on namespace and path together.
+        let el = mount_regions_with_files(vec![
+            file_data("runs/a/one.csv", "user/alpha", 1_000.0),
+            file_data("runs/b/two.csv", "user/alpha", 2_000.0),
+        ]);
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let before = row_li(&el, "two.csv");
+        type_search(&el, "two.csv");
+        sleep_ms(20).await;
+
+        let after = row_li(&el, "two.csv");
+        assert!(
+            before.is_same_node(Some(&after)),
+            "the surviving row keeps its node"
         );
     }
 }
