@@ -41,11 +41,16 @@ use leptos::prelude::*;
 stylance::import_crate_style!(style, "src/kit/state_label.module.scss");
 
 /// How loudly a state is stated.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// `Neutral` is the default because it is the one that claims nothing: a caller
+/// that forgets to choose reports a fact rather than raising an alarm or
+/// promising everything is fine.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum StateTone {
     /// Nothing to do. `Latest`.
     Success,
     /// A fact, not a problem. `2 files changed`.
+    #[default]
     Neutral,
     /// Waiting on you. `Not the latest`, `Not published yet`.
     Attention,

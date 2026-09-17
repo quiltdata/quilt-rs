@@ -42,20 +42,32 @@ pub(crate) use quilt_sync_ui::kit;
 // One module per component. Adding a story means adding a file here and one line
 // in `Gallery` below — there is no registry to keep in step.
 mod gallery {
+    pub mod action_menu;
+    pub mod anchored_overlay;
+    pub mod back_link;
     pub mod button;
     pub mod card;
+    pub mod checkbox;
+    pub mod choice_group;
     pub mod countdown;
+    pub mod entry_group;
+    pub mod entry_row;
     pub mod feedback;
+    pub mod file_list;
+    pub mod file_toolbar;
     pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
     pub mod packages;
     pub mod page;
+    pub mod pane_section;
     pub mod queue;
     pub mod recent_files;
+    pub mod revision_row;
     pub mod search_input;
     pub mod segmented_control;
     pub mod select;
+    pub mod select_all;
     pub mod skeleton;
     pub mod state_label;
     pub mod state_strip;
@@ -65,11 +77,20 @@ mod gallery {
 
 use leptos::prelude::*;
 
+use crate::gallery::action_menu::ActionMenuStories;
+use crate::gallery::anchored_overlay::AnchoredOverlayStories;
+use crate::gallery::back_link::BackLinkStories;
 use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
+use crate::gallery::checkbox::CheckboxStories;
+use crate::gallery::choice_group::ChoiceGroupStories;
 use crate::gallery::countdown::CountdownStories;
+use crate::gallery::entry_group::EntryGroupStories;
+use crate::gallery::entry_row::EntryRowStories;
 use crate::gallery::feedback::BannerScene;
 use crate::gallery::feedback::FeedbackStories;
+use crate::gallery::file_list::FileListStories;
+use crate::gallery::file_toolbar::FileToolbarStories;
 use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
@@ -77,13 +98,16 @@ use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
 use crate::gallery::page::PageScene;
+use crate::gallery::pane_section::PaneSectionStories;
 use crate::gallery::queue::QueueScene;
 use crate::gallery::queue::QueueStories;
 use crate::gallery::recent_files::RecentFilesScene;
 use crate::gallery::recent_files::RecentFilesStories;
+use crate::gallery::revision_row::RevisionRowStories;
 use crate::gallery::search_input::SearchInputStories;
 use crate::gallery::segmented_control::SegmentedControlStories;
 use crate::gallery::select::SelectStories;
+use crate::gallery::select_all::SelectAllStories;
 use crate::gallery::skeleton::SkeletonStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
@@ -118,69 +142,106 @@ fn Gallery() -> impl IntoView {
     // a pixel taller than a Button, or that two components disagree about a
     // baseline. The scenes exist precisely to compare, and Ctrl+F stops working
     // across hidden panels. So the page stays one scroll and gains a way to jump.
-    let sections: Vec<(&'static str, AnyView)> = vec![
-        ("Button", view! { <ButtonStories /> }.into_any()),
-        ("Select", view! { <SelectStories /> }.into_any()),
-        ("Card", view! { <CardStories /> }.into_any()),
-        ("ToggleRow", view! { <ToggleRowStories /> }.into_any()),
-        ("Countdown", view! { <CountdownStories /> }.into_any()),
-        ("HostRow", view! { <HostRowStories /> }.into_any()),
+    // One list, used twice: the index reads the labels, the page consumes the
+    // views. A second hardcoded list of section names would drift from this one
+    // the first time anybody added a component.
+    //
+    // Anchors rather than tabs. Tabs would show one component at a time, which
+    // costs the thing a design-system gallery is *for*: noticing that a Select is
+    // a pixel taller than a Button, or that two components disagree about a
+    // baseline. The scenes exist precisely to compare, and Ctrl+F stops working
+    // across hidden panels. So the page stays one scroll and gains a way to jump.
+    //
+    // The four tiers are what a section IS, not where it sits in a menu:
+    //
+    //   Core      one kit component, every state it can reach, no composition.
+    //   Combined  several kit components wired as the kit intends, no page data.
+    //   Scenes    one page REGION in one state, with fixture data.
+    //   Pages     a whole page at a real viewport.
+    //
+    // The tier is the heading, so a section's own label does not repeat it —
+    // `Scene · list toolbar` was the prefix doing a heading's job.
+    let groups: Vec<(&'static str, Vec<(&'static str, AnyView)>)> = vec![
         (
-            "SegmentedControl",
-            view! { <SegmentedControlStories /> }.into_any(),
-        ),
-        ("SearchInput", view! { <SearchInputStories /> }.into_any()),
-        ("StateLabel", view! { <StateLabelStories /> }.into_any()),
-        ("PackageRow", view! { <PackageRowStories /> }.into_any()),
-        ("SkeletonBox", view! { <SkeletonStories /> }.into_any()),
-        ("Feedback", view! { <FeedbackStories /> }.into_any()),
-        ("Forms", view! { <FormsStories /> }.into_any()),
-        ("Queue parts", view! { <QueueStories /> }.into_any()),
-        (
-            "Recent files parts",
-            view! { <RecentFilesStories /> }.into_any(),
-        ),
-        (
-            "Scene · the two dialogs",
-            view! { <DialogScene /> }.into_any(),
-        ),
-        (
-            "Scene · a banner in place",
-            view! { <BannerScene /> }.into_any(),
-        ),
-        (
-            "Scene · state strip",
-            view! { <StateStripScene /> }.into_any(),
-        ),
-        (
-            "Scene · autosync paused",
-            view! { <PausedScene /> }.into_any(),
-        ),
-        (
-            "Scene · a strip that could not load",
-            view! { <StripErrorScene /> }.into_any(),
-        ),
-        (
-            "Scene · list toolbar",
-            view! { <ListToolbarScene /> }.into_any(),
+            "Core",
+            vec![
+                ("Button", view! { <ButtonStories /> }.into_any()),
+                ("Select", view! { <SelectStories /> }.into_any()),
+                ("Card", view! { <CardStories /> }.into_any()),
+                ("ToggleRow", view! { <ToggleRowStories /> }.into_any()),
+                ("Countdown", view! { <CountdownStories /> }.into_any()),
+                ("HostRow", view! { <HostRowStories /> }.into_any()),
+                (
+                    "SegmentedControl",
+                    view! { <SegmentedControlStories /> }.into_any(),
+                ),
+                ("SearchInput", view! { <SearchInputStories /> }.into_any()),
+                ("StateLabel", view! { <StateLabelStories /> }.into_any()),
+                ("PackageRow", view! { <PackageRowStories /> }.into_any()),
+                ("SkeletonBox", view! { <SkeletonStories /> }.into_any()),
+                ("Feedback", view! { <FeedbackStories /> }.into_any()),
+                ("Forms", view! { <FormsStories /> }.into_any()),
+                ("Checkbox", view! { <CheckboxStories /> }.into_any()),
+                ("BackLink", view! { <BackLinkStories /> }.into_any()),
+                (
+                    "AnchoredOverlay",
+                    view! { <AnchoredOverlayStories /> }.into_any(),
+                ),
+                ("ActionMenu", view! { <ActionMenuStories /> }.into_any()),
+                ("PaneSection", view! { <PaneSectionStories /> }.into_any()),
+                ("RevisionRow", view! { <RevisionRowStories /> }.into_any()),
+                ("ChoiceGroup", view! { <ChoiceGroupStories /> }.into_any()),
+                ("SelectAll", view! { <SelectAllStories /> }.into_any()),
+                ("EntryRow", view! { <EntryRowStories /> }.into_any()),
+                ("EntryGroup", view! { <EntryGroupStories /> }.into_any()),
+            ],
         ),
         (
-            "Scene · recent files",
-            view! { <RecentFilesScene /> }.into_any(),
+            "Combined",
+            vec![
+                ("The file list", view! { <FileListStories /> }.into_any()),
+                (
+                    "The list toolbar",
+                    view! { <FileToolbarStories /> }.into_any(),
+                ),
+                ("Queue parts", view! { <QueueStories /> }.into_any()),
+                (
+                    "Recent files parts",
+                    view! { <RecentFilesStories /> }.into_any(),
+                ),
+            ],
         ),
         (
-            "Scene · needs your attention",
-            view! { <QueueScene /> }.into_any(),
+            "Scenes",
+            vec![
+                ("The two dialogs", view! { <DialogScene /> }.into_any()),
+                ("A banner in place", view! { <BannerScene /> }.into_any()),
+                ("State strip", view! { <StateStripScene /> }.into_any()),
+                ("Autosync paused", view! { <PausedScene /> }.into_any()),
+                (
+                    "A strip that could not load",
+                    view! { <StripErrorScene /> }.into_any(),
+                ),
+                ("List toolbar", view! { <ListToolbarScene /> }.into_any()),
+                ("Recent files", view! { <RecentFilesScene /> }.into_any()),
+                ("Needs your attention", view! { <QueueScene /> }.into_any()),
+                ("Packages", view! { <PackagesScene /> }.into_any()),
+                (
+                    "A check that failed",
+                    view! { <UncheckedScene /> }.into_any(),
+                ),
+            ],
         ),
-        ("Scene · packages", view! { <PackagesScene /> }.into_any()),
         (
-            "Scene · a check that failed",
-            view! { <UncheckedScene /> }.into_any(),
+            "Pages",
+            vec![("Main page", view! { <PageScene /> }.into_any())],
         ),
-        ("Scene · whole page", view! { <PageScene /> }.into_any()),
     ];
 
-    let index: Vec<&'static str> = sections.iter().map(|(label, _)| *label).collect();
+    let index: Vec<(&'static str, Vec<&'static str>)> = groups
+        .iter()
+        .map(|(tier, items)| (*tier, items.iter().map(|(label, _)| *label).collect()))
+        .collect();
 
     view! {
         <div class="g-shell">
@@ -188,18 +249,28 @@ fn Gallery() -> impl IntoView {
                 <Button on_click=move |_| dark.update(|d| *d = !*d)>
                     {move || if dark.get() { "Light theme" } else { "Dark theme" }}
                 </Button>
-                <ul>
-                    {index
-                        .into_iter()
-                        .map(|label| {
-                            view! {
-                                <li>
-                                    <a href=format!("#{}", slug(label))>{label}</a>
-                                </li>
-                            }
-                        })
-                        .collect_view()}
-                </ul>
+                {index
+                    .into_iter()
+                    .map(|(tier, labels)| {
+                        view! {
+                            <p class="g-nav__tier">
+                                <a href=format!("#{}", slug(tier))>{tier}</a>
+                            </p>
+                            <ul>
+                                {labels
+                                    .into_iter()
+                                    .map(|label| {
+                                        view! {
+                                            <li>
+                                                <a href=format!("#{}", slug(label))>{label}</a>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        }
+                    })
+                    .collect_view()}
             </nav>
             <main class="g-main">
                 <header class="g-head">
@@ -209,18 +280,43 @@ fn Gallery() -> impl IntoView {
                          part of what is being reviewed."
                     </p>
                 </header>
-                {sections
+                {groups
                     .into_iter()
-                    .map(|(label, body)| {
+                    .map(|(tier, items)| {
                         view! {
-                            <div id=slug(label) class="g-anchor">
-                                {body}
+                            // The tier rule, beside the tier, so a section lands in the
+                            // right one without anybody opening this file.
+                            <div id=slug(tier) class="g-anchor g-tier">
+                                <h2 class="g-tier__name">{tier}</h2>
+                                <p class="g-tier__rule">{tier_rule(tier)}</p>
                             </div>
+                            {items
+                                .into_iter()
+                                .map(|(label, body)| {
+                                    view! {
+                                        <div id=slug(label) class="g-anchor">
+                                            {body}
+                                        </div>
+                                    }
+                                })
+                                .collect_view()}
                         }
                     })
                     .collect_view()}
             </main>
         </div>
+    }
+}
+
+/// What earns a section its tier. Rendered under the tier heading rather than
+/// living only in this file's comment: the rule is for whoever is adding the
+/// next section, and they are looking at the page, not at the source.
+fn tier_rule(tier: &str) -> &'static str {
+    match tier {
+        "Core" => "One kit component, in every state it can reach. No composition.",
+        "Combined" => "Several kit components wired as the kit intends. No page data.",
+        "Scenes" => "One page region in one state, with fixture data.",
+        _ => "A whole page at a real viewport.",
     }
 }
 
@@ -248,7 +344,7 @@ fn slug(label: &str) -> String {
 pub fn Story(title: &'static str, note: &'static str, children: Children) -> impl IntoView {
     view! {
         <section class="g-section">
-            <h2>{title}</h2>
+            <h3>{title}</h3>
             <p class="g-note">{note}</p>
             <div class="g-grid">{children()}</div>
         </section>
@@ -266,7 +362,7 @@ pub fn Story(title: &'static str, note: &'static str, children: Children) -> imp
 pub fn Scene(title: &'static str, note: &'static str, children: Children) -> impl IntoView {
     view! {
         <section class="g-section">
-            <h2>{title}</h2>
+            <h3>{title}</h3>
             <p class="g-note">{note}</p>
             <div class="g-scene">{children()}</div>
         </section>

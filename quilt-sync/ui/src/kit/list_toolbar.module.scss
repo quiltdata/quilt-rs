@@ -10,3 +10,10 @@
   flex-wrap: wrap;
   padding-bottom: var(--q-space-2);
 }
+
+/* Stacks upwards: the lines reverse, each line's own order does not. So the
+ * first child lands on the last line — nearest the list the toolbar sits above —
+ * and a single-line toolbar is untouched. */
+.reversed {
+  flex-wrap: wrap-reverse;
+}

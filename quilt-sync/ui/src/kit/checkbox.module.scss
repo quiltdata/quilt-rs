@@ -1,0 +1,116 @@
+/*
+ * Checkbox. The real input, invisible and stretched over the box that is drawn
+ * in its place.
+ *
+ * Not `appearance: none` with a pseudo-element, because a pseudo-element on a
+ * replaced input is unreliable across the three webviews. Not off-screen
+ * either, which is where these rules started: an off-screen input is only
+ * clickable through a `<label>`, and the two callers that cannot be wrapped in
+ * one — a group heading holding a disclosure `<button>`, and any standalone box
+ * — were left with a control that took focus and ignored the mouse.
+ *
+ * `Select` reached the same answer for the same reason: "the select itself is
+ * stretched over the whole wrapper at opacity 0 — a wrapping label would not
+ * have done it".
+ *
+ * Inside a `<label>` this still fires once. A label forwards a click to its
+ * control, and a click that lands on the control was never forwarded.
+ */
+
+.root {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+/* Focusable, labelled, in the accessibility tree, and over the box it draws —
+ * but invisible. */
+.input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
+  /* Above the indicator, so the pointer meets the input and not the paint. */
+  z-index: 1;
+}
+
+.input:disabled {
+  cursor: not-allowed;
+}
+
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--q-borderColor-emphasis);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.indicator svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* One glyph is shown at a time and the other is hidden, rather than the Rust
+ * choosing: the box must not rebuild its subtree to change state, and a swap in
+ * the markup is a rebuild. */
+.tick,
+.dash {
+  display: none;
+}
+
+.input:checked + .indicator .tick {
+  display: inline;
+}
+
+.input:indeterminate + .indicator .dash {
+  display: inline;
+}
+
+/* `:indeterminate` wins over `:checked` in the DOM's own rendering, so it must
+ * win here too — a box that drew both would be the disagreement `CheckState`
+ * exists to prevent. */
+.input:indeterminate + .indicator .tick {
+  display: none;
+}
+
+.input:checked + .indicator,
+.input:indeterminate + .indicator {
+  background: var(--q-bgColor-accent-emphasis);
+  border-color: var(--q-bgColor-accent-emphasis);
+  /* Safe in both themes: `--blue-contrast` is #fff in each, so the glyph never
+   * needs a per-theme value. */
+  color: var(--q-fgColor-onEmphasis);
+}
+
+.root:hover .indicator {
+  border-color: var(--q-fgColor-muted);
+}
+
+/* The ring goes on the box, because the input it belongs to is off-screen. */
+.input:focus-visible + .indicator {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+.input:disabled + .indicator,
+.root:hover .input:disabled + .indicator {
+  border-color: var(--q-borderColor-muted);
+  background: var(--q-overlay-hover);
+}
+
+.input:checked:disabled + .indicator,
+.input:indeterminate:disabled + .indicator {
+  background: var(--q-fgColor-disabled);
+  border-color: var(--q-fgColor-disabled);
+}

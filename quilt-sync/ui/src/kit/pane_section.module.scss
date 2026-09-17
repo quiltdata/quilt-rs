@@ -1,0 +1,45 @@
+/*
+ * PaneSection. `Card`'s label, without `Card`'s surface.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+
+/* The system's Label: 600 at the 14px floor, upper-cased in CSS and tracked to
+ * do the work that shrinking would otherwise do. Identical to `Card`'s title on
+ * purpose — two labels a third of an em apart is how a design system stops being
+ * one.
+ *
+ * Upper-cased here and not in the string: `text-transform` leaves the text
+ * itself alone, while typing KEEPING makes some screen readers spell it out as
+ * an initialism. */
+.label {
+  margin: 0;
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--q-fgColor-muted);
+}
+
+/* A section inside a section. The tracking goes and the weight drops, so two
+ * levels of label are two levels to look at. */
+.nested > .label {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* Proximity has to do the grouping, and it cannot while both gaps are equal: a
+ * label sitting the same distance from the section above it as from its own
+ * content belongs to neither. So the space BETWEEN two sections is double the
+ * space INSIDE one — `gap` already contributes `space-2`, and this adds the
+ * second. Weight alone would not carry it; the nested label is deliberately the
+ * quieter of the two. */
+.root > .root + .root {
+  margin-top: var(--q-space-2);
+}

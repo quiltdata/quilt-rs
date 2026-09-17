@@ -1,0 +1,132 @@
+/*
+ * EntryRow. One line per entry.
+ *
+ * Two lines would halve how many survive the 560px fold, which is the whole
+ * reason grouping strips the common prefix from the name.
+ */
+
+.root {
+  display: flex;
+  align-items: center;
+  /* Between the label and the trailing menu. The label has its own gap inside;
+   * without this one the size and the dots touch. */
+  gap: var(--q-space-2);
+  /* Fills its container and truncates inside, at any width — a row's job, not
+   * its parent's. As a flex item without this it sizes to content, and a flex
+   * item's automatic minimum is its max-content width, so a long path would push
+   * the row past its container instead of ellipsising. Same reasoning, and the
+   * same fix, as `PackageRow` and `FileRow`. */
+  width: 100%;
+  min-height: var(--q-control-height);
+  padding-right: var(--q-space-2);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+}
+
+.root:hover {
+  background: var(--q-bgColor-muted);
+}
+
+/* Everything up to the overflow. A `<label>` when the row is selectable, so
+ * clicking it ticks the box — and it stops here, because a `<button>` inside a
+ * `<label>` that is not its control is invalid markup. When the row opens
+ * instead it is a `<div>` carrying the click, and when it can do neither it is a
+ * `<div>` that says so. */
+.main {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: var(--q-space-3);
+  cursor: pointer;
+}
+
+/* A row that can neither be ticked nor opened — a deleted or ignored file. The
+ * pointer is the whole affordance in this list, so withholding it is how the row
+ * says there is nothing here to click. Without this it would look identical to a
+ * row that acts, which is the defect this rule exists to remove. */
+.main.inert {
+  cursor: default;
+}
+
+/* The name of an openable row: a real button, so Enter and Space are the
+ * platform's, wearing the name's own typography. `FileRow`'s path button makes
+ * the same trade — the semantics are the button's, the look is the row's. */
+.open {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--q-text-body);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.open:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+
+/* One value, set by the pane, keeps the select-all box, a group's box and a
+ * file's box on one x. The fallback is here so the component is not broken when
+ * it is looked at on its own. */
+.gutter {
+  flex: 0 0 var(--q-entry-gutter, 16px);
+}
+
+/* A box-shaped hole. Without it the names of unselectable rows would start a
+ * checkbox to the left of everyone else's. */
+.nobox {
+  flex: 0 0 17px;
+}
+
+/* The same trick at the other end: an `IconButton`'s small square, held open so
+ * a row with no actions does not pull its size out of the column. */
+.nomenu {
+  flex: 0 0 var(--q-control-height-sm);
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-text-body);
+}
+
+.state {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  /* Wide enough for the longest label in the vocabulary. DESIGN.md forbids
+   * truncating a state label — if one overflows, the words are wrong — so
+   * adding a state means checking this number. */
+  min-width: 132px;
+}
+
+.size {
+  flex: 0 0 64px;
+  text-align: right;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The two revisions disagree about this file. A rule and a tint, no word: a
+ * highlighted-rows-and-legend pattern explains itself once instead of twenty
+ * times, and gives a busy row back a column.
+ *
+ * This is one channel and the design owes it a second — the rule is a colour,
+ * and so is the tint. Until that lands, `title` is the half a mouse gets free. */
+.root.differs {
+  box-shadow: inset 3px 0 0 var(--q-fgColor-danger);
+  background: var(--q-bgColor-danger-muted);
+}

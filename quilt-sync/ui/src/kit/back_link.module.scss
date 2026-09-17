@@ -1,0 +1,32 @@
+/*
+ * BackLink. A chevron and the destination's name, on the accent colour.
+ *
+ * Not a Button: it navigates rather than acts, and drawing it as a button would
+ * put a second control beside the page's real one at the same weight.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  /* The chevron hangs into the gutter, so the label starts on the same x as the
+   * page heading below it rather than a glyph's width to the right. */
+  margin-left: -2px;
+  color: var(--q-fgColor-accent);
+  font-size: var(--q-text-body);
+  text-decoration: none;
+}
+
+.root:hover {
+  text-decoration: underline;
+}
+
+.chevron {
+  display: inline-flex;
+  flex: none;
+}
+
+.chevron svg {
+  width: 16px;
+  height: 16px;
+}

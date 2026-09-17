@@ -1,0 +1,44 @@
+/*
+ * AnchoredOverlay. The platform's popover, positioned by hand.
+ *
+ * `position: fixed` because the top layer is not in the page's flow: the
+ * coordinates the effect writes are the trigger's viewport rect, so anything
+ * else would scroll away from what it is anchored to.
+ */
+
+.root {
+  display: inline-flex;
+  position: relative;
+}
+
+.surface {
+  position: fixed;
+  margin: 0;
+  /* Room for prose, which is what most of these hold. A menu overrides it:
+   * its items pad themselves and have to reach the edge, or the hover
+   * highlight stops short of the surface it is inside. */
+  padding: var(--q-space-3);
+  min-width: 200px;
+  max-width: 360px;
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  /* The system's one shadow, and this is what it is for: the only thing that
+   * floats above the page. Everything that sits *in* the page stays flat and
+   * bordered. */
+  box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+}
+
+/* The backdrop is the browser's, and we want nothing drawn on it: a popover
+ * dims nothing, unlike a modal. */
+.surface::backdrop {
+  background: transparent;
+}
+
+/* A surface whose children own their own insets — a menu, a list of rows. */
+.tight {
+  padding: var(--q-space-1);
+}
