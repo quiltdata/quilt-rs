@@ -41,6 +41,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Story;
 use crate::kit::CheckState;
+use crate::kit::EntryAction;
 use crate::kit::EntryGroup;
 use crate::kit::EntryRow;
 use crate::kit::EntrySelection;
@@ -135,20 +136,35 @@ fn menu() -> Vec<MenuAction> {
 /// One row, in the shape its state puts it in.
 ///
 /// Three calls rather than one call with three optional values: `state` and
-/// `selection` are both absent-means-something, and `EntrySelection` is a value
-/// carrying its own callback, so the unselectable case is the call that does not
-/// pass it. Spelling the arms out is the component's contract showing through.
-fn row(entry: &Entry, picks: RwSignal<Vec<bool>>) -> AnyView {
+/// `action` are both absent-means-something, and `EntryAction` carries its own
+/// callback, so the inert case is the call that does not pass one. Spelling the
+/// arms out is the component's contract showing through.
+///
+/// The click follows the file, not the row: a file that is here opens, a file
+/// that is not here ticks. `opened` is what makes that reviewable — a no-op
+/// would have the cell claim a behaviour and then not show it.
+fn row(entry: &Entry, picks: RwSignal<Vec<bool>>, opened: RwSignal<String>) -> AnyView {
     match *entry {
-        Entry::Here(name, size) => {
-            view! { <EntryRow name=name size=size actions=menu() /> }.into_any()
+        Entry::Here(name, size) => view! {
+            <EntryRow
+                name=name
+                size=size
+                action=EntryAction::Open(
+                    Callback::new(move |()| opened.set(name.to_string())),
+                )
+                actions=menu()
+            />
         }
+        .into_any(),
         Entry::Changed(name, size) => view! {
             <EntryRow
                 name=name
                 state="Changed"
                 tone=StateTone::Attention
                 size=size
+                action=EntryAction::Open(
+                    Callback::new(move |()| opened.set(name.to_string())),
+                )
                 actions=menu()
             />
         }
@@ -158,9 +174,11 @@ fn row(entry: &Entry, picks: RwSignal<Vec<bool>>) -> AnyView {
                 name=name
                 state="Not downloaded"
                 size=size
-                selection=EntrySelection::new(
-                    Signal::derive(move || picks.with(|p| p[i])),
-                    Callback::new(move |next| picks.update(|p| p[i] = next)),
+                action=EntryAction::Select(
+                    EntrySelection::new(
+                        Signal::derive(move || picks.with(|p| p[i])),
+                        Callback::new(move |next| picks.update(|p| p[i] = next)),
+                    ),
                 )
                 actions=menu()
             />
@@ -173,7 +191,12 @@ fn row(entry: &Entry, picks: RwSignal<Vec<bool>>) -> AnyView {
 /// it and toggles exactly those, so `Mixed` is a fact about the rows rather
 /// than an assertion beside them — and a group with no index carries no box,
 /// because it would be a control with nothing to act on.
-fn group(name: &'static str, entries: Vec<Entry>, picks: RwSignal<Vec<bool>>) -> AnyView {
+fn group(
+    name: &'static str,
+    entries: Vec<Entry>,
+    picks: RwSignal<Vec<bool>>,
+    opened: RwSignal<String>,
+) -> AnyView {
     let open = RwSignal::new(true);
     let count = entries.len();
     let mine: Vec<usize> = entries.iter().filter_map(Entry::pick).collect();
@@ -203,7 +226,8 @@ fn group(name: &'static str, entries: Vec<Entry>, picks: RwSignal<Vec<bool>>) ->
     });
 
     let rows = StoredValue::new(entries);
-    let children = move || rows.with_value(|es| es.iter().map(|e| row(e, picks)).collect_view());
+    let children =
+        move || rows.with_value(|es| es.iter().map(|e| row(e, picks, opened)).collect_view());
 
     // Same two arms as a row, for the same reason one level up: a group with
     // nothing selectable under it does not take a `GroupSelection` at all.
@@ -233,7 +257,7 @@ fn group(name: &'static str, entries: Vec<Entry>, picks: RwSignal<Vec<bool>>) ->
 /// `grouped=false` is `Group: None`: every file flat, in one run, and therefore
 /// no heading anywhere — which is what sets the gutter to zero. The same
 /// fixture, the same rows, one control moved.
-fn file_list(grouped: bool, picks: RwSignal<Vec<bool>>) -> AnyView {
+fn file_list(grouped: bool, picks: RwSignal<Vec<bool>>, opened: RwSignal<String>) -> AnyView {
     let ticked = Signal::derive(move || picks.with(|p| p.iter().filter(|t| **t).count()));
 
     // Zero when the list rendered no heading, which is the whole rule: the
@@ -273,16 +297,16 @@ fn file_list(grouped: bool, picks: RwSignal<Vec<bool>>) -> AnyView {
                         var(--q-borderColor-muted)">
                 {if grouped {
                     view! {
-                        {move || roots.with_value(|es| es.iter().map(|e| row(e, picks)).collect_view())}
+                        {move || roots.with_value(|es| es.iter().map(|e| row(e, picks, opened)).collect_view())}
                         {groups()
                             .into_iter()
-                            .map(|(name, entries)| group(name, entries, picks))
+                            .map(|(name, entries)| group(name, entries, picks, opened))
                             .collect_view()}
                     }
                         .into_any()
                 } else {
                     view! {
-                        {move || flat.with_value(|es| es.iter().map(|e| row(e, picks)).collect_view())}
+                        {move || flat.with_value(|es| es.iter().map(|e| row(e, picks, opened)).collect_view())}
                     }
                         .into_any()
                 }}
@@ -311,6 +335,13 @@ const NOTE: &str = "Three checkbox columns on one x — select-all's, a group's 
                     no box at all — every file is already here, and a box that can select \
                     nothing is the dead control `Select` refuses to be. \
                     \
+                    A click does the thing the row can do. A file that is here has no box \
+                    and opens — the recent-files list's own gesture, so a click means the \
+                    same in both file lists — and a file that is not here ticks instead. \
+                    The last cell says which file the last click opened. The two shapes are \
+                    interleaved on purpose: the checkbox column is the discriminator, and \
+                    it only reads as one when both kinds are in one list. \
+                    \
                     Collapse a group and inspect it: the rows leave the DOM. Scroll the \
                     list and the headings stick, at 29px against a 32px row.";
 
@@ -318,14 +349,21 @@ const NOTE: &str = "Three checkbox columns on one x — select-all's, a group's 
 pub fn FileListStories() -> impl IntoView {
     let grouped = RwSignal::new(vec![false; PICKS]);
     let flat = RwSignal::new(vec![false; PICKS]);
+    // One readout for both lists: clicking a file that is here is supposed to
+    // open it, and a section that swallowed the call would look identical to one
+    // where the rule was never wired.
+    let opened = RwSignal::new(String::from("nothing yet"));
 
     view! {
         <Story title="The file list" note=NOTE>
             <Cell full=true label="grouped — root files, then three groups, one gutter">
-                {file_list(true, grouped)}
+                {file_list(true, grouped, opened)}
             </Cell>
             <Cell full=true label="Group: None — no heading renders, so the gutter is 0">
-                {file_list(false, flat)}
+                {file_list(false, flat, opened)}
+            </Cell>
+            <Cell full=true label="last file a click opened">
+                <span class="g-note">{move || opened.get()}</span>
             </Cell>
         </Story>
     }

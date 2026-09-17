@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Story;
 use crate::kit::CheckState;
+use crate::kit::EntryAction;
 use crate::kit::EntryGroup;
 use crate::kit::EntryRow;
 use crate::kit::EntrySelection;
@@ -51,9 +52,8 @@ fn flat_list(pending: RwSignal<bool>) -> AnyView {
                 name="manifest.jsonl"
                 state="Not downloaded"
                 size="44 KB"
-                selection=EntrySelection::new(
-                    pending,
-                    Callback::new(move |next| pending.set(next)),
+                action=EntryAction::Select(
+                    EntrySelection::new(pending, Callback::new(move |next| pending.set(next))),
                 )
             />
         </div>
@@ -83,9 +83,8 @@ fn root_files(pending: RwSignal<bool>, grouped: RwSignal<bool>) -> AnyView {
                 name="manifest.jsonl"
                 state="Not downloaded"
                 size="44 KB"
-                selection=EntrySelection::new(
-                    pending,
-                    Callback::new(move |next| pending.set(next)),
+                action=EntryAction::Select(
+                    EntrySelection::new(pending, Callback::new(move |next| pending.set(next))),
                 )
             />
             <EntryGroup name="raw/" count=Signal::derive(|| 2) open=grouped>
@@ -136,7 +135,7 @@ fn picks_group(
                                     name=name
                                     state="Not downloaded"
                                     size=size
-                                    selection=selection(i)
+                                    action=EntryAction::Select(selection(i))
                                 />
                             }
                         })
@@ -211,9 +210,11 @@ pub fn EntryGroupStories() -> impl IntoView {
                         name="verdicts.md"
                         state="Not downloaded"
                         size="31 KB"
-                        selection=EntrySelection::new(
-                            collapsed_row,
-                            Callback::new(move |next| collapsed_row.set(next)),
+                        action=EntryAction::Select(
+                            EntrySelection::new(
+                                collapsed_row,
+                                Callback::new(move |next| collapsed_row.set(next)),
+                            ),
                         )
                     />
                 </EntryGroup>

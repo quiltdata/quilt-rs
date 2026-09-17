@@ -17,16 +17,37 @@
 //! view that shows those, so every row in it is ignored and the label would
 //! repeat what the facet already said.
 //!
-//! # Only a downloadable row carries a box
+//! # A click does the thing this row can do
+//!
+//! Where the file is decides both the box and the gesture, so they are **one
+//! value** — [`EntryAction`] — and not a flag beside two optional halves:
+//!
+//! - **not downloaded** → [`EntryAction::Select`]: it carries a box, and a click
+//!   anywhere on the row ticks it. There is no local file to open, and choosing
+//!   is what the page is for.
+//! - **downloaded** → [`EntryAction::Open`]: no box, and a click opens the local
+//!   file — the recent-files list's own gesture, so the two file lists in this
+//!   app mean the same thing by a click.
+//! - **neither** → no action at all: a file that is here but that the caller will
+//!   not open, such as a deleted or ignored one. No box, no pointer, nothing to
+//!   click. A row that advertises a click it cannot honour is worse than an
+//!   inert one.
 //!
 //! A tick on a file that is already here has nothing to act on, and it is what
-//! made *select all 56* disagree with *download 17*. An unselectable row keeps
+//! made *select all 56* disagree with *download 17*. A row without a box keeps
 //! the column's width so the names still line up.
 //!
-//! Selectability is **one value**, not a flag beside two optional halves:
-//! [`EntrySelection`] carries the state and the callback together, so a box that
-//! accepts clicks and discards them cannot be built. Same reason
-//! [`CheckState`](super::CheckState) is an enum.
+//! One value rather than two optional props is the same discipline
+//! [`CheckState`](super::CheckState) follows: a box that accepts clicks and
+//! discards them cannot be built, and neither can a row that both selects and
+//! opens.
+//!
+//! # The destination never depends on state
+//!
+//! `Open` is always the **local** file. Opening in the catalog leaves the
+//! application, and that is a named command in the `[⋯]`, never something a
+//! click infers — v1 splits the same way and is legible because it splits by
+//! which control is present, not by what a gesture guesses.
 //!
 //! # The gutter is the list's, and it can be nothing
 //!
@@ -42,12 +63,18 @@
 //! for. The value exists to keep three components honest; when there is nothing
 //! to be honest about, it is zero.
 //!
-//! # The `<label>` stops before the overflow
+//! # The `<label>` stops before the overflow, and only a selectable row has one
 //!
-//! Clicking the row toggles its box, which wants a `<label>` around the row —
-//! but `<button>` is a labelable element, and one inside a `<label>` that is not
-//! its control is invalid. So the label covers box, name, state and size, and the
-//! menu is its sibling.
+//! Clicking a selectable row toggles its box, which wants a `<label>` around the
+//! row — but `<button>` is a labelable element, and one inside a `<label>` that
+//! is not its control is invalid. So the label covers box, name, state and size,
+//! and the menu is its sibling.
+//!
+//! An openable row is not a label at all. Its **name is a real `<button>`**, as
+//! [`FileRow`](super::FileRow)'s is, so the platform turns Enter and Space into a
+//! click. The row carries the click too, as a pointer convenience — but only up
+//! to the name, state and size: the handler is on the row's inner area and the
+//! `[⋯]` is that area's sibling, so reaching for the menu cannot open the file.
 
 use leptos::prelude::*;
 
@@ -79,6 +106,18 @@ impl EntrySelection {
     }
 }
 
+/// What this row's click does — which is a consequence of where the file is,
+/// so the box and the gesture are decided together and cannot disagree.
+#[derive(Clone, Copy)]
+pub enum EntryAction {
+    /// Not downloaded: draw a box, and let a click anywhere on the row tick it.
+    Select(EntrySelection),
+    /// Downloaded: draw no box, and open the **local** file on a click. Never
+    /// the catalog — leaving the application is a named command, not an
+    /// inference.
+    Open(Callback<()>),
+}
+
 /// What a marked row's `title` says. One sentence, in the page's own words —
 /// no `remote`, no `diverged`, and no platform named as the other place.
 pub const DIFFERS_TITLE: &str =
@@ -99,10 +138,11 @@ pub fn EntryRow(
     /// Already formatted — the kit has no opinion about units.
     #[prop(into)]
     size: String,
-    /// Present when this file can be downloaded, and therefore ticked. Absent
-    /// leaves the column open and draws no box.
+    /// What a click does, and therefore whether a box is drawn. Absent is a row
+    /// that can do neither — a deleted or ignored file — which keeps the
+    /// column's width, draws nothing in it and takes no pointer.
     #[prop(optional)]
-    selection: Option<EntrySelection>,
+    action: Option<EntryAction>,
     /// The two revisions disagree about this file. **Information, never a
     /// control** — resolution happens at revision level, so there is nothing to
     /// click here and the marking must not look like the state beside it.
@@ -120,6 +160,68 @@ pub fn EntryRow(
         String::from(style::root)
     };
 
+    // The state and the size are the same in all three shapes, and building them
+    // once keeps the arms about the one thing that actually differs.
+    let trailing = move || {
+        view! {
+            // A fixed slot, so a size lands in the same column whether or not
+            // the row above carries a label. Sizes exist to be compared, and
+            // ragged ones cannot be.
+            <span class=style::state>
+                {state.map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })}
+            </span>
+            <span class=style::size>{size}</span>
+        }
+    };
+
+    // Empty, and exactly a disclosure button wide, so a file's box sits under
+    // its group's box rather than a triangle's width to the left of it.
+    let gutter = move || view! { <span class=style::gutter /> };
+
+    let main = match action {
+        // Selectable: the whole row is the box's label, which is what makes a
+        // click anywhere on it a tick.
+        Some(EntryAction::Select(EntrySelection {
+            selected,
+            on_toggle,
+        })) => view! {
+            <label class=style::main>
+                {gutter()}
+                <Checkbox
+                    state=Signal::derive(move || selected.get().into())
+                    on_toggle=move |next| on_toggle.run(next)
+                />
+                <span class=style::name title=full_name>{name}</span>
+                {trailing()}
+            </label>
+        }
+        .into_any(),
+        // Openable: not a label — there is no control to label. The name is the
+        // button, so Enter and Space are the platform's, and its click bubbles to
+        // the row, which is the one handler.
+        Some(EntryAction::Open(on_open)) => view! {
+            <div class=style::main on:click=move |_| on_open.run(())>
+                {gutter()}
+                <span class=style::nobox />
+                <button type="button" class=style::open title=full_name>
+                    {name}
+                </button>
+                {trailing()}
+            </div>
+        }
+        .into_any(),
+        // Neither. Inert, and says so: no pointer, no hover target.
+        None => view! {
+            <div class=format!("{} {}", style::main, style::inert)>
+                {gutter()}
+                <span class=style::nobox />
+                <span class=style::name title=full_name>{name}</span>
+                {trailing()}
+            </div>
+        }
+        .into_any(),
+    };
+
     view! {
         <div
             class=class
@@ -128,35 +230,10 @@ pub fn EntryRow(
             // also says it once in prose for the rows as a set.
             title=differs.then_some(DIFFERS_TITLE)
         >
-            <label class=style::main>
-                // Empty, and exactly a disclosure button wide, so a file's box
-                // sits under its group's box rather than a triangle's width to
-                // the left of it.
-                <span class=style::gutter />
-                {match selection {
-                    Some(EntrySelection { selected, on_toggle }) => {
-                        view! {
-                            <Checkbox
-                                state=Signal::derive(move || selected.get().into())
-                                on_toggle=move |next| on_toggle.run(next)
-                            />
-                        }
-                            .into_any()
-                    }
-                    None => view! { <span class=style::nobox /> }.into_any(),
-                }}
-                <span class=style::name title=full_name>{name}</span>
-                // A fixed slot, so a size lands in the same column whether or not
-                // the row above carries a label. Sizes exist to be compared, and
-                // ragged ones cannot be.
-                <span class=style::state>
-                    {state.map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })}
-                </span>
-                <span class=style::size>{size}</span>
-            </label>
+            {main}
             {if actions.is_empty() {
-                // A menu-shaped hole, for the same reason an unselectable row keeps
-                // a box-shaped one: without it the sizes in a list where one row has
+                // A menu-shaped hole, for the same reason a boxless row keeps a
+                // box-shaped one: without it the sizes in a list where one row has
                 // no actions stop being a column.
                 view! { <span class=style::nomenu /> }.into_any()
             } else {
@@ -164,5 +241,143 @@ pub fn EntryRow(
                     .into_any()
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// `file_row.rs`'s pattern: mount into a fresh, attached `div` and hand back
+    /// the element to query against.
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    fn click(el: &web_sys::Element) {
+        let el: web_sys::HtmlElement = el.clone().dyn_into().unwrap();
+        el.click();
+    }
+
+    #[wasm_bindgen_test]
+    fn a_selectable_row_is_a_label_so_the_whole_row_ticks() {
+        let ticked = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <EntryRow
+                    name="raw/plate-07.csv"
+                    state="Not downloaded"
+                    size="4.1 MB"
+                    action=EntryAction::Select(
+                        EntrySelection::new(ticked, Callback::new(move |n| ticked.set(n))),
+                    )
+                />
+            }
+        });
+        let main = el.query_selector("label").unwrap();
+        assert!(
+            main.is_some(),
+            "a selectable row's main area is a `<label>`"
+        );
+        assert!(
+            el.query_selector("button").unwrap().is_none(),
+            "the name is not a button when the row selects",
+        );
+        click(&main.unwrap());
+        assert!(ticked.get_untracked(), "clicking the row ticked its box");
+    }
+
+    #[wasm_bindgen_test]
+    fn an_openable_row_opens_from_the_row_and_from_its_name_button() {
+        // A signal, not an `Rc<Cell>`: `Callback` is `Send + Sync`.
+        let opened = RwSignal::new(0_u32);
+        let el = mount(move || {
+            view! {
+                <EntryRow
+                    name="notes/ernest-thread.md"
+                    size="12 KB"
+                    action=EntryAction::Open(Callback::new(move |()| {
+                        opened.update(|n| *n += 1);
+                    }))
+                />
+            }
+        });
+
+        // The name is a real button, so the platform owns Enter and Space.
+        let name = el
+            .query_selector("button")
+            .unwrap()
+            .expect("name is a button");
+        assert_eq!(name.text_content().unwrap(), "notes/ernest-thread.md");
+        click(&name);
+        assert_eq!(opened.get_untracked(), 1, "the name button opened the file");
+
+        // And the row itself is a pointer target, which is the one handler the
+        // button's click bubbles into.
+        assert!(
+            el.query_selector("label").unwrap().is_none(),
+            "an openable row is not a label — there is no control to label",
+        );
+        assert!(
+            el.query_selector("input[type=checkbox]").unwrap().is_none(),
+            "a file that is here has nothing to tick",
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_with_no_action_is_inert_and_says_so() {
+        // The defect this rule removes: a row that draws a pointer and does
+        // nothing when clicked. Deleted and ignored files reach this shape.
+        let el = mount(|| view! { <EntryRow name=".DS_Store" size="6 KB" /> });
+        let main = el
+            .query_selector(&format!(".{}", style::main))
+            .unwrap()
+            .expect("the row has a main area");
+        let class = main.get_attribute("class").unwrap();
+        assert!(
+            class.contains(style::inert),
+            "an actionless row carries the inert class, which drops the pointer",
+        );
+        assert!(el.query_selector("label").unwrap().is_none());
+        assert!(el.query_selector("button").unwrap().is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn the_overflow_menu_does_not_open_the_file() {
+        // The open handler is on the row's inner area and the `[...]` is that
+        // area's sibling, so the menu's click never passes through it. Widening
+        // the handler to the whole row is what this pins — it would make
+        // reaching for the menu open the file as well.
+        // A signal, not an `Rc<Cell>`: `Callback` is `Send + Sync`.
+        let opened = RwSignal::new(0_u32);
+        let el = mount(move || {
+            view! {
+                <EntryRow
+                    name="notes/ernest-thread.md"
+                    size="12 KB"
+                    action=EntryAction::Open(Callback::new(move |()| {
+                        opened.update(|n| *n += 1);
+                    }))
+                    actions=vec![MenuAction::new("Copy URI", Callback::new(|()| ()))]
+                />
+            }
+        });
+        let trigger = el
+            .query_selector(&format!(".{} ~ * button", style::main))
+            .unwrap()
+            .expect("the menu trigger sits outside the row's clickable area");
+        click(&trigger);
+        assert_eq!(
+            opened.get_untracked(),
+            0,
+            "opening the menu did not open the file"
+        );
     }
 }

@@ -26,9 +26,11 @@
   background: var(--q-bgColor-muted);
 }
 
-/* Everything up to the overflow. A `<label>`, so clicking the row ticks the box
- * — and it stops here, because a `<button>` inside a `<label>` that is not its
- * control is invalid markup. */
+/* Everything up to the overflow. A `<label>` when the row is selectable, so
+ * clicking it ticks the box — and it stops here, because a `<button>` inside a
+ * `<label>` that is not its control is invalid markup. When the row opens
+ * instead it is a `<div>` carrying the click, and when it can do neither it is a
+ * `<div>` that says so. */
 .main {
   display: flex;
   align-items: center;
@@ -38,6 +40,39 @@
   padding-left: var(--q-space-3);
   cursor: pointer;
 }
+
+/* A row that can neither be ticked nor opened — a deleted or ignored file. The
+ * pointer is the whole affordance in this list, so withholding it is how the row
+ * says there is nothing here to click. Without this it would look identical to a
+ * row that acts, which is the defect this rule exists to remove. */
+.main.inert {
+  cursor: default;
+}
+
+/* The name of an openable row: a real button, so Enter and Space are the
+ * platform's, wearing the name's own typography. `FileRow`'s path button makes
+ * the same trade — the semantics are the button's, the look is the row's. */
+.open {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--q-text-body);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.open:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
 
 /* One value, set by the pane, keeps the select-all box, a group's box and a
  * file's box on one x. The fallback is here so the component is not broken when
