@@ -63,6 +63,15 @@
 //! the option's own string, so a label carrying a count that changed under the
 //! user would leave the selection matching no option at all.
 //!
+//! # Left, then right — and upwards when it stacks
+//!
+//! `reverse_when_stacked` puts select-all on the **last** line, against the rows
+//! it acts on, and the facets on the first. Only the container knows there is a
+//! wrap to order, which is why the prop is `ListToolbar`'s and not an
+//! arrangement the caller can express by ordering its children: order and wrap
+//! order are the same thing in flexbox, so a caller reordering for the stacked
+//! case would reorder the single-line case too.
+//!
 //! # Left, then right
 //!
 //! Select-all sits left, on the rows' own checkbox column. The free space is
@@ -246,7 +255,7 @@ fn toolbar(width: &'static str) -> AnyView {
             // width, which is the point — the toolbar has 28px less than the
             // pane to fit five controls into.
             <div style="padding-left:calc(var(--q-space-3) + 16px)">
-            <ListToolbar>
+            <ListToolbar reverse_when_stacked=true>
                 // A select-all over nothing is a control that cannot act — the
                 // `Changed` facet reaches that, because a file that is here
                 // cannot be downloaded.
@@ -265,7 +274,7 @@ fn toolbar(width: &'static str) -> AnyView {
                 // at the widths where the row does not fit on one line — and at
                 // 1024 it does not.
                 <div style="margin-left:auto; display:flex; gap:var(--q-space-2); \
-                            flex-wrap:wrap; justify-content:flex-end">
+                            flex-wrap:wrap-reverse; justify-content:flex-end">
                     <Select
                         naming=Naming::Prefix("Group".to_string())
                         options=vec!["Base folder".to_string(), "None".to_string()]
@@ -307,6 +316,13 @@ const NOTE: &str = "The file pane's two control rows, at the pane's own width �
                     search field above them. They keep that right edge on whatever line \
                     they land on — which matters, because at 1024 they land on the second \
                     one. \
+                    \
+                    When it stacks it stacks upwards: facets, then grouping, then \
+                    select-all last and nearest the list. `wrap-reverse` reverses the \
+                    lines and leaves each line's own order alone, so the single-line \
+                    arrangement is untouched — nothing moves until there is a wrap to \
+                    order. Select-all belongs against the rows because it is the one \
+                    control that acts on them. \
                     \
                     The facets are where the width goes: 396 of the 680, 58% of the toolbar, \
                     for four options — against `SegmentedControl`'s own `two or three short \
