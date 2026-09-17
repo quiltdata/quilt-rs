@@ -17,6 +17,10 @@
 - Signing in through your browser returns you to the page you started from. It could only return you to a page it had a name for, and the page the app opens on was not one of them, so it always finished on the installed packages list — which shows only with **New main page** on (Settings → Experimental), where signing in from the new page landed you on the old one (<https://github.com/quiltdata/quilt-rs/pull/944>)
 - The buttons on a package's status banner keep their size when the message beside them is long. They used to be squeezed by it, narrowing as the text grew (<https://github.com/quiltdata/quilt-rs/pull/942>)
 
+### Changed
+
+- Under the hood, a package's namespace now crosses between the app's backend and its interface as the validated address type it already was, rather than being flattened to plain text on the way out. No behaviour changes and the wire format is identical (<https://github.com/quiltdata/quilt-rs/pull/946>)
+
 ## [v0.22.2] - 2026-09-15
 
 ### Fixed
