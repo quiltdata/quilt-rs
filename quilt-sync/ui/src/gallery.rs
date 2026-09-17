@@ -58,6 +58,7 @@ mod gallery {
     pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
+    pub mod package_header;
     pub mod packages;
     pub mod page;
     pub mod pane_section;
@@ -96,6 +97,7 @@ use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
+use crate::gallery::package_header::PackageHeaderScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
 use crate::gallery::page::PageScene;
@@ -229,6 +231,10 @@ fn Gallery() -> impl IntoView {
                 ("Recent files", view! { <RecentFilesScene /> }.into_any()),
                 ("Needs your attention", view! { <QueueScene /> }.into_any()),
                 ("Packages", view! { <PackagesScene /> }.into_any()),
+                (
+                    "The package header",
+                    view! { <PackageHeaderScene /> }.into_any(),
+                ),
                 (
                     "A check that failed",
                     view! { <UncheckedScene /> }.into_any(),
