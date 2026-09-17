@@ -19,6 +19,7 @@ pub fn ChoiceGroupStories() -> impl IntoView {
     let keeping = RwSignal::new("pick".to_string());
     let second = RwSignal::new("all".to_string());
     let frozen = RwSignal::new("pick".to_string());
+    let theme = RwSignal::new("system".to_string());
 
     // The consequence, in the present tense, changing with the choice — the whole
     // reason the caption belongs to the group rather than sitting beside it.
@@ -46,7 +47,13 @@ pub fn ChoiceGroupStories() -> impl IntoView {
                   globally unique string. \
                   \
                   Not a ToggleRow: that is an independent setting with two states, this is \
-                  a choice between alternatives where exactly one holds."
+                  a choice between alternatives where exactly one holds. \
+                  \
+                  Nothing here knows what a package is — the last cell is the same \
+                  component with none of this page's words in it. The download action a \
+                  whole-package scope needs is the caller's, not this component's: it \
+                  depends on how many files are outstanding, which is a fact about a \
+                  package that a radio group has no business holding."
         >
             <Cell wide=true label="the Keeping block — caption tracks the choice">
                 <ChoiceGroup
@@ -58,6 +65,18 @@ pub fn ChoiceGroupStories() -> impl IntoView {
             </Cell>
             <Cell wide=true label="a second instance — proves the generated name">
                 <ChoiceGroup label="Keeping" options=scopes() selected=second />
+            </Cell>
+            <Cell wide=true label="a third option, and none of this page's words">
+                <ChoiceGroup
+                    label="Appearance"
+                    caption="Follows your system setting until you pick one."
+                    options=vec![
+                        Choice::new("system", "Match system"),
+                        Choice::new("light", "Light"),
+                        Choice::new("dark", "Dark"),
+                    ]
+                    selected=theme
+                />
             </Cell>
             <Cell wide=true label="disabled">
                 <ChoiceGroup
