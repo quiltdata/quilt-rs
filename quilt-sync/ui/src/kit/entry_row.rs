@@ -4,9 +4,9 @@
 //!
 //! That one is *a recently-changed file* for the cross-package feed: it carries
 //! the package it belongs to, which a page about one package does not need, and
-//! `qhq-8mgw.63` is filed against the `role=button` it wraps around a link. This
-//! row does not inherit the defect — **the checkbox is the control and the name
-//! is not a button.**
+//! its row opens the file. This one chooses instead — **the checkbox is the
+//! control and the name is not a button** — because this page's verb is picking
+//! files in bulk, not acting on one.
 //!
 //! # The resting state is silent
 //!
