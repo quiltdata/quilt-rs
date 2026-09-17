@@ -54,6 +54,7 @@ mod gallery {
     pub mod entry_row;
     pub mod feedback;
     pub mod file_list;
+    pub mod file_toolbar;
     pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
@@ -89,6 +90,7 @@ use crate::gallery::entry_row::EntryRowStories;
 use crate::gallery::feedback::BannerScene;
 use crate::gallery::feedback::FeedbackStories;
 use crate::gallery::file_list::FileListStories;
+use crate::gallery::file_toolbar::FileToolbarStories;
 use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
@@ -198,6 +200,10 @@ fn Gallery() -> impl IntoView {
             "Combined",
             vec![
                 ("The file list", view! { <FileListStories /> }.into_any()),
+                (
+                    "The list toolbar",
+                    view! { <FileToolbarStories /> }.into_any(),
+                ),
                 ("Queue parts", view! { <QueueStories /> }.into_any()),
                 (
                     "Recent files parts",
