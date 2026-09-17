@@ -120,6 +120,22 @@ pub fn ActionMenu(
         .into_any()
     };
 
+    let items = surface(actions, open);
+
+    view! {
+        <AnchoredOverlay trigger=trigger open=open aria_label=surface_label tight=true>
+            {items}
+        </AnchoredOverlay>
+    }
+}
+
+/// The list of commands, as it is drawn inside an [`AnchoredOverlay`].
+///
+/// Shared with [`SplitButton`](super::SplitButton), which is the same list
+/// behind a different trigger. Extracted rather than written twice: two copies
+/// of the separator rule and the close-then-run order would drift, and this file
+/// already owns the stylesheet they are drawn with.
+pub(super) fn surface(actions: Vec<MenuAction>, open: RwSignal<bool>) -> AnyView {
     let items = actions
         .into_iter()
         .map(|action| {
@@ -168,9 +184,5 @@ pub fn ActionMenu(
         })
         .collect_view();
 
-    view! {
-        <AnchoredOverlay trigger=trigger open=open aria_label=surface_label tight=true>
-            <div class=style::list>{items.clone()}</div>
-        </AnchoredOverlay>
-    }
+    view! { <div class=style::list>{items}</div> }.into_any()
 }

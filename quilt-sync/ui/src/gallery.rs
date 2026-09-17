@@ -69,6 +69,7 @@ mod gallery {
     pub mod select;
     pub mod select_all;
     pub mod skeleton;
+    pub mod split_button;
     pub mod state_label;
     pub mod state_strip;
     pub mod toggle_row;
@@ -109,6 +110,7 @@ use crate::gallery::segmented_control::SegmentedControlStories;
 use crate::gallery::select::SelectStories;
 use crate::gallery::select_all::SelectAllStories;
 use crate::gallery::skeleton::SkeletonStories;
+use crate::gallery::split_button::SplitButtonStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
 use crate::gallery::state_strip::StateStripScene;
@@ -179,6 +181,7 @@ fn Gallery() -> impl IntoView {
                 ("StateLabel", view! { <StateLabelStories /> }.into_any()),
                 ("PackageRow", view! { <PackageRowStories /> }.into_any()),
                 ("SkeletonBox", view! { <SkeletonStories /> }.into_any()),
+                ("SplitButton", view! { <SplitButtonStories /> }.into_any()),
                 ("Feedback", view! { <FeedbackStories /> }.into_any()),
                 ("Forms", view! { <FormsStories /> }.into_any()),
                 ("Checkbox", view! { <CheckboxStories /> }.into_any()),
