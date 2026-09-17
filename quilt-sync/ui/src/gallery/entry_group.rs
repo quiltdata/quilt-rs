@@ -38,6 +38,29 @@ fn settled_group(open: RwSignal<bool>) -> AnyView {
     .into_any()
 }
 
+/// The degenerate list: no group anywhere, which `Group: None` reaches from the
+/// toolbar at any moment and a flat package reaches by existing. Every row's
+/// disclosure gutter would be an indent with nothing to align to, so the list
+/// sets `--q-entry-gutter` to zero and the names start where the box does.
+fn flat_list(pending: RwSignal<bool>) -> AnyView {
+    view! {
+        <div class="g-stack" style="--q-entry-gutter: 0">
+            <EntryRow name="README.md" size="2 KB" />
+            <EntryRow name="quilt_summarize.json" size="1 KB" />
+            <EntryRow
+                name="manifest.jsonl"
+                state="Not downloaded"
+                size="44 KB"
+                selection=EntrySelection::new(
+                    pending,
+                    Callback::new(move |next| pending.set(next)),
+                )
+            />
+        </div>
+    }
+    .into_any()
+}
+
 /// Root-level files above a group, which is the arrangement verdict 14
 /// describes: they render **first** and ungrouped, because `(root)` names a
 /// directory that does not exist and reads as a real folder.
@@ -91,6 +114,38 @@ const NOTE: &str = "A container, not a heading: it holds its rows, owns whether 
                   Scroll the last cell: the heading sticks, and it costs 29px against a \
                   32px row, which at the height floor is most of a row per heading.";
 
+/// The group whose heading box is derived from its three rows, so the heading
+/// and the rows can never disagree about how many are ticked.
+fn picks_group(
+    open: RwSignal<bool>,
+    picks: GroupSelection,
+    selection: impl Fn(usize) -> EntrySelection + Send + Sync + 'static,
+) -> AnyView {
+    view! {
+                <EntryGroup name="raw/" count=Signal::derive(|| 3) open=open selection=picks>
+                    {[
+                        ("plate-06.csv", "4.0 MB"),
+                        ("plate-07.csv", "4.1 MB"),
+                        ("plate-08.csv", "3.9 MB"),
+                    ]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (name, size))| {
+                            view! {
+                                <EntryRow
+                                    name=name
+                                    state="Not downloaded"
+                                    size=size
+                                    selection=selection(i)
+                                />
+                            }
+                        })
+                        .collect_view()}
+                </EntryGroup>
+    }
+    .into_any()
+}
+
 #[component]
 pub fn EntryGroupStories() -> impl IntoView {
     let open = RwSignal::new(true);
@@ -100,6 +155,7 @@ pub fn EntryGroupStories() -> impl IntoView {
     let pending = RwSignal::new(false);
     let collapsed_row = RwSignal::new(false);
     let grouped = RwSignal::new(true);
+    let flat = RwSignal::new(false);
     // Three real ticks, so the group's box is derived from its rows rather than
     // asserted beside them — a heading that disagrees with what is under it is
     // the mock that teaches the wrong thing.
@@ -136,26 +192,7 @@ pub fn EntryGroupStories() -> impl IntoView {
             note=NOTE
         >
             <Cell full=true label="expanded · tri-state box — tick a row, then the heading">
-                <EntryGroup name="raw/" count=Signal::derive(|| 3) open=open selection=picks>
-                    <EntryRow
-                        name="plate-06.csv"
-                        state="Not downloaded"
-                        size="4.0 MB"
-                        selection=selection(0)
-                    />
-                    <EntryRow
-                        name="plate-07.csv"
-                        state="Not downloaded"
-                        size="4.1 MB"
-                        selection=selection(1)
-                    />
-                    <EntryRow
-                        name="plate-08.csv"
-                        state="Not downloaded"
-                        size="3.9 MB"
-                        selection=selection(2)
-                    />
-                </EntryGroup>
+                {picks_group(open, picks, selection)}
             </Cell>
             <Cell full=true label="collapsed — the rows are not in the DOM">
                 <EntryGroup
@@ -183,6 +220,9 @@ pub fn EntryGroupStories() -> impl IntoView {
             </Cell>
             <Cell full=true label="every file already here — nothing to select, so no box">
                 {settled_group(settled)}
+            </Cell>
+            <Cell full=true label="no group anywhere — Group: None, or a flat package. No gutter to keep">
+                {flat_list(flat)}
             </Cell>
             <Cell full=true label="root files first, then a group — one column, and no (root) heading">
                 {root_files(pending, grouped)}

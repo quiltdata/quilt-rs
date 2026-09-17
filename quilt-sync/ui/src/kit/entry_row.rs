@@ -28,6 +28,20 @@
 //! accepts clicks and discards them cannot be built. Same reason
 //! [`CheckState`](super::CheckState) is an enum.
 //!
+//! # The gutter is the list's, and it can be nothing
+//!
+//! The empty column before the checkbox is the width of a group's disclosure
+//! button, so a file's box lands under its group's box rather than a triangle's
+//! width to the left of it. It comes from `--q-entry-gutter`, which the list
+//! sets once for its rows, its headings and its select-all.
+//!
+//! **A list with no headings at all sets it to `0`** — a package whose files are
+//! all at the root, or any package under `Group: None`, which is a control the
+//! reader can reach at any time. There is no triangle anywhere in such a list,
+//! so the column has nothing to align to and is simply an indent nobody asked
+//! for. The value exists to keep three components honest; when there is nothing
+//! to be honest about, it is zero.
+//!
 //! # The `<label>` stops before the overflow
 //!
 //! Clicking the row toggles its box, which wants a `<label>` around the row —

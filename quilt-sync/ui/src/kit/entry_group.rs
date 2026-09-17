@@ -21,6 +21,13 @@
 //! [`GroupSelection`] and the column stays open so the names still line up, but
 //! nothing is drawn in it.
 //!
+//! # The gutter is the list's
+//!
+//! The disclosure sits in `--q-entry-gutter`, the same column the rows leave
+//! empty. A list that renders no group at all sets that value to `0` — see
+//! [`EntryRow`](super::EntryRow) — which is why the width lives on the list
+//! rather than in here.
+//!
 //! # The heading cannot be a `<label>`
 //!
 //! It holds the disclosure `<button>`, and a `<label>` may not contain another
