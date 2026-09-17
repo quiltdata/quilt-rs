@@ -6,10 +6,15 @@
 //! different places** — which is why [`render`] takes a [`Site`] and not just a
 //! state.
 //!
-//! The words are a property of the state AND where it draws, and every state in the
-//! vocabulary differs across the three: a list row names it in a chip, a queue row
-//! continues the sentence its package name started, and a shared cause is a heading
-//! above the packages it holds.
+//! The words are a property of the state AND where it draws: a list row names it in
+//! a chip, a queue row continues the sentence its package name started, a shared
+//! cause is a heading above the packages it holds, and a package's own page header
+//! names it beside the action that fixes it.
+//!
+//! Only the first two word every state for themselves. `Cause` and `PageHeader`
+//! borrow the list's phrasing and diverge in one state each — a cause names the role
+//! behind a denial, a header says what is available rather than how this package
+//! sorts — so each keeps a test naming its one exception.
 
 use serde::Deserialize;
 
@@ -72,6 +77,18 @@ pub enum Site {
     /// the role a denial was refused under: the whole point of stating a cause once
     /// is that there is room to say which one.
     Cause,
+    /// The one package's own page header, beside its primary action.
+    ///
+    /// A chip like the list's, and it borrows the list's words for every state but
+    /// one. A list row is read while scanning many packages, where `Not the latest`
+    /// sorts this package against its neighbours; a header is read having already
+    /// chosen this package, where the useful fact is not that it lags but that
+    /// there is something to fetch. Hence `Newer revision available`.
+    ///
+    /// One divergence is the whole reason this site exists, and
+    /// `the_page_header_borrows_the_list_except_for_behind` holds it to that: a
+    /// second one has to be written down deliberately rather than drifting in.
+    PageHeader,
 }
 
 /// The operation a state offers, as a closed set.
@@ -159,6 +176,10 @@ fn words(state: &PackageState, site: Site) -> String {
 
         (PackageState::Behind, Site::ListRow) => "Not the latest".to_string(),
         (PackageState::Behind, Site::QueueRow) => "has a newer revision".to_string(),
+        // The one state the header words differently from the list, and the reason
+        // that site exists — see [`Site::PageHeader`]. Every other state falls
+        // through to the list's phrasing at the foot of the match.
+        (PackageState::Behind, Site::PageHeader) => "Newer revision available".to_string(),
 
         (PackageState::PendingChanges { files: 1 }, Site::ListRow) => "1 file changed".to_string(),
         (PackageState::PendingChanges { files: 1 }, Site::QueueRow) => {
@@ -219,10 +240,16 @@ fn words(state: &PackageState, site: Site) -> String {
         (PackageState::Unknown, Site::ListRow) => "Sync stopped".to_string(),
         (PackageState::Unknown, Site::QueueRow) => "cannot be checked".to_string(),
 
-        // Every remaining cause. Delegated rather than written out, because a
-        // heading and a chip want the same noun phrase; the arms above still force
-        // a new state to answer for both of the sites that choose their own words.
-        (state, Site::Cause) => words(state, Site::ListRow),
+        // Every remaining cause and header. Delegated rather than written out,
+        // because a heading, a header chip and a list chip all want the same noun
+        // phrase; the arms above still force a new state to answer for both of the
+        // sites that choose their own words.
+        //
+        // Delegating means a state added later inherits the list's words at these
+        // two sites rather than failing to compile. That is deliberate — the list's
+        // phrasing is the right default and both exceptions above are one state
+        // each — but it is why each exception carries a test naming it.
+        (state, Site::Cause | Site::PageHeader) => words(state, Site::ListRow),
     }
 }
 
@@ -540,6 +567,53 @@ mod tests {
         assert!(matches!(parsed, PackageState::Unknown));
     }
 
+    /// The header borrows the list's chip words for every state but `Behind`, and
+    /// that single exception is the whole reason [`Site::PageHeader`] exists.
+    ///
+    /// Written as a sweep rather than a table so it fails from both directions: a
+    /// second divergence added without thought breaks it, and so does someone
+    /// deleting the one divergence and leaving the site behind as a synonym for
+    /// `ListRow`.
+    #[wasm_bindgen_test]
+    fn the_page_header_borrows_the_list_except_for_behind() {
+        let all = [
+            PackageState::Latest,
+            PackageState::Behind,
+            PackageState::PendingChanges { files: 2 },
+            PackageState::PendingCommit,
+            PackageState::Diverged,
+            PackageState::PullConflict { files: vec![] },
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+            PackageState::NoRemote,
+            PackageState::Unpublished,
+            PackageState::Paused,
+            PackageState::Unknown,
+        ];
+
+        for state in &all {
+            let header = render(state, Site::PageHeader).words;
+            let list = render(state, Site::ListRow).words;
+            if matches!(state, PackageState::Behind) {
+                assert_eq!(header, "Newer revision available");
+                assert_ne!(header, list, "the divergence is the point of the site");
+            } else {
+                assert_eq!(header, list, "{state:?} should borrow the list's words");
+            }
+        }
+    }
+
+    /// Tone and action are properties of the state alone, so the header must not
+    /// have quietly acquired its own — only the words are site-dependent.
+    #[wasm_bindgen_test]
+    fn the_page_header_changes_words_only() {
+        let behind_header = render(&PackageState::Behind, Site::PageHeader);
+        let behind_list = render(&PackageState::Behind, Site::ListRow);
+        assert_eq!(behind_header.tone, behind_list.tone);
+        assert_eq!(behind_header.action, behind_list.action);
+    }
+
     #[wasm_bindgen_test]
     fn no_label_uses_a_banned_word() {
         const BANNED: &[&str] = &[
@@ -561,7 +635,7 @@ mod tests {
             PackageState::Unknown,
         ];
         for state in &all {
-            for site in [Site::ListRow, Site::QueueRow, Site::Cause] {
+            for site in [Site::ListRow, Site::QueueRow, Site::Cause, Site::PageHeader] {
                 let words = render(state, site).words.to_lowercase();
                 for bad in BANNED {
                     assert!(
