@@ -63,6 +63,14 @@
 //! the option's own string, so a label carrying a count that changed under the
 //! user would leave the selection matching no option at all.
 //!
+//! # Left, then right
+//!
+//! Select-all sits left, on the rows' own checkbox column. The free space is
+//! immediately after it, so grouping and the facets travel together against the
+//! right edge and the facets finish **flush with the search field above them** —
+//! the two rows share one right margin, which is the only thing that makes them
+//! read as one block of controls rather than two unrelated rows.
+//!
 //! # The left inset is part of the measurement
 //!
 //! Select-all sits in the rows' checkbox column, which puts the toolbar's
@@ -250,11 +258,19 @@ fn toolbar(width: &'static str) -> AnyView {
                         on_toggle=move |next| picked.set(if next { shown.get() } else { 0 })
                     />
                 </Show>
-                <Select
-                    naming=Naming::Prefix("Group".to_string())
-                    options=vec!["Base folder".to_string(), "None".to_string()]
-                    selected=group
-                />
+                // Grouping and the facets as one right-hand group, so the free
+                // space lands after select-all and the facets finish flush with
+                // the search field above. It wraps within itself and keeps
+                // justifying right, which is what holds the shared right margin
+                // at the widths where the row does not fit on one line — and at
+                // 1024 it does not.
+                <div style="margin-left:auto; display:flex; gap:var(--q-space-2); \
+                            flex-wrap:wrap; justify-content:flex-end">
+                    <Select
+                        naming=Naming::Prefix("Group".to_string())
+                        options=vec!["Base folder".to_string(), "None".to_string()]
+                        selected=group
+                    />
                 <SegmentedControl
                     aria_label="Filter files"
                     // One name per cell. `SegmentedControl` takes the radio
@@ -269,6 +285,7 @@ fn toolbar(width: &'static str) -> AnyView {
                     options=options
                     selected=facet
                 />
+                </div>
             </ListToolbar>
             </div>
         </div>
@@ -284,6 +301,12 @@ const NOTE: &str = "The file pane's two control rows, at the pane's own width �
                     \
                     The three cells are that width, the width where it just fits, and the \
                     narrow arrangement where wrapping is the intended behaviour. \
+                    \
+                    Select-all is left, on the rows' own checkbox column; grouping and the \
+                    facets are one right-hand group, so the facets finish flush with the \
+                    search field above them. They keep that right edge on whatever line \
+                    they land on — which matters, because at 1024 they land on the second \
+                    one. \
                     \
                     The facets are where the width goes: 396 of the 680, 58% of the toolbar, \
                     for four options — against `SegmentedControl`'s own `two or three short \
