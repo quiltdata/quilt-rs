@@ -41,14 +41,24 @@ fn settled_group(open: RwSignal<bool>) -> AnyView {
 /// Root-level files, which are deliberately **not** a group: `(root)` names a
 /// directory that does not exist and reads as a real folder, so they render
 /// first and ungrouped. The absence of a heading is the design, not a gap.
-fn root_files() -> AnyView {
+fn root_files(pending: RwSignal<bool>) -> AnyView {
     view! {
         // A column, because a cell's body is a flex ROW and three loose rows
         // would sit beside each other. An `EntryGroup` brings its own.
         <div class="g-stack">
             <EntryRow name="README.md" size="2 KB" />
             <EntryRow name="quilt_summarize.json" size="1 KB" />
-            <EntryRow name="manifest.jsonl" state="Not downloaded" size="44 KB" />
+            // `Not downloaded` and therefore selectable. A row in that state
+            // without a box is the mock that teaches the wrong rule.
+            <EntryRow
+                name="manifest.jsonl"
+                state="Not downloaded"
+                size="44 KB"
+                selection=EntrySelection::new(
+                    pending,
+                    Callback::new(move |next| pending.set(next)),
+                )
+            />
         </div>
     }
     .into_any()
@@ -77,6 +87,8 @@ pub fn EntryGroupStories() -> impl IntoView {
     let shut = RwSignal::new(false);
     let scroller = RwSignal::new(true);
     let settled = RwSignal::new(true);
+    let pending = RwSignal::new(false);
+    let collapsed_row = RwSignal::new(false);
     // Three real ticks, so the group's box is derived from its rows rather than
     // asserted beside them — a heading that disagrees with what is under it is
     // the mock that teaches the wrong thing.
@@ -143,18 +155,29 @@ pub fn EntryGroupStories() -> impl IntoView {
                     count=Signal::derive(|| 1)
                     open=shut
                     selection=GroupSelection::new(
-                        Signal::derive(|| CheckState::Off),
-                        Callback::new(|_: bool| ()),
+                        Signal::derive(move || collapsed_row.get().into()),
+                        Callback::new(move |next: bool| collapsed_row.set(next)),
                     )
                 >
-                    <EntryRow name="verdicts.md" size="31 KB" />
+                    // Selectable, so the heading's box has something to act on.
+                    // A `select all` over rows that cannot be selected is the
+                    // same lie one level up.
+                    <EntryRow
+                        name="verdicts.md"
+                        state="Not downloaded"
+                        size="31 KB"
+                        selection=EntrySelection::new(
+                            collapsed_row,
+                            Callback::new(move |next| collapsed_row.set(next)),
+                        )
+                    />
                 </EntryGroup>
             </Cell>
             <Cell full=true label="every file already here — nothing to select, so no box">
                 {settled_group(settled)}
             </Cell>
             <Cell full=true label="everything at the root — verdict 14 draws no heading at all">
-                {root_files()}
+                {root_files(pending)}
             </Cell>
             <Cell full=true label="sticky, against a short scroll">
                 <div style="width:100%;max-height:140px;overflow-y:auto">
