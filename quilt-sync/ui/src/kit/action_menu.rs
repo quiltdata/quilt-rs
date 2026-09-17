@@ -139,12 +139,15 @@ pub fn ActionMenu(
                 class.push(' ');
                 class.push_str(style::danger);
             }
-            if separated {
-                class.push(' ');
-                class.push_str(style::separated);
-            }
 
             view! {
+                // Its own element, not a border on the item below it. As an edge
+                // it could only be spaced from one side — the item above already
+                // has its own padding, so the rule sat closer to the command
+                // under it than to the one over it. A separator owns the space on
+                // both sides, and every item keeps identical padding.
+                {separated
+                    .then(|| view! { <div class=style::separator role="separator" /> })}
                 <button
                     type="button"
                     class=class
