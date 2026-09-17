@@ -12,6 +12,22 @@
 //! with nothing to correct it. A CSS animation is positioned by the document
 //! timeline, so it is simply *at* the right place when the machine wakes.
 //!
+//! # Hidden from the accessibility tree
+//!
+//! The ring is `aria-hidden` and carries no role and no name.
+//!
+//! It cannot report a value. The arc is placed by CSS from the single clock read
+//! above, so anything written into the DOM is stale the moment it lands, and
+//! keeping it current needs the timer this component exists to avoid. A
+//! `progressbar` with no `aria-valuenow` reads as indeterminate, which the ring
+//! is not.
+//!
+//! Nothing is lost by hiding it. Every caller states the cycle in words the
+//! reader already reaches — `Every 30s, keeping any local changes` sits inside
+//! the toggle's own `<label>`, so it is part of the checkbox's accessible name.
+//! The ring adds where we are within that cycle, which is the part it cannot
+//! say.
+//!
 //! # It is a prediction, not the truth
 //!
 //! The watcher decides when it actually ticks; this only estimates from the last
@@ -47,16 +63,17 @@ pub fn Countdown(
     /// for publish. A determinate ring cannot be drawn from a remaining time
     /// alone; it needs to know what that time is a fraction of.
     interval: f64,
-    /// What the cycle *is*, for the hover title and the accessible name — for
-    /// example "Checks for new revisions every 30 seconds".
+    /// What the cycle *is*, for the hover title — for example "Checks for new
+    /// revisions every 30 seconds".
     ///
-    /// Deliberately the period rather than the remainder. A ring alone says
-    /// something is progressing but not when, and R1 forbids leaving that
-    /// unlabelled — but a live `0:23` would need the per-second tick this
-    /// component exists to avoid, and the caller is the only thing that knows what
-    /// the cycle means anyway.
+    /// Deliberately the period rather than the remainder: a live `0:23` would
+    /// need the per-second tick this component exists to avoid, and the caller
+    /// is the only thing that knows what the cycle means anyway.
+    ///
+    /// Sighted readers only. The ring is hidden from the accessibility tree, and
+    /// the caller states the cycle in words — see the module doc.
     #[prop(into)]
-    aria_label: String,
+    title: String,
     /// Loop at the interval. True for the pull tick, which recurs; false for the
     /// publish quiet window, which happens once and then holds full.
     #[prop(optional)]
@@ -94,17 +111,17 @@ pub fn Countdown(
             seed()
                 .map(|(seed, offset)| {
                     let class = class.clone();
-                    let aria_label = aria_label.clone();
+                    let title = title.clone();
                     view! {
-                        // `progressbar` rather than an image: a screen reader
-                        // reports it on request instead of announcing every tick.
+                        // Hidden from the accessibility tree — see the module doc.
+                        // The `title` is the sighted reader's hover text and
+                        // nothing else.
                         <svg
                             class=style::root
                             style=seed
                             viewBox="0 0 16 16"
-                            role="progressbar"
-                            aria-label=aria_label.clone()
-                            title=aria_label
+                            aria-hidden="true"
+                            title=title
                         >
                             <circle
                                 class=style::track
@@ -129,5 +146,65 @@ pub fn Countdown(
                     }
                 })
         }}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        leptos::mount::mount_to(container.clone(), f).forget();
+        container.into()
+    }
+
+    fn ring(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("svg").unwrap()
+    }
+
+    /// The module doc's claim, pinned: no role and no name, because the ring has
+    /// no live value to report and the caller already states the cycle in words.
+    #[wasm_bindgen_test]
+    fn the_ring_is_hidden_from_the_accessibility_tree() {
+        let el = mount(|| {
+            view! {
+                <Countdown
+                    deadline=Signal::stored(Some(js_sys::Date::now() + 10_000.0))
+                    interval=30_000.0
+                    title="Checks for new revisions every 30s"
+                />
+            }
+        });
+        let ring = ring(&el).expect("the ring");
+        assert_eq!(ring.get_attribute("aria-hidden").as_deref(), Some("true"));
+        assert_eq!(ring.get_attribute("role"), None, "no role at all");
+        assert_eq!(ring.get_attribute("aria-label"), None, "and no name");
+        assert_eq!(
+            ring.get_attribute("title").as_deref(),
+            Some("Checks for new revisions every 30s"),
+            "the hover text stays: it is for sighted readers"
+        );
+    }
+
+    /// `None` is the caller's cue to draw its own idle words, so the component
+    /// must draw nothing at all rather than an empty or full ring.
+    #[wasm_bindgen_test]
+    fn no_deadline_draws_no_ring() {
+        let el = mount(|| {
+            view! {
+                <Countdown
+                    deadline=Signal::stored(None)
+                    interval=30_000.0
+                    title="Checks for new revisions every 30s"
+                />
+            }
+        });
+        assert!(ring(&el).is_none());
     }
 }
