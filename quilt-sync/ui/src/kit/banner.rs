@@ -31,6 +31,7 @@
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 
+use super::icons;
 use super::state_label::StateTone;
 
 stylance::import_crate_style!(style, "src/kit/banner.module.scss");
@@ -96,10 +97,7 @@ pub fn Banner(
                 aria-label="Dismiss"
                 on:click=on_dismiss
             >
-                <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-                    stroke-width="1.6" stroke-linecap="round">
-                    <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
-                </svg>
+                {icons::x()}
             </button>
         </div>
     }

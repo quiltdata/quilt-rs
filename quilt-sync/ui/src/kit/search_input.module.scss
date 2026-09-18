@@ -87,7 +87,11 @@
   color: var(--q-fgColor-default);
 }
 
+/* 14px, not the 11px this was: the mark moved to the kit's shared 16-unit box
+ * (`icons::x`), whose cross sits further inside its viewBox than the 11-unit one
+ * drawn here did. 14px is what keeps the rendered cross the size it has always
+ * been — 6.7px against 7px — rather than shrinking it by a quarter. */
 .clear svg {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
 }
