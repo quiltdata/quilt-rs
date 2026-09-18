@@ -10,10 +10,9 @@
 //! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
 //! because at 15px a stroked gear's spokes read as a sun.
 //!
-//! [`x`] is ours, and stroked, because the two controls it replaced were.
+//! [`x`] is ours, and stroked to match the controls that draw it.
 //!
-//! The kit owns them because four files had each drawn their own copy of the
-//! first two, and the page below would have made it six.
+//! The kit owns them so that no file draws its own copy.
 
 // Octicons' licence, reproduced as its terms require:
 //
@@ -103,9 +102,9 @@ pub fn chevron_right() -> AnyView {
 /// drawn heavier and sized by whichever consumer holds it (`state_label.rs`).
 /// Two marks that happen to look alike and mean different things stay apart.
 ///
-/// Stroked rather than filled, matching the controls it replaced, and drawn in
-/// the same 16-unit box as the rest of this file — the search field's copy was
-/// an 11-unit box, so its X now sits at the same inset as the banner's.
+/// Stroked rather than filled, matching the controls that draw it, and in the
+/// same 16-unit box as the rest of this file. Its cross therefore sits further
+/// inside the box than an 11-unit one would; a caller sizes the svg to suit.
 #[must_use]
 pub fn x() -> AnyView {
     view! {
