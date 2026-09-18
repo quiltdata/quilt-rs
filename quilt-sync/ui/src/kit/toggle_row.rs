@@ -57,3 +57,99 @@ pub fn ToggleRow(
         </div>
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::element_saying;
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn row(checked: RwSignal<bool>, disabled: bool) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <ToggleRow
+                    label="Publish on save"
+                    sublabel="Every save writes a new revision."
+                    checked=checked
+                    trailing=view! { <span>"in 5 min"</span> }.into_any()
+                    disabled=disabled
+                />
+            }
+        })
+    }
+
+    fn click(el: &web_sys::Element) {
+        el.unchecked_ref::<web_sys::HtmlElement>().click();
+    }
+
+    fn box_of(el: &web_sys::Element) -> web_sys::HtmlInputElement {
+        el.query_selector("input[type=checkbox]")
+            .unwrap()
+            .expect("a checkbox")
+            .unchecked_into()
+    }
+
+    #[wasm_bindgen_test]
+    fn clicking_the_words_toggles_the_box() {
+        let checked = RwSignal::new(false);
+        let el = row(checked, false);
+
+        click(&element_saying(&el, "Every save writes a new revision."));
+
+        assert!(checked.get_untracked(), "the words are inside the label");
+        assert!(box_of(&el).checked());
+    }
+
+    /// The trailing slot is information, not a control: it sits outside the
+    /// `<label>` so that a click on a clock cannot flip a setting.
+    #[wasm_bindgen_test]
+    fn clicking_the_trailing_slot_leaves_the_box_alone() {
+        let checked = RwSignal::new(false);
+        let el = row(checked, false);
+
+        click(&element_saying(&el, "in 5 min"));
+
+        assert!(!checked.get_untracked());
+        assert!(!box_of(&el).checked());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_disabled_row_ignores_a_click() {
+        let checked = RwSignal::new(false);
+        let el = row(checked, true);
+
+        click(&element_saying(&el, "Every save writes a new revision."));
+
+        assert!(box_of(&el).disabled(), "and the input says so");
+        assert!(!checked.get_untracked());
+    }
+
+    /// An `aria_label` on the box would win over the words on screen, so the row
+    /// names it the only other way: by wrapping it.
+    #[wasm_bindgen_test]
+    fn the_box_is_named_by_the_row_rather_than_by_an_aria_label() {
+        let el = row(RwSignal::new(false), false);
+        let input = box_of(&el);
+
+        assert!(input.get_attribute("aria-label").is_none());
+        let labels = input.labels().expect("a label element");
+        assert_eq!(labels.length(), 1, "exactly one name");
+        let text = labels
+            .get(0)
+            .unwrap()
+            .unchecked_into::<web_sys::Element>()
+            .text_content()
+            .unwrap_or_default();
+        assert!(text.contains("Publish on save"), "got: {text}");
+        assert!(
+            text.contains("Every save writes a new revision."),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("in 5 min"),
+            "the slot is not part of the name: {text}"
+        );
+    }
+}
