@@ -307,91 +307,17 @@ fn resolve() -> AnyView {
 }
 
 /// What the cells are for, and what looking at them settled.
-const NOTE: &str = "280px of fixed width holding two blocks, and everything the page says \
-    about the package rather than about its files. \
+const NOTE: &str = "280px holding two blocks: what the page says about the package rather \
+    than about its files. \
     \
-    Read the first two cells as a pair: they differ only by which scope is \
-    picked, and that difference is the whole of the download action's \
-    contract — whole-package scope with files outstanding, counted in the \
-    label, gone the moment either condition fails. The third cell is the same \
-    pane with nothing left to fetch. Flip a radio in any of them and the \
-    caption and the button answer together. \
+    Flip a radio and the caption and the download action answer together. \
+    Click a trigger: the surface hangs leftwards over the file list, which is \
+    the only direction the page has for it. In the list a published revision \
+    wears a cloud and links to the catalog; the unsent one wears the slashed \
+    cloud. \
     \
-    The words under the choice are v1's, kept in two clauses. The count \
-    reports the present; `files added later are downloaded too` promises \
-    something about files that do not exist yet, which only the whole-package \
-    scope is entitled to say. Neither clause claims a download started, \
-    because picking a scope writes a preference and moves no bytes — which is \
-    exactly why the action beneath it had to come back. A standing button \
-    with an unnamed extent was removed on purpose; this one is conditional \
-    and counted. \
-    \
-    The two blocks are divided, and the rule has the same air above it as \
-    below — which is what the question the design left open turned out to \
-    need. Card draws a hairline between any two of its children and that is \
-    right for rows, because a row carries its own padding; a PaneSection has \
-    none, so the rule landed flush on the `Revisions you have (4)` button and \
-    read as that button's underline. A gap on its own was the other candidate \
-    and says less: these are two subjects, not one list. So the rule stays and \
-    PaneSection supplies space-3 on each side of it. \
-    \
-    The three overlay cells are drawn in the page's geometry — 992px, the \
-    file list to the left, the pane last — because the surface is the one \
-    part of the pane whose behaviour depends on where the pane sits. \
-    Measured: the surface is 297px against the pane's 280, so it cannot sit \
-    inside it either way. Hung from the trigger's left edge it ends 30px past \
-    the pane's own right edge, which at a 1024 window is past the page margin \
-    and into the viewport clamp that #955 exists to keep surfaces out of. \
-    Hung from the right edge it reaches 114px over the file list and stays \
-    97px clear of the page's edge, so that is what this asks for — the same \
-    rule every trailing control already follows. \
-    \
-    Click each of the three. It opens immediately into whatever it has — \
-    skeletons, then rows — because a trigger that spins with nothing opening \
-    reads as broken, and the surface is its own scope of work. The failed one \
-    is a LoadFailure: a fixed sentence and the one read that runs again. At \
-    one revision the trigger is not drawn at all, since a row restating the \
-    line above it is a dead control. \
-    \
-    In the surface, a revision that reached the platform wears a cloud and its \
-    message is a link to the catalog; one this copy has not sent wears the \
-    slashed cloud and stays text. A pair rather than a glyph and its absence, \
-    because nothing tells an absent glyph from a component that was not told. \
-    The word is there too, for anyone not reading pixels. The newest row is \
-    the unsent one, which is the ordinary shape of this list: the revision \
-    somebody is working on is the one they have not published. \
-    \
-    The address carries a hash and the words never do — a hash is banned as a \
-    name and fine as an address. Inside the app the link is intercepted and \
-    handed to the browser, because following it in place would navigate the \
-    webview and take the app with it. The row itself is not the link: the time \
-    beside the message is when this copy obtained the revision, which is not a \
-    fact the catalog holds. \
-    \
-    Resolve's two actions are deliberately not mirrors, and the labels are \
-    not the design's: `Replace mine with the remote` names the thing the \
-    vocabulary test exists to catch, two lines under a section calling that \
-    side `Published`. There is no Danger button and there should not be — \
-    Danger is a status colour here, so a red confirm would read as this \
-    errored — so the weight is left to the dialog that action opens. \
-    \
-    And the pane is 15px too narrow for it. `Replace mine with the published \
-    one` needs 243px of text and the button gives it 228, so it truncates; \
-    `Make mine the shared one` needs 176 and has room to spare. Either the \
-    words get shorter or the pane's 280 is wrong, and this is the first thing \
-    that has argued against that number. \
-    \
-    The exit is drawn because the design left it as a maybe: resolve is \
-    deep-linkable from the queue, so somebody can arrive, look, and want out, \
-    and the only other exits are two consequential actions. It is the same \
-    BackLink the header uses, naming its destination rather than saying Back \
-    — which puts the package's name in the pane while the header above it \
-    says the same word. \
-    \
-    `Revision` is a PaneSection's label and `Keeping` is a ChoiceGroup's, \
-    because one component titling the other says it twice. They match to the \
-    pixel and only one of them is a heading, so heading navigation walks \
-    straight past Keeping.";
+    Unresolved: `Replace mine with the published one` does not fit 280px and \
+    truncates.";
 
 #[component]
 pub fn ContextPaneScene() -> impl IntoView {
