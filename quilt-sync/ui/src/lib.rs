@@ -54,5 +54,7 @@ pub mod pages;
 pub mod panic_report;
 pub mod routes;
 pub mod tauri;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod theme;
 pub mod util;

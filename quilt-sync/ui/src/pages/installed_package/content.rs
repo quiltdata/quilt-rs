@@ -218,7 +218,7 @@ pub(super) fn InstalledPackageContent(
         let is_behind = status_for_outcome == "behind";
         async move {
             if is_behind {
-                match commands::package_pull_outcome(ns).await {
+                match commands::package_pull_outcome(ns.to_string()).await {
                     Ok(preview) => PullCheck::Ready(preview),
                     Err(_) => PullCheck::Failed,
                 }
@@ -279,7 +279,7 @@ pub(super) fn InstalledPackageContent(
                             let bucket = bucket_for_fetch.clone();
                             let catalog = catalog_for_fetch.clone();
                             async move {
-                                commands::get_revision_message(bucket, ns, hash, catalog).await
+                                commands::get_revision_message(bucket, ns.to_string(), hash, catalog).await
                             }
                         });
                         let requested_short: String = requested.chars().take(8).collect();
@@ -334,7 +334,7 @@ pub(super) fn InstalledPackageContent(
 
                 // ── Status banner ──
                 <StatusBanner
-                    namespace=ns_for_status
+                    namespace=ns_for_status.clone()
                     status=status_clone
                     uri=uri_for_status
                     no_access_reason=banner_no_access_reason
@@ -351,7 +351,7 @@ pub(super) fn InstalledPackageContent(
                     // ── Entries toolbar ──
                     <Show when=move || scope_gate>
                         <SyncScopeBand
-                            namespace=namespace_for_scope.clone()
+                            namespace=namespace_for_scope.to_string()
                             with_status=with_status
                             pending=pending_count
                             entire_package=syncs_entire_package
@@ -421,7 +421,7 @@ pub(super) fn InstalledPackageContent(
                     move || {
                         let ns = ns_for_publish.clone();
                         let uri = uri_for_publish.clone();
-                        async move { commands::package_publish(ns, uri).await }
+                        async move { commands::package_publish(ns.to_string(), uri).await }
                     },
                     notification,
                     Some(ui_locked),
@@ -477,7 +477,7 @@ pub(super) fn InstalledPackageContent(
 
         <Show when=move || show_set_remote_popup.get()>
             <SetRemotePopup
-                namespace=data.namespace.clone()
+                namespace=data.namespace.to_string()
                 current_host=current_host.clone()
                 current_bucket=current_bucket.clone()
                 has_local_commit=data.has_local_commit

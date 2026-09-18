@@ -133,7 +133,7 @@ pub fn InstalledPackage() -> impl IntoView {
             return;
         }
         let current = query.read_untracked().get("namespace").unwrap_or_default();
-        if ev.namespace == current {
+        if ev.namespace.to_string() == current {
             paused_event.set(Some(ev));
         }
     });
@@ -153,7 +153,7 @@ pub fn InstalledPackage() -> impl IntoView {
         if let Some(entry) = snapshot
             .paused
             .into_iter()
-            .find(|p| p.namespace == current && warrants_paused_banner(&p.reason))
+            .find(|p| p.namespace.to_string() == current && warrants_paused_banner(&p.reason))
         {
             // Don't overwrite a fresher value the live listener may have
             // already set between listener registration and now.
@@ -176,7 +176,7 @@ pub fn InstalledPackage() -> impl IntoView {
     Effect::new(move |_| {
         let Some(ev) = event_holder.get() else { return };
         let current = query.read().get("namespace").unwrap_or_default();
-        if ev.namespace != current {
+        if ev.namespace.to_string() != current {
             return;
         }
         if !is_new_observation(last_fingerprint.get_untracked().as_deref(), &ev) {
@@ -238,7 +238,7 @@ pub fn InstalledPackage() -> impl IntoView {
                                     href: "/".to_string(),
                                     title: String::new(),
                                 }),
-                                BreadcrumbItem::Current(ns),
+                                BreadcrumbItem::Current(ns.to_string()),
                             ];
                             let actions = build_toolbar_actions(
                                 &d,
@@ -280,6 +280,7 @@ pub fn InstalledPackage() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::warrants_paused_banner;
+    use quilt_uri::Namespace;
 
     #[test]
     fn message_bearing_reasons_get_the_dedicated_banner() {
@@ -305,7 +306,7 @@ mod tests {
 
     fn ev(fingerprint: &str) -> PackageStatusEvent {
         PackageStatusEvent {
-            namespace: "acme/demo".to_string(),
+            namespace: Namespace::try_from("acme/demo").expect("a namespace"),
             status: "up_to_date".to_string(),
             has_changes: false,
             fingerprint: fingerprint.to_string(),

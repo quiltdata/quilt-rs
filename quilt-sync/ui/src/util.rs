@@ -34,19 +34,21 @@ pub fn entry_catalog_url(pkg_uri: &S3PackageUri, filename: &str) -> Option<Strin
 /// revision the copier happens to hold — a recipient asking for a pinned
 /// revision would have to be given one deliberately.
 ///
-/// `None` when the namespace does not parse, which cannot happen from a payload
-/// the backend built out of a `Namespace`, or when the catalog host does not —
-/// and a bad host is dropped rather than failing the whole address, since the
-/// catalog is the one optional part of it.
+/// A catalog host that does not parse is dropped rather than failing the whole
+/// address, the catalog being the one optional part of it.
 #[must_use]
-pub fn package_uri(bucket: &str, namespace: &str, catalog: Option<&str>) -> Option<S3PackageUri> {
-    Some(S3PackageUri {
+pub fn package_uri(
+    bucket: &str,
+    namespace: &quilt_uri::Namespace,
+    catalog: Option<&str>,
+) -> S3PackageUri {
+    S3PackageUri {
         catalog: catalog.and_then(|host| host.parse().ok()),
         bucket: bucket.to_string(),
-        namespace: quilt_uri::Namespace::try_from(namespace).ok()?,
+        namespace: namespace.clone(),
         revision: quilt_uri::RevisionPointer::Tag(quilt_uri::Tag::Latest),
         path: None,
-    })
+    }
 }
 
 /// The same handle, pointed at one file inside the package — the form the feed's
@@ -236,14 +238,21 @@ pub fn format_size(bytes: u64) -> String {
 mod tests {
     use super::*;
 
+    fn ns(text: &str) -> quilt_uri::Namespace {
+        quilt_uri::Namespace::try_from(text).expect("a namespace")
+    }
+
     /// The one claim a copied address makes: the string. Round-tripped rather
     /// than only compared, because the point of the `quilt+s3` form is that
     /// something else parses it back — `S3PackageUri::try_from` is the reader on
     /// the other end of a paste.
     #[test]
     fn a_file_address_names_its_bucket_package_path_and_catalog() {
-        let package = package_uri("team-bucket", "user/plate-07", Some("example.quilt.dev"))
-            .expect("a package address");
+        let package = package_uri(
+            "team-bucket",
+            &ns("user/plate-07"),
+            Some("example.quilt.dev"),
+        );
         let file = file_uri(&package, "runs/a/one.csv");
 
         assert_eq!(
@@ -261,7 +270,7 @@ mod tests {
     /// stop a copy.
     #[test]
     fn a_package_with_no_catalog_still_has_an_address() {
-        let package = package_uri("team-bucket", "user/plate-07", None).expect("a package address");
+        let package = package_uri("team-bucket", &ns("user/plate-07"), None);
 
         assert_eq!(
             file_uri(&package, "one.csv").display(),
@@ -274,7 +283,7 @@ mod tests {
     /// revision the copier happened to hold.
     #[test]
     fn a_copied_address_pins_no_revision() {
-        let package = package_uri("b", "user/p", None).expect("a package address");
+        let package = package_uri("b", &ns("user/p"), None);
 
         let address = package.display();
         let package_spec = address

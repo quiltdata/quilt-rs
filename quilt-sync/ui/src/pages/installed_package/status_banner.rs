@@ -1,4 +1,5 @@
 use leptos::prelude::*;
+use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
 use crate::commands::{self, PausedEvent, PullCheck, PullOutcome};
@@ -20,7 +21,7 @@ use crate::util::role_denied_hint;
     reason = "declarative Leptos view; length is markup, not logic complexity"
 )]
 pub(super) fn StatusBanner(
-    namespace: String,
+    namespace: Namespace,
     status: String,
     /// The package's remote, when it has one. Its catalog answers both
     /// questions this banner asks about the remote: whether there *is* one (and
@@ -86,7 +87,7 @@ pub(super) fn StatusBanner(
                 move || {
                     let ns = ns_for_push.clone();
                     let uri = uri_for_push.clone();
-                    async move { commands::package_push(ns, uri).await }
+                    async move { commands::package_push(ns.to_string(), uri).await }
                 },
                 notification,
                 Some(ui_locked),
@@ -108,7 +109,7 @@ pub(super) fn StatusBanner(
                 move || {
                     let ns = ns_for_pull.clone();
                     let uri = uri_for_pull.clone();
-                    async move { commands::package_pull(ns, uri).await }
+                    async move { commands::package_pull(ns.to_string(), uri).await }
                 },
                 notification,
                 Some(ui_locked),
@@ -162,7 +163,7 @@ pub(super) fn StatusBanner(
                 move || {
                     let ns = ns_for_push.clone();
                     let uri = uri_for_push.clone();
-                    async move { commands::package_push(ns, uri).await }
+                    async move { commands::package_push(ns.to_string(), uri).await }
                 },
                 notification,
                 Some(ui_locked),

@@ -129,18 +129,10 @@ pub fn QuitPrompt() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mount;
 
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
-
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     fn button_saying(el: &web_sys::Element, text: &str) -> web_sys::HtmlElement {
         let buttons = el.query_selector_all("button").unwrap();

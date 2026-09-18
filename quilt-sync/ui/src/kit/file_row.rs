@@ -209,20 +209,9 @@ pub fn FileRowSkeleton() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
-
-    /// `main_page.rs`'s pattern: mount a view into a fresh, attached `div` and
-    /// hand back the element to query against. No `Router` needed here — unlike
-    /// `queue.rs`'s `mount`, nothing in this row navigates through one.
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     /// The action span's buttons, in document order.
     fn buttons(el: &web_sys::Element) -> Vec<web_sys::Element> {

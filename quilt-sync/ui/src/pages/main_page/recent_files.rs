@@ -16,6 +16,7 @@ use std::time::Duration;
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
 use super::super::main_page::rows_class;
@@ -54,7 +55,7 @@ pub fn RecentFilesRegion(
     /// its job is worse than no button. The feed's own payload carries no
     /// bucket, which is why this comes from the caller rather than from `files`.
     #[prop(optional)]
-    addresses: HashMap<String, S3PackageUri>,
+    addresses: HashMap<Namespace, S3PackageUri>,
 ) -> impl IntoView {
     // One state rather than a flag per row: exactly one copy can be the most
     // recent, and the rows read it through their own `copied` prop.
@@ -92,17 +93,19 @@ pub fn RecentFilesRegion(
                 files: visible,
             }];
         }
-        // `BTreeMap` gives the alphabetical group order. Pushing in arrival
+        // `BTreeMap` gives the group order, and it is the namespace's own —
+        // owner, then package — not the display string's, which sorts `/` after
+        // `-` and would put `acme-labs/x` ahead of `acme/y`. Pushing in arrival
         // order keeps the backend's newest-first order inside a group, which
         // nothing here re-derives.
-        let mut by_namespace: BTreeMap<String, Vec<MainPageFileData>> = BTreeMap::new();
+        let mut by_namespace: BTreeMap<Namespace, Vec<MainPageFileData>> = BTreeMap::new();
         for f in visible {
             by_namespace.entry(f.namespace.clone()).or_default().push(f);
         }
         by_namespace
             .into_iter()
             .map(|(namespace, files)| FileGroup {
-                title: Some(namespace),
+                title: Some(namespace.to_string()),
                 files,
             })
             .collect()
@@ -301,7 +304,7 @@ enum FeedShape {
 fn file_group(
     title: Option<String>,
     arranged: Memo<Vec<FileGroup>>,
-    addresses: HashMap<String, S3PackageUri>,
+    addresses: HashMap<Namespace, S3PackageUri>,
     state: CopyState,
 ) -> AnyView {
     let key = title.clone();
@@ -345,7 +348,7 @@ fn file_group(
 /// row rather than two copies of the same closures drifting apart.
 fn file_row(
     f: &MainPageFileData,
-    addresses: &HashMap<String, S3PackageUri>,
+    addresses: &HashMap<Namespace, S3PackageUri>,
     state: CopyState,
 ) -> impl IntoView + use<> {
     let namespace = f.namespace.clone();
@@ -373,13 +376,15 @@ fn file_row(
         <li>
         <FileRow
             path=f.path.clone()
-            package=namespace.clone()
+            package=namespace.to_string()
             package_href=package_page_href(&namespace)
             at=f.changed_at
             on_open=move |_| {
                 let (ns, path) = (open_ns.clone(), open_path.clone());
                 leptos::task::spawn_local(async move {
-                    if let Err(err) = commands::open_in_default_application(ns, path, None).await {
+                    if let Err(err) =
+                        commands::open_in_default_application(ns.to_string(), path, None).await
+                    {
                         // Logged, never rendered: the words a
                         // user reads come only from the kit.
                         web_sys::console::error_1(
@@ -391,7 +396,9 @@ fn file_row(
             on_reveal=move |_| {
                 let (ns, path) = (reveal_ns.clone(), reveal_path.clone());
                 leptos::task::spawn_local(async move {
-                    if let Err(err) = commands::reveal_in_file_browser(ns, path, None).await {
+                    if let Err(err) =
+                        commands::reveal_in_file_browser(ns.to_string(), path, None).await
+                    {
                         web_sys::console::error_1(
                             &format!("reveal_in_file_browser failed: {err}").into(),
                         );
@@ -408,33 +415,20 @@ fn file_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mount;
+    use crate::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    /// `main_page.rs`'s pattern.
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
-
-    /// `main_page.rs`'s pattern: let the queue drain before asserting.
-    async fn sleep_ms(ms: i32) {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            window()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-                .unwrap();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    /// The scenes name packages as text; the payloads carry the type.
+    fn ns(text: &str) -> Namespace {
+        Namespace::try_from(text).expect("a namespace")
     }
 
     fn file(path: &str, namespace: &str, changed_at: f64) -> MainPageFileData {
         MainPageFileData {
             path: path.to_string(),
-            namespace: namespace.to_string(),
+            namespace: ns(namespace),
             changed_at,
         }
     }
@@ -455,7 +449,7 @@ mod tests {
     fn mount_feed_addressed(
         files: Vec<MainPageFileData>,
         axis: &str,
-        addresses: HashMap<String, S3PackageUri>,
+        addresses: HashMap<Namespace, S3PackageUri>,
     ) -> web_sys::Element {
         let axis = axis.to_string();
         mount(move || {
@@ -473,10 +467,10 @@ mod tests {
     }
 
     /// The address of a package that has a bucket.
-    fn addressed(namespace: &str) -> HashMap<String, S3PackageUri> {
-        let uri =
-            crate::util::package_uri("team-bucket", namespace, None).expect("a package address");
-        HashMap::from([(namespace.to_string(), uri)])
+    fn addressed(namespace: &str) -> HashMap<Namespace, S3PackageUri> {
+        let namespace = ns(namespace);
+        let uri = crate::util::package_uri("team-bucket", &namespace, None);
+        HashMap::from([(namespace, uri)])
     }
 
     /// Every action button in the feed, by its accessible name.
@@ -611,6 +605,25 @@ mod tests {
             "groups are alphabetical, NOT ordered by their newest file — that is \
              the arrangement §3.2 rejects: {text}"
         );
+    }
+
+    /// The one case where the namespace's order and its text's disagree: an
+    /// owner that is a prefix of another owner. `acme` sorts before `acme-labs`
+    /// as owners do, though `acme-labs/plate` would come first as text.
+    #[wasm_bindgen_test]
+    fn the_feed_orders_owners_as_owners_not_as_text() {
+        let el = mount_feed_grouped(
+            vec![
+                file("one.csv", "acme-labs/plate", 9_000.0),
+                file("two.csv", "acme/plate", 1_000.0),
+            ],
+            GROUP_PACKAGE,
+        );
+
+        let text = el.text_content().unwrap();
+        let acme = text.find("acme/plate").expect("acme");
+        let labs = text.find("acme-labs/plate").expect("acme-labs");
+        assert!(acme < labs, "got: {text}");
     }
 
     #[wasm_bindgen_test]
