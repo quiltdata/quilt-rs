@@ -183,14 +183,14 @@ fn menu() -> Vec<MenuAction> {
 /// publishing ones. Duplication on purpose: the menu is the stable home, the
 /// caret is proximity at the moment it is wanted. See [`menu`].
 ///
-/// # Two groups, not four peers
+/// # One gap, because there is nothing left to group
 ///
-/// `Publish` / `Get latest` / `Resolve` / `Choose S3 bucket` act on this
-/// package's relationship to the remote. `Open folder` and `[⋯]` act on the copy
-/// on disk. At one uniform gap they read as four peers, so the essential group
-/// and the auxiliary one are separated by a wider space — `space-4` against
-/// `space-2` — rather than by a rule, which would be a second border in a header
-/// that already has the chip's.
+/// An earlier arrangement split the row into an essential group and an auxiliary
+/// one with a wider space between them. That earned itself while the row held
+/// four controls. It does not now: moving `Create new revision` into the menu
+/// leaves at most the state's action, `Open folder` and `[⋯]`, so the wider gap
+/// would separate a group of one from a group of two and invite the reader to
+/// look for a distinction that is not doing any work. One uniform `space-2`.
 fn header(state: &PackageState) -> AnyView {
     let rendered = render(state, Site::PageHeader);
     let action = rendered.action;
@@ -208,7 +208,6 @@ fn header(state: &PackageState) -> AnyView {
                 </h3>
                 <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
 
-                // Essential: what this package can do about the remote.
                 <div style="margin-left:auto; display:flex; align-items:center; \
                             gap:var(--q-space-2)">
                     {publishes
@@ -237,11 +236,6 @@ fn header(state: &PackageState) -> AnyView {
                                 </Button>
                             }
                         })}
-                </div>
-
-                // Auxiliary: what you can do with the copy on disk.
-                <div style="display:flex; align-items:center; gap:var(--q-space-2); \
-                            margin-left:var(--q-space-4)">
                     <Button on_click=|_| ()>"Open folder"</Button>
                     <ActionMenu
                         aria_label="More actions for this package"
@@ -277,17 +271,11 @@ pub fn PackageHeaderScene() -> impl IntoView {
                   `Publish` to hang a caret on; the caret is proximity, at the moment \
                   somebody is about to publish and might want the other way to do it. \
                   \
-                  Two groups, not four peers. The state's action sits apart from `Open \
-                  folder` and `[⋯]`, which act on the copy on disk rather than on this \
-                  package's relationship to the remote. At one uniform spacing they read \
-                  as one undifferentiated row of controls. \
-                  \
                   Measured, not guessed. Shrinking each row until it wraps: the widest \
-                  is `Revision not published` at 584px, then `No S3 bucket yet` at 584 \
-                  and `Newer revision available` at 580; the resting state needs 370. \
-                  The page has 992 at a 1024 window, so the worst case clears it by 408. \
-                  Taking the standalone button off the row bought back 162px against the \
-                  arrangement before it. The package name truncates rather than pushing, \
+                  is `Revision not published` at 568px, tied with `No S3 bucket yet`, \
+                  then `Newer revision available` at 564; the resting state needs 346. \
+                  The page has 992 at a 1024 window, so the worst case clears it by 424. \
+                  The package name truncates rather than pushing, \
                   so a long namespace does not move these numbers. The list toolbar \
                   below lost exactly this \
                   argument — it needs 708 and gets 700 — which is why the header's was \
