@@ -8,6 +8,7 @@ use quilt_uri::S3PackageUri;
 use rfd::FileDialog;
 use serde::Serialize;
 use tauri::Manager;
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync;
 
@@ -383,6 +384,44 @@ pub async fn open_in_web_browser(
     Notify::new(msg_init)
         .on_success(&tracing, MixpanelEvent::WebBrowserOpened)
         .map(open_in_web_browser_command(&url), msg_ok, msg_err)
+}
+
+fn copy_to_clipboard_command(app: &tauri::AppHandle, text: &str) -> Result<(), Error> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(crate::error::TauriUiError::from)?;
+    Ok(())
+}
+
+/// Put `text` on the system clipboard.
+///
+/// The text, not the thing it describes: the caller decides what a copy *means*
+/// — today the `quilt+s3` address of a file — and this command decides nothing
+/// about it. `uri` is for the event alone and never reaches the clipboard, which
+/// is why the two are separate arguments rather than one that gets rendered here.
+///
+/// Through the backend rather than `navigator.clipboard`, so it does not depend
+/// on a webview setting that differs per platform: on Linux and Windows the DOM
+/// API is gated behind wry's `clipboard` attribute, which Tauri leaves off and
+/// exposes only on a builder this app does not call — its window comes from
+/// `tauri.conf.json`.
+#[tauri::command]
+pub async fn copy_to_clipboard(
+    app: tauri::AppHandle,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    text: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let msg_init = format!("Copying to clipboard: {text}");
+    let msg_ok = "Successfully copied to clipboard".to_string();
+    let msg_err = |err: &Error| format!("Failed to copy to clipboard: {err}");
+
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::FileUriCopied(PackageFileEvent::for_uri(uri.as_ref())),
+        )
+        .map(copy_to_clipboard_command(&app, &text), msg_ok, msg_err)
 }
 
 async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {

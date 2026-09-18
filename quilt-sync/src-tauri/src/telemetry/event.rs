@@ -221,7 +221,9 @@ impl From<&crate::error::Error> for Failure {
             // cannot silently inherit this answer. Each is either the UI handing the
             // backend something it should not have, the OS refusing us, or an opaque
             // string that would need a variant of its own before it could be placed.
-            E::TauriUi(TauriUiError::Tauri(_) | TauriUiError::Window)
+            E::TauriUi(
+                TauriUiError::Tauri(_) | TauriUiError::Window | TauriUiError::Clipboard(_),
+            )
             | E::FsOpen(FsOpenError::Open(_) | FsOpenError::Zip(_))
             | E::Telemetry(TelemetryError::Mixpanel(_) | TelemetryError::Serialize(_))
             | E::Route(
@@ -419,6 +421,8 @@ pub enum MixpanelEvent {
     PackageDirOpened(PackageFileEvent),
     FileRevealed(PackageFileEvent),
     DefaultApplicationOpened(PackageFileEvent),
+    /// A file's `quilt+s3` address put on the clipboard.
+    FileUriCopied(PackageFileEvent),
 
     // ── autosync: the engine acting with no user present ──
     /// A publish the loop completed on its own. Deliberately *not*
@@ -485,7 +489,8 @@ impl MixpanelEvent {
 
             Self::PackageDirOpened(e)
             | Self::FileRevealed(e)
-            | Self::DefaultApplicationOpened(e) => e.host.as_ref(),
+            | Self::DefaultApplicationOpened(e)
+            | Self::FileUriCopied(e) => e.host.as_ref(),
 
             Self::AutosyncPublished(e) => Some(&e.host),
             Self::AutosyncPaused(e) => Some(&e.host),
