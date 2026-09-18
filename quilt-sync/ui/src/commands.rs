@@ -491,6 +491,20 @@ pub async fn get_login_error_data(
     }
     tauri::invoke("get_login_error_data", &Args { host, title, error }).await
 }
+/// Put `text` on the system clipboard.
+///
+/// `uri` is the package the text addresses, for the backend's event only — see
+/// `commands.rs`'s own note on the `uri` argument several commands take and
+/// never use.
+pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Result<String, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        text: String,
+        uri: Option<S3PackageUri>,
+    }
+    tauri::invoke("copy_to_clipboard", &Args { text, uri }).await
+}
 
 pub async fn get_settings_data() -> Result<SettingsData, String> {
     tauri::invoke_unit("get_settings_data").await

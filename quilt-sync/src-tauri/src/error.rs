@@ -12,6 +12,9 @@ pub enum TauriUiError {
     #[error("Window not found")]
     Window,
 
+    #[error("Clipboard unavailable: {0}")]
+    Clipboard(#[from] tauri_plugin_clipboard_manager::Error),
+
     #[error("User cancelled operation")]
     UserCancelled,
 }

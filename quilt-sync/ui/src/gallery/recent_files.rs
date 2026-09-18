@@ -52,7 +52,7 @@ fn Rows() -> impl IntoView {
                 on_open=|_| ()
                 on_reveal=|_| ()
                 on_open_catalog=|_| ()
-                on_copy_uri=|_| ()
+                on_copy_uri=Some(Callback::new(|_| ()))
             />
         }
     };
@@ -87,6 +87,30 @@ fn Rows() -> impl IntoView {
             </Cell>
             <Cell full=true label="short path — nothing truncates, actions still sit right">
                 {row("README.md", "user/package-a", 3.0 * HOUR)}
+            </Cell>
+            <Cell full=true label="just copied — the glyph confirms, the button stays put">
+                <FileRow
+                    path="analysis/qc/summary-by-well.parquet"
+                    package="org/dataset-c"
+                    package_href="#recent-files-parts"
+                    at=ago(41.0 * MINUTE)
+                    on_open=|_| ()
+                    on_reveal=|_| ()
+                    on_open_catalog=|_| ()
+                    on_copy_uri=Some(Callback::new(|_| ()))
+                    copied=true
+                />
+            </Cell>
+            <Cell full=true label="local only — no bucket, so no address and no Copy button">
+                <FileRow
+                    path="README.md"
+                    package="user/package-a"
+                    package_href="#recent-files-parts"
+                    at=ago(3.0 * HOUR)
+                    on_open=|_| ()
+                    on_reveal=|_| ()
+                    on_open_catalog=|_| ()
+                />
             </Cell>
             <Cell wide=true label="narrow — two columns, roughly a narrow window">
                 {row(
@@ -319,7 +343,7 @@ fn row(entry: (&'static str, &'static str, f64)) -> AnyView {
             on_open=|_| ()
             on_reveal=|_| ()
             on_open_catalog=|_| ()
-            on_copy_uri=|_| ()
+            on_copy_uri=Some(Callback::new(|_| ()))
         />
     }
     .into_any()

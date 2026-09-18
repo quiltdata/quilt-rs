@@ -31,6 +31,8 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
+use quilt_uri::S3PackageUri;
+
 use crate::commands;
 use crate::commands::MainPageAccountsData;
 use crate::commands::MainPagePackageData;
@@ -38,6 +40,7 @@ use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
 use crate::routes::package_page_href;
+use crate::util;
 use grouping::ListRowData;
 use grouping::PackageGroup;
 
@@ -669,6 +672,12 @@ fn files_view(
     query: RwSignal<String>,
     group_files_by: RwSignal<String>,
     retry: Trigger,
+    // Each package's `quilt+s3` handle, by namespace — see
+    // `recent_files::RecentFilesRegion`'s own prop. Empty when the packages read
+    // failed, which is why it is passed rather than read here: the feed is a
+    // payload of its own and stands whatever the other one did, but with no
+    // packages there are no addresses and so no Copy buttons.
+    addresses: HashMap<String, S3PackageUri>,
 ) -> AnyView {
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
@@ -685,7 +694,11 @@ fn files_view(
                 </Card>
             }
         }>
-            {move || Suspend::new(async move {
+            {move || {
+                // Cloned per run, not moved: the closure a `Transition` takes is
+                // `FnMut`, and a resolve happens again on every refetch.
+                let addresses = addresses.clone();
+                Suspend::new(async move {
                 match recent_files.await {
                     Ok(data) => {
                         view! {
@@ -693,6 +706,7 @@ fn files_view(
                                 files=data.files
                                 query=query.into()
                                 group_by=group_files_by.into()
+                                addresses=addresses.clone()
                             />
                         }
                             .into_any()
@@ -703,8 +717,9 @@ fn files_view(
                         );
                         view! { <Card>{render_files_fetch_error(retry)}</Card> }.into_any()
                     }
-                }
-            })}
+                    }
+                })
+            }}
         </Transition>
     }
     .into_any()
@@ -976,6 +991,20 @@ fn MainPageRegions(
                                 bucket: p.bucket.clone(),
                             })
                             .collect();
+                        // The feed's Copy action addresses a package, and only
+                        // this payload carries the bucket. A package without one
+                        // is absent here, and its rows draw no Copy button.
+                        let addresses: HashMap<String, S3PackageUri> = light
+                            .iter()
+                            .filter_map(|p| {
+                                let uri = util::package_uri(
+                                    p.bucket.as_deref()?,
+                                    &p.namespace,
+                                    p.host.as_deref(),
+                                )?;
+                                Some((p.namespace.clone(), uri))
+                            })
+                            .collect();
                         // How many packages the page holds, confirmed or not. The
                         // zero line speaks for all of them, and `settled` drops
                         // the ones no answer confirmed (R2) — including the ones
@@ -1172,7 +1201,7 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query, group_files_by, files_retry)}
+                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone())}
                             </Show>
                             </div>
                         }
@@ -1208,7 +1237,7 @@ fn MainPageRegions(
                                         view! { <Card>{render_fetch_error(packages_retry)}</Card> }
                                     }
                                 >
-                                    {files_view(recent_files, query, group_files_by, files_retry)}
+                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new())}
                                 </Show>
                             </div>
                         }
@@ -4180,6 +4209,7 @@ mod tests {
                 RwSignal::new(String::new()),
                 RwSignal::new(GROUP_NONE.to_string()),
                 Trigger::new(),
+                HashMap::new(),
             )
         });
         leptos::task::tick().await;

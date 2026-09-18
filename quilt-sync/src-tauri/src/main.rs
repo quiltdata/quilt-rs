@@ -62,6 +62,7 @@ fn main() {
                 error!("{}", err);
             }
         }))
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -242,6 +243,7 @@ fn main() {
             commands::open_directory_picker,
             commands::open_in_default_application,
             commands::open_in_file_browser,
+            commands::copy_to_clipboard,
             commands::open_in_web_browser,
             commands::package_commit,
             commands::package_commit_and_push,

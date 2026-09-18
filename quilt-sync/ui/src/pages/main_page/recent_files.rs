@@ -10,8 +10,13 @@
 //! a heading per namespace without touching the order within a group.
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::time::Duration;
 
+use leptos::ev::MouseEvent;
 use leptos::prelude::*;
+use leptos::task::spawn_local;
+use quilt_uri::S3PackageUri;
 
 use super::super::main_page::rows_class;
 use crate::commands;
@@ -41,7 +46,20 @@ pub fn RecentFilesRegion(
     /// A `Signal`, matching `query` above and for the identical reason: this
     /// region only reads the axis it is handed, never writes it.
     group_by: Signal<String>,
+    /// The `quilt+s3` handle of each package the packages payload named, by
+    /// namespace — what a row's Copy action addresses.
+    ///
+    /// A package with no bucket has no such address, so it is absent here and
+    /// its rows draw no Copy button. Absent, not inert: a button that cannot do
+    /// its job is worse than no button. The feed's own payload carries no
+    /// bucket, which is why this comes from the caller rather than from `files`.
+    #[prop(optional)]
+    addresses: HashMap<String, S3PackageUri>,
 ) -> impl IntoView {
+    // One state rather than a flag per row: exactly one copy can be the most
+    // recent, and the rows read it through their own `copied` prop.
+    let state = CopyState::new();
+
     if files.is_empty() {
         return view! {
             <Card label="Recent files">
@@ -121,19 +139,135 @@ pub fn RecentFilesRegion(
                         .into_any()
                 }
                 FeedShape::Groups => {
+                    // Cloned per run, not moved: the closure a `Card` body takes
+                    // is `FnMut`, and the shape changes whenever a search empties
+                    // the feed and fills it again.
+                    let addresses = addresses.clone();
                     view! {
                         <For
                             each=move || arranged.get()
                             key=|group: &FileGroup| group.title.clone()
-                            children=move |group| file_group(group.title, arranged)
+                            children=move |group| {
+                                file_group(group.title, arranged, addresses.clone(), state)
+                            }
                         />
                     }
                         .into_any()
                 }
             }}
+            // The copy's words, for a reader who cannot see the check the row
+            // draws. At card level, outside the rows: a region inside a row is
+            // replaced rather than updated when the list re-arranges, and a
+            // replaced live region never fires. Last in the body, because
+            // `Card`'s `.body > * + *` counts an out-of-flow child too and a
+            // first-child region would give the list a margin it does not have.
+            <span data-sr-only role="status">
+                {move || state.said.get()}
+            </span>
         </Card>
     }
     .into_any()
+}
+
+/// The address that is on the clipboard, and the row it came from.
+#[derive(Clone, Debug, PartialEq)]
+struct Copied {
+    uri: String,
+    path: String,
+}
+
+/// How long a copied row keeps its check, and its words their place in the live
+/// region.
+///
+/// Long enough to be seen after the click that caused it, short enough that a
+/// reader returning to the card later is not told something stale about a
+/// clipboard anything else may own by then.
+const CONFIRM_FOR: Duration = Duration::from_millis(1_500);
+
+/// What the card says about the last copy: the row's check and the live region's
+/// words, plus the stamp that decides which request may set them.
+///
+/// The stamp is `components/toasts.rs`'s pattern. Every click takes a fresh one,
+/// and a write settles only while its own stamp is the newest — two clicks
+/// inside one round trip would otherwise let the slower answer mark a row the
+/// reader has already moved past.
+#[derive(Clone, Copy)]
+struct CopyState {
+    copied: RwSignal<Option<Copied>>,
+    said: RwSignal<String>,
+    issued: StoredValue<u64>,
+}
+
+impl CopyState {
+    fn new() -> Self {
+        Self {
+            copied: RwSignal::new(None),
+            said: RwSignal::new(String::new()),
+            issued: StoredValue::new(0),
+        }
+    }
+
+    /// Take the next stamp. Everything in flight is stale from here.
+    fn bump(self) -> u64 {
+        self.issued
+            .try_update_value(|n| {
+                *n += 1;
+                *n
+            })
+            .unwrap_or_default()
+    }
+
+    fn is_current(self, stamp: u64) -> bool {
+        self.issued.try_get_value().unwrap_or_default() == stamp
+    }
+
+    /// Report one outcome on both surfaces, and take it back after
+    /// [`CONFIRM_FOR`].
+    fn settle(self, stamp: u64, mark: Option<Copied>, words: String) {
+        if !self.is_current(stamp) {
+            return;
+        }
+        self.copied.set(mark);
+        self.said.set(words);
+        set_timeout(
+            move || {
+                if self.is_current(stamp) {
+                    self.copied.set(None);
+                    self.said.set(String::new());
+                }
+            },
+            CONFIRM_FOR,
+        );
+    }
+}
+
+/// Put one file's `quilt+s3` address on the clipboard and report what happened.
+///
+/// Only a copy the backend confirmed draws a check. A row that marked itself on
+/// click would be lying in the one case that matters — the clipboard refusing.
+fn copy_uri(package: &S3PackageUri, path: &str, state: CopyState) {
+    let uri = crate::util::file_uri(package, path);
+    let text = uri.display();
+    let mark = Copied {
+        uri: text.clone(),
+        path: path.to_string(),
+    };
+    let stamp = state.bump();
+    spawn_local(async move {
+        match commands::copy_to_clipboard(text, Some(uri)).await {
+            Ok(_) => {
+                let words = format!("Copied the address of {}", mark.path);
+                state.settle(stamp, Some(mark), words);
+            }
+            Err(err) => {
+                // The words are the kit's; the backend's own text is logged and
+                // never rendered. A refusal says so rather than looking like a
+                // click that went nowhere.
+                web_sys::console::error_1(&format!("copy_to_clipboard failed: {err}").into());
+                state.settle(stamp, None, "Could not copy the address".to_string());
+            }
+        }
+    });
 }
 
 /// One run of feed rows under one heading — the feed's counterpart to the
@@ -164,7 +298,12 @@ enum FeedShape {
 /// The rows come from `arranged` rather than from the value the `<For>` hands
 /// in: a keyed child is built once per key, so a captured membership would never
 /// narrow.
-fn file_group(title: Option<String>, arranged: Memo<Vec<FileGroup>>) -> AnyView {
+fn file_group(
+    title: Option<String>,
+    arranged: Memo<Vec<FileGroup>>,
+    addresses: HashMap<String, S3PackageUri>,
+    state: CopyState,
+) -> AnyView {
     let key = title.clone();
     let files = Signal::derive(move || {
         arranged.with(|groups| {
@@ -194,7 +333,7 @@ fn file_group(title: Option<String>, arranged: Memo<Vec<FileGroup>>) -> AnyView 
             <For
                 each=move || files.get()
                 key=|f: &MainPageFileData| (f.namespace.clone(), f.path.clone())
-                children=|f| file_row(&f)
+                children=move |f| file_row(&f, &addresses, state)
             />
         </ul>
     }
@@ -204,8 +343,28 @@ fn file_group(title: Option<String>, arranged: Memo<Vec<FileGroup>>) -> AnyView 
 /// One file, wherever it is drawn — a flat row or a row under a `GroupHeading`.
 /// Pulled out so the two call sites in [`RecentFilesRegion`] draw the identical
 /// row rather than two copies of the same closures drifting apart.
-fn file_row(f: &MainPageFileData) -> impl IntoView + use<> {
+fn file_row(
+    f: &MainPageFileData,
+    addresses: &HashMap<String, S3PackageUri>,
+    state: CopyState,
+) -> impl IntoView + use<> {
     let namespace = f.namespace.clone();
+    // `None` for a package with no bucket: no address, so no button.
+    let on_copy_uri: Option<Callback<MouseEvent>> = addresses.get(&f.namespace).map(|package| {
+        let package = package.clone();
+        let path = f.path.clone();
+        Callback::new(move |_| copy_uri(&package, &path, state))
+    });
+    let uri = addresses
+        .get(&f.namespace)
+        .map(|package| crate::util::file_uri(package, &f.path).display());
+    let is_copied = Signal::derive(move || {
+        uri.as_ref().is_some_and(|uri| {
+            state
+                .copied
+                .with(|c| c.as_ref().is_some_and(|c| &c.uri == uri))
+        })
+    });
     let open_ns = namespace.clone();
     let open_path = f.path.clone();
     let reveal_ns = namespace.clone();
@@ -239,6 +398,8 @@ fn file_row(f: &MainPageFileData) -> impl IntoView + use<> {
                     }
                 });
             }
+            on_copy_uri=on_copy_uri
+            copied=is_copied
         />
         </li>
     }
@@ -260,6 +421,16 @@ mod tests {
         container.into()
     }
 
+    /// `main_page.rs`'s pattern: let the queue drain before asserting.
+    async fn sleep_ms(ms: i32) {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            window()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+                .unwrap();
+        });
+        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    }
+
     fn file(path: &str, namespace: &str, changed_at: f64) -> MainPageFileData {
         MainPageFileData {
             path: path.to_string(),
@@ -277,6 +448,15 @@ mod tests {
 
     /// `mount_feed`, with the axis under test named explicitly.
     fn mount_feed_grouped(files: Vec<MainPageFileData>, axis: &str) -> web_sys::Element {
+        mount_feed_addressed(files, axis, HashMap::new())
+    }
+
+    /// `mount_feed_grouped`, with the package addresses the Copy action needs.
+    fn mount_feed_addressed(
+        files: Vec<MainPageFileData>,
+        axis: &str,
+        addresses: HashMap<String, S3PackageUri>,
+    ) -> web_sys::Element {
         let axis = axis.to_string();
         mount(move || {
             view! {
@@ -285,10 +465,29 @@ mod tests {
                         files=files
                         query=Signal::stored(String::new())
                         group_by=Signal::stored(axis)
+                        addresses=addresses
                     />
                 </leptos_router::components::Router>
             }
         })
+    }
+
+    /// The address of a package that has a bucket.
+    fn addressed(namespace: &str) -> HashMap<String, S3PackageUri> {
+        let uri =
+            crate::util::package_uri("team-bucket", namespace, None).expect("a package address");
+        HashMap::from([(namespace.to_string(), uri)])
+    }
+
+    /// Every action button in the feed, by its accessible name.
+    fn action_names(el: &web_sys::Element) -> Vec<String> {
+        let buttons = el.query_selector_all("button[aria-label]").unwrap();
+        (0..buttons.length())
+            .map(|i| {
+                let b: web_sys::Element = buttons.item(i).unwrap().dyn_into().unwrap();
+                b.get_attribute("aria-label").unwrap_or_default()
+            })
+            .collect()
     }
 
     #[wasm_bindgen_test]
@@ -453,6 +652,122 @@ mod tests {
                 .unwrap()
                 .is_some(),
             "a heading is drawn on the package axis"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_package_with_an_address_offers_the_copy_action() {
+        let el = mount_feed_addressed(
+            vec![file("one.csv", "user/alpha", 1_000.0)],
+            GROUP_NONE,
+            addressed("user/alpha"),
+        );
+
+        assert!(
+            action_names(&el).iter().any(|n| n == "Copy Quilt+S3 URI"),
+            "got: {:?}",
+            action_names(&el)
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_package_with_no_bucket_offers_no_copy_action_at_all() {
+        // Absent, not inert. A local-only package has no `quilt+s3` address —
+        // there is no bucket to name — and a button that cannot do its job is
+        // worse than no button.
+        let el = mount_feed(vec![file("one.csv", "user/alpha", 1_000.0)]);
+
+        assert!(
+            !action_names(&el).iter().any(|n| n == "Copy Quilt+S3 URI"),
+            "got: {:?}",
+            action_names(&el)
+        );
+        assert!(
+            action_names(&el).iter().any(|n| n == "Reveal in directory"),
+            "and the actions that do work are still there"
+        );
+    }
+
+    /// The card's live region exists before any copy and is empty — a region
+    /// created by the event it is meant to announce never fires.
+    #[wasm_bindgen_test]
+    fn the_card_holds_a_silent_live_region_until_something_is_copied() {
+        let el = mount_feed_addressed(
+            vec![file("one.csv", "user/alpha", 1_000.0)],
+            GROUP_NONE,
+            addressed("user/alpha"),
+        );
+
+        let region = el
+            .query_selector("[role=status]")
+            .unwrap()
+            .expect("a live region");
+        assert!(region.has_attribute("data-sr-only"), "and it is not drawn");
+        assert_eq!(region.text_content().unwrap_or_default(), "");
+        assert!(
+            el.query_selector("li [role=status]").unwrap().is_none(),
+            "and it is outside the rows, which are rebuilt by every re-arrangement"
+        );
+    }
+
+    fn mark(path: &str) -> Copied {
+        Copied {
+            uri: format!("quilt+s3://b#package=user/p&path={path}"),
+            path: path.to_string(),
+        }
+    }
+
+    /// Two clicks inside one round trip: the older write must not land on top of
+    /// the newer one, on either surface.
+    #[wasm_bindgen_test]
+    fn a_slower_copy_cannot_overwrite_a_newer_one() {
+        let state = CopyState::new();
+        let first = state.bump();
+        let second = state.bump();
+
+        state.settle(second, Some(mark("two.csv")), "two".to_string());
+        state.settle(first, Some(mark("one.csv")), "one".to_string());
+
+        assert_eq!(state.said.get_untracked(), "two");
+        assert_eq!(
+            state.copied.get_untracked().expect("a mark").path,
+            "two.csv"
+        );
+    }
+
+    /// A refused clipboard says so. Silence would be indistinguishable from a
+    /// click that never registered — and there is no Tauri bridge in this
+    /// harness, so every copy here refuses.
+    #[wasm_bindgen_test]
+    async fn a_copy_that_fails_says_so_and_draws_no_check() {
+        let el = mount_feed_addressed(
+            vec![file("one.csv", "user/alpha", 1_000.0)],
+            GROUP_NONE,
+            addressed("user/alpha"),
+        );
+        let button: web_sys::HtmlElement = el
+            .query_selector("button[aria-label='Copy Quilt+S3 URI']")
+            .unwrap()
+            .expect("the copy button")
+            .dyn_into()
+            .unwrap();
+        let before = button.inner_html();
+
+        button.click();
+        sleep_ms(50).await;
+
+        let region = el
+            .query_selector("[role=status]")
+            .unwrap()
+            .expect("a live region");
+        assert_eq!(
+            region.text_content().unwrap_or_default(),
+            "Could not copy the address"
+        );
+        assert_eq!(
+            button.inner_html(),
+            before,
+            "and the glyph does not claim a copy that did not happen"
         );
     }
 }

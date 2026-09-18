@@ -57,6 +57,19 @@ fn copy_icon() -> AnyView {
     .into_any()
 }
 
+/// The copy button's glyph once the address is on the clipboard. Octicons' check
+/// would be the obvious choice, but the three glyphs beside it here are hand-drawn
+/// strokes at 1.3 and a filled Octicon among them reads as a different weight.
+fn copied_icon() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+        </svg>
+    }
+    .into_any()
+}
+
 #[component]
 pub fn FileRow(
     /// Logical key, shown whole and truncated from the left when it will not fit.
@@ -75,9 +88,22 @@ pub fn FileRow(
     /// appears.
     #[prop(optional, into)]
     on_open_catalog: Option<Callback<MouseEvent>>,
-    /// Optional: the app has no clipboard access yet (`qhq-8mgw.13`).
-    #[prop(optional, into)]
+    /// `optional_no_strip`, unlike its neighbour above: this is the one action
+    /// whose presence is decided per row — a package with no bucket has no
+    /// address to copy — so the caller hands in the `Option` it computed rather
+    /// than a callback it may not have.
+    #[prop(optional_no_strip)]
     on_copy_uri: Option<Callback<MouseEvent>>,
+    /// Whether this row's address is the one currently on the clipboard.
+    ///
+    /// The caller's answer, not this row's: only a copy that actually landed may
+    /// say so, and the row cannot know. It swaps the glyph for a check and
+    /// changes nothing else — in particular not the button's accessible name,
+    /// which would mean rebuilding the control under whoever had just pressed
+    /// it. The words a screen reader hears come from the region's own live
+    /// region (`pages/main_page/recent_files.rs`).
+    #[prop(optional, into)]
+    copied: MaybeProp<bool>,
 ) -> impl IntoView {
     // Both ellipsise, so each carries its whole value in `title`.
     let full_path = path.clone();
@@ -127,9 +153,20 @@ pub fn FileRow(
                     }
                 })}
                 {on_copy_uri.map(|cb| {
+                    // One button whose glyph is reactive, never two swapped by a
+                    // `Show`: the control must survive its own press, or a keyboard
+                    // user loses focus the moment the copy lands.
+                    let glyph = view! {
+                        {move || if copied.get().unwrap_or(false) {
+                            copied_icon()
+                        } else {
+                            copy_icon()
+                        }}
+                    }
+                        .into_any();
                     view! {
                         <IconButton
-                            icon=copy_icon()
+                            icon=glyph
                             aria_label="Copy Quilt+S3 URI"
                             variant=IconButtonVariant::Invisible
                             on_click=move |ev| cb.run(ev)
@@ -244,7 +281,7 @@ mod tests {
                     on_open=|_| {}
                     on_reveal=|_| {}
                     on_open_catalog=Callback::new(|_| {})
-                    on_copy_uri=Callback::new(|_| {})
+                    on_copy_uri=Some(Callback::new(|_| {}))
                 />
             }
         });
@@ -358,6 +395,69 @@ mod tests {
         assert_eq!(
             tag.get_attribute("title").as_deref(),
             Some("a-long-owner-name/a-much-longer-package-name-than-the-column")
+        );
+    }
+
+    /// The copy button confirms in place: the glyph swaps, the button does not.
+    ///
+    /// Node identity is half the assertion. A `Show` around two buttons would
+    /// pass the glyph half and fail this one, and it would take focus off the
+    /// control in the instant after a keyboard user pressed it.
+    #[wasm_bindgen_test]
+    async fn a_copied_row_swaps_its_glyph_without_replacing_the_button() {
+        let copied = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <FileRow
+                    path="data/one.csv"
+                    package="user/alpha"
+                    package_href="/installed-package?namespace=user/alpha"
+                    at=0.0
+                    on_open=|_| {}
+                    on_reveal=|_| {}
+                    on_copy_uri=Some(Callback::new(|_| {}))
+                    copied=copied
+                />
+            }
+        });
+        let button = el
+            .query_selector("button[aria-label='Copy Quilt+S3 URI']")
+            .unwrap()
+            .expect("the copy button");
+        let before = button
+            .query_selector("svg")
+            .unwrap()
+            .expect("a glyph")
+            .inner_html();
+
+        copied.set(true);
+        leptos::task::tick().await;
+
+        let after_button = el
+            .query_selector("button[aria-label='Copy Quilt+S3 URI']")
+            .unwrap()
+            .expect("the copy button, still");
+        assert!(
+            button.is_same_node(Some(&after_button)),
+            "the control survives its own press"
+        );
+        let after = after_button
+            .query_selector("svg")
+            .unwrap()
+            .expect("a glyph")
+            .inner_html();
+        assert_ne!(before, after, "and the glyph says the copy landed");
+
+        copied.set(false);
+        leptos::task::tick().await;
+        assert_eq!(
+            after_button
+                .query_selector("svg")
+                .unwrap()
+                .expect("a glyph")
+                .inner_html(),
+            before,
+            "and goes back — a check that stayed would outlive the clipboard"
         );
     }
 }
