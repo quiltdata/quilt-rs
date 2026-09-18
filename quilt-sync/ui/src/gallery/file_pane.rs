@@ -47,6 +47,34 @@
 //!   so the thousand it keeps is category-biased and the design's own wording
 //!   would be false (`qhq-qpus`).
 //!
+//! # What the render settled, none of it reasoned first
+//!
+//! - **The footer's arithmetic is exact.** 313px of list at rest, 264 with the
+//!   footer, and the footer measures 49 — so the card is 315 either way and the
+//!   pane does not change height when the first row is ticked. §9's number is
+//!   the selecting state, as §5 worked out on paper and this confirms.
+//! - **End-truncation destroys a path.** Under `Group: None` at 700px, five
+//!   consecutive rows read
+//!   `investigations/2026-09-15-installed-package-page/design-0…` and three of
+//!   them are indistinguishable: the ellipsis eats the leaf, which is the only
+//!   part that identifies the file. §6 left the truncation strategy open and
+//!   this is the argument for settling it — the end of a path is what a reader
+//!   needs and the start is what they can infer.
+//! - **`Group: None` also changes how many rows the toolbar takes.** `Group:
+//!   Base folder` is 166px and `Group: None` about 130, which is the margin the
+//!   toolbar is short by — so the controls fit one line under `None` and wrap
+//!   under the default. The wrap is not a property of the width alone.
+//! - **A group of one is mostly heading.** The `Ignored` facet draws three
+//!   `.DS_Store` rows under two headings holding one file each, so half the view
+//!   is headings and all three rows have the same name. §6's *suppress the
+//!   heading for a group of one* has its evidence, and this view is where it
+//!   shows.
+//! - **The loading state had to reserve two heights, not one.** The toolbar
+//!   wraps to 68px and the list is 313, and a skeleton shorter than either moves
+//!   the page under the reader at the moment data lands — the same jump the
+//!   never-move-geometry rule is about, caused by an arrival rather than a
+//!   hover.
+//!
 //! # Three things the cells settled by being drawn
 //!
 //! - **The facets make the toolbar content, so it cannot survive a load.** §7's
@@ -103,6 +131,9 @@ const PANE: &str = "width:700px; max-width:100%";
 /// the selecting state, not the resting one.
 const LIST_RESTING: &str = "max-height:313px";
 const LIST_WITH_FOOTER: &str = "max-height:264px";
+/// The cap notice is 36px, and at the height floor the pane cannot grow by it —
+/// so it comes out of the list rather than out of the page.
+const LIST_UNDER_NOTICE: &str = "max-height:277px";
 
 // ── the package ─────────────────────────────────────────────
 
@@ -190,7 +221,7 @@ fn package() -> Vec<File> {
         File::new("notes/.DS_Store", 6_148, Mark::Ignored),
         File::new("raw/.DS_Store", 6_148, Mark::Ignored),
     ];
-    for i in 1..=6u64 {
+    for i in 1..=5u64 {
         files.push(File::new(
             format!("notes/handoff-{i:02}.md"),
             9_000 + i * 700,
@@ -352,6 +383,32 @@ fn rows(files: &[File]) -> Vec<Row> {
         .collect()
 }
 
+/// The row-level confirm: whether it is open, and the file it is about.
+///
+/// **One value, because the two are never set apart.** Opening without setting
+/// the subject would put the previous file's name in front of a reader about to
+/// delete this one, which is the exact failure verdict 8's *name what goes* is
+/// written against.
+#[derive(Clone, Copy)]
+struct Confirm {
+    open: RwSignal<bool>,
+    subject: RwSignal<String>,
+}
+
+impl Confirm {
+    fn new(subject: &str) -> Self {
+        Self {
+            open: RwSignal::new(false),
+            subject: RwSignal::new(subject.to_string()),
+        }
+    }
+
+    fn ask(self, subject: String) {
+        self.subject.set(subject);
+        self.open.set(true);
+    }
+}
+
 /// The `[⋯]`, gated by where the file is.
 ///
 /// §6 owes this — *"the menu must be gated the same way, or it offers `Open
@@ -363,7 +420,7 @@ fn rows(files: &[File]) -> Vec<Row> {
 /// `Stop ignoring` is not in §3's list at all, although the `Ignored` facet is
 /// the view that reaches it and v1 has the popup. A menu that can ignore and
 /// cannot un-ignore is a one-way door.
-fn menu(mark: Mark, ask: RwSignal<bool>) -> Vec<MenuAction> {
+fn menu(mark: Mark, subject: String, confirm: Confirm) -> Vec<MenuAction> {
     let mut items = Vec::new();
     if mark.local() {
         items.push(MenuAction::new("Open file", Callback::new(|()| ())));
@@ -376,8 +433,16 @@ fn menu(mark: Mark, ask: RwSignal<bool>) -> Vec<MenuAction> {
         MenuAction::new("Ignore", Callback::new(|()| ()))
     });
     if matches!(mark, Mark::Here | Mark::Changed | Mark::New) {
-        items
-            .push(MenuAction::new("Stop keeping", Callback::new(move |()| ask.set(true))).danger());
+        items.push(
+            MenuAction::new(
+                "Stop keeping",
+                // The dialog names the row it was opened from. A confirm that
+                // names some other file is the defect verdict 8 exists to
+                // prevent, and a fixture is where it would go unnoticed.
+                Callback::new(move |()| confirm.ask(subject.clone())),
+            )
+            .danger(),
+        );
     }
     items
 }
@@ -395,13 +460,13 @@ fn row(
     picks: RwSignal<Vec<bool>>,
     marked: bool,
     boxes: bool,
-    ask: RwSignal<bool>,
+    confirm: Confirm,
 ) -> AnyView {
     let name = if flat { r.path.clone() } else { r.leaf.clone() };
     let state = r.mark.state();
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
-    let actions = menu(r.mark, ask);
+    let actions = menu(r.mark, format!("{} ({})", r.path, r.size), confirm);
 
     match (r.pick, boxes) {
         (Some(i), true) => view! {
@@ -547,7 +612,9 @@ fn pane(p: Pane) -> AnyView {
     });
 
     let all = StoredValue::new(all);
-    let ask = RwSignal::new(false);
+    // Seeded, because a gallery cell can open this from its own trigger as well
+    // as from a row's menu.
+    let confirm = Confirm::new("raw/plate-03.csv (4.16 MB)");
 
     let query_sig = RwSignal::new(query.to_string());
     let facet_sig = RwSignal::new(selected);
@@ -639,7 +706,7 @@ fn pane(p: Pane) -> AnyView {
                         Some((name, members)) if name == folder => members.push(i),
                         _ => groups.push((folder.clone(), vec![i])),
                     },
-                    _ => roots.push(draw(&rs[i], flat, picks, marked, boxes, ask)),
+                    _ => roots.push(draw(&rs[i], flat, picks, marked, boxes, confirm)),
                 }
             }
 
@@ -647,7 +714,7 @@ fn pane(p: Pane) -> AnyView {
                 {roots}
                 {groups
                     .into_iter()
-                    .map(|(name, members)| group(name, members, all, picks, marked, boxes, ask))
+                    .map(|(name, members)| group(name, members, all, picks, marked, boxes, confirm))
                     .collect_view()}
             }
             .into_any()
@@ -670,12 +737,25 @@ fn pane(p: Pane) -> AnyView {
                         // The toolbar's own labels carry counts, and counts are
                         // data — so this is the one piece of chrome that cannot
                         // outlive its load. §7 has to record the exception.
-                        <div style="display:flex; gap:var(--q-space-2); align-items:center; \
-                                    padding:var(--q-space-1) 0">
-                            <SkeletonBox width="180px" height="32px" />
-                            <div style="margin-left:auto; display:flex; gap:var(--q-space-2)">
-                                <SkeletonBox width="150px" height="32px" />
+                        //
+                        // It reserves the height the real toolbar takes, which
+                        // at this width is two lines and not one: a skeleton
+                        // that stands 36px shorter than what replaces it moves
+                        // the list down on arrival, which is the jump the
+                        // never-move-geometry rule exists to prevent — and the
+                        // rule binds a load as much as a hover.
+                        <div
+                            class="g-stack"
+                            style="gap:var(--q-space-2); padding:var(--q-space-1) 0"
+                        >
+                            <div style="display:flex; gap:var(--q-space-2); \
+                                        justify-content:flex-end">
+                                <SkeletonBox width="166px" height="32px" />
                                 <SkeletonBox width="396px" height="32px" />
+                            </div>
+                            <div style="display:flex; gap:var(--q-space-2)">
+                                <span style="flex:0 0 28px" />
+                                <SkeletonBox width="102px" height="20px" />
                             </div>
                         </div>
                     }
@@ -743,9 +823,16 @@ fn pane(p: Pane) -> AnyView {
                     }
                     Body::Loading => {
                         view! {
-                            <div style="padding:var(--q-space-2) var(--q-space-3); \
-                                        display:flex; flex-direction:column; \
-                                        gap:var(--q-space-3)">
+                            // The box reserves the resting list's height too. A
+                            // skeleton that stands 117px shorter than the rows
+                            // it becomes moves the whole page under the reader
+                            // at the moment the data lands.
+                            <div style=format!(
+                                "{LIST_RESTING}; height:313px; overflow:hidden; \
+                                 padding:var(--q-space-2) var(--q-space-3); \
+                                 display:flex; flex-direction:column; \
+                                 gap:var(--q-space-3)",
+                            )>
                                 {(0..8)
                                     .map(|i| {
                                         view! {
@@ -784,10 +871,10 @@ fn pane(p: Pane) -> AnyView {
                                 style=move || {
                                     format!(
                                         "{}; overflow-y:auto; --q-entry-gutter:{}",
-                                        if footer_shown.get() {
-                                            LIST_WITH_FOOTER
-                                        } else {
-                                            LIST_RESTING
+                                        match (footer_shown.get(), body) {
+                                            (true, _) => LIST_WITH_FOOTER,
+                                            (false, Body::Capped) => LIST_UNDER_NOTICE,
+                                            (false, _) => LIST_RESTING,
                                         },
                                         if group_sig.get() == "None" { "0" } else { "16px" },
                                     )
@@ -816,7 +903,7 @@ fn pane(p: Pane) -> AnyView {
                     </div>
                 </Show>
             </Card>
-            {stop_keeping(ask)}
+            {stop_keeping(confirm)}
         </div>
     }
     .into_any()
@@ -831,10 +918,10 @@ fn draw(
     picks: RwSignal<Vec<bool>>,
     marked: StoredValue<Vec<String>>,
     boxes: bool,
-    ask: RwSignal<bool>,
+    confirm: Confirm,
 ) -> AnyView {
     let differs = marked.with_value(|paths| paths.contains(&r.path));
-    row(r, flat, picks, differs, boxes, ask)
+    row(r, flat, picks, differs, boxes, confirm)
 }
 
 /// A heading and its rows. The heading's box is derived from the rows under it
@@ -848,7 +935,7 @@ fn group(
     picks: RwSignal<Vec<bool>>,
     marked: StoredValue<Vec<String>>,
     boxes: bool,
-    ask: RwSignal<bool>,
+    confirm: Confirm,
 ) -> AnyView {
     let open = RwSignal::new(true);
     let count = members.len();
@@ -884,7 +971,7 @@ fn group(
         all.with_value(|rs| {
             members.with_value(|ms| {
                 ms.iter()
-                    .map(|&i| draw(&rs[i], false, picks, marked, boxes, ask))
+                    .map(|&i| draw(&rs[i], false, picks, marked, boxes, confirm))
                     .collect_view()
             })
         })
@@ -924,7 +1011,8 @@ fn group(
 /// `Cancel` first and the confirm `Primary` last, as `Dialog` has it everywhere
 /// else on this platform. The weight sits in the words, because Danger in this
 /// system is a *status* colour and a red confirm would read as *this errored*.
-fn stop_keeping(open: RwSignal<bool>) -> AnyView {
+fn stop_keeping(confirm: Confirm) -> AnyView {
+    let Confirm { open, subject } = confirm;
     view! {
         <Dialog
             open=open
@@ -938,8 +1026,13 @@ fn stop_keeping(open: RwSignal<bool>) -> AnyView {
                 .into_any()
         >
             <p style="margin:0">
-                "raw/plate-03.csv (4.16 MB) will be deleted from this computer. It stays in \
-                 the package, and you can download it again."
+                {move || {
+                    format!(
+                        "{} will be deleted from this computer. It stays in the package, and \
+                         you can download it again.",
+                        subject.get(),
+                    )
+                }}
             </p>
         </Dialog>
     }
@@ -975,17 +1068,18 @@ fn replace_mine(open: RwSignal<bool>) -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a row: \
-    the footer slides up and the list drops from 313px to 264 — §9 quotes the second number \
-    as the page's capacity, and it is the selecting state, not the resting one. Type in the \
-    search or pick a facet: select-all states its own extent, and under `Changed` it goes, \
-    having nothing to tick. Two cells draw ahead of their data — the marked rows and the \
-    cap's sentence. Unresolved: `New` and `Deleted` belong to no facet, and loading \
-    skeletonises a toolbar §7 calls chrome.";
+const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a \
+    row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
+    either way, so the pane never changes height. Type in the search or pick a facet: \
+    select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
+    Two cells draw ahead of their data, the marked rows and the cap's sentence. Unresolved \
+    and visible: under `Group: None` the ellipsis eats the leaf, and `Ignored` is three \
+    files under two headings.";
 
 #[component]
 pub fn FilePaneScene() -> impl IntoView {
-    let keeping = RwSignal::new(false);
+    // The standalone trigger has no row behind it, so it names one.
+    let keeping = Confirm::new("raw/plate-03.csv (4.16 MB)");
     let replacing = RwSignal::new(false);
 
     view! {
@@ -1005,7 +1099,7 @@ pub fn FilePaneScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
                 {pane(Pane {
-                    marked: &["notes/ernest-thread.md", "raw/plate-24.csv"],
+                    marked: &["README.md", "investigations/2026-09-15-installed-package-page/design-01.md"],
                     ..Pane::new("fp-marked")
                 })}
             </Cell>
@@ -1015,13 +1109,13 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="the Changed facet — nothing here can be ticked, so select-all goes">
                 {pane(Pane { facet: "Changed", ..Pane::new("fp-changed") })}
             </Cell>
-            <Cell full=true label="the Ignored facet — every row is ignored, so no row says so">
+            <Cell full=true label="the Ignored facet — three files, two headings, one name between them">
                 {pane(Pane { facet: "Ignored", ..Pane::new("fp-ignored") })}
             </Cell>
             <Cell full=true label="a clean copy — `Changed 0` stays in place, inert">
                 {pane(Pane { files: settled_package(), ..Pane::new("fp-settled") })}
             </Cell>
-            <Cell full=true label="Group: None — full paths, and the gutter goes to zero">
+            <Cell full=true label="Group: None — the gutter goes to zero, and the ellipsis eats the leaf">
                 {pane(Pane { grouped: false, ..Pane::new("fp-flat") })}
             </Cell>
             <Cell full=true label="a search and a facet that leave nothing — compact, and no way out">
@@ -1037,7 +1131,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="loading — and the toolbar cannot outlive its counts">
                 {pane(Pane { body: Body::Loading, ..Pane::new("fp-loading") })}
             </Cell>
-            <Cell full=true label="over the cap — the sentence the DTO cannot yet support">
+            <Cell full=true label="over the cap — and the toolbar's counts openly disagree with it">
                 {pane(Pane { body: Body::Capped, ..Pane::new("fp-capped") })}
             </Cell>
             <Cell full=true label="the read failed — the controls stay, the box carries it">
@@ -1045,7 +1139,7 @@ pub fn FilePaneScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="the two confirms — also reachable from any row's [⋯]">
                 <div class="g-inline">
-                    <Button on_click=move |_| keeping.set(true)>"Stop keeping"</Button>
+                    <Button on_click=move |_| keeping.open.set(true)>"Stop keeping"</Button>
                     <Button on_click=move |_| replacing.set(true)>
                         "Replace mine with the published one"
                     </Button>
