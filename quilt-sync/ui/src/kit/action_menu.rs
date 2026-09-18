@@ -25,6 +25,15 @@
 //! `aria-controls` — it says that it opens something, which of it is open, and
 //! which surface it means, none of which claim a keyboard model.
 //!
+//! # It hangs leftwards, and that is not a prop
+//!
+//! The trigger is an overflow glyph, which is a trailing control everywhere it is
+//! used — the end of a row, the end of a header. So the surface always aligns its
+//! right edge to the trigger's and grows left. Left-aligning instead would push it
+//! into [`AnchoredOverlay`]'s viewport clamp, which pins the surface to the window
+//! rather than to the button that opened it. If a leading `[⋯]` ever exists, this
+//! becomes a prop; inventing one for a caller that does not exist would not.
+//!
 //! # A disabled command says why
 //!
 //! [`MenuAction::disabled`] carries the reason rather than a flag. A greyed
@@ -33,6 +42,7 @@
 
 use leptos::prelude::*;
 
+use super::Align;
 use super::AnchoredOverlay;
 use super::IconButton;
 use super::IconButtonVariant;
@@ -120,6 +130,28 @@ pub fn ActionMenu(
         .into_any()
     };
 
+    let items = surface(actions, open);
+
+    view! {
+        <AnchoredOverlay
+            trigger=trigger
+            open=open
+            aria_label=surface_label
+            align=Align::End
+            tight=true
+        >
+            {items}
+        </AnchoredOverlay>
+    }
+}
+
+/// The list of commands, as it is drawn inside an [`AnchoredOverlay`].
+///
+/// Shared with [`SplitButton`](super::SplitButton), which is the same list
+/// behind a different trigger. Extracted rather than written twice: two copies
+/// of the separator rule and the close-then-run order would drift, and this file
+/// already owns the stylesheet they are drawn with.
+pub(super) fn surface(actions: Vec<MenuAction>, open: RwSignal<bool>) -> AnyView {
     let items = actions
         .into_iter()
         .map(|action| {
@@ -168,9 +200,65 @@ pub fn ActionMenu(
         })
         .collect_view();
 
-    view! {
-        <AnchoredOverlay trigger=trigger open=open aria_label=surface_label tight=true>
-            <div class=style::list>{items.clone()}</div>
-        </AnchoredOverlay>
-    }
+    view! { <div class=style::list>{items}</div> }.into_any()
+}
+
+/// The options of a [`SplitButton`](super::SplitButton), as they are drawn
+/// inside an [`AnchoredOverlay`].
+///
+/// Separate from [`surface`] because the two menus mean different things.
+/// `ActionMenu`'s items are commands: each runs and the menu closes. These are
+/// **choices**: picking one moves the mark and changes what the face will do,
+/// and nothing runs until the face itself is clicked. Sharing one function would
+/// mean a parameter that silently changes what a click does.
+///
+/// `aria-current` rather than `aria-checked`: the latter needs a `radio` or
+/// `menuitemradio` role, and both promise the arrow-key model this kit
+/// deliberately does not hand-write — the same reason `ActionMenu` declines
+/// `role="menu"`. `aria-current` states which one is active and claims nothing
+/// about how to move between them.
+///
+/// **`current` and `selected` are two different things and must stay so.**
+/// `current` is what the face is showing, already normalised; `selected` is the
+/// caller's raw store, which a stale preference can put out of range. Marking
+/// from the raw value leaves every option unticked while the face shows one of
+/// them — the menu saying "none of these" about a button that is about to run.
+pub(super) fn choices(
+    labels: Vec<String>,
+    current: Signal<usize>,
+    selected: RwSignal<usize>,
+    open: RwSignal<bool>,
+) -> AnyView {
+    let items = labels
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let class = format!("{} {}", style::item, style::choice);
+            let is_current = move || current.get() == index;
+            view! {
+                <button
+                    type="button"
+                    class=class
+                    aria-current=move || is_current().then_some("true")
+                    on:click=move |_| {
+                        // Sets the default; it does not run it. Opening a menu to
+                        // change a preference must not also publish.
+                        selected.set(index);
+                        open.set(false);
+                    }
+                >
+                    {move || {
+                        if is_current() {
+                            view! { <span class=style::mark>{icons::check()}</span> }.into_any()
+                        } else {
+                            view! { <span class=style::unmarked /> }.into_any()
+                        }
+                    }}
+                    {label}
+                </button>
+            }
+        })
+        .collect_view();
+
+    view! { <div class=style::list>{items}</div> }.into_any()
 }

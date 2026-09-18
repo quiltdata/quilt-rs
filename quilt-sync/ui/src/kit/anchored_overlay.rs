@@ -48,6 +48,23 @@ const OFFSET: f64 = 4.0;
 /// How close to the viewport's edge it is allowed to come.
 const MARGIN: f64 = 8.0;
 
+/// Which of the surface's edges lines up with the trigger's.
+///
+/// Not cosmetic. A trigger near the right of its container has no room to grow
+/// rightwards, and a surface that tries lands against the viewport clamp — which
+/// pins it to the *window* rather than to the trigger, so the gap between the two
+/// changes as the window resizes. Trailing controls therefore hang leftwards from
+/// their own right edge, which is also where the eye already is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Align {
+    /// Left edges together. For a trigger that leads its row.
+    #[default]
+    Start,
+    /// Right edges together, growing leftwards. For a trailing trigger — an
+    /// overflow `[⋯]`, or the caret of a [`SplitButton`](super::SplitButton).
+    End,
+}
+
 #[component]
 pub fn AnchoredOverlay(
     /// Draws the control that opens it, handed the surface's id so it can point
@@ -71,6 +88,11 @@ pub fn AnchoredOverlay(
     /// in the top layer and no longer a descendant in the visual tree.
     #[prop(into)]
     aria_label: String,
+    /// Which of the surface's edges lines up with the trigger's. Defaults to
+    /// [`Align::Start`]; a trailing trigger wants [`Align::End`]. See the enum for
+    /// why this is not left to the viewport clamp.
+    #[prop(optional)]
+    align: Align,
     /// Drop the surface's own padding, for contents that pad themselves and
     /// need to reach its edge — a menu's items, whose hover highlight would
     /// otherwise stop short of the surface it is drawn inside.
@@ -145,7 +167,7 @@ pub fn AnchoredOverlay(
                 drop(element.show_popover());
                 attach();
             }
-            place(element, &anchor.get_bounding_client_rect());
+            place(element, &anchor.get_bounding_client_rect(), align);
         } else if was_open {
             drop(element.hide_popover());
             detach();
@@ -190,7 +212,7 @@ pub fn AnchoredOverlay(
 /// Below by preference and above when below does not fit, because a menu that
 /// opens upward is merely unusual while one that opens off the bottom of the
 /// window is unreachable.
-fn place(element: &web_sys::HtmlElement, anchor: &web_sys::DomRect) {
+fn place(element: &web_sys::HtmlElement, anchor: &web_sys::DomRect, align: Align) {
     let Some(window) = web_sys::window() else {
         return;
     };
@@ -207,10 +229,7 @@ fn place(element: &web_sys::HtmlElement, anchor: &web_sys::DomRect) {
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
-    // Left-aligned with the trigger, pulled back in if that would overflow the
-    // right edge. `max` last, so a surface wider than the viewport still starts
-    // on screen rather than off the left of it.
-    let left = anchor.left().min(view_width - MARGIN - width).max(MARGIN);
+    let left = horizontal(align, anchor.left(), anchor.right(), width, view_width);
 
     let below = anchor.bottom() + OFFSET;
     let above = anchor.top() - OFFSET - height;
@@ -223,4 +242,79 @@ fn place(element: &web_sys::HtmlElement, anchor: &web_sys::DomRect) {
     let css = element.style();
     drop(css.set_property("left", &format!("{left}px")));
     drop(css.set_property("top", &format!("{top}px")));
+}
+
+/// Where the surface's left edge goes: lined up with one of the trigger's edges,
+/// then pulled back inside the viewport.
+///
+/// Split out from [`place`] because it is the whole decision and the rest is DOM
+/// plumbing — it can be checked without a browser, a popover or a layout pass.
+///
+/// The clamp is a last resort and not an alignment. It ties the surface to the
+/// *window* instead of to its trigger, so the gap between the two moves when the
+/// window resizes; choosing the edge that has room is what keeps it from firing.
+/// `max` comes last, so a surface wider than the viewport still starts on screen
+/// rather than off the left of it.
+fn horizontal(
+    align: Align,
+    anchor_left: f64,
+    anchor_right: f64,
+    width: f64,
+    view_width: f64,
+) -> f64 {
+    let aligned = match align {
+        Align::Start => anchor_left,
+        Align::End => anchor_right - width,
+    };
+    aligned.min(view_width - MARGIN - width).max(MARGIN)
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::float_cmp,
+    reason = "every input here is integral and the arithmetic is min/max over               them, so the results are exact — a tolerance would only hide a               placement that had genuinely moved"
+)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    /// A trailing trigger hangs its surface leftwards from its own right edge.
+    /// This is the case the clamp used to swallow: left-aligning a `[⋯]` near the
+    /// window's edge pinned the surface to the window, which is why the menu
+    /// overhung its own button by 45px at a 1280 viewport.
+    #[wasm_bindgen_test]
+    fn end_alignment_puts_the_right_edges_together() {
+        // A `[⋯]` at 1203..1227 in a 1280 viewport, 200px of menu.
+        let left = horizontal(Align::End, 1203.0, 1227.0, 200.0, 1280.0);
+        assert_eq!(left + 200.0, 1227.0, "right edges must coincide");
+        assert!(left > MARGIN, "and it must not have hit the clamp");
+    }
+
+    #[wasm_bindgen_test]
+    fn start_alignment_puts_the_left_edges_together() {
+        let left = horizontal(Align::Start, 40.0, 72.0, 200.0, 1280.0);
+        assert_eq!(left, 40.0);
+    }
+
+    /// The clamp still exists for the case it was written for: a surface that
+    /// genuinely cannot fit beside its trigger.
+    #[wasm_bindgen_test]
+    fn a_surface_that_cannot_fit_is_pulled_inside_the_viewport() {
+        // Start-aligned against a trigger hard against the right edge.
+        let left = horizontal(Align::Start, 1200.0, 1232.0, 200.0, 1280.0);
+        assert_eq!(left, 1280.0 - MARGIN - 200.0);
+
+        // End-aligned against a trigger hard against the left edge: the surface
+        // would start off-screen, so it is pushed back to the margin.
+        let left = horizontal(Align::End, 0.0, 24.0, 200.0, 1280.0);
+        assert_eq!(left, MARGIN);
+    }
+
+    /// Wider than the viewport: it starts on screen rather than off the left of
+    /// it, which is what putting `max` last buys.
+    #[wasm_bindgen_test]
+    fn a_surface_wider_than_the_viewport_still_starts_on_screen() {
+        let left = horizontal(Align::End, 300.0, 340.0, 900.0, 400.0);
+        assert_eq!(left, MARGIN);
+    }
 }

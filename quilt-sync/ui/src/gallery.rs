@@ -58,6 +58,7 @@ mod gallery {
     pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
+    pub mod package_header;
     pub mod packages;
     pub mod page;
     pub mod pane_section;
@@ -69,6 +70,7 @@ mod gallery {
     pub mod select;
     pub mod select_all;
     pub mod skeleton;
+    pub mod split_button;
     pub mod state_label;
     pub mod state_strip;
     pub mod toggle_row;
@@ -95,6 +97,7 @@ use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
+use crate::gallery::package_header::PackageHeaderScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
 use crate::gallery::page::PageScene;
@@ -109,6 +112,7 @@ use crate::gallery::segmented_control::SegmentedControlStories;
 use crate::gallery::select::SelectStories;
 use crate::gallery::select_all::SelectAllStories;
 use crate::gallery::skeleton::SkeletonStories;
+use crate::gallery::split_button::SplitButtonStories;
 use crate::gallery::state_label::StateLabelStories;
 use crate::gallery::state_strip::PausedScene;
 use crate::gallery::state_strip::StateStripScene;
@@ -179,6 +183,7 @@ fn Gallery() -> impl IntoView {
                 ("StateLabel", view! { <StateLabelStories /> }.into_any()),
                 ("PackageRow", view! { <PackageRowStories /> }.into_any()),
                 ("SkeletonBox", view! { <SkeletonStories /> }.into_any()),
+                ("SplitButton", view! { <SplitButtonStories /> }.into_any()),
                 ("Feedback", view! { <FeedbackStories /> }.into_any()),
                 ("Forms", view! { <FormsStories /> }.into_any()),
                 ("Checkbox", view! { <CheckboxStories /> }.into_any()),
@@ -226,6 +231,10 @@ fn Gallery() -> impl IntoView {
                 ("Recent files", view! { <RecentFilesScene /> }.into_any()),
                 ("Needs your attention", view! { <QueueScene /> }.into_any()),
                 ("Packages", view! { <PackagesScene /> }.into_any()),
+                (
+                    "The package header",
+                    view! { <PackageHeaderScene /> }.into_any(),
+                ),
                 (
                     "A check that failed",
                     view! { <UncheckedScene /> }.into_any(),

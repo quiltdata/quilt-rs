@@ -1,11 +1,12 @@
 //! The kit's glyphs, drawn once and used by both binaries.
 //!
-//! The appbar's pair, the four the installed-package page needs, and the close
-//! mark. Each is a 16-unit `viewBox` drawn in `currentColor` and hidden from
-//! assistive tech: the control that holds it carries the name.
+//! The appbar's pair, the four the installed-package page needs, the close mark
+//! and `SplitButton`'s tick. Each is a 16-unit `viewBox` drawn in
+//! `currentColor` and hidden from assistive tech: the control that holds it
+//! carries the name.
 //!
-//! Six are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
-//! `chevron-down-16`, `chevron-right-16` and `kebab-horizontal-16` — MIT
+//! Seven are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
+//! `chevron-down-16`, `chevron-right-16`, `kebab-horizontal-16` and `check-16` — MIT
 //! License, Copyright (c) GitHub Inc. —
 //! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
 //! because at 15px a stroked gear's spokes read as a sun.
@@ -128,6 +129,18 @@ pub fn overflow() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
             <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// The chosen one of a set. Marks the active option in a
+/// [`SplitButton`](super::SplitButton)'s menu.
+#[must_use]
+pub fn check() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z" />
         </svg>
     }
     .into_any()
