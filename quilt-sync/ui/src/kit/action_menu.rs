@@ -25,6 +25,15 @@
 //! `aria-controls` — it says that it opens something, which of it is open, and
 //! which surface it means, none of which claim a keyboard model.
 //!
+//! # It hangs leftwards, and that is not a prop
+//!
+//! The trigger is an overflow glyph, which is a trailing control everywhere it is
+//! used — the end of a row, the end of a header. So the surface always aligns its
+//! right edge to the trigger's and grows left. Left-aligning instead would push it
+//! into [`AnchoredOverlay`]'s viewport clamp, which pins the surface to the window
+//! rather than to the button that opened it. If a leading `[⋯]` ever exists, this
+//! becomes a prop; inventing one for a caller that does not exist would not.
+//!
 //! # A disabled command says why
 //!
 //! [`MenuAction::disabled`] carries the reason rather than a flag. A greyed
@@ -33,6 +42,7 @@
 
 use leptos::prelude::*;
 
+use super::Align;
 use super::AnchoredOverlay;
 use super::IconButton;
 use super::IconButtonVariant;
@@ -123,7 +133,13 @@ pub fn ActionMenu(
     let items = surface(actions, open);
 
     view! {
-        <AnchoredOverlay trigger=trigger open=open aria_label=surface_label tight=true>
+        <AnchoredOverlay
+            trigger=trigger
+            open=open
+            aria_label=surface_label
+            align=Align::End
+            tight=true
+        >
             {items}
         </AnchoredOverlay>
     }

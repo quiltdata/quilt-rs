@@ -74,6 +74,7 @@ pub mod zero_line;
 pub use action_menu::ActionMenu;
 pub use action_menu::ActionTone;
 pub use action_menu::MenuAction;
+pub use anchored_overlay::Align;
 pub use anchored_overlay::AnchoredOverlay;
 pub use back_link::BackLink;
 pub use banner::Banner;

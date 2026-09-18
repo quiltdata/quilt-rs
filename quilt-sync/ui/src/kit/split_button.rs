@@ -38,6 +38,7 @@
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 
+use super::Align;
 use super::AnchoredOverlay;
 use super::Button;
 use super::ButtonVariant;
@@ -115,6 +116,7 @@ pub fn SplitButton(
                 trigger=trigger
                 open=open
                 aria_label=surface_label
+                align=Align::End
                 tight=true
             >
                 {action_menu::surface(actions, open)}
