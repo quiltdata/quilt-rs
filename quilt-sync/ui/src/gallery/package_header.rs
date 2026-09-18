@@ -112,8 +112,22 @@ fn states() -> Vec<(&'static str, PackageState)> {
 /// The package-level commands. Fixed across states on purpose: the header's
 /// menu is where everything that is *not* the one primary action lives, so it
 /// does not change shape as the state does.
+///
+/// `Create new revision` is here in **every** state, and also behind the caret
+/// of the `Publish` split button in the states that publish. The duplication is
+/// deliberate. The menu is its stable home — one place to learn, available even
+/// when the package has nothing to publish and so nothing to hang a caret on.
+/// The caret is proximity: at the moment somebody is about to publish, the other
+/// way to do it should be next to their cursor rather than a menu away.
 fn menu() -> Vec<MenuAction> {
     vec![
+        MenuAction {
+            label: "Create new revision".to_string(),
+            tone: ActionTone::Default,
+            disabled: None,
+            on_select: Callback::new(|()| ()),
+            separated: false,
+        },
         MenuAction {
             label: "Open in catalog".to_string(),
             tone: ActionTone::Default,
@@ -147,24 +161,27 @@ fn menu() -> Vec<MenuAction> {
 
 /// The header at one state.
 ///
-/// # `/commit` is one click away, not buried
+/// # The row is state-driven; the menu is not
 ///
-/// `Create new revision` is the way to the commit page. v1 has it as a visible
-/// peer of publishing — `[Create new revision] or [Commit and Push]`, `primary`
-/// swapping by context — so filing it under `[⋯]` would take away a button
-/// people already use.
+/// Every control on the row answers *what does this package need* — so it is the
+/// state's own action and nothing else. `Create new revision` answers *what may
+/// I choose to do*, which does not vary with state, so it lives in `[⋯]`.
 ///
-/// Two earlier arrangements were rejected by looking at them. `[⋯]` buried it.
-/// A literal `or` between two buttons worked against `Publish` and produced
-/// `Create new revision or Get latest` against everything else, which claims a
-/// relationship that is not there. A [`SplitButton`](crate::kit::SplitButton)
-/// says the same thing structurally and only where it is true: the caret holds
-/// the other way to do *this* command, so it appears only when the command has
-/// another way.
+/// Three arrangements were rejected by looking at them. `[⋯]` alone buried a
+/// button v1 shows as a peer of publishing. A literal `or` between two buttons
+/// read correctly against `Publish` and produced `Create new revision or Get
+/// latest` against everything else, claiming a relationship that is not there.
+/// Keeping it as a standalone button left it the one thing on the row that was
+/// not state-driven — conspicuous in `Latest`, where it stood alone as the only
+/// control in the resting state, which is the state people see most.
 ///
-/// So `Publish` is a split button and the other three verbs are plain. A state
-/// the page cannot act on keeps `Create new revision` on its own, which is v1's
-/// rule too: committing is local, and only the push half needs access.
+/// So: the states that publish get a [`SplitButton`](crate::kit::SplitButton)
+/// whose caret holds `Create new revision`, the states with another verb get
+/// that verb plainly, and the states with nothing to do get an empty slot.
+///
+/// The command is in the menu in every state **and** behind the caret in the
+/// publishing ones. Duplication on purpose: the menu is the stable home, the
+/// caret is proximity at the moment it is wanted. See [`menu`].
 ///
 /// # Two groups, not four peers
 ///
@@ -211,10 +228,6 @@ fn header(state: &PackageState) -> AnyView {
                                 />
                             }
                         })}
-                    {(!publishes)
-                        .then(|| {
-                            view! { <Button on_click=|_| ()>"Create new revision"</Button> }
-                        })}
                     {action
                         .filter(|a| !matches!(a, PackageAction::Publish))
                         .map(|action| {
@@ -250,28 +263,33 @@ pub fn PackageHeaderScene() -> impl IntoView {
                   each appear twice, because the singular is written by hand and a \
                   plural-only fixture never exercises it. \
                   \
-                  Read down the action column first. The way to the commit page stays \
-                  visible rather than going in `[⋯]` — v1 shows it as a peer of \
-                  publishing, sometimes as the primary one, and demoting it would take \
-                  away a button people use. Where the command is `Publish` it is the \
-                  caret of a `SplitButton`, because those two are one job done two ways. \
-                  Where it is `Get latest`, `Resolve` or `Choose S3 bucket` there is no \
-                  such relationship, so `Create new revision` stands beside them as its \
-                  own button. Four states offer nothing at all and leave it alone on the \
-                  row, which is v1's rule too — committing is local, only the push half \
-                  needs access. \
+                  Read down the action column first. Every control on the row answers \
+                  `what does this package need`, so it is the state's own action and \
+                  nothing else: a `Publish` split button where there is something to \
+                  ship, a plain button for `Get latest`, `Resolve` and `Choose S3 \
+                  bucket`, and an empty slot in the four states with nothing to do. \
                   \
-                  Two groups, not four peers. The commands that act on this package's \
-                  relationship to the remote sit together; `Open folder` and `[⋯]` act \
-                  on the copy on disk and are pushed out by a wider gap. At one uniform \
-                  spacing they read as one undifferentiated row of controls. \
+                  `Create new revision` answers a different question — `what may I \
+                  choose to do` — which does not vary with state, so it lives in `[⋯]`, \
+                  present in all thirteen. It is also behind the split button's caret in \
+                  the publishing states. That duplication is deliberate: the menu is the \
+                  stable home, one place to learn and available even when there is no \
+                  `Publish` to hang a caret on; the caret is proximity, at the moment \
+                  somebody is about to publish and might want the other way to do it. \
+                  \
+                  Two groups, not four peers. The state's action sits apart from `Open \
+                  folder` and `[⋯]`, which act on the copy on disk rather than on this \
+                  package's relationship to the remote. At one uniform spacing they read \
+                  as one undifferentiated row of controls. \
                   \
                   Measured, not guessed. Shrinking each row until it wraps: the widest \
-                  is `No S3 bucket yet` at 746px, then `Newer revision available` at \
-                  742 and `Changed in both places` at 724; the resting state needs 526. \
-                  The page has 992 at a 1024 window, so the worst case clears it by 246. \
-                  The package name truncates rather than pushing, so a long namespace \
-                  does not move these numbers. The list toolbar below lost exactly this \
+                  is `Revision not published` at 584px, then `No S3 bucket yet` at 584 \
+                  and `Newer revision available` at 580; the resting state needs 370. \
+                  The page has 992 at a 1024 window, so the worst case clears it by 408. \
+                  Taking the standalone button off the row bought back 162px against the \
+                  arrangement before it. The package name truncates rather than pushing, \
+                  so a long namespace does not move these numbers. The list toolbar \
+                  below lost exactly this \
                   argument — it needs 708 and gets 700 — which is why the header's was \
                   measured rather than argued. \
                   \
