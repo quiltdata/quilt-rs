@@ -6,6 +6,8 @@
 
 use leptos::prelude::*;
 
+use super::icons;
+
 stylance::import_crate_style!(style, "src/kit/search_input.module.scss");
 
 #[component]
@@ -49,15 +51,7 @@ pub fn SearchInput(
                                 title="Clear search"
                                 on:click=move |_| value.set(String::new())
                             >
-                                <svg
-                                    viewBox="0 0 11 11"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.6"
-                                    stroke-linecap="round"
-                                >
-                                    <path d="M2 2 9 9M9 2 2 9" />
-                                </svg>
+                                {icons::x()}
                             </button>
                         }
                     })

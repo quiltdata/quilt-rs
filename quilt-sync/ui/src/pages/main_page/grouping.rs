@@ -68,6 +68,10 @@ pub fn sort_within(rows: &mut [ListRowData], sort_by: &str) {
 }
 
 /// A run of rows drawn under one heading.
+///
+/// `PartialEq` because the list holds the arrangement in a `Memo`: an edit that
+/// arranges to the same rows never reaches the keyed lists below.
+#[derive(Clone, Debug, PartialEq)]
 pub struct PackageGroup {
     /// `None` only for the single group the `None` axis produces — the one
     /// case where the list draws no heading at all.

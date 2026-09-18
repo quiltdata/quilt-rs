@@ -73,55 +73,86 @@ pub fn RecentFilesRegion(
         .into_any();
     }
 
+    // Filter, then the optional package axis, in one place. A `Memo`: the keyed
+    // lists below read a value that is diffed rather than a subtree that is
+    // rebuilt (see [`FeedShape`]).
+    let arranged = Memo::new(move |_| {
+        let needle = query.with(|text| text.trim().to_lowercase());
+        let visible: Vec<MainPageFileData> = if needle.is_empty() {
+            files.clone()
+        } else {
+            files
+                .iter()
+                .filter(|f| f.path.to_lowercase().contains(&needle))
+                .cloned()
+                .collect()
+        };
+        if group_by.get() != GROUP_PACKAGE {
+            return vec![FileGroup {
+                title: None,
+                files: visible,
+            }];
+        }
+        // `BTreeMap` gives the alphabetical group order. Pushing in arrival
+        // order keeps the backend's newest-first order inside a group, which
+        // nothing here re-derives.
+        let mut by_namespace: BTreeMap<String, Vec<MainPageFileData>> = BTreeMap::new();
+        for f in visible {
+            by_namespace.entry(f.namespace.clone()).or_default().push(f);
+        }
+        by_namespace
+            .into_iter()
+            .map(|(namespace, files)| FileGroup {
+                title: Some(namespace),
+                files,
+            })
+            .collect()
+    });
+    // The flat axis answers an empty filter with one empty group, so "nothing
+    // matched" is every group empty rather than no group. An empty payload
+    // returned early above, so nothing reaches here with an empty query.
+    let shape = Memo::new(move |_| {
+        if arranged.with(|groups| groups.iter().all(|group| group.files.is_empty())) {
+            FeedShape::NoMatch
+        } else {
+            FeedShape::Groups
+        }
+    });
+
     view! {
         <Card label="Recent files">
-            {move || {
-                let text = query.get();
-                let needle = text.trim().to_lowercase();
-                let visible: Vec<MainPageFileData> = if needle.is_empty() {
-                    files.clone()
-                } else {
-                    files
-                        .clone()
-                        .into_iter()
-                        .filter(|f| f.path.to_lowercase().contains(&needle))
-                        .collect()
-                };
-                if visible.is_empty() {
+            {move || match shape.get() {
+                FeedShape::NoMatch => {
+                    // Its own closure: the words carry the query, so they follow
+                    // every keystroke while the shape stands still.
                     view! {
-                        <Blankslate
-                            heading=format!("No files match \u{201c}{}\u{201d}", text.trim())
-                            description="Search covers the paths of files you have locally. Files that exist \
-                                  only in a bucket are not included."
+                        {move || {
+                            let text = query.get();
+                            view! {
+                                <Blankslate
+                                    heading=format!("No files match \u{201c}{}\u{201d}", text.trim())
+                                    description="Search covers the paths of files you have locally. Files that exist \
+                                          only in a bucket are not included."
+                                />
+                            }
+                        }}
+                    }
+                        .into_any()
+                }
+                FeedShape::Groups => {
+                    // Cloned per run, not moved: the closure a `Card` body takes
+                    // is `FnMut`, and the shape changes whenever a search empties
+                    // the feed and fills it again.
+                    let addresses = addresses.clone();
+                    view! {
+                        <For
+                            each=move || arranged.get()
+                            key=|group: &FileGroup| group.title.clone()
+                            children=move |group| {
+                                file_group(group.title, arranged, addresses.clone(), copied)
+                            }
                         />
                     }
-                        .into_any()
-                } else if group_by.get() == GROUP_PACKAGE {
-                    // `BTreeMap` gives the alphabetical group order for free and,
-                    // because `visible` is pushed into each entry in the order it
-                    // arrives, preserves the wire order within a group too — the
-                    // backend's order (§4.5) is not re-derived here.
-                    let mut by_namespace: BTreeMap<String, Vec<MainPageFileData>> = BTreeMap::new();
-                    for f in visible {
-                        by_namespace.entry(f.namespace.clone()).or_default().push(f);
-                    }
-                    by_namespace
-                        .into_iter()
-                        .map(|(namespace, group_files)| {
-                            // Never written by hand — the count is the length of
-                            // the rows that follow, always, including one.
-                            let count = group_files.len();
-                            view! {
-                                <GroupHeading title=namespace count=count />
-                                <ul class=rows_class() role="list">
-                                    {group_files.iter().map(|f| file_row(f, &addresses, copied)).collect_view()}
-                                </ul>
-                            }
-                        })
-                        .collect_view()
-                        .into_any()
-                } else {
-                    view! { <ul class=rows_class() role="list">{visible.iter().map(|f| file_row(f, &addresses, copied)).collect_view()}</ul> }
                         .into_any()
                 }
             }}
@@ -201,6 +232,76 @@ fn copy_uri(package: &S3PackageUri, path: &str, copied: RwSignal<Option<Copied>>
             }
         }
     });
+}
+
+/// One run of feed rows under one heading — the feed's counterpart to the
+/// list's `PackageGroup`. `None` is the flat axis, which draws no heading.
+#[derive(Clone, Debug, PartialEq)]
+struct FileGroup {
+    title: Option<String>,
+    files: Vec<MainPageFileData>,
+}
+
+/// What the feed draws. Held in a `Memo`, so only a change of shape re-renders
+/// the card.
+///
+/// A reactive closure's `rebuild` discards its whole subtree, so a `<For>` under
+/// a closure that re-runs per keystroke is destroyed before its key can do
+/// anything.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeedShape {
+    /// Files, and none of them matching what was typed.
+    NoMatch,
+    /// The groups and their rows.
+    Groups,
+}
+
+/// One group's heading and its rows, built once per group title by the keyed
+/// `<For>` above.
+///
+/// The rows come from `arranged` rather than from the value the `<For>` hands
+/// in: a keyed child is built once per key, so a captured membership would never
+/// narrow.
+fn file_group(
+    title: Option<String>,
+    arranged: Memo<Vec<FileGroup>>,
+    addresses: HashMap<String, S3PackageUri>,
+    copied: RwSignal<Option<Copied>>,
+) -> AnyView {
+    let key = title.clone();
+    let files = Signal::derive(move || {
+        arranged.with(|groups| {
+            groups
+                .iter()
+                .find(|group| group.title == key)
+                .map(|group| group.files.clone())
+                .unwrap_or_default()
+        })
+    });
+    let heading = title.map(|heading| {
+        view! {
+            {move || {
+                // The count is the length of the rows that follow, always,
+                // including one. Never written by hand.
+                let count = files.with(Vec::len);
+                view! { <GroupHeading title=heading.clone() count=count /> }
+            }}
+        }
+    });
+    view! {
+        {heading}
+        <ul class=rows_class() role="list">
+            // Keyed on namespace and path together: a path alone is unique only
+            // within its package, and the flat axis draws every package's files
+            // in one list.
+            <For
+                each=move || files.get()
+                key=|f: &MainPageFileData| (f.namespace.clone(), f.path.clone())
+                children=move |f| file_row(&f, &addresses, copied)
+            />
+        </ul>
+    }
+    .into_any()
 }
 
 /// One file, wherever it is drawn — a flat row or a row under a `GroupHeading`.
