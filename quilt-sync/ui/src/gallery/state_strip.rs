@@ -95,7 +95,7 @@ pub fn StateStripRegion() -> impl IntoView {
                             <Countdown
                                 deadline=in_secs(23.0)
                                 interval=30_000.0
-                                aria_label="Checks for new revisions every 30 seconds"
+                                title="Checks for new revisions every 30 seconds"
                                 repeat=true
                             />
                         }
@@ -196,7 +196,7 @@ fn PausedWithReason() -> impl IntoView {
                             <Countdown
                                 deadline=in_secs(23.0)
                                 interval=30_000.0
-                                aria_label="Checks for new revisions every 30 seconds"
+                                title="Checks for new revisions every 30 seconds"
                                 repeat=true
                             />
                         }

@@ -117,18 +117,13 @@ fn delay_until(deadline: Option<f64>, now: f64) -> Option<Duration> {
 ///
 /// `Attention`, not `Danger`: a pause is a state the user can clear, and every
 /// reason's fix is already some queue row's action.
-fn trailing(
-    toggle: &ToggleStateData,
-    aria_label: String,
-    idle: &'static str,
-    repeat: bool,
-) -> AnyView {
+fn trailing(toggle: &ToggleStateData, title: String, idle: &'static str, repeat: bool) -> AnyView {
     match toggle.activity {
         ToggleActivityData::Armed => view! {
             <Countdown
                 deadline=toggle.deadline
                 interval=toggle.interval_ms
-                aria_label=aria_label
+                title=title
                 repeat=repeat
             />
         }
@@ -386,6 +381,18 @@ mod tests {
     }
 
     /// Pull counting down, publish with nothing to do — the ordinary steady state.
+    /// How many countdown rings the card draws.
+    ///
+    /// Found by the ring's own track circle rather than by a role: the svg is
+    /// hidden from the accessibility tree (`kit/countdown.rs`), and `svg` alone
+    /// would also match the glyph a `Paused` `StateLabel` draws into the same
+    /// trailing slot.
+    fn rings(el: &web_sys::Element) -> u32 {
+        el.query_selector_all("[class*=trailing] circle[class*=track]")
+            .unwrap()
+            .length()
+    }
+
     fn armed_payload() -> MainPageWatcherData {
         armed_in_ms(23_000.0)
     }
@@ -411,16 +418,12 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn an_armed_toggle_draws_a_ring() {
-        // `Countdown` renders a `role="progressbar"` svg. A toggle that is armed and
-        // draws no ring is the countdown silently missing, which is what this pins.
+        // `Countdown` draws an `aria-hidden` svg into the row's trailing slot —
+        // the slot is the selector, the ring carrying no role of its own (see
+        // `kit/countdown.rs`). A toggle that is armed and draws no ring is the
+        // countdown silently missing, which is what this pins.
         let el = mount(|| view! { <AutosyncBody data=armed_payload() reload=Trigger::new() /> });
-        assert_eq!(
-            el.query_selector_all("[role=progressbar]")
-                .unwrap()
-                .length(),
-            1,
-            "one ring: pull is armed, publish is idle"
-        );
+        assert_eq!(rings(&el), 1, "one ring: pull is armed, publish is idle");
     }
 
     #[wasm_bindgen_test]
@@ -431,13 +434,7 @@ mod tests {
         let el = mount(|| view! { <AutosyncBody data=paused_payload() reload=Trigger::new() /> });
         let text = el.text_content().unwrap();
         assert!(text.contains("Paused"), "got: {text}");
-        assert_eq!(
-            el.query_selector_all("[role=progressbar]")
-                .unwrap()
-                .length(),
-            0,
-            "a stopped countdown must not keep counting"
-        );
+        assert_eq!(rings(&el), 0, "a stopped countdown must not keep counting");
         assert!(!text.to_lowercase().contains("resume"), "got: {text}");
     }
 
