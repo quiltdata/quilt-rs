@@ -58,6 +58,7 @@ mod gallery {
     pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
+    pub mod load_failure;
     pub mod package_header;
     pub mod packages;
     pub mod page;
@@ -97,6 +98,7 @@ use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
+use crate::gallery::load_failure::LoadFailureStories;
 use crate::gallery::package_header::PackageHeaderScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
@@ -196,6 +198,7 @@ fn Gallery() -> impl IntoView {
                 ("PaneSection", view! { <PaneSectionStories /> }.into_any()),
                 ("RevisionRow", view! { <RevisionRowStories /> }.into_any()),
                 ("ChoiceGroup", view! { <ChoiceGroupStories /> }.into_any()),
+                ("LoadFailure", view! { <LoadFailureStories /> }.into_any()),
                 ("SelectAll", view! { <SelectAllStories /> }.into_any()),
                 ("EntryRow", view! { <EntryRowStories /> }.into_any()),
                 ("EntryGroup", view! { <EntryGroupStories /> }.into_any()),

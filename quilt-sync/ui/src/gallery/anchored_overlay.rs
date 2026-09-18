@@ -6,6 +6,7 @@ use crate::Cell;
 use crate::Story;
 use crate::kit::AnchoredOverlay;
 use crate::kit::Button;
+use crate::kit::LoadFailure;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
 use crate::kit::SkeletonBox;
@@ -64,7 +65,8 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
                   \
                   It opens immediately into whatever it is given and fills when the data \
                   lands — a trigger that spins with nothing opening reads as broken. The \
-                  error cell is the state the kit had nothing for."
+                  error cell is a LoadFailure, which is what the fourth hand-written \
+                  copy of that sentence and its button bought the kit."
         >
             <Cell wide=true label="click it — the revisions this copy holds">
                 <AnchoredOverlay
@@ -98,10 +100,10 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
                     open=failed
                     aria_label="Revisions you have"
                 >
-                    <PaneSection>
-                        <p style="margin:0">"Couldn't list your revisions."</p>
-                        <Button on_click=|_| ()>"Try again"</Button>
-                    </PaneSection>
+                    <LoadFailure
+                        words="Could not load your revisions."
+                        on_retry=Callback::new(|()| ())
+                    />
                 </AnchoredOverlay>
             </Cell>
             <Cell wide=true label="click it — one revision, so callers hide the trigger instead">

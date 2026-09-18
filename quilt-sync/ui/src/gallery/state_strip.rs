@@ -11,10 +11,10 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::gallery::queue::row;
-use crate::kit::Button;
 use crate::kit::Card;
 use crate::kit::Countdown;
 use crate::kit::HostRow;
+use crate::kit::LoadFailure;
 use crate::kit::PackageState;
 use crate::kit::StateLabel;
 use crate::kit::StateTone;
@@ -59,16 +59,16 @@ pub fn StripErrorScene() -> impl IntoView {
         >
             <div class="g-strip">
                 <Card title="Autosync">
-                    <div class="g-card-error">
-                        <p>"Could not load autosync."</p>
-                        <Button on_click=|_| ()>"Try again"</Button>
-                    </div>
+                    <LoadFailure
+                        words="Could not load autosync."
+                        on_retry=Callback::new(|()| ())
+                    />
                 </Card>
                 <Card title="Accounts">
-                    <div class="g-card-error">
-                        <p>"Could not load your accounts."</p>
-                        <Button on_click=|_| ()>"Try again"</Button>
-                    </div>
+                    <LoadFailure
+                        words="Could not load your accounts."
+                        on_retry=Callback::new(|()| ())
+                    />
                 </Card>
             </div>
         </Scene>

@@ -53,6 +53,7 @@ use crate::kit::Card;
 use crate::kit::FileRowSkeleton;
 use crate::kit::GroupHeading;
 use crate::kit::ListToolbar;
+use crate::kit::LoadFailure;
 use crate::kit::Naming;
 use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
@@ -116,13 +117,8 @@ fn render_fetch_error(retry: Trigger) -> impl IntoView {
 ///
 /// `retry` is the failed read's trigger, never the page's.
 fn fetch_error_body(words: &'static str, retry: Trigger) -> AnyView {
-    view! {
-        <div class=style::card_error>
-            <p>{words}</p>
-            <Button on_click=move |_| retry.notify()>"Try again"</Button>
-        </div>
-    }
-    .into_any()
+    view! { <LoadFailure words=words on_retry=Callback::new(move |()| retry.notify()) /> }
+        .into_any()
 }
 
 /// Titled, since the title is what tells this card from the one beside it.
