@@ -4,6 +4,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
+use crate::kit::CatalogLink;
 use crate::kit::RevisionRow;
 
 const HOUR: f64 = 3_600_000.0;
@@ -44,9 +45,11 @@ pub fn RevisionRowStories() -> impl IntoView {
                     message="Re-run plate 7 with the corrected layout"
                     at=ago(3.0 * DAY)
                     published=true
-                    href=Some(
-                        "https://quilt-lab.example/b/quilt-lab-plates/packages/user/plate-07/tree/c41d8f/"
-                            .to_string(),
+                    catalog=Some(
+                        CatalogLink::new(
+                            "https://quilt-lab.example/b/quilt-lab-plates/packages/user/plate-07/tree/c41d8f/",
+                            Callback::new(|_url: String| ()),
+                        ),
                     )
                 />
             </Cell>

@@ -122,6 +122,7 @@ pub use queue_row::QueueRow;
 pub use queue_row::QueueRowSkeleton;
 pub use queue_row::Remedy;
 pub use relative_time::RelativeTime;
+pub use revision_row::CatalogLink;
 pub use revision_row::RevisionRow;
 pub use search_input::SearchInput;
 pub use segmented_control::SegmentedControl;

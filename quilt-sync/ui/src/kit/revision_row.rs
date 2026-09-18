@@ -29,10 +29,21 @@
 //!
 //! # Two facts, two props
 //!
-//! `published` says whether the revision reached the platform; `href` says where
-//! to read it. They are separate because a published revision in a bucket with
-//! no catalog host has nowhere to point — it earns the cloud and stays text.
-//! The reverse never holds: a revision this copy has not sent has no address.
+//! `published` says whether the revision reached the platform; `catalog` says
+//! where to read it and what opens it. They are separate because a published
+//! revision in a bucket with no catalog host has nowhere to point — it earns the
+//! cloud and stays text. The reverse never holds: a revision this copy has not
+//! sent has no address.
+//!
+//! # The address and the opener arrive together
+//!
+//! [`CatalogLink`] carries both, because a link this app *follows* would replace
+//! the running application: the webview has no chrome to come back from. Every
+//! other catalog link in the app hands the URL to `open_in_web_browser` from a
+//! click handler, and the kit cannot do that itself — it holds no commands. So
+//! the row draws a real anchor, cancels the navigation, and calls what the
+//! caller gave it. A caller cannot supply one without the other, which is the
+//! only way the rule survives the next call site.
 
 use leptos::prelude::*;
 
@@ -41,6 +52,28 @@ use super::countdown::EpochMillis;
 use super::icons;
 
 stylance::import_crate_style!(style, "src/kit/revision_row.module.scss");
+
+/// Where a revision is read, and what opens it.
+///
+/// One value and not two props, so a call site cannot draw a link it has no way
+/// to open. `open` is handed the address at click time — in the app it goes to
+/// `open_in_web_browser`, which is how every other catalog link in this codebase
+/// reaches a browser.
+#[derive(Clone)]
+pub struct CatalogLink {
+    href: String,
+    open: Callback<String>,
+}
+
+impl CatalogLink {
+    #[must_use]
+    pub fn new(href: impl Into<String>, open: Callback<String>) -> Self {
+        Self {
+            href: href.into(),
+            open,
+        }
+    }
+}
 
 #[component]
 pub fn RevisionRow(
@@ -56,18 +89,15 @@ pub fn RevisionRow(
     /// the section labels have already said it.
     #[prop(optional)]
     published: Option<bool>,
-    /// Where to read it. The message becomes a link; the whole row does not,
-    /// because the time beside it is this copy's fact and not the platform's.
-    ///
-    /// **Inside the app the caller intercepts the click** and hands the address
-    /// to the browser — following it in place would navigate the webview and
-    /// take the app with it.
+    /// Where to read it, and what opens it. The message becomes a link; the
+    /// whole row does not, because the time beside it is this copy's fact and
+    /// not the platform's.
     ///
     /// `optional_no_strip` rather than `optional`: callers hold an `Option`
     /// already, because `util::catalog_url` answers `None` for a bucket with no
     /// catalog host.
     #[prop(optional_no_strip)]
-    href: Option<String>,
+    catalog: Option<CatalogLink>,
 ) -> impl IntoView {
     // An empty message is reachable — nothing stops a publish without one — and
     // it must not render as a pair of bare quotes.
@@ -90,10 +120,34 @@ pub fn RevisionRow(
         // nobody meant.
         None => (String::from("No message"), String::from(style::empty), None),
     };
-    let body = match href {
-        Some(href) => {
+    let body = match catalog {
+        Some(CatalogLink { href, open }) => {
             let class = format!("{} {class}", style::link);
-            view! { <a class=class href=href title=title>{text}</a> }.into_any()
+            let followed = href.clone();
+            let middled = href.clone();
+            view! {
+                // A real anchor, so the address is there to copy and the pointer
+                // says where it goes — and then the navigation is cancelled,
+                // because following it would replace the application. `auxclick`
+                // as well as `click`: a middle button does not raise the latter,
+                // and a new webview window is the same loss by another door.
+                <a
+                    class=class
+                    href=href
+                    title=title
+                    on:click=move |ev| {
+                        ev.prevent_default();
+                        open.run(followed.clone());
+                    }
+                    on:auxclick=move |ev| {
+                        ev.prevent_default();
+                        open.run(middled.clone());
+                    }
+                >
+                    {text}
+                </a>
+            }
+            .into_any()
         }
         None => view! { <span class=class title=title>{text}</span> }.into_any(),
     };

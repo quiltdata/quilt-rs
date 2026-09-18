@@ -38,6 +38,7 @@ use crate::kit::BackLink;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
+use crate::kit::CatalogLink;
 use crate::kit::Choice;
 use crate::kit::ChoiceGroup;
 use crate::kit::LoadFailure;
@@ -72,7 +73,7 @@ fn ago(ms: f64) -> f64 {
 /// the revision somebody is working on is the one they have not published, and a
 /// list where every row is identical on the one axis the glyph draws would prove
 /// nothing about the glyph.
-fn revisions() -> Vec<(&'static str, f64, Option<String>)> {
+fn revisions() -> Vec<(&'static str, f64, Option<CatalogLink>)> {
     vec![
         ("Add Caihong folder-upload note", ago(2.0 * HOUR), None),
         (
@@ -87,8 +88,17 @@ fn revisions() -> Vec<(&'static str, f64, Option<String>)> {
 
 /// Where a published revision is read. The hash is banned from the page's words
 /// and belongs in an address, which is not a name.
-fn catalog(revision: &str) -> String {
-    format!("https://quilt-lab.example/b/quilt-lab-plates/packages/{NAMESPACE}/tree/{revision}/")
+///
+/// The opener does nothing here. In the app it is `open_in_web_browser`; a
+/// gallery has no Tauri host to hand an address to, and letting the anchor
+/// follow itself would take the gallery with it.
+fn catalog(revision: &str) -> CatalogLink {
+    CatalogLink::new(
+        format!(
+            "https://quilt-lab.example/b/quilt-lab-plates/packages/{NAMESPACE}/tree/{revision}/"
+        ),
+        Callback::new(|_url: String| ()),
+    )
 }
 
 fn scopes() -> Vec<Choice> {
@@ -121,13 +131,13 @@ fn revision_list() -> AnyView {
         <PaneSection>
             {revisions()
                 .into_iter()
-                .map(|(message, at, href)| {
+                .map(|(message, at, catalog)| {
                     view! {
                         <RevisionRow
                             message=message
                             at=at
-                            published=href.is_some()
-                            href=href
+                            published=catalog.is_some()
+                            catalog=catalog
                         />
                     }
                 })
