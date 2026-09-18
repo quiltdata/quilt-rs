@@ -49,6 +49,7 @@ mod gallery {
     pub mod card;
     pub mod checkbox;
     pub mod choice_group;
+    pub mod context_pane;
     pub mod countdown;
     pub mod entry_group;
     pub mod entry_row;
@@ -87,6 +88,7 @@ use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
 use crate::gallery::checkbox::CheckboxStories;
 use crate::gallery::choice_group::ChoiceGroupStories;
+use crate::gallery::context_pane::ContextPaneScene;
 use crate::gallery::countdown::CountdownStories;
 use crate::gallery::entry_group::EntryGroupStories;
 use crate::gallery::entry_row::EntryRowStories;
@@ -237,6 +239,10 @@ fn Gallery() -> impl IntoView {
                 (
                     "The package header",
                     view! { <PackageHeaderScene /> }.into_any(),
+                ),
+                (
+                    "The context pane",
+                    view! { <ContextPaneScene /> }.into_any(),
                 ),
                 (
                     "A check that failed",
