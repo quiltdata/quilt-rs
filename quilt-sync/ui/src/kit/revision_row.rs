@@ -53,6 +53,10 @@ use super::icons;
 
 stylance::import_crate_style!(style, "src/kit/revision_row.module.scss");
 
+/// `MouseEvent.button` for the middle one. `auxclick` carries the right button
+/// under the same event, and that gesture is asking for the context menu.
+const MIDDLE_BUTTON: i16 = 1;
+
 /// Where a revision is read, and what opens it.
 ///
 /// One value and not two props, so a call site cannot draw a link it has no way
@@ -131,6 +135,11 @@ pub fn RevisionRow(
                 // because following it would replace the application. `auxclick`
                 // as well as `click`: a middle button does not raise the latter,
                 // and a new webview window is the same loss by another door.
+                //
+                // `auxclick` fires for **every** non-primary button, so the
+                // middle one is checked for by number. Right-clicking asks for
+                // the context menu and nothing else, and the menu is where the
+                // address gets copied.
                 <a
                     class=class
                     href=href
@@ -140,8 +149,10 @@ pub fn RevisionRow(
                         open.run(followed.clone());
                     }
                     on:auxclick=move |ev| {
-                        ev.prevent_default();
-                        open.run(middled.clone());
+                        if ev.button() == MIDDLE_BUTTON {
+                            ev.prevent_default();
+                            open.run(middled.clone());
+                        }
                     }
                 >
                     {text}
