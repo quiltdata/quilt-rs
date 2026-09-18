@@ -1438,20 +1438,13 @@ mod tests {
     use crate::commands::MainPageFileData;
     use crate::commands::MainPagePackageData;
     use crate::kit::StateTone;
+    use crate::test_support::mount;
+    use crate::test_support::sleep_ms;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
-
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     /// One light-phase row, in any state the caller names. `provisional: true`
     /// as the light phase always delivers it, and every other field empty: the
@@ -3471,17 +3464,6 @@ mod tests {
             Some(queue_before.as_str()),
             "so the queue never went back to waiting"
         );
-    }
-
-    /// A promise-backed sleep, the same four lines over `set_timeout` that
-    /// [`accounts`](super::accounts)'s tests use.
-    async fn sleep_ms(ms: i32) {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            window()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-                .unwrap();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
     }
 
     #[wasm_bindgen_test]

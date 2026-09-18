@@ -415,18 +415,10 @@ pub(super) fn EntryRow(
 #[cfg(test)]
 mod tests {
     use super::EntriesToolbar;
+    use crate::test_support::mount;
     use leptos::prelude::*;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
-
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     /// The toolbar's header checkbox in one selection state. `indeterminate` is a
     /// DOM *property* with no attribute form, so it can only be checked against a

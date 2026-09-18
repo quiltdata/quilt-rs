@@ -282,28 +282,10 @@ mod tests {
     use super::*;
     use crate::commands::AccountHostData;
     use crate::commands::MainPageAccountsData;
+    use crate::test_support::mount;
+    use crate::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
-
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
-
-    /// A promise-backed sleep, the same four lines over `set_timeout` that
-    /// [`autosync`](super::super::autosync)'s tests use.
-    async fn sleep_ms(ms: i32) {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            window()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-                .unwrap();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
-    }
 
     /// Pick a role the way a user does: set the value, then fire `change` — the
     /// event `Select` listens for. The value must be one of the rendered options;

@@ -201,19 +201,8 @@ pub fn QueueRowSkeleton() -> impl IntoView {
 mod tests {
     use super::*;
     use crate::kit::PackageAction;
-    use wasm_bindgen::JsCast;
+    use crate::test_support::mount;
     use wasm_bindgen_test::*;
-
-    /// `main_page.rs`'s pattern: mount a view into a fresh, attached `div` and
-    /// hand back the element to query against.
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     /// The row is the link, so the whole of it goes to the page that fixes the state
     /// — and the verb still says which page that is.

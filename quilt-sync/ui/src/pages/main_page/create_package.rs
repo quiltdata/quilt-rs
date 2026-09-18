@@ -182,6 +182,7 @@ fn PackageFields(namespace: RwSignal<String>, source: RwSignal<String>) -> impl 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -261,18 +262,6 @@ mod tests {
         field
             .dispatch_event(&web_sys::Event::new("input").unwrap())
             .unwrap();
-    }
-
-    /// `main_page.rs`'s own pattern for waiting out a `spawn_local` that this
-    /// test cannot otherwise observe finishing.
-    async fn sleep_ms(ms: i32) {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            web_sys::window()
-                .unwrap()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-                .unwrap();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
     }
 
     #[wasm_bindgen_test]
