@@ -12,6 +12,8 @@
 //! `back` parameter (`src-tauri/src/routes.rs`), so the encoding is invisible to
 //! everything downstream.
 
+use quilt_uri::Namespace;
+
 /// The installed-package screen for one package.
 ///
 /// `namespace` goes in the query string because `installed_package` reads it
@@ -22,20 +24,23 @@
 /// The `[Get latest]` and `[Choose S3 bucket]` queue actions land here too,
 /// because neither has a page of its own — v1 puts `Pull` in this page's status
 /// banner and `SetRemote` in its toolbar.
-pub fn package_page_href(namespace: &str) -> String {
-    let namespace = urlencoding::encode(namespace);
+pub fn package_page_href(namespace: &Namespace) -> String {
+    let namespace = namespace.to_string();
+    let namespace = urlencoding::encode(&namespace);
     format!("/installed-package?namespace={namespace}&filter=unmodified")
 }
 
 /// The commit screen for one package.
-pub fn commit_href(namespace: &str) -> String {
-    let namespace = urlencoding::encode(namespace);
+pub fn commit_href(namespace: &Namespace) -> String {
+    let namespace = namespace.to_string();
+    let namespace = urlencoding::encode(&namespace);
     format!("/commit?namespace={namespace}")
 }
 
 /// The merge screen for one package.
-pub fn merge_href(namespace: &str) -> String {
-    let namespace = urlencoding::encode(namespace);
+pub fn merge_href(namespace: &Namespace) -> String {
+    let namespace = namespace.to_string();
+    let namespace = urlencoding::encode(&namespace);
     format!("/merge?namespace={namespace}")
 }
 
@@ -43,16 +48,20 @@ pub fn merge_href(namespace: &str) -> String {
 mod tests {
     use super::*;
 
+    fn ns(text: &str) -> Namespace {
+        Namespace::try_from(text).expect("a namespace")
+    }
+
     /// The ordinary shape, pinned whole rather than by substring: a substring
     /// match cannot tell a missing namespace from a present one.
     #[test]
     fn a_plain_namespace_keeps_its_slash_readable() {
         assert_eq!(
-            package_page_href("org/pkg"),
+            package_page_href(&ns("org/pkg")),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified"
         );
-        assert_eq!(commit_href("org/pkg"), "/commit?namespace=org%2Fpkg");
-        assert_eq!(merge_href("org/pkg"), "/merge?namespace=org%2Fpkg");
+        assert_eq!(commit_href(&ns("org/pkg")), "/commit?namespace=org%2Fpkg");
+        assert_eq!(merge_href(&ns("org/pkg")), "/merge?namespace=org%2Fpkg");
     }
 
     /// The defect this module exists for. `&` starts a new parameter and `#` a
@@ -61,12 +70,12 @@ mod tests {
     #[test]
     fn a_namespace_cannot_end_the_parameter_early() {
         assert_eq!(
-            commit_href("team/a&b"),
+            commit_href(&ns("team/a&b")),
             "/commit?namespace=team%2Fa%26b",
             "`&` would otherwise start a second parameter"
         );
         assert_eq!(
-            commit_href("team/a#b"),
+            commit_href(&ns("team/a#b")),
             "/commit?namespace=team%2Fa%23b",
             "`#` would otherwise truncate the query at a fragment"
         );
@@ -80,7 +89,10 @@ mod tests {
     /// two this app happens to use — not because it was losing data.
     #[test]
     fn an_equals_is_encoded_for_uniformity_not_because_it_split() {
-        assert_eq!(commit_href("team/a=b"), "/commit?namespace=team%2Fa%3Db");
+        assert_eq!(
+            commit_href(&ns("team/a=b")),
+            "/commit?namespace=team%2Fa%3Db"
+        );
     }
 
     /// `filter` has to survive whatever the namespace contains — a raw `&` in
@@ -88,7 +100,7 @@ mod tests {
     #[test]
     fn the_filter_stays_its_own_parameter() {
         assert_eq!(
-            package_page_href("team/a&filter=all"),
+            package_page_href(&ns("team/a&filter=all")),
             "/installed-package?namespace=team%2Fa%26filter%3Dall&filter=unmodified"
         );
     }

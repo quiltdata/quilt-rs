@@ -67,7 +67,7 @@ pub fn Commit() -> impl IntoView {
                             }),
                             BreadcrumbItem::Link(BreadcrumbLink {
                                 href: pkg_href,
-                                title: ns.clone(),
+                                title: ns.to_string(),
                             }),
                             BreadcrumbItem::Current("Commit".to_string()),
                         ];
@@ -254,17 +254,22 @@ fn CommitContent(
             };
             let refresh = first_load.try_get_value().unwrap_or(false);
             first_load.set_value(false);
-            let _ = commands::load_workflow_rules(ns.clone(), id.clone(), refresh).await;
+            let _ = commands::load_workflow_rules(ns.to_string(), id.clone(), refresh).await;
             // Parity with the commit path's `UserMeta::Keep`: an empty/whitespace
             // editor keeps the previous revision's metadata, so the commit gate
             // validates that seeded value — not `{}`. Live validation must check
             // the same thing, so substitute the seeded previous metadata here.
             // (Both empty collapse to `{}` on both paths — consistent.)
             let effective_meta = effective_metadata(&metadata, &seeded_previous_meta);
-            let violations =
-                commands::validate_commit_candidate(ns, id, message, effective_meta, handle)
-                    .await
-                    .unwrap_or_default();
+            let violations = commands::validate_commit_candidate(
+                ns.to_string(),
+                id,
+                message,
+                effective_meta,
+                handle.to_string(),
+            )
+            .await
+            .unwrap_or_default();
             (key, violations)
         }
     });
@@ -344,9 +349,9 @@ fn CommitContent(
             .unwrap_or(WorkflowIntent::BucketDefault);
         leptos::task::spawn_local(async move {
             let result = if push {
-                commands::package_commit_and_push(ns.clone(), msg, meta, wf, uri).await
+                commands::package_commit_and_push(ns.to_string(), msg, meta, wf, uri).await
             } else {
-                commands::package_commit(ns.clone(), msg, meta, wf, uri).await
+                commands::package_commit(ns.to_string(), msg, meta, wf, uri).await
             };
             match result {
                 Ok(msg) => {
@@ -395,7 +400,7 @@ fn CommitContent(
                                 id="namespace"
                                 name="namespace"
                                 readonly
-                                prop:value=namespace.clone()
+                                prop:value=namespace.to_string()
                             />
                         </p>
                         {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
@@ -596,7 +601,7 @@ fn build_toolbar_actions(
             let ns = ns_for_open.clone();
             let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns, uri).await {
+                match commands::open_in_file_browser(ns.to_string(), uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -620,7 +625,7 @@ fn build_toolbar_actions(
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns, uri).await {
+                match commands::package_uninstall(ns.to_string(), uri).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
                         navigate("/", NavigateOptions::default());
@@ -710,7 +715,7 @@ fn CommitEntryRow(
         let path = path_for_open.clone();
         let uri = uri_for_open.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, path, uri).await {
+            match commands::open_in_default_application(ns.to_string(), path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -725,7 +730,7 @@ fn CommitEntryRow(
         let path = path_for_reveal.clone();
         let uri = uri_for_reveal.clone();
         leptos::task::spawn_local(async move {
-            match commands::reveal_in_file_browser(ns, path, uri).await {
+            match commands::reveal_in_file_browser(ns.to_string(), path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -751,7 +756,7 @@ fn CommitEntryRow(
     let on_ignore = move |_| {
         if let Some(pattern) = junky_pattern.clone() {
             show_ignore_popup.set(Some(IgnorePopupData {
-                namespace: ns_for_ignore.clone(),
+                namespace: ns_for_ignore.to_string(),
                 path: path_for_ignore.clone(),
                 suggested_pattern: pattern,
                 uri: uri_for_ignore.clone(),
@@ -764,7 +769,7 @@ fn CommitEntryRow(
     let on_unignore = move |_| {
         if let Some(pattern) = ignored_by.clone() {
             show_unignore_popup.set(Some(UnignorePopupData {
-                namespace: ns_for_unignore.clone(),
+                namespace: ns_for_unignore.to_string(),
                 pattern,
                 uri: uri_for_unignore.clone(),
             }));

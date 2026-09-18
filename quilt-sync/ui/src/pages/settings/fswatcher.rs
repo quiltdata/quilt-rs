@@ -34,7 +34,10 @@ pub(super) fn FsWatcherSection(
                 )));
                 return;
             }
-            let ns = ev.namespace.as_deref().unwrap_or("-");
+            let ns = ev
+                .namespace
+                .as_ref()
+                .map_or_else(|| "-".to_string(), ToString::to_string);
             web_sys::console::warn_1(
                 &format!("fswatcher: {} [{ns}]: {}", ev.kind, ev.message).into(),
             );

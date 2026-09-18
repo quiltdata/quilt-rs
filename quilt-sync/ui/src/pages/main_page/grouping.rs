@@ -9,6 +9,8 @@
 
 use std::collections::BTreeMap;
 
+use quilt_uri::Namespace;
+
 use super::GROUP_BUCKET;
 #[cfg(test)]
 use super::GROUP_NONE;
@@ -27,7 +29,7 @@ use super::SORT_NAME;
 /// what the payload fixes for the life of the read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ListRowData {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub changed_at: Option<f64>,
     /// `None` is a local-only package: its own group, and first on the bucket
     /// axis (§3.1), because local packages are the ones missing a bucket and
@@ -45,7 +47,7 @@ pub fn filter_packages(rows: Vec<ListRowData>, query: &str) -> Vec<ListRowData> 
         return rows;
     }
     rows.into_iter()
-        .filter(|row| row.namespace.to_lowercase().contains(&needle))
+        .filter(|row| row.namespace.to_string().to_lowercase().contains(&needle))
         .collect()
 }
 
@@ -54,7 +56,7 @@ pub fn filter_packages(rows: Vec<ListRowData>, query: &str) -> Vec<ListRowData> 
 /// on `Name` cannot happen, namespaces being unique.
 pub fn sort_within(rows: &mut [ListRowData], sort_by: &str) {
     match sort_by {
-        SORT_NAME => rows.sort_by_key(|a| a.namespace.to_lowercase()),
+        SORT_NAME => rows.sort_by_key(|a| a.namespace.to_string().to_lowercase()),
         // Newest first. `None` is "nothing has ever been written here", which
         // sorts last rather than as epoch zero — the difference is invisible in
         // the ordering but not in what the code says it means.
@@ -118,9 +120,7 @@ pub fn group_packages(rows: Vec<ListRowData>, group_by: &str) -> Vec<PackageGrou
         let key = if group_by == GROUP_BUCKET {
             row.bucket.clone().unwrap_or_else(|| local_key.clone())
         } else {
-            row.namespace
-                .split_once('/')
-                .map_or_else(|| row.namespace.clone(), |(prefix, _)| prefix.to_string())
+            row.namespace.prefix().to_string()
         };
         by_key.entry(key).or_default().push(row);
     }
@@ -162,7 +162,7 @@ mod tests {
 
     fn row(namespace: &str, changed_at: Option<f64>, bucket: Option<&str>) -> ListRowData {
         ListRowData {
-            namespace: namespace.to_string(),
+            namespace: Namespace::try_from(namespace).expect("a namespace"),
             changed_at,
             bucket: bucket.map(str::to_string),
         }
@@ -181,7 +181,7 @@ mod tests {
         let hit = filter_packages(rows, "plate");
 
         assert_eq!(hit.len(), 1);
-        assert_eq!(hit[0].namespace, "user/Plate-07");
+        assert_eq!(hit[0].namespace.to_string(), "user/Plate-07");
     }
 
     #[wasm_bindgen_test]
@@ -214,7 +214,7 @@ mod tests {
 
         sort_within(&mut rows, SORT_CHANGED);
 
-        let names: Vec<&str> = rows.iter().map(|r| r.namespace.as_str()).collect();
+        let names: Vec<String> = rows.iter().map(|r| r.namespace.to_string()).collect();
         assert_eq!(names, vec!["user/newest", "user/middle", "user/oldest"]);
     }
 
@@ -236,16 +236,16 @@ mod tests {
             row("user/never", None, None),
         ];
         sort_within(&mut old_first, SORT_CHANGED);
-        assert_eq!(old_first[0].namespace, "user/old");
-        assert_eq!(old_first[1].namespace, "user/never");
+        assert_eq!(old_first[0].namespace.to_string(), "user/old");
+        assert_eq!(old_first[1].namespace.to_string(), "user/never");
 
         let mut never_first = vec![
             row("user/never", None, None),
             row("user/old", Some(1_000.0), None),
         ];
         sort_within(&mut never_first, SORT_CHANGED);
-        assert_eq!(never_first[0].namespace, "user/old");
-        assert_eq!(never_first[1].namespace, "user/never");
+        assert_eq!(never_first[0].namespace.to_string(), "user/old");
+        assert_eq!(never_first[1].namespace.to_string(), "user/never");
     }
 
     #[wasm_bindgen_test]
@@ -261,7 +261,7 @@ mod tests {
 
         sort_within(&mut rows, SORT_NAME);
 
-        let names: Vec<&str> = rows.iter().map(|r| r.namespace.as_str()).collect();
+        let names: Vec<String> = rows.iter().map(|r| r.namespace.to_string()).collect();
         assert_eq!(names, vec!["user/Alpha", "user/beta", "user/gamma"]);
     }
 
@@ -308,19 +308,6 @@ mod tests {
         let titles: Vec<Option<&str>> = groups.iter().map(|g| g.title.as_deref()).collect();
         assert_eq!(titles, vec![Some("team"), Some("user")]);
         assert_eq!(groups[0].rows.len(), 2, "both team packages in one group");
-    }
-
-    #[wasm_bindgen_test]
-    fn a_namespace_with_no_slash_is_its_own_prefix_rather_than_a_panic() {
-        // `split_once('/')` returns None here. `quilt_uri::Namespace` rejects a
-        // missing `/` on construction, so this branch is unreachable from a
-        // validated namespace — kept defensively anyway, so the axis does not
-        // panic if that ever stops being true.
-        let rows = vec![row("scratch", None, None)];
-
-        let groups = group_packages(rows, GROUP_PREFIX);
-
-        assert_eq!(groups[0].title.as_deref(), Some("scratch"));
     }
 
     #[wasm_bindgen_test]

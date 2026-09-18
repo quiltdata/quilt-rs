@@ -43,7 +43,7 @@ pub(super) fn build_toolbar_actions(
             let ns = ns_for_open.clone();
             let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns, uri).await {
+                match commands::open_in_file_browser(ns.to_string(), uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -67,7 +67,7 @@ pub(super) fn build_toolbar_actions(
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns, uri).await {
+                match commands::package_uninstall(ns.to_string(), uri).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
                         navigate("/", NavigateOptions::default());

@@ -298,7 +298,7 @@ fn fixtures() -> Vec<(&'static str, &'static str, &'static str, StateTone, f64)>
 /// condition is a fixture, but the real page reads the cause off a DTO as an
 /// `Option` and will hit this. Noted rather than fixed: changing the prop would
 /// cost every caller that passes a literal.
-fn header(title: &'static str, count: usize, bucket_axis: bool) -> AnyView {
+fn header(title: String, count: usize, bucket_axis: bool) -> AnyView {
     // Only the bucket axis carries a cause. A prefix spans buckets — `user/` has
     // packages in two of them here — so no cause can be a property of a prefix group,
     // and the slot stays empty rather than repeating a per-row problem.
@@ -311,11 +311,10 @@ fn header(title: &'static str, count: usize, bucket_axis: bool) -> AnyView {
 }
 
 /// The namespace's owner segment, with its slash — `user/package-a` groups under
-/// `user/`. Borrowed from a `&'static str`, so the group key needs no allocation.
-fn prefix(namespace: &'static str) -> &'static str {
-    namespace
-        .split_once('/')
-        .map_or(namespace, |(owner, _)| &namespace[..=owner.len()])
+/// `user/`. The split is `quilt_uri::Namespace`'s; the slash is this heading's.
+fn prefix(namespace: &'static str) -> String {
+    let namespace = quilt_uri::Namespace::try_from(namespace).expect("a scene namespace");
+    format!("{}/", namespace.prefix())
 }
 
 fn row(entry: (&'static str, &'static str, &'static str, StateTone, f64)) -> AnyView {
@@ -389,12 +388,12 @@ pub fn PackagesRegion(
                     // "sorted by prefix" — the same rows in the same order with no
                     // headers at all.
                     let key = move |entry: &(&'static str, &'static str, &str, StateTone, f64)| {
-                        if bucket_axis { entry.0 } else { prefix(entry.1) }
+                        if bucket_axis { entry.0.to_string() } else { prefix(entry.1) }
                     };
                     // First-appearance order, not sorted: the fixture order is the
                     // page's sort order, and re-sorting the groups here would hide
                     // whatever the Sort control did.
-                    let mut order: Vec<&'static str> = Vec::new();
+                    let mut order: Vec<String> = Vec::new();
                     for entry in &rows {
                         let k = key(entry);
                         if !order.contains(&k) {

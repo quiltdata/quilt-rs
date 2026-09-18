@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
+use quilt_uri::Namespace;
 
 use super::super::main_page::list_class;
 use super::accounts::sign_in_href;
@@ -38,14 +39,14 @@ pub enum QueueItem {
     Cause {
         text: String,
         action: CauseAction,
-        members: Vec<String>,
+        members: Vec<Namespace>,
     },
     /// A package needing its own decision. Carries the `PackageState` itself,
     /// not its words: Task 3 renders it with `render(&state, Site::QueueRow)`,
     /// the one exception being a cause's own composed text (see
     /// [`derive_queue`]).
     Package {
-        namespace: String,
+        namespace: Namespace,
         // Read by `QueueRegion` to render — the one exception being a cause's
         // own composed text (see [`derive_queue`]).
         state: PackageState,
@@ -291,11 +292,11 @@ fn precedence(state: &PackageState) -> u8 {
 fn cause_item(
     text: String,
     action: &CauseAction,
-    members: Vec<String>,
+    members: Vec<Namespace>,
     expanders: StoredValue<HashMap<String, RwSignal<bool>>>,
     owner: &Owner,
     navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
-    retry: Callback<Vec<String>>,
+    retry: Callback<Vec<Namespace>>,
 ) -> AnyView {
     // Looked up, not built: the map outlives this render, so a group the user opened
     // stays open across every settle that follows.
@@ -322,7 +323,7 @@ fn cause_item(
                         .map(|namespace| {
                             view! {
                                 <li>
-                                    <QueueRow namespace=namespace.clone() sub=true />
+                                    <QueueRow namespace=namespace.to_string() sub=true />
                                 </li>
                             }
                         })
@@ -337,9 +338,9 @@ fn cause_item(
 /// One package's row: its words, its detail if it has one, and its remedy if the
 /// state names an operation.
 fn package_row(
-    namespace: &str,
+    namespace: &Namespace,
     state: &PackageState,
-    pause_messages: Signal<HashMap<String, String>>,
+    pause_messages: Signal<HashMap<Namespace, String>>,
 ) -> AnyView {
     let rendered = render(state, Site::QueueRow);
     // Only a pause has one. `PackageState::Paused` says a sync stopped; this says
@@ -362,7 +363,7 @@ fn package_row(
     });
     view! {
         <QueueRow
-            namespace=namespace.to_owned()
+            namespace=namespace.to_string()
             state=rendered.words
             tone=rendered.tone
             remedy=remedy
@@ -377,7 +378,7 @@ fn package_row(
 /// Only `Other` is kept. Every other reason resolved into a state of its own before
 /// the row was built, so a message beside one of those would explain a state the row
 /// is not in.
-pub fn pause_messages(paused: &[PausedPackageData]) -> HashMap<String, String> {
+pub fn pause_messages(paused: &[PausedPackageData]) -> HashMap<Namespace, String> {
     paused
         .iter()
         .filter_map(|entry| match &entry.reason {
@@ -410,7 +411,7 @@ fn zero_line_text(total: usize) -> String {
 /// `pub` for the gallery, which is a second binary against this library and draws
 /// the same rows — without this it would need a second copy of the map, and a copy
 /// that drifts points the gallery's rows at pages the app does not use.
-pub fn action_href(action: PackageAction, namespace: &str) -> String {
+pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
     match action {
         PackageAction::Publish => crate::routes::commit_href(namespace),
         PackageAction::Resolve => crate::routes::merge_href(namespace),
@@ -430,9 +431,9 @@ fn cause_trailing(
     // Passed beside the action rather than inside it — the cause already owns
     // them, and a second copy would be told apart only by which one a later
     // change forgot.
-    members: &[String],
+    members: &[Namespace],
     navigate: impl Fn(&str, NavigateOptions) + Clone + 'static,
-    retry: Callback<Vec<String>>,
+    retry: Callback<Vec<Namespace>>,
 ) -> AnyView {
     match action {
         CauseAction::SignIn { host } => {
@@ -481,12 +482,12 @@ pub fn QueueRegion(
     unchecked: Signal<Vec<MainPagePackageData>>,
     /// Re-check exactly these namespaces. The page owns the store and the call;
     /// the queue only knows which packages a cause speaks for.
-    retry: Callback<Vec<String>>,
+    retry: Callback<Vec<Namespace>>,
     /// Namespace to the message of the pause that stopped it, from the watcher
     /// payload. Empty while that read is out or when it failed, which leaves a paused
     /// row saying only that it stopped.
     #[prop(optional, into)]
-    pause_messages: Signal<HashMap<String, String>>,
+    pause_messages: Signal<HashMap<Namespace, String>>,
 ) -> impl IntoView {
     // Created ONCE per construction, outside the closure below — that placement
     // is R4 and R6 in one line. A settle re-runs the closure and finds the
@@ -659,9 +660,14 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
+    /// The scenes name packages as text; the payloads carry the type.
+    fn ns(text: &str) -> Namespace {
+        Namespace::try_from(text).expect("a namespace")
+    }
+
     fn pkg(namespace: &str, state: PackageState, host: Option<&str>) -> MainPagePackageData {
         MainPagePackageData {
-            namespace: namespace.to_string(),
+            namespace: ns(namespace),
             state,
             changed_at: None,
             bucket: None,
@@ -678,7 +684,7 @@ mod tests {
         bucket: &str,
     ) -> MainPagePackageData {
         MainPagePackageData {
-            namespace: namespace.to_string(),
+            namespace: ns(namespace),
             state,
             changed_at: None,
             bucket: Some(bucket.to_string()),
@@ -740,7 +746,7 @@ mod tests {
             other @ QueueItem::Package { .. } => panic!("expected a cause first, got {other:?}"),
         }
         assert!(
-            matches!(&items[1], QueueItem::Package { namespace, .. } if namespace == "b/three"),
+            matches!(&items[1], QueueItem::Package { namespace, .. } if namespace.to_string() == "b/three"),
             "a package with its own state is not swept into the cause"
         );
     }
@@ -874,13 +880,13 @@ mod tests {
             &[host("h.io", true), host("gone.io", false)],
             &[],
         );
-        let shape: Vec<&str> = items
+        let shape: Vec<String> = items
             .iter()
             .map(|i| match i {
-                QueueItem::Cause { .. } => "cause",
-                QueueItem::Package { namespace, .. } => namespace.as_str(),
+                QueueItem::Cause { .. } => "cause".to_string(),
+                QueueItem::Package { namespace, .. } => namespace.to_string(),
             })
-            .collect();
+            .collect::<Vec<String>>();
         assert_eq!(shape, vec!["cause", "a/conflict", "a/behind"]);
     }
 
@@ -962,7 +968,7 @@ mod tests {
         );
         assert_eq!(items.len(), 1, "not dropped, and not folded into a cause");
         assert!(
-            matches!(&items[0], QueueItem::Package { namespace, .. } if namespace == "a/one"),
+            matches!(&items[0], QueueItem::Package { namespace, .. } if namespace.to_string() == "a/one"),
             "a bucket-less denial cannot be named by a cause keyed on the bucket: {:?}",
             items[0]
         );
@@ -1020,7 +1026,7 @@ mod tests {
         packages: Signal<Vec<MainPagePackageData>>,
         hosts: Vec<AccountHostData>,
         unchecked: Vec<MainPagePackageData>,
-        retry: Callback<Vec<String>>,
+        retry: Callback<Vec<Namespace>>,
     ) -> web_sys::Element {
         let total = unchecked.len() + packages.get_untracked().len();
         mount_region_of(
@@ -1041,7 +1047,7 @@ mod tests {
         in_flight: Signal<bool>,
         total: Signal<usize>,
         unchecked: Signal<Vec<MainPagePackageData>>,
-        retry: Callback<Vec<String>>,
+        retry: Callback<Vec<Namespace>>,
     ) -> web_sys::Element {
         mount(move || {
             view! {
@@ -1290,19 +1296,19 @@ mod tests {
         // every verb, must fail here — asserted as the whole string, since a
         // substring match cannot tell a missing namespace from a present one.
         assert_eq!(
-            action_href(PackageAction::Publish, "org/pkg"),
+            action_href(PackageAction::Publish, &ns("org/pkg")),
             "/commit?namespace=org%2Fpkg"
         );
         assert_eq!(
-            action_href(PackageAction::Resolve, "org/pkg"),
+            action_href(PackageAction::Resolve, &ns("org/pkg")),
             "/merge?namespace=org%2Fpkg"
         );
         assert_eq!(
-            action_href(PackageAction::GetLatest, "org/pkg"),
+            action_href(PackageAction::GetLatest, &ns("org/pkg")),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified"
         );
         assert_eq!(
-            action_href(PackageAction::ChooseS3Bucket, "org/pkg"),
+            action_href(PackageAction::ChooseS3Bucket, &ns("org/pkg")),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified"
         );
         // The fifth label ruling 5 names: `[Sign in]`, which `cause_trailing`
@@ -1868,7 +1874,9 @@ mod tests {
                 pkg("a/one", PackageState::Latest, Some("open.quiltdata.com")),
                 pkg("a/two", PackageState::Latest, Some("open.quiltdata.com")),
             ],
-            Callback::new(move |names: Vec<String>| asked.update(|log| log.push(names))),
+            Callback::new(move |names: Vec<Namespace>| {
+                asked.update(|log| log.push(names.iter().map(ToString::to_string).collect()));
+            }),
         );
 
         let button = el
@@ -1918,13 +1926,13 @@ mod tests {
             &[],
         );
 
-        let order: Vec<&str> = items
+        let order: Vec<String> = items
             .iter()
             .filter_map(|item| match item {
-                QueueItem::Package { namespace, .. } => Some(namespace.as_str()),
+                QueueItem::Package { namespace, .. } => Some(namespace.to_string()),
                 QueueItem::Cause { .. } => None,
             })
-            .collect();
+            .collect::<Vec<String>>();
         assert_eq!(
             order,
             vec!["a/conflict", "a/paused", "a/unread"],
@@ -1939,7 +1947,7 @@ mod tests {
 
     fn mount_region_paused(
         packages: Signal<Vec<MainPagePackageData>>,
-        pause_messages: HashMap<String, String>,
+        pause_messages: HashMap<Namespace, String>,
     ) -> web_sys::Element {
         mount_region_with_pauses(packages, Vec::new(), Signal::stored(pause_messages))
     }
@@ -1947,7 +1955,7 @@ mod tests {
     fn mount_region_with_pauses(
         packages: Signal<Vec<MainPagePackageData>>,
         hosts: Vec<AccountHostData>,
-        pause_messages: Signal<HashMap<String, String>>,
+        pause_messages: Signal<HashMap<Namespace, String>>,
     ) -> web_sys::Element {
         mount(move || {
             view! {
@@ -1971,17 +1979,17 @@ mod tests {
     fn only_a_reason_with_no_state_of_its_own_keeps_its_message() {
         let paused = vec![
             PausedPackageData {
-                namespace: "a/other".to_string(),
+                namespace: ns("a/other"),
                 reason: PausedReasonData::Other {
                     message: "workflow rejected metadata".to_string(),
                 },
             },
             PausedPackageData {
-                namespace: "a/diverged".to_string(),
+                namespace: ns("a/diverged"),
                 reason: PausedReasonData::Diverged,
             },
             PausedPackageData {
-                namespace: "a/conflict".to_string(),
+                namespace: ns("a/conflict"),
                 reason: PausedReasonData::PullConflict {
                     files: vec!["one.csv".to_string()],
                 },
@@ -1989,11 +1997,11 @@ mod tests {
         ];
         let map = pause_messages(&paused);
         assert_eq!(
-            map.get("a/other").map(String::as_str),
+            map.get(&ns("a/other")).map(String::as_str),
             Some("workflow rejected metadata")
         );
-        assert!(!map.contains_key("a/diverged"));
-        assert!(!map.contains_key("a/conflict"));
+        assert!(!map.contains_key(&ns("a/diverged")));
+        assert!(!map.contains_key(&ns("a/conflict")));
     }
 
     /// The row says what stopped it, keeping the engine's own line breaks.
@@ -2002,7 +2010,7 @@ mod tests {
         let packages = Signal::stored(vec![pkg("team/imaging", PackageState::Paused, None)]);
         let el = mount_region_paused(
             packages,
-            HashMap::from([("team/imaging".to_string(), REJECTION.to_string())]),
+            HashMap::from([(ns("team/imaging"), REJECTION.to_string())]),
         );
 
         let detail = el
@@ -2023,7 +2031,7 @@ mod tests {
         let packages = Signal::stored(vec![pkg("team/imaging", PackageState::Diverged, None)]);
         let el = mount_region_paused(
             packages,
-            HashMap::from([("team/imaging".to_string(), REJECTION.to_string())]),
+            HashMap::from([(ns("team/imaging"), REJECTION.to_string())]),
         );
 
         assert!(
@@ -2067,7 +2075,7 @@ mod tests {
 
         // What a watcher reload delivers: the same question, answered again.
         pauses.set(HashMap::from([(
-            "somewhere/else".to_string(),
+            ns("somewhere/else"),
             "workflow rejected".to_string(),
         )]));
         leptos::task::tick().await;

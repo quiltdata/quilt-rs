@@ -1,4 +1,4 @@
-use quilt_uri::{Host, S3PackageUri};
+use quilt_uri::{Host, Namespace, S3PackageUri};
 use serde::{Deserialize, Serialize};
 
 use crate::tauri;
@@ -9,7 +9,7 @@ use crate::tauri;
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
 pub struct InstalledPackageData {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub uri: Option<S3PackageUri>,
     pub status: String,
     /// Hash of the revision currently installed locally, if any. Feeds the
@@ -51,13 +51,13 @@ pub struct EntryData {
     pub status: String,
     pub junky_pattern: Option<String>,
     pub ignored_by: Option<String>,
-    pub namespace: String,
+    pub namespace: Namespace,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub uri: Option<S3PackageUri>,
     pub status: String,
     pub message: String,
@@ -186,7 +186,7 @@ pub enum WorkflowIntent {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeData {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub uri: Option<S3PackageUri>,
 }
 
@@ -298,7 +298,7 @@ pub struct InstalledPackagesListData {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageItemData {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub status: String,
     pub has_changes: bool,
     /// Package has a local commit. Setting a remote only re-commits (creating
@@ -359,7 +359,7 @@ pub enum RemoteBanner {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePackageResult {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub banner: Option<RemoteBanner>,
 }
 
@@ -554,7 +554,7 @@ pub struct MainPagePackagesData {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackageData {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub state: crate::kit::PackageState,
     /// Epoch milliseconds, from the last commit or the last installed path — see
     /// `last_changed` on the Tauri side. `None` only when nothing has ever been
@@ -648,7 +648,7 @@ pub enum PausedReasonData {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedPackageData {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub reason: PausedReasonData,
 }
 
@@ -720,7 +720,7 @@ pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, 
 #[serde(rename_all = "camelCase")]
 pub struct MainPageFileData {
     pub path: String,
-    pub namespace: String,
+    pub namespace: Namespace,
     /// Epoch milliseconds. Never re-sorted or re-capped on this side — see
     /// `pages::main_page::recent_files::RecentFilesRegion`.
     pub changed_at: f64,
@@ -760,7 +760,7 @@ pub struct RefreshedPackageStatus {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageStatusEvent {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub status: String,
     pub has_changes: bool,
     /// Digest of the observation this event reports (see the backend's
@@ -779,7 +779,7 @@ pub const PACKAGE_STATUS_EVENT: &str = "package-status-changed";
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishedEvent {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub message: String,
 }
 
@@ -793,7 +793,7 @@ pub const AUTOSYNC_PUBLISHED_EVENT: &str = "autosync-published";
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedEvent {
-    pub namespace: String,
+    pub namespace: Namespace,
     pub reason: String,
     pub message: Option<String>,
 }
@@ -1057,7 +1057,7 @@ pub async fn package_set_sync_scope(namespace: String, entire_package: bool) -> 
 pub struct SubscriberErrorEvent {
     pub kind: String,
     pub message: String,
-    pub namespace: Option<String>,
+    pub namespace: Option<Namespace>,
 }
 
 pub const FSWATCHER_SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
@@ -1508,7 +1508,7 @@ mod tests {
             r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"acme.quilt.dev"}"#,
         )
         .unwrap();
-        assert_eq!(item.namespace, "acme/data");
+        assert_eq!(item.namespace.to_string(), "acme/data");
         assert_eq!(item.status, "paused");
         assert!(!item.has_changes);
         assert!(!item.has_local_commit);
@@ -1687,7 +1687,7 @@ mod tests {
         .unwrap();
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "team/latest");
+        assert_eq!(pkg.namespace.to_string(), "team/latest");
         assert_eq!(pkg.state, crate::kit::PackageState::Latest);
         assert_eq!(pkg.changed_at, None);
         assert_eq!(pkg.host.as_deref(), Some("test.quilt.dev"));
@@ -1709,7 +1709,7 @@ mod tests {
         assert_eq!(data.files.len(), 1);
         let file = &data.files[0];
         assert_eq!(file.path, "a/one.csv");
-        assert_eq!(file.namespace, "user/alpha");
+        assert_eq!(file.namespace.to_string(), "user/alpha");
         assert!((file.changed_at - 1000.0).abs() < f64::EPSILON);
     }
 
@@ -1791,7 +1791,7 @@ mod tests {
         assert!((data.pull.interval_ms - 30_000.0).abs() < f64::EPSILON);
         assert!((data.publish.interval_ms - 300_000.0).abs() < f64::EPSILON);
         assert_eq!(data.paused.len(), 1);
-        assert_eq!(data.paused[0].namespace, "team/plate-07");
+        assert_eq!(data.paused[0].namespace.to_string(), "team/plate-07");
         match &data.paused[0].reason {
             super::PausedReasonData::PullConflict { files } => {
                 assert_eq!(files, &["a.csv".to_string(), "b.csv".to_string()]);
