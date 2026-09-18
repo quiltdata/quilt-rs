@@ -18,9 +18,13 @@ fn main() {
     console_error_panic_hook::set_once();
     // After the console hook, so it chains onto it rather than being replaced by it.
     panic_report::install();
-    // Before the mount, so the first paint is already in the right palette
-    // rather than flashing light and correcting itself (qhq-8mgw.56).
+    // Before the mount, so the first paint is in the right palette. The frame
+    // before this one belongs to `index.html` — Rust cannot run early enough for
+    // it.
     quilt_sync_ui::theme::follow_os();
+    // The launch marker comes off before anything is drawn: it darkens the bare
+    // canvas, which only an empty frame may have.
+    quilt_sync_ui::theme::stop_booting();
     mount_to_body(App);
 }
 

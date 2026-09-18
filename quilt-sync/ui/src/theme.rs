@@ -87,6 +87,38 @@ pub fn set_v2(on: bool) {
         };
         drop(result);
     }
+    remember_v2(on);
+}
+
+/// Where the flag is kept for the *next* launch, read by `index.html`'s inline
+/// script before the first paint.
+const V2_KEY: &str = "quiltsync.main-page-v2";
+
+/// Record the flag for the next launch.
+///
+/// Last session's answer, never this one's: `/` reads the real setting every
+/// time and [`set_v2`] corrects the marker either way. All this decides is which
+/// palette the empty launch window wears, and being one launch behind costs a
+/// reader who has just switched the flag exactly one boot in the old palette.
+///
+/// Every failure is ignored. A webview with no storage, a quota, a private mode
+/// — each leaves the next launch opening light, which is the fallback anyway.
+fn remember_v2(on: bool) {
+    let Some(Ok(Some(storage))) = web_sys::window().map(|w| w.local_storage()) else {
+        return;
+    };
+    drop(storage.set_item(V2_KEY, if on { "1" } else { "0" }));
+}
+
+/// The attribute `index.html` sets while the document has no page on it.
+///
+/// See `_base.scss`: it is what scopes the dark launch canvas to the empty
+/// frame. A v2 reader opens v1's pages too, and those draw on a light canvas —
+/// so the marker has to be gone before anything is drawn at all.
+pub fn stop_booting() {
+    if let Some(root) = document().document_element() {
+        drop(root.remove_attribute("data-booting"));
+    }
 }
 
 #[cfg(test)]
@@ -116,6 +148,22 @@ mod tests {
         );
     }
 
+    /// The launch marker must come off, and off the ROOT — the stylesheet hangs a
+    /// dark canvas on it, and a canvas that stayed dark would sit under the black
+    /// ink of every v1 page this reader opens.
+    #[wasm_bindgen_test]
+    fn the_launch_marker_comes_off_before_anything_is_drawn() {
+        let root = document().document_element().expect("a root element");
+        root.set_attribute("data-booting", "").unwrap();
+
+        stop_booting();
+
+        assert!(
+            !root.has_attribute("data-booting"),
+            "the dark launch canvas must not outlive the empty frame"
+        );
+    }
+
     #[wasm_bindgen_test]
     fn the_theme_lands_on_the_root_where_the_tokens_can_see_it() {
         let root = document().document_element().expect("a root element");
@@ -137,7 +185,9 @@ mod tests {
     /// The root's scheme decides the canvas. [`V2_CLASS`] marks a reader who opted
     /// in, not a page that is showing, and that reader still opens v1's pages — where
     /// a dark canvas sits under ink no theme switches. So every dark declaration has
-    /// to name a surface the v2 palette actually paints.
+    /// to name a surface the v2 palette actually paints — or `[data-booting]`, which
+    /// is the frame before any page exists and is cleared by [`stop_booting`] in
+    /// `main` before the mount.
     #[test]
     fn a_dark_scheme_never_reaches_the_document_root() {
         // Both global partials the app bundle carries, because the rule this pins
@@ -174,10 +224,22 @@ mod tests {
 
         for (file, selector, value) in &declarations {
             if *value == "dark" {
-                assert!(
-                    selector.contains("[data-v2-page]") || selector.contains("[data-home-frame]"),
-                    "{file}: `{selector}` would darken the canvas a v1 page draws on"
-                );
+                // EVERY branch of the list, not the list as a string: a dark rule
+                // is a list of two, and a substring check over the pair passes on
+                // one of them while the other says `:root` — the leak this test
+                // exists to catch.
+                //
+                // Splitting on `,` is enough because no selector here uses a
+                // functional pseudo-class; `:is(...)` in one of these partials
+                // would need a real parser.
+                for branch in selector.split(',').map(str::trim) {
+                    assert!(
+                        branch.contains("[data-v2-page]")
+                            || branch.contains("[data-home-frame]")
+                            || branch.contains("[data-booting]"),
+                        "{file}: `{branch}` would darken the canvas a v1 page draws on"
+                    );
+                }
             } else {
                 assert_eq!(*value, "light", "{file}: `{selector}` declares `{value}`");
             }
