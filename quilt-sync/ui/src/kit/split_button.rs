@@ -1,76 +1,112 @@
-//! One command on its face, its alternatives behind a caret.
+//! One chosen command on its face, the rest of the set behind a caret.
 //!
-//! # Legal for the same reason [`ActionMenu`](super::ActionMenu) is
+//! # A choice, not a list of other commands
 //!
-//! DESIGN.md's **Platform Owns The Keyboard Rule** bans a listbox and a combobox
-//! because each replaces a native form control that already works. This replaces
-//! nothing: both halves are real `<button>`s, Tab reaches each in reading order,
-//! and the surface holds commands rather than values. `Select` picks a **value**;
-//! this fires a **command**, and so does everything behind its caret.
+//! The face shows whichever option is **selected**; the caret opens the whole
+//! set with the selected one marked. Picking a different one moves the mark and
+//! changes what the face will do — it does not run it. Opening a menu to change a
+//! preference must not also publish to a shared bucket.
 //!
-//! No `role="menu"` and no `aria-haspopup`, for the reason `ActionMenu` spells
-//! out: both promise arrow-key navigation this kit deliberately does not
-//! hand-write. The caret carries `aria-expanded` and `aria-controls`, which say
-//! that it opens something and which surface it means, without claiming a
-//! keyboard model.
+//! That is why the menu lists the face's own command rather than excluding it:
+//! the menu is where you *see which one is active*, so leaving the active one out
+//! would leave out the thing it is for. (An earlier version of this component was
+//! the other shape — face runs X, caret offers Y and Z, nothing selected — and
+//! its menu deliberately omitted the face. Both are real controls; this is the
+//! one with a memory.)
 //!
-//! # Which command is on the face is the caller's business
+//! # Where it sits against the Platform Owns The Keyboard Rule
 //!
-//! The component renders the default it is handed. It does not choose one, and it
-//! does not remember one — that is the layering rule (*kit renders from props;
-//! page owns state, I/O and meaning*), and it is what lets a page persist the
-//! reader's last choice without this file knowing that preferences exist.
+//! DESIGN.md draws its line with *`Select` picks a **value**, `ActionMenu` fires
+//! a **command***, and bans a listbox because it replaces a native control that
+//! already works. This menu does pick something, so it sits nearer that line than
+//! [`ActionMenu`](super::ActionMenu) does and the justification has to be
+//! narrower:
 //!
-//! Worth knowing before a caller does persist one: a face that changes on
-//! invisible history means two readers of the same screen see different buttons,
-//! and muscle memory on this kind of control is positional. Fine for a preference
-//! the reader set deliberately; a trap for one inferred from what they did last.
+//! - It is not a form control. Nothing is submitted and there is no value to read
+//!   back; a `<select>` in its place would be a `<select>` that runs code.
+//! - It claims no keyboard model. Both halves and every option are real buttons,
+//!   reached with Tab in reading order — no `role="menu"`, no `aria-haspopup`, no
+//!   roving focus. `aria-current` marks the active option, because `aria-checked`
+//!   would need a `radio` or `menuitemradio` role and both promise arrow keys.
+//! - Escape, light dismiss and the top layer are the platform's, through
+//!   [`AnchoredOverlay`](super::AnchoredOverlay).
 //!
-//! # The caret is drawn here, the default half is not
+//! If it ever needs arrow-key movement between options it has become a listbox,
+//! and should be a `Select` beside a `Button` instead.
+//!
+//! # The selection is the caller's, and so is remembering it
+//!
+//! `selected` is an `RwSignal` the caller owns: this writes it when somebody
+//! picks, and the page reads it to persist. The component has no idea that
+//! preferences exist — the layering rule, *kit renders from props, page owns
+//! state, I/O and meaning* — which is also what lets a caller that wants the
+//! choice to reset every time use the same control.
+//!
+//! Worth knowing for whoever persists it: a face that changes on history means
+//! two people at the same screen see different buttons, and muscle memory on a
+//! control like this is positional. A preference somebody set deliberately is
+//! fine; one inferred from what they did last is the one to be careful with.
+//!
+//! # The caret is drawn here, the face is not
 //!
 //! The face is a [`Button`](super::Button), so every variant, the disabled state
 //! and the loading spinner come from the one place they are defined. The caret
 //! cannot be an [`IconButton`](super::IconButton): that has no primary variant,
-//! and a navy face beside a white caret is two controls, not one. So the caret's
-//! fill is restated in this module's stylesheet — the only duplication here, and
-//! deliberate over adding a variant to `IconButton` that only this would use.
+//! and a navy face beside a white caret is two controls rather than one. So the
+//! caret's fill is restated in this module's stylesheet — the only duplication
+//! here, and deliberate over a variant nothing else would use.
 
-use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 
 use super::Align;
 use super::AnchoredOverlay;
 use super::Button;
 use super::ButtonVariant;
-use super::MenuAction;
 use super::action_menu;
 use super::icons;
 
 stylance::import_crate_style!(style, "src/kit/split_button.module.scss");
 
+/// One of the commands a [`SplitButton`] can be set to.
+#[derive(Clone)]
+pub struct SplitOption {
+    /// What the face reads when this one is selected, and what the menu lists.
+    pub label: String,
+    /// Runs when the **face** is clicked while this one is selected. Picking this
+    /// option out of the menu does not call it.
+    pub on_run: Callback<()>,
+}
+
+impl SplitOption {
+    #[must_use]
+    pub fn new(label: impl Into<String>, on_run: Callback<()>) -> Self {
+        Self {
+            label: label.into(),
+            on_run,
+        }
+    }
+}
+
 #[component]
 pub fn SplitButton(
-    /// The command on the face — the half that runs without opening anything.
+    /// Every option, in the order the menu lists them. The first is the sensible
+    /// default for a caller with nothing remembered.
+    options: Vec<SplitOption>,
+    /// Which option is on the face, as an index into `options`. Written here when
+    /// somebody picks from the menu; read by the caller to persist.
     ///
-    /// A `Signal`, not a plain value: a page that persists which command the
-    /// reader last used writes that preference into a signal, and the face has to
-    /// follow it without the caller remounting the control.
-    #[prop(into)]
-    label: Signal<String>,
-    /// Runs the command on the face.
-    on_click: impl Fn(MouseEvent) + 'static,
-    /// Names the caret, and through it the surface — `Other ways to publish`,
-    /// not `More`. The face already has a name; this has to say what opening it
-    /// would offer.
+    /// Out of range degrades to `0` rather than panicking: a persisted index
+    /// outlives the list it indexed, and a preference stored by an older build
+    /// should fall back to the default rather than take the page down.
+    selected: RwSignal<usize>,
+    /// Names the caret, and through it the surface — `Change what this button
+    /// does`, not `More`. The face already has a name; this has to say what
+    /// opening it would offer.
     #[prop(into)]
     menu_label: String,
-    /// The alternatives. The face's own command is **not** repeated here — it is
-    /// already on screen, and a menu that lists what you just clicked reads as a
-    /// mistake.
-    actions: Vec<MenuAction>,
     #[prop(optional)] variant: ButtonVariant,
-    /// Disables both halves. A caret that opens alternatives to a command you
-    /// cannot run offers nothing.
+    /// Disables both halves. A caret offering other ways to do something you
+    /// cannot do is a dead end.
     #[prop(optional, into)]
     disabled: MaybeProp<bool>,
     /// Spinner on the face, and the caret goes with it: work is in flight, so
@@ -82,6 +118,31 @@ pub fn SplitButton(
     let surface_label = menu_label.clone();
     let is_busy =
         Signal::derive(move || disabled.get().unwrap_or(false) || loading.get().unwrap_or(false));
+
+    let options = StoredValue::new(options);
+    let labels = options.with_value(|o| o.iter().map(|opt| opt.label.clone()).collect::<Vec<_>>());
+
+    let index = Signal::derive(move || {
+        let i = selected.get();
+        if options.with_value(|o| i < o.len()) {
+            i
+        } else {
+            0
+        }
+    });
+    let label = Signal::derive(move || {
+        options.with_value(|o| {
+            o.get(index.get())
+                .map(|opt| opt.label.clone())
+                .unwrap_or_default()
+        })
+    });
+
+    let run = move |_| {
+        if let Some(option) = options.with_value(|o| o.get(index.get_untracked()).cloned()) {
+            option.on_run.run(());
+        }
+    };
 
     let caret_class = if matches!(variant, ButtonVariant::Primary) {
         format!("{} {}", style::caret, style::primary)
@@ -109,7 +170,7 @@ pub fn SplitButton(
 
     view! {
         <div class=style::root>
-            <Button variant=variant disabled=disabled loading=loading on_click=on_click>
+            <Button variant=variant disabled=disabled loading=loading on_click=run>
                 {move || label.get()}
             </Button>
             <AnchoredOverlay
@@ -119,7 +180,7 @@ pub fn SplitButton(
                 align=Align::End
                 tight=true
             >
-                {action_menu::surface(actions, open)}
+                {action_menu::choices(labels, selected, open)}
             </AnchoredOverlay>
         </div>
     }
@@ -148,112 +209,156 @@ mod tests {
             .collect()
     }
 
-    fn action(label: &str, hits: RwSignal<Vec<String>>) -> MenuAction {
-        let name = label.to_string();
-        MenuAction::new(
-            label,
-            Callback::new(move |()| hits.update(|h| h.push(name.clone()))),
-        )
+    fn two(ran: RwSignal<Vec<String>>) -> Vec<SplitOption> {
+        vec![
+            SplitOption::new(
+                "Publish",
+                Callback::new(move |()| ran.update(|r| r.push("publish".into()))),
+            ),
+            SplitOption::new(
+                "Create new revision",
+                Callback::new(move |()| ran.update(|r| r.push("revision".into()))),
+            ),
+        ]
     }
 
-    /// The point of the control: one click runs the face, without opening
-    /// anything. Deleting the `on_click` wiring must fail here.
+    /// The face runs whichever option is selected, not always the first.
     #[wasm_bindgen_test]
-    fn the_face_runs_without_opening_the_surface() {
-        let hits = RwSignal::new(Vec::<String>::new());
+    fn the_face_runs_the_selected_option() {
+        let ran = RwSignal::new(Vec::<String>::new());
+        let selected = RwSignal::new(0_usize);
         let root = mount(move || {
             view! {
                 <SplitButton
-                    label="Publish"
-                    menu_label="Other ways to publish"
-                    actions=vec![action("Create new revision", hits)]
-                    on_click=move |_| hits.update(|h| h.push("face".to_string()))
+                    options=two(ran)
+                    selected=selected
+                    menu_label="Change what this button does"
                 />
             }
         });
 
         buttons(&root)[0].click();
+        assert_eq!(ran.get_untracked(), vec!["publish".to_string()]);
 
-        assert_eq!(hits.get_untracked(), vec!["face".to_string()]);
-        assert!(
-            !root
-                .query_selector(":popover-open")
-                .unwrap()
-                .is_some_and(|_| true),
-            "clicking the face must not open the surface"
+        selected.set(1);
+        buttons(&root)[0].click();
+        assert_eq!(
+            ran.get_untracked(),
+            vec!["publish".to_string(), "revision".to_string()],
+            "the face must follow the selection rather than stay on the first option"
         );
     }
 
-    /// Two real buttons, both reachable. A single button with a click zone that
-    /// behaves differently at one end would pass a render test and fail a reader.
     #[wasm_bindgen_test]
-    fn both_halves_are_real_buttons() {
-        let hits = RwSignal::new(Vec::<String>::new());
+    fn the_face_shows_the_selected_label() {
+        let ran = RwSignal::new(Vec::<String>::new());
+        let selected = RwSignal::new(1_usize);
         let root = mount(move || {
             view! {
                 <SplitButton
-                    label="Publish"
-                    menu_label="Other ways to publish"
-                    actions=vec![action("Create new revision", hits)]
-                    on_click=|_| ()
+                    options=two(ran)
+                    selected=selected
+                    menu_label="Change what this button does"
+                />
+            }
+        });
+
+        assert_eq!(
+            buttons(&root)[0].text_content().unwrap().trim(),
+            "Create new revision"
+        );
+    }
+
+    /// The point of this shape: picking moves the default and runs nothing. If it
+    /// ever ran on pick, opening the menu to look at the options would publish.
+    #[wasm_bindgen_test]
+    fn picking_an_option_changes_the_default_without_running_it() {
+        let ran = RwSignal::new(Vec::<String>::new());
+        let selected = RwSignal::new(0_usize);
+        let root = mount(move || {
+            view! {
+                <SplitButton
+                    options=two(ran)
+                    selected=selected
+                    menu_label="Change what this button does"
+                />
+            }
+        });
+
+        // face, caret, then the two options on the surface
+        buttons(&root)[3].click();
+
+        assert_eq!(selected.get_untracked(), 1, "the default moved");
+        assert!(
+            ran.get_untracked().is_empty(),
+            "and nothing ran: {:?}",
+            ran.get_untracked()
+        );
+    }
+
+    /// The menu lists every option including the one on the face — it is where
+    /// you see which is active, so omitting the active one omits the point.
+    #[wasm_bindgen_test]
+    fn the_menu_lists_every_option_and_marks_the_selected_one() {
+        let ran = RwSignal::new(Vec::<String>::new());
+        let selected = RwSignal::new(1_usize);
+        let root = mount(move || {
+            view! {
+                <SplitButton
+                    options=two(ran)
+                    selected=selected
+                    menu_label="Change what this button does"
                 />
             }
         });
 
         let found = buttons(&root);
-        assert!(
-            found.len() >= 2,
-            "expected a face and a caret, found {}",
-            found.len()
-        );
-        assert_eq!(found[0].text_content().unwrap().trim(), "Publish");
+        let options: Vec<String> = found[2..]
+            .iter()
+            .map(|b| b.text_content().unwrap().trim().to_string())
+            .collect();
+        assert_eq!(options, vec!["Publish", "Create new revision"]);
+
+        assert_eq!(found[2].get_attribute("aria-current"), None);
         assert_eq!(
-            found[1].get_attribute("aria-label").as_deref(),
-            Some("Other ways to publish"),
-            "the caret names what it opens, not itself"
+            found[3].get_attribute("aria-current").as_deref(),
+            Some("true"),
+            "the selected option is the marked one"
         );
     }
 
-    /// `aria-expanded` is what tells a reader the caret opens anything at all.
-    /// Removing it leaves a button that announces a name and nothing else.
+    /// A persisted index outlives the list it indexed, so an older build's
+    /// preference degrades to the default rather than taking the page down.
     #[wasm_bindgen_test]
-    fn the_caret_says_whether_it_is_open() {
-        let hits = RwSignal::new(Vec::<String>::new());
+    fn an_out_of_range_selection_falls_back_to_the_first_option() {
+        let ran = RwSignal::new(Vec::<String>::new());
+        let selected = RwSignal::new(7_usize);
         let root = mount(move || {
             view! {
                 <SplitButton
-                    label="Publish"
-                    menu_label="Other ways to publish"
-                    actions=vec![action("Create new revision", hits)]
-                    on_click=|_| ()
+                    options=two(ran)
+                    selected=selected
+                    menu_label="Change what this button does"
                 />
             }
         });
 
-        let caret = buttons(&root).remove(1);
-        assert_eq!(
-            caret.get_attribute("aria-expanded").as_deref(),
-            Some("false")
-        );
-        assert!(
-            caret.get_attribute("aria-controls").is_some(),
-            "the caret must name the surface it opens"
-        );
+        assert_eq!(buttons(&root)[0].text_content().unwrap().trim(), "Publish");
+        buttons(&root)[0].click();
+        assert_eq!(ran.get_untracked(), vec!["publish".to_string()]);
     }
 
-    /// Disabling the command must disable the alternatives too — a caret that
-    /// offers other ways to do something you cannot do is a dead end.
     #[wasm_bindgen_test]
     fn disabled_stops_both_halves() {
-        let hits = RwSignal::new(Vec::<String>::new());
+        let ran = RwSignal::new(Vec::<String>::new());
+        let selected = RwSignal::new(0_usize);
         let root = mount(move || {
             view! {
                 <SplitButton
-                    label="Publish"
-                    menu_label="Other ways to publish"
-                    actions=vec![action("Create new revision", hits)]
+                    options=two(ran)
+                    selected=selected
+                    menu_label="Change what this button does"
                     disabled=true
-                    on_click=move |_| hits.update(|h| h.push("face".to_string()))
                 />
             }
         });
@@ -265,25 +370,20 @@ mod tests {
         assert!(caret.disabled(), "the caret");
 
         found[0].click();
-        assert!(
-            hits.get_untracked().is_empty(),
-            "a disabled face must not run its command"
-        );
+        assert!(ran.get_untracked().is_empty());
     }
 
-    /// Loading implies disabled, and the caret goes with it: work is in flight,
-    /// so neither half should start more.
     #[wasm_bindgen_test]
     fn loading_stops_the_caret_too() {
-        let hits = RwSignal::new(Vec::<String>::new());
+        let ran = RwSignal::new(Vec::<String>::new());
+        let selected = RwSignal::new(0_usize);
         let root = mount(move || {
             view! {
                 <SplitButton
-                    label="Publish"
-                    menu_label="Other ways to publish"
-                    actions=vec![action("Create new revision", hits)]
+                    options=two(ran)
+                    selected=selected
+                    menu_label="Change what this button does"
                     loading=true
-                    on_click=|_| ()
                 />
             }
         });

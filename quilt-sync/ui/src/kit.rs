@@ -129,6 +129,7 @@ pub use skeleton_box::SkeletonBox;
 pub use spinner::Spinner;
 pub use spinner::SpinnerVariant;
 pub use split_button::SplitButton;
+pub use split_button::SplitOption;
 pub use state_label::StateLabel;
 pub use state_label::StateTone;
 pub use text_input::TextInput;

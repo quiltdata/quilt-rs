@@ -47,6 +47,7 @@ use crate::kit::PackageAction;
 use crate::kit::PackageState;
 use crate::kit::Site;
 use crate::kit::SplitButton;
+use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
 
@@ -191,7 +192,7 @@ fn menu() -> Vec<MenuAction> {
 /// leaves at most the state's action, `Open folder` and `[⋯]`, so the wider gap
 /// would separate a group of one from a group of two and invite the reader to
 /// look for a distinction that is not doing any work. One uniform `space-2`.
-fn header(state: &PackageState) -> AnyView {
+fn header(state: &PackageState, publish_choice: RwSignal<usize>) -> AnyView {
     let rendered = render(state, Site::PageHeader);
     let action = rendered.action;
     let publishes = matches!(action, Some(PackageAction::Publish));
@@ -214,16 +215,16 @@ fn header(state: &PackageState) -> AnyView {
                         .then(|| {
                             view! {
                                 <SplitButton
-                                    label="Publish"
-                                    menu_label="Other ways to publish"
-                                    actions=vec![
-                                        MenuAction::new(
+                                    options=vec![
+                                        SplitOption::new("Publish", Callback::new(|()| ())),
+                                        SplitOption::new(
                                             "Create new revision",
                                             Callback::new(|()| ()),
                                         ),
                                     ]
+                                    selected=publish_choice
+                                    menu_label="Change what this button does"
                                     variant=ButtonVariant::Primary
-                                    on_click=|_| ()
                                 />
                             }
                         })}
@@ -250,6 +251,11 @@ fn header(state: &PackageState) -> AnyView {
 
 #[component]
 pub fn PackageHeaderScene() -> impl IntoView {
+    // One signal across every cell, so picking in any of them moves them all —
+    // which is what a preference persisted by the page would do. Per-cell signals
+    // would draw a control that cannot exist.
+    let publish_choice = RwSignal::new(0_usize);
+
     view! {
         <Scene
             title="The package header, state by state"
@@ -299,7 +305,7 @@ pub fn PackageHeaderScene() -> impl IntoView {
             {states()
                 .into_iter()
                 .map(|(label, state)| {
-                    view! { <Cell full=true label=label>{header(&state)}</Cell> }
+                    view! { <Cell full=true label=label>{header(&state, publish_choice)}</Cell> }
                 })
                 .collect_view()}
         </Scene>

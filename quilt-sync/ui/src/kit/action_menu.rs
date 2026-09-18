@@ -202,3 +202,56 @@ pub(super) fn surface(actions: Vec<MenuAction>, open: RwSignal<bool>) -> AnyView
 
     view! { <div class=style::list>{items}</div> }.into_any()
 }
+
+/// The options of a [`SplitButton`](super::SplitButton), as they are drawn
+/// inside an [`AnchoredOverlay`].
+///
+/// Separate from [`surface`] because the two menus mean different things.
+/// `ActionMenu`'s items are commands: each runs and the menu closes. These are
+/// **choices**: picking one moves the mark and changes what the face will do,
+/// and nothing runs until the face itself is clicked. Sharing one function would
+/// mean a parameter that silently changes what a click does.
+///
+/// `aria-current` rather than `aria-checked`: the latter needs a `radio` or
+/// `menuitemradio` role, and both promise the arrow-key model this kit
+/// deliberately does not hand-write — the same reason `ActionMenu` declines
+/// `role="menu"`. `aria-current` states which one is active and claims nothing
+/// about how to move between them.
+pub(super) fn choices(
+    labels: Vec<String>,
+    selected: RwSignal<usize>,
+    open: RwSignal<bool>,
+) -> AnyView {
+    let items = labels
+        .into_iter()
+        .enumerate()
+        .map(|(index, label)| {
+            let class = format!("{} {}", style::item, style::choice);
+            let is_current = move || selected.get() == index;
+            view! {
+                <button
+                    type="button"
+                    class=class
+                    aria-current=move || is_current().then_some("true")
+                    on:click=move |_| {
+                        // Sets the default; it does not run it. Opening a menu to
+                        // change a preference must not also publish.
+                        selected.set(index);
+                        open.set(false);
+                    }
+                >
+                    {move || {
+                        if is_current() {
+                            view! { <span class=style::mark>{icons::check()}</span> }.into_any()
+                        } else {
+                            view! { <span class=style::unmarked /> }.into_any()
+                        }
+                    }}
+                    {label}
+                </button>
+            }
+        })
+        .collect_view();
+
+    view! { <div class=style::list>{items}</div> }.into_any()
+}

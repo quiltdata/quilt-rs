@@ -65,3 +65,35 @@
   color: var(--q-fgColor-disabled);
   white-space: normal;
 }
+
+/* ── a choice, rather than a command ──────────────────────────────────────
+ * `SplitButton`'s menu picks which option sits on the face. Every row reserves
+ * the mark's width whether or not it carries one, so the labels line up and the
+ * list does not shift when the selection moves.
+ */
+.choice {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--q-space-2);
+}
+
+.mark {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-accent);
+}
+
+.mark svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Empty, but the same size: the reserved gutter that keeps labels aligned. */
+.unmarked {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
