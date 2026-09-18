@@ -26,3 +26,21 @@ pub(crate) async fn sleep_ms(ms: i32) {
     });
     wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
 }
+
+/// The innermost element drawing exactly these words — how a reader finds a
+/// thing on screen, and what keeps a test off the stylesheet's class names.
+pub(crate) fn element_saying(root: &web_sys::Element, text: &str) -> web_sys::HtmlElement {
+    let all = root.query_selector_all("*").unwrap();
+    let mut found: Option<web_sys::Element> = None;
+    for i in 0..all.length() {
+        let el: web_sys::Element = all.item(i).unwrap().unchecked_into();
+        if el.text_content().unwrap_or_default().trim() == text {
+            // A descendant follows its ancestor in document order, so the last
+            // exact match is the element holding the words and nothing else.
+            found = Some(el);
+        }
+    }
+    found
+        .unwrap_or_else(|| panic!("nothing says {text:?}; markup was {}", root.inner_html()))
+        .unchecked_into()
+}

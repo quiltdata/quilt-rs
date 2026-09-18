@@ -64,8 +64,8 @@ pub fn SegmentedControl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::element_saying;
     use crate::test_support::mount;
-    use crate::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -125,12 +125,7 @@ mod tests {
         let selected = RwSignal::new("Flat".to_string());
         let el = control(selected);
 
-        let word = el
-            .query_selector_all("[class*=text]")
-            .unwrap()
-            .get(1)
-            .expect("the second option's word");
-        word.unchecked_ref::<web_sys::HtmlElement>().click();
+        element_saying(&el, "Package").click();
 
         assert_eq!(
             selected.get_untracked(),
@@ -148,7 +143,7 @@ mod tests {
         let el = control(selected);
 
         selected.set("Package".to_string());
-        sleep_ms(10).await;
+        leptos::task::tick().await;
 
         let radios = radios(&el);
         assert!(!radios[0].checked());

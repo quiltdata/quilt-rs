@@ -61,6 +61,7 @@ pub fn ToggleRow(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::element_saying;
     use crate::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
@@ -72,7 +73,7 @@ mod tests {
                     label="Publish on save"
                     sublabel="Every save writes a new revision."
                     checked=checked
-                    trailing=view! { <span class="clock">"in 5 min"</span> }.into_any()
+                    trailing=view! { <span>"in 5 min"</span> }.into_any()
                     disabled=disabled
                 />
             }
@@ -95,7 +96,7 @@ mod tests {
         let checked = RwSignal::new(false);
         let el = row(checked, false);
 
-        click(&el.query_selector("[class*=sublabel]").unwrap().unwrap());
+        click(&element_saying(&el, "Every save writes a new revision."));
 
         assert!(checked.get_untracked(), "the words are inside the label");
         assert!(box_of(&el).checked());
@@ -108,7 +109,7 @@ mod tests {
         let checked = RwSignal::new(false);
         let el = row(checked, false);
 
-        click(&el.query_selector(".clock").unwrap().expect("the slot"));
+        click(&element_saying(&el, "in 5 min"));
 
         assert!(!checked.get_untracked());
         assert!(!box_of(&el).checked());
@@ -119,7 +120,7 @@ mod tests {
         let checked = RwSignal::new(false);
         let el = row(checked, true);
 
-        click(&el.query_selector("[class*=sublabel]").unwrap().unwrap());
+        click(&element_saying(&el, "Every save writes a new revision."));
 
         assert!(box_of(&el).disabled(), "and the input says so");
         assert!(!checked.get_untracked());
