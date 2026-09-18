@@ -16,3 +16,13 @@
   margin: 0;
   max-width: 70ch;
 }
+
+/* Standing where rows would, in a box whose padding is the rows' own. It borrows
+ * `Blankslate`'s compact padding rather than inventing a second number, because
+ * the two take turns in that one slot: this one when the read failed, that one
+ * when it succeeded and there was nothing. */
+.root.centred {
+  align-items: center;
+  padding: var(--q-space-5) var(--q-space-4);
+  text-align: center;
+}

@@ -822,6 +822,7 @@ fn pane(p: Pane) -> AnyView {
                     Body::Failed => {
                         view! {
                             <LoadFailure
+                                centred=true
                                 words="Could not read this package's files."
                                 on_retry=Callback::new(|()| ())
                             />
@@ -1144,7 +1145,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="the read failed — the controls stay, the box carries it">
                 {pane(Pane { body: Body::Failed, ..Pane::new("fp-failed") })}
             </Cell>
-            <Cell full=true label="the two confirms — also reachable from any row's [⋯]">
+            <Cell full=true label="both confirms, opened here directly — `Stop keeping` is also on every row's menu">
                 <div class="g-inline">
                     <Button on_click=move |_| keeping.open.set(true)>"Stop keeping"</Button>
                     <Button on_click=move |_| replacing.set(true)>

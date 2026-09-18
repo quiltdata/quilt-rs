@@ -20,6 +20,18 @@
 //! would be four surfaces disagreeing about what the button is called. What each
 //! caller does own is *which* read runs again: the failed one, never the page's.
 //!
+//! # Where it stands decides whether it carries its own air
+//!
+//! Every caller but one puts this inside a padded container — a `Card`, a pane
+//! section, an overlay surface — so it draws no padding and starts at the left,
+//! like the prose above it. The exception is a box with no padding of its own,
+//! where this stands exactly where rows would: there it has to supply what the
+//! container does not, and it should read like the state it is standing in for.
+//! [`Blankslate`](super::Blankslate) occupies that same slot when there is
+//! nothing to show, and the two saying *nothing here* and *could not find out*
+//! in two different shapes is the kind of difference a reader notices and cannot
+//! explain. `centred` is that case.
+//!
 //! # Announcing belongs to the region
 //!
 //! This draws; it does not speak. A region that swaps content in asynchronously
@@ -41,9 +53,21 @@ pub fn LoadFailure(
     /// Runs the read that failed. Required: a failure with no way out is a dead
     /// end, and the surface that has one cannot be recovered without a reload.
     on_retry: Callback<()>,
+    /// Centred, with padding of its own, for a container that has none — the
+    /// installed package's file list, where this stands where the rows would.
+    /// It matches `Blankslate`'s compact padding, because in that slot the two
+    /// are the same kind of statement.
+    #[prop(optional)]
+    centred: bool,
 ) -> impl IntoView {
+    let class = if centred {
+        format!("{} {}", style::root, style::centred)
+    } else {
+        String::from(style::root)
+    };
+
     view! {
-        <div class=style::root>
+        <div class=class>
             <p class=style::words>{words}</p>
             <Button on_click=move |_| on_retry.run(())>"Try again"</Button>
         </div>

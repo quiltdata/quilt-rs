@@ -4,6 +4,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
+use crate::kit::Segment;
 use crate::kit::SegmentedControl;
 
 #[component]
@@ -11,6 +12,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
     let two = RwSignal::new("Packages".to_string());
     let three = RwSignal::new("Prefix".to_string());
     let long = RwSignal::new("Recently changed files".to_string());
+    let inert = RwSignal::new("All 53".to_string());
 
     view! {
         <Story
@@ -34,6 +36,19 @@ pub fn SegmentedControlStories() -> impl IntoView {
                     name="story-group"
                     options=vec!["Bucket".into(), "Prefix".into(), "None".into()]
                     selected=three
+                />
+            </Cell>
+            <Cell label="a facet at zero — present, greyed, and not choosable">
+                <SegmentedControl
+                    aria_label="Filter files"
+                    name="story-inert"
+                    options=vec![
+                        Segment::new("All 53"),
+                        Segment::inert("Changed 0"),
+                        Segment::new("Not downloaded 17"),
+                        Segment::inert("Ignored 0"),
+                    ]
+                    selected=inert
                 />
             </Cell>
             <Cell label="long labels — past this, use a Select">

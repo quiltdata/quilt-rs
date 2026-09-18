@@ -268,6 +268,13 @@ fn Empties() -> impl IntoView {
                   empty list is a frustration and the way out of it is still to design, which \
                   is a deferral rather than the rule this note used to state."
         >
+            <Cell wide=true label="compact — for a box too short for the full one">
+                <Blankslate
+                    compact=true
+                    heading="No files match"
+                    description="Nothing in this view matches what you are looking for."
+                />
+            </Cell>
             <Cell wide=true label="no results — no action">
                 <Blankslate
                     heading="No files match “plate-99”"
