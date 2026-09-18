@@ -26,7 +26,8 @@ pub fn Blankslate(
     /// The installed package's file list is **264px at the height floor**, and
     /// this component's `space-10` padding is taller than that — so a full-height
     /// empty state there pushes the list's own border off screen. Compact keeps
-    /// the words and the centring and spends a quarter of the height.
+    /// the words, the type and the centring, and spends a quarter of the height:
+    /// it is the padding that is short, not the heading.
     ///
     /// Not a separate component: what a narrowed list needs to say is exactly
     /// what this says, and the one thing that differs is how much room it takes.

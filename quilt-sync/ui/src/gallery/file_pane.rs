@@ -60,10 +60,17 @@
 //!   part that identifies the file. §6 left the truncation strategy open and
 //!   this is the argument for settling it — the end of a path is what a reader
 //!   needs and the start is what they can infer.
+//! - **The third toolbar row belongs to the minimum window, and only to it.**
+//!   The toolbar's content is 716px against the pane's 700, and the pane is the
+//!   window less 324 — `page_layout`'s 32, the context pane's 280 and the gap.
+//!   So it wraps at a **1024** window, which is the app's `minWidth`, and stops
+//!   wrapping at **1040**: sixteen pixels of window buy the row back. Accepted
+//!   on 2026-09-18 for that reason — the cost lands on the narrowest window
+//!   rather than on the shipping one.
 //! - **`Group: None` also changes how many rows the toolbar takes.** `Group:
-//!   Base folder` is 166px and `Group: None` about 130, which is the margin the
-//!   toolbar is short by — so the controls fit one line under `None` and wrap
-//!   under the default. The wrap is not a property of the width alone.
+//!   Base folder` is 166px and `Group: None` about 130, which is more than the
+//!   16 the toolbar is short by — so the controls fit one line under `None` and
+//!   wrap under the default. The wrap is not a property of the width alone.
 //! - **A group of one is mostly heading.** The `Ignored` facet draws three
 //!   `.DS_Store` rows under two headings holding one file each, so half the view
 //!   is headings and all three rows have the same name. §6's *suppress the
