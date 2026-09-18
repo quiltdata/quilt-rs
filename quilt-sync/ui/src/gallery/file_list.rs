@@ -317,33 +317,14 @@ fn file_list(grouped: bool, picks: RwSignal<Vec<bool>>, opened: RwSignal<String>
 }
 
 const NOTE: &str = "Three checkbox columns on one x — select-all's, a group's and a file's — \
-                    and none of the three components chose it. The list sets \
-                    `--q-entry-gutter` once and each component reads it with its own \
-                    fallback. Sight down the boxes; that is the whole contract, and nothing \
-                    smaller would catch a component that stopped reading the value. \
-                    \
-                    Root files render first and ungrouped, because `(root)` names a \
-                    directory that does not exist. Alone they look indented for no reason, \
-                    which is why they are only ever shown with a group beneath them. \
-                    \
-                    Second cell is the same fixture under `Group: None`. No heading renders, \
-                    so the list sets the gutter to zero and every box moves left together — \
-                    a view the toolbar reaches at any moment, not an edge case. \
-                    \
-                    Tick a row and watch its heading go indeterminate: the group's box is \
-                    derived from the rows under it, so the two cannot disagree. `notes/` has \
-                    no box at all — every file is already here, and a box that can select \
-                    nothing is the dead control `Select` refuses to be. \
-                    \
-                    A click does the thing the row can do. A file that is here has no box \
-                    and opens — the recent-files list's own gesture, so a click means the \
-                    same in both file lists — and a file that is not here ticks instead. \
-                    The last cell says which file the last click opened. The two shapes are \
-                    interleaved on purpose: the checkbox column is the discriminator, and \
-                    it only reads as one when both kinds are in one list. \
-                    \
-                    Collapse a group and inspect it: the rows leave the DOM. Scroll the \
-                    list and the headings stick, at 29px against a 32px row.";
+                    and none of the three components chose it: the list sets `--q-entry- \
+                    gutter` once and each reads it with its own fallback. Sight down the \
+                    boxes. The second cell is the same fixture under `Group: None`, where no \
+                    heading renders and every box moves left together. Tick a row and watch \
+                    its heading go indeterminate. `notes/` has no box, because every file \
+                    there is already here. Click a row: one that is here opens, one that is \
+                    not ticks. Collapse a group and inspect it — the rows leave the DOM. The \
+                    headings stick, at 29px against a 32px row.";
 
 #[component]
 pub fn FileListStories() -> impl IntoView {

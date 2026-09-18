@@ -34,26 +34,12 @@ pub fn ChoiceGroupStories() -> impl IntoView {
     view! {
         <Story
             title="ChoiceGroup"
-            note="A named set of radios with the consequence of the current choice under \
-                  it. Two things belong to the set and not to any one option: the shared \
-                  name that makes the radios exclusive, and the caption — a scope and its \
-                  effect have to read as one statement. \
-                  \
-                  Pick in the first group and watch its caption change; then pick in the \
-                  second and check the first did not clear. The name is generated, not \
-                  passed: a string that has to be unique across the document is a \
-                  precondition no call site can check, and five SegmentedControls sharing a \
-                  literal once became one radiogroup. No kit component asks a caller for a \
-                  globally unique string. \
-                  \
-                  Not a ToggleRow: that is an independent setting with two states, this is \
-                  a choice between alternatives where exactly one holds. \
-                  \
-                  Nothing here knows what a package is — the last cell is the same \
-                  component with none of this page's words in it. The download action a \
-                  whole-package scope needs is the caller's, not this component's: it \
-                  depends on how many files are outstanding, which is a fact about a \
-                  package that a radio group has no business holding."
+            note="A named set of radios with the consequence of the current choice under it. \
+                  Pick in the first group and watch its caption change, then pick in the \
+                  second and check the first did not clear: the `name` is generated, not \
+                  passed, after five SegmentedControls sharing a literal once became one \
+                  radiogroup. Not a ToggleRow, which is one setting with two states. The \
+                  last cell is the same component with none of this page's words in it."
         >
             <Cell wide=true label="the Keeping block — caption tracks the choice">
                 <ChoiceGroup

@@ -38,23 +38,12 @@ fn ShapeStory() -> impl IntoView {
             title="SplitButton"
             note="The face is whichever option is selected; the caret opens the whole set \
                   with that one ticked. Open the live cell and pick the other option: the \
-                  face changes and nothing runs. Picking sets the default; the face runs \
-                  it. A menu you opened to look at your options must not publish. \
-                  \
-                  That is also why the menu lists the option already on the face. It is \
-                  where you see which one is active, so leaving the active one out would \
-                  leave out the point of opening it. \
-                  \
-                  Both halves and every option are real buttons: Tab stops at each in \
-                  reading order, Escape and a click outside dismiss. No arrow keys, and \
-                  no `role=menu` claiming there are — the active option carries \
-                  `aria-current`, which says which one rather than how to move between \
-                  them. \
-                  \
-                  The two halves share one border: the caret is pulled back a pixel so \
-                  the seam is 1px like the outer edge, not 2px. The surface hangs from \
-                  the caret's right edge, because a trailing control has no room to grow \
-                  rightwards."
+                  face changes and nothing runs. A menu you opened to look at your options \
+                  must not publish. The menu lists the option already on the face, because \
+                  that is where you see which one is active. Both halves and every option \
+                  are real buttons — Tab stops at each, Escape dismisses, and there are no \
+                  arrow keys and no `role=menu` claiming there are. The surface hangs from \
+                  the caret's right edge."
         >
             <Cell wide=true label="live — pick the other option, watch the face">
                 <SplitButton

@@ -30,19 +30,14 @@ fn open(name: &'static str, into: RwSignal<String>) -> EntryAction {
     EntryAction::Open(Callback::new(move |()| into.set(name.to_string())))
 }
 
-const STATES: &str = "The resting state is silent. `Downloaded` is what most of a \
-                      seven-hundred row list is, and printing it seven hundred times spends \
-                      the reader's attention on the one thing that needs none — so absence \
-                      says the file is here. An ignored file is silent too, for a different \
-                      reason: the Ignored facet is the only view that shows them, so \
-                      labelling each one repeats what the facet already said. \
-                      \
-                      Only a downloadable row carries a box. A tick on a file already here \
-                      has nothing to act on, and it is what made `select all 56` disagree \
-                      with `download 17`; the boxless rows keep the column's width so the \
-                      names still line up. Read the sizes down the column — the state slot \
-                      is fixed so they stay in one column whether or not the row above \
-                      carries a label.";
+const STATES: &str = "The resting state is silent: `Downloaded` is what most of a seven- \
+                      hundred row list is, and printing it seven hundred times spends \
+                      attention on the one thing that needs none. An ignored file is silent \
+                      too, because the Ignored facet is the only view that shows them. Only \
+                      a downloadable row carries a box — a tick on a file already here has \
+                      nothing to act on, and it is what made `select all 56` disagree with \
+                      `download 17`. The boxless rows keep the column's width, so the names \
+                      still line up.";
 
 fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
     view! {
@@ -90,21 +85,12 @@ fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String
 }
 
 const CLICK: &str = "A click does the thing the row can do, and where the file is decides \
-                     which — so the box and the gesture are one value and cannot disagree. \
-                     A file that is here has no box and opens locally, which is the \
-                     recent-files list's own gesture, so a click means the same thing in \
-                     both of this app's file lists. A file that is not here ticks instead: \
-                     there is nothing local to open, and choosing is what the page is for. \
-                     \
-                     A file that can do neither draws no pointer at all. Deleted and ignored \
-                     files reach that shape — v1 offers them neither Open nor Reveal — and a \
-                     row advertising a click it cannot honour is worse than an inert one. \
-                     \
-                     The destination is always the local file. Opening in the catalog leaves \
-                     the application, and that stays a named command in the `[⋯]` rather \
-                     than something a click infers from a state the row does not even print. \
-                     \
-                     Click the first two rows, then read the last cell.";
+                     which, so the box and the gesture cannot disagree. A file that is here \
+                     has no box and opens locally — the recent-files list's own gesture, so \
+                     a click means the same in both of this app's file lists. One that is \
+                     not here ticks instead. One that can do neither draws no pointer at \
+                     all, because a row advertising a click it cannot honour is worse than \
+                     an inert one. Click the first two rows, then read the last cell.";
 
 fn click_rule(opened: RwSignal<String>) -> AnyView {
     view! {
@@ -146,16 +132,12 @@ fn click_rule(opened: RwSignal<String>) -> AnyView {
     .into_any()
 }
 
-const EDGES: &str = "A row the two revisions disagree about carries no word at all: a rule, \
-                     a tint and a title. It is information and never a control, because \
-                     resolution happens at revision level and there is nothing to click \
-                     here. It is also one channel where the design owes two — hover it for \
-                     the half a mouse gets free. \
-                     \
-                     The label stops before the overflow: clicking a selectable row ticks \
-                     the box, but a button inside a label that is not its control is invalid \
-                     markup. An openable row is not a label at all, and its name is the \
-                     button. Click a row, then click its dots.";
+const EDGES: &str = "A row the two revisions disagree about carries no word: a rule, a tint \
+                     and a title. It is information and never a control, since resolution \
+                     happens at revision level. It is also one channel where the design owes \
+                     two — hover it for the half a mouse gets free. The label stops before \
+                     the overflow, because a button inside a label that is not its control \
+                     is invalid markup. Click a row, then click its dots.";
 
 fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
     view! {

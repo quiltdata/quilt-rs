@@ -26,21 +26,12 @@ fn Notices() -> impl IntoView {
     view! {
         <Story
             title="Banner"
-            note="Three kinds, and the type has exactly three variants rather than reusing \
-                  StateTone's four — Neutral has no meaning for an outcome, and a type that \
-                  cannot express it beats a note asking people not to. They map onto the \
-                  page's tones internally, so a warning here and a warning on a row cannot \
-                  disagree about what amber means. \
-                  \
-                  Error takes role=alert and the other two role=status: an error has to cut \
-                  across what is being read because the thing the user asked for did not \
-                  happen, and a success does not, because it did. \
-                  \
-                  It does not dismiss itself. Auto-dismiss is a policy about the OPERATION \
-                  — a publish confirmation can go quietly, a failure must not — and only \
-                  the caller knows which. It animates in and not out: an exit needs the \
-                  node to outlive the state that produced it, and once the signal is None \
-                  there is nothing left to fade."
+            note="Three kinds, and three variants rather than reusing StateTone's four — \
+                  Neutral means nothing for an outcome. Error takes `role=alert` and the \
+                  other two `role=status`. It does not dismiss itself: auto-dismiss is a \
+                  policy about the operation, and only the caller knows whether a failure \
+                  may go quietly. It animates in and not out, because once the signal is \
+                  `None` there is nothing left to fade."
         >
             <Cell full=true label="success">
                 <Banner variant=BannerVariant::Success on_dismiss=|_| ()>
@@ -76,21 +67,12 @@ fn Spinners() -> impl IntoView {
     view! {
         <Story
             title="Spinner"
-            note="No longer the page's loading state — SkeletonBox is, because a skeleton holds \
-                  the space the content will take and a spinner says only that you are \
-                  waiting. This is for work whose SHAPE is unknown, which leaves two jobs: \
-                  inline beside a label that names the work, and filling a region whose \
-                  contents are not a list of rows. \
-                  \
-                  Inline usually passes no label and is aria-hidden, because the text \
-                  beside it already says what is happening and announcing it twice is \
-                  worse. A region spinner has no such text, so it always names itself. \
-                  \
-                  Button keeps its OWN spinner rather than using this one: it draws it as a \
-                  ::before on the leading slot so a button with an icon does not change \
-                  width when work starts, and swapping in an element would put that width \
-                  at the mercy of a child. Ten duplicated lines, against coupling a \
-                  button's geometry to another component."
+            note="Not the page's loading state — SkeletonBox is. This is for work whose \
+                  shape is unknown, which leaves two jobs: inline beside a label that names \
+                  the work, where it stays aria-hidden, and filling a region with no such \
+                  text, where it names itself. Button keeps its own spinner, drawn as a \
+                  `::before` on the leading slot, so a button with an icon does not change \
+                  width when work starts."
         >
             <Cell label="inline, beside text that names the work">
                 <span>
@@ -132,16 +114,11 @@ pub fn BannerScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · a banner in place"
-            note="Under the appbar, in the flow, pushing the page down — not floating over \
-                  it. Anchored positioning is banned by the design, and that ban is what \
-                  keeps the whole tooltip/popover/dropdown class out of the codebase; a bar \
-                  also cannot be missed by someone looking at the bottom of a long list, \
-                  which is exactly where a corner toast fails. \
-                  \
-                  Its width is capped like the appbar's contents and the page column, so it \
-                  lines up with the regions rather than with the window. Dismiss it and it \
-                  is gone — the caller owns that, which is why PageLayout takes a slot and not \
-                  the signal."
+            note="Under the appbar, in the flow, pushing the page down rather than floating \
+                  over it. A bar cannot be missed by somebody reading the bottom of a long \
+                  list, which is where a corner toast fails. Its width is capped like the \
+                  appbar's contents, so it lines up with the regions rather than with the \
+                  window. Dismiss it and it is gone — the caller owns that."
             >
             <PageLayout
                 heading="QuiltSync"

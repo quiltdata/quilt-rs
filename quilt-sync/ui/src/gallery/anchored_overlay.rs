@@ -6,6 +6,7 @@ use crate::Cell;
 use crate::Story;
 use crate::kit::AnchoredOverlay;
 use crate::kit::Button;
+use crate::kit::LoadFailure;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
 use crate::kit::SkeletonBox;
@@ -44,27 +45,13 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
     view! {
         <Story
             title="AnchoredOverlay"
-            note="Click a trigger — the cells below hold only the buttons, because the \
-                  surface each one opens is in the top layer and floats over the whole \
-                  page rather than sitting in its cell. That is the component; the \
-                  revisions inside it are one caller's content. \
-                  \
-                  It is the platform's own popover, driven the way Dialog drives the \
-                  platform's own dialog — so light dismiss, Escape and the top layer are \
-                  the browser's and none of them are hand-written. Open one and press \
-                  Escape, then open one and click elsewhere, then open one and scroll: a \
-                  surface that has lost its anchor closes, because in a list of rows it \
-                  would otherwise appear to belong to whatever row scrolled under it. Only \
-                  the position is ours, and only because CSS anchor positioning has not \
-                  reached WebKit. \
-                  \
-                  The top layer is the point, not a detail: a row's overflow lives inside a \
-                  scrolling list, and the cheaper `details` answer is clipped by its own \
-                  scroll container. \
-                  \
-                  It opens immediately into whatever it is given and fills when the data \
-                  lands — a trigger that spins with nothing opening reads as broken. The \
-                  error cell is the state the kit had nothing for."
+            note="Click a trigger. The cells hold only the buttons, because the surface \
+                  opens into the top layer and floats over the page rather than sitting in \
+                  its cell. Open one and press Escape, open one and click away, open one and \
+                  scroll: light dismiss, Escape and the top layer are the platform's, and a \
+                  surface that has lost its anchor closes. Only the position is ours, until \
+                  CSS anchor positioning reaches WebKit. It opens immediately into whatever \
+                  it has and fills when the data lands; the last cell is a LoadFailure."
         >
             <Cell wide=true label="click it — the revisions this copy holds">
                 <AnchoredOverlay
@@ -98,10 +85,10 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
                     open=failed
                     aria_label="Revisions you have"
                 >
-                    <PaneSection>
-                        <p style="margin:0">"Couldn't list your revisions."</p>
-                        <Button on_click=|_| ()>"Try again"</Button>
-                    </PaneSection>
+                    <LoadFailure
+                        words="Could not load your revisions."
+                        on_retry=Callback::new(|()| ())
+                    />
                 </AnchoredOverlay>
             </Cell>
             <Cell wide=true label="click it — one revision, so callers hide the trigger instead">

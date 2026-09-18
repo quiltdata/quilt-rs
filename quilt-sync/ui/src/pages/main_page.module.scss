@@ -93,15 +93,3 @@
   padding: 0;
 }
 
-/* A failed read: the sentence, then its retry. */
-.card_error {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--q-space-3);
-}
-
-.card_error p {
-  margin: 0;
-  max-width: 70ch;
-}

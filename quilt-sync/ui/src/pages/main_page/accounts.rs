@@ -12,6 +12,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
@@ -71,16 +72,103 @@ pub(super) fn AccountsBody(
         .into_any();
     }
 
+    let watch = RoleWatch::new(&data.hosts);
+
     view! {
         <Card title="Accounts">
             {data
                 .hosts
                 .into_iter()
-                .map(|host| view! { <AccountRow host=host refresh=refresh /> })
+                .enumerate()
+                .map(|(index, host)| {
+                    view! { <AccountRow host=host index=index watch=watch refresh=refresh /> }
+                })
                 .collect_view()}
+            // Outside the rows: a row is replaced whole when it settles, and a
+            // replaced live region never fires. Last in the body, or the top row
+            // lands on the far side of the card's own `.body > * + *`.
+            <span data-sr-only role="status">{move || watch.said.get()}</span>
         </Card>
     }
     .into_any()
+}
+
+/// Taken back after this, so a reader browsing the card later is not told the
+/// rows' own sub-lines a second time.
+const ANNOUNCE_FOR: Duration = Duration::from_millis(1_500);
+
+/// The card's live region, written once — when the last row that had something
+/// to ask has answered. One utterance rather than one per row: a polite region
+/// rewritten twice inside a tick loses the first message. The shape
+/// `recent_files.rs`'s copy confirmation uses.
+#[derive(Clone, Copy)]
+struct RoleWatch {
+    said: RwSignal<String>,
+    /// One slot per row, in the card's order rather than the order the concurrent
+    /// invocations answer in — that is not an order a reader can hunt in.
+    clauses: StoredValue<Vec<Option<String>>>,
+    waiting: StoredValue<usize>,
+}
+
+impl RoleWatch {
+    fn new(hosts: &[AccountHostData]) -> Self {
+        Self {
+            said: RwSignal::new(String::new()),
+            clauses: StoredValue::new(vec![None; hosts.len()]),
+            waiting: StoredValue::new(hosts.iter().filter(|host| host.provisional).count()),
+        }
+    }
+
+    /// One row has stopped waiting. `None` when the query never landed: that row
+    /// still says "Checking role…", so the region may not say otherwise.
+    fn answered(self, index: usize, clause: Option<String>) {
+        self.clauses.try_update_value(|clauses| {
+            if let Some(slot) = clauses.get_mut(index) {
+                *slot = clause;
+            }
+        });
+        let was = self
+            .waiting
+            .try_update_value(|n| {
+                let was = *n;
+                *n = n.saturating_sub(1);
+                was
+            })
+            .unwrap_or_default();
+        // Only the answer that empties the queue speaks.
+        if was != 1 {
+            return;
+        }
+        let words = self
+            .clauses
+            .try_with_value(|clauses| {
+                clauses
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(". ")
+            })
+            .unwrap_or_default();
+        if words.is_empty() {
+            return;
+        }
+        self.said.set(words);
+        set_timeout(move || self.said.set(String::new()), ANNOUNCE_FOR);
+    }
+}
+
+/// The sub-line the row draws, with the host in it: these words are read away
+/// from the row.
+fn role_clause(host: &AccountHostData) -> String {
+    if !host.signed_in {
+        // A session lost between the two phases; the row now draws "Signed out".
+        return format!("{} is signed out", host.host);
+    }
+    match host.current_role.as_deref().filter(|role| !role.is_empty()) {
+        Some(role) => format!("Role at {}: {role}", host.host),
+        None => format!("Role at {} unavailable", host.host),
+    }
 }
 
 /// One host, with its own heavy-phase settle — the shape `PackageListRow` uses:
@@ -89,6 +177,11 @@ pub(super) fn AccountsBody(
 #[component]
 fn AccountRow(
     host: AccountHostData,
+    /// This row's slot in [`RoleWatch`]'s words.
+    index: usize,
+    /// The card's live region. Every row that asked reports back, either way, or
+    /// the card never speaks at all.
+    watch: RoleWatch,
     /// The page's own trigger, notified after a role switch, on success and on
     /// failure alike — see the effect below.
     refresh: Trigger,
@@ -111,13 +204,19 @@ fn AccountRow(
                 return;
             }
             match result {
-                Ok(settled) => row.set(settled),
+                Ok(settled) => {
+                    let clause = role_clause(&settled);
+                    // The row first: the region reports what is already on screen.
+                    row.set(settled);
+                    watch.answered(index, Some(clause));
+                }
                 Err(err) => {
                     // The row keeps what the light phase gave it, which is honest:
                     // nothing confirmed the role. Logged, never rendered.
                     web_sys::console::error_1(
                         &format!("refresh_main_page_account failed: {err}").into(),
                     );
+                    watch.answered(index, None);
                 }
             }
         });
@@ -491,5 +590,157 @@ mod tests {
 
         let text = el.text_content().unwrap_or_default();
         assert!(!text.contains("No accounts yet"), "got: {text}");
+    }
+
+    /// A signed-in host whose role nobody has asked for yet.
+    fn waiting_host(host: &str) -> AccountHostData {
+        AccountHostData {
+            host: host.to_string(),
+            signed_in: true,
+            current_role: None,
+            roles: Vec::new(),
+            provisional: true,
+        }
+    }
+
+    /// What the heavy phase hands back — `None` for a role it could not name.
+    fn answered_host(host: &str, role: Option<&str>) -> AccountHostData {
+        AccountHostData {
+            host: host.to_string(),
+            signed_in: true,
+            current_role: role.map(str::to_string),
+            roles: role.into_iter().map(str::to_string).collect(),
+            provisional: false,
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn the_card_holds_a_silent_live_region_while_a_row_waits() {
+        // Present before the settle it announces: a region created by that event
+        // never fires.
+        let el = mount_body(waiting_for_a_role());
+
+        let region = el
+            .query_selector("[role=status]")
+            .unwrap()
+            .expect("a live region");
+        assert!(region.has_attribute("data-sr-only"), "and it is not drawn");
+        assert_eq!(region.text_content().unwrap_or_default(), "");
+        let before = region
+            .previous_element_sibling()
+            .expect("the rows come first");
+        assert!(
+            before
+                .text_content()
+                .unwrap_or_default()
+                .contains("quiet.quiltdata.com"),
+            "the region is a sibling of the rows, not inside one — a row is \
+             replaced whole when it settles, and a replaced region never fires"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_words_name_the_role_each_row_settled_on() {
+        assert_eq!(
+            role_clause(&answered_host("one.quiltdata.com", Some("ReadOnly"))),
+            "Role at one.quiltdata.com: ReadOnly"
+        );
+        assert_eq!(
+            role_clause(&answered_host("two.quiltdata.com", None)),
+            "Role at two.quiltdata.com unavailable"
+        );
+        let signed_out = AccountHostData {
+            signed_in: false,
+            ..answered_host("three.quiltdata.com", None)
+        };
+        assert_eq!(
+            role_clause(&signed_out),
+            "three.quiltdata.com is signed out"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn nothing_is_said_until_every_waiting_row_has_answered() {
+        let hosts = vec![
+            waiting_host("first.quiltdata.com"),
+            waiting_host("second.registry.io"),
+        ];
+        let watch = RoleWatch::new(&hosts);
+
+        watch.answered(0, Some("Role at first.quiltdata.com: ReadOnly".to_string()));
+        assert_eq!(
+            watch.said.get_untracked(),
+            "",
+            "the second row is still checking"
+        );
+
+        watch.answered(
+            1,
+            Some("Role at second.registry.io unavailable".to_string()),
+        );
+        assert_eq!(
+            watch.said.get_untracked(),
+            "Role at first.quiltdata.com: ReadOnly. Role at second.registry.io unavailable"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_words_follow_the_card_rather_than_the_order_the_answers_arrived() {
+        let hosts = vec![
+            waiting_host("first.quiltdata.com"),
+            waiting_host("second.registry.io"),
+        ];
+        let watch = RoleWatch::new(&hosts);
+
+        watch.answered(1, Some("Role at second.registry.io: ReadOnly".to_string()));
+        watch.answered(0, Some("Role at first.quiltdata.com: Admin".to_string()));
+
+        assert_eq!(
+            watch.said.get_untracked(),
+            "Role at first.quiltdata.com: Admin. Role at second.registry.io: ReadOnly"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_whose_query_never_landed_is_left_out_of_the_words() {
+        let hosts = vec![
+            waiting_host("first.quiltdata.com"),
+            waiting_host("second.registry.io"),
+        ];
+        let watch = RoleWatch::new(&hosts);
+
+        watch.answered(0, None);
+        watch.answered(1, Some("Role at second.registry.io: ReadOnly".to_string()));
+
+        assert_eq!(
+            watch.said.get_untracked(),
+            "Role at second.registry.io: ReadOnly"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_card_where_nothing_could_answer_stays_silent() {
+        let hosts = vec![waiting_host("first.quiltdata.com")];
+        let watch = RoleWatch::new(&hosts);
+
+        watch.answered(0, None);
+
+        assert_eq!(watch.said.get_untracked(), "");
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_words_are_taken_back_once_they_have_been_read() {
+        let hosts = vec![waiting_host("first.quiltdata.com")];
+        let watch = RoleWatch::new(&hosts);
+
+        watch.answered(0, Some("Role at first.quiltdata.com: ReadOnly".to_string()));
+        assert_eq!(
+            watch.said.get_untracked(),
+            "Role at first.quiltdata.com: ReadOnly"
+        );
+
+        let window = i32::try_from(ANNOUNCE_FOR.as_millis()).expect("a timeout's own window");
+        sleep_ms(window + 100).await;
+        assert_eq!(watch.said.get_untracked(), "");
     }
 }

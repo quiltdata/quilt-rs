@@ -34,21 +34,14 @@ fn Bars() -> impl IntoView {
     view! {
         <Story
             title="SkeletonBox"
-            note="For content that is genuinely UNKNOWN — the window before the light phase \
-                  resolves, where the row count is not known yet. Not for provisional: the \
-                  light phase already returns a status and the heavy walk merely corrects \
-                  it, so skeletonising a state label would hide information we already have \
-                  and then reveal the same value. A provisional row renders dimmed and \
-                  settles instead. \
-                  \
-                  It pulses rather than sweeping a gradient across itself, because a \
-                  shimmer band has to be lighter than its base and 'lighter' is a lower \
-                  grey step in light and a higher one in dark — a sweep needs a per-theme \
-                  highlight, and fading opacity is correct in both by construction. Under \
-                  prefers-reduced-motion the pulse stops and the bar stays. \
-                  \
-                  Each bar is aria-hidden; the REGION sets aria-busy. Getting that backwards \
-                  makes a screen reader read out a dozen nameless boxes."
+            note="For content that is genuinely unknown — the window before the light phase \
+                  resolves, where the row count is not known yet. Not for provisional: a row \
+                  whose status will merely be corrected renders dimmed and settles instead. \
+                  It pulses rather than sweeping a gradient, because a shimmer band needs a \
+                  per-theme highlight while fading opacity is correct in both; under \
+                  `prefers-reduced-motion` the bar stays still. Each bar is `aria-hidden` \
+                  and the region sets `aria-busy` — backwards, a reader gets a dozen \
+                  nameless boxes."
         >
             <Cell label="a text bar — the default height">
                 <SkeletonBox width="140px" />
@@ -81,20 +74,12 @@ fn Rows() -> impl IntoView {
     view! {
         <Story
             title="SkeletonBox — composed as rows"
-            note="THE HEIGHT IS THE WHOLE JOB. Each cell puts skeleton rows directly above \
-                  the real rows they stand in for — if the boundary between them is visible \
-                  as a step, the list will jump when it settles, which is worse than no \
-                  skeleton because the reflow lands exactly when the user starts reading. \
-                  \
-                  The two skeleton rows reuse their real row's own `.root` class rather \
-                  than restating its padding, so equal height holds by construction and \
-                  not by two numbers agreeing. They switch off the pointer cursor and the \
-                  hover tint, because nothing in them responds to a click. \
-                  \
-                  Chrome is never skeletonised — the appbar, both cards, the section \
-                  headings and the toolbar all render immediately. Only the queue and the \
-                  two lists have an unknown state, which is why the card titles and counts \
-                  below are real while their contents are not."
+            note="The height is the whole job. Each cell puts skeleton rows directly above \
+                  the real rows they stand in for: if the boundary reads as a step, the list \
+                  will jump when it settles, exactly when somebody starts reading. The \
+                  skeleton rows reuse the real row's own `.root` class rather than restating \
+                  its padding, so equal height holds by construction. Chrome is never \
+                  skeletonised — only the queue and the two lists have an unknown state."
         >
             <Cell wide=true label="package list — four unknown rows above two real ones">
                 <Card>

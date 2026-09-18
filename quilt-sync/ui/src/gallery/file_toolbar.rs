@@ -302,39 +302,15 @@ fn toolbar(width: &'static str) -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The file pane's two control rows, at the pane's own width — and at 1024 \
-                    they are three. The controls and their gaps are 680px, the 28px inset \
-                    leaves the toolbar the pane minus 28, so one line needs a 708px pane and \
-                    the pane at 1024 is 700. It wraps by eight pixels. `two rows at every \
-                    width` is false, and the row it gains is 40px nobody budgeted. \
-                    \
-                    The three cells are that width, the width where it just fits, and the \
-                    narrow arrangement where wrapping is the intended behaviour. \
-                    \
-                    Select-all is left, on the rows' own checkbox column; grouping and the \
-                    facets are one right-hand group, so the facets finish flush with the \
-                    search field above them. They keep that right edge on whatever line \
-                    they land on — which matters, because at 1024 they land on the second \
-                    one. \
-                    \
-                    When it stacks it stacks upwards: facets, then grouping, then \
-                    select-all last and nearest the list. `wrap-reverse` reverses the \
-                    lines and leaves each line's own order alone, so the single-line \
-                    arrangement is untouched — nothing moves until there is a wrap to \
-                    order. Select-all belongs against the rows because it is the one \
-                    control that acts on them. \
-                    \
-                    The facets are where the width goes: 396 of the 680, 58% of the toolbar, \
-                    for four options — against `SegmentedControl`'s own `two or three short \
-                    options`. None of them truncates, so nothing is broken; it simply does \
-                    not fit. The same four in a `Select` read `Show: Not downloaded 17` in \
-                    about 190px, which is the row back. \
-                    \
-                    Every number is counted from one fixture — the facet counts, the \
-                    select-all's total and what the search narrows to — so they cannot drift \
-                    from each other. Type in the search and the label says `shown`. Choose \
-                    `Changed` and the select-all disappears: a file that is here cannot be \
-                    downloaded, so there is nothing for a tick to act on.";
+const NOTE: &str = "The file pane's two control rows — and at 1024 they are three. The \
+                    controls and their gaps are 680px and the pane leaves the toolbar 700, \
+                    so one line needs 708: it wraps by eight pixels, and the row it gains is \
+                    40px nobody budgeted. The three cells are that width, the width where it \
+                    just fits, and the narrow arrangement. The facets are where the width \
+                    goes: 396 of the 680, 58% of the toolbar, for four options against \
+                    SegmentedControl's own two or three. Nothing truncates; it simply does \
+                    not fit. Type in the search and the label says `shown`; choose `Changed` \
+                    and select-all disappears.";
 
 #[component]
 pub fn FileToolbarStories() -> impl IntoView {
