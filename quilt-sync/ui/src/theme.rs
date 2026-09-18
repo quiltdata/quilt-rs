@@ -43,8 +43,7 @@ pub fn set(dark: bool) {
 /// life of the page, and dropping the closure would unregister it immediately.
 ///
 /// A webview with no `matchMedia` leaves the attribute unset, which is the light
-/// palette — the same thing every build did before this existed, so the failure
-/// mode is the old behaviour rather than a broken one.
+/// palette: the failure mode is a light app, not a broken one.
 pub fn follow_os() {
     let Some(window) = web_sys::window() else {
         return;
