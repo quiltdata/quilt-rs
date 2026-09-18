@@ -302,6 +302,28 @@ impl TryFrom<&str> for S3PackageUri {
     }
 }
 
+/// The characters that would otherwise be read as fragment structure.
+///
+/// `&`, `=` and `#` delimit; `+` decodes as a space and `%` opens an escape.
+/// Everything else is left alone — `/` above all, because a namespace and a
+/// logical key are full of them and these addresses are read and pasted by
+/// hand.
+const FRAGMENT_VALUE: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b'&')
+    .add(b'=')
+    .add(b'#')
+    .add(b'+')
+    .add(b'%');
+
+/// One fragment value, safe to put beside the delimiters.
+///
+/// The parse side reads the fragment with `form_urlencoded`, so anything written
+/// raw comes back changed or truncated: a logical key holding `&` ends the value
+/// early and the rest is read as another parameter.
+fn encode_value(value: &str) -> String {
+    percent_encoding::utf8_percent_encode(value, FRAGMENT_VALUE).to_string()
+}
+
 impl S3PackageUri {
     fn format_hash(hash: &str) -> String {
         if hash.len() <= 12 {
@@ -315,20 +337,24 @@ impl S3PackageUri {
     pub fn display(&self) -> String {
         let hash = match &self.revision {
             RevisionPointer::Tag(Tag::Latest) => String::new(),
-            RevisionPointer::Tag(tag) => format!(":{tag}"),
-            RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
+            RevisionPointer::Tag(tag) => format!(":{}", encode_value(&tag.to_string())),
+            RevisionPointer::Hash(h) => format!("@{}", encode_value(&Self::format_hash(h))),
         };
         let path_part = match &self.path {
-            Some(p) => format!("&path={}", p.display()),
+            Some(p) => format!("&path={}", encode_value(&p.display().to_string())),
             None => String::new(),
         };
         let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={p}"),
+            Some(p) => format!("&catalog={}", encode_value(&p.to_string())),
             None => String::new(),
         };
         format!(
             "quilt+s3://{}#package={}{}{}{}",
-            self.bucket, self.namespace, hash, path_part, catalog_part
+            self.bucket,
+            encode_value(&self.namespace.to_string()),
+            hash,
+            path_part,
+            catalog_part
         )
     }
 
@@ -1084,5 +1110,52 @@ mod tests {
         let json = serde_json::to_string(&uri).unwrap();
         let parsed: S3PackageUri = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, uri);
+    }
+
+    /// A logical key is user data and may hold anything a filesystem allows.
+    /// The fragment is read with `form_urlencoded`, so every character that
+    /// means something there has to survive the trip out and back.
+    #[test]
+    fn a_path_holding_fragment_delimiters_round_trips() {
+        for path in [
+            "a&catalog=evil.csv",
+            "plus+one.csv",
+            "a=b.csv",
+            "hash#tag.csv",
+            "already%2Fencoded.csv",
+            "with space.csv",
+            "runs/2026/plate-07/A01.fcs",
+        ] {
+            let uri = S3PackageUri {
+                catalog: None,
+                bucket: "b".to_string(),
+                namespace: ("user", "p").into(),
+                revision: RevisionPointer::Tag(Tag::Latest),
+                path: Some(PathBuf::from(path)),
+            };
+
+            let back = S3PackageUri::try_from(uri.display().as_str())
+                .unwrap_or_else(|e| panic!("{path:?} -> {} : {e}", uri.display()));
+
+            assert_eq!(back, uri, "{path:?} came back as {}", uri.display());
+        }
+    }
+
+    /// The readable part stays readable: a plain address carries its slashes
+    /// literally, because these are pasted into a terminal and a chat window.
+    #[test]
+    fn an_ordinary_address_is_not_escaped() {
+        let uri = S3PackageUri {
+            catalog: None,
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: Some(PathBuf::from("runs/a/one.csv")),
+        };
+
+        assert_eq!(
+            uri.display(),
+            "quilt+s3://team-bucket#package=user/plate-07&path=runs/a/one.csv"
+        );
     }
 }
