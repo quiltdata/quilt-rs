@@ -90,17 +90,12 @@ fn EdgesStory() -> impl IntoView {
     view! {
         <Story
             title="PackageRow — edges"
-            note="Namespaces truncate from the RIGHT, the opposite of FileRow's paths: a \
-                  namespace is distinguished by its start, and there is no filename at the \
-                  end worth saving. The time column is a 104px floor, sized to the widest \
-                  phrase RelativeTime can produce in the widest system face, and never a cap. \
-                  The last cell is the worst-case phrase set; every one of them must sit \
-                  inside the column. \
-                  \
-                  The state phrase in the truncation cells is `Changed in both places`, 22 \
-                  characters, which is the widest label a list row can carry — and since \
-                  the queue draws its own words as prose rather than in a chip, it is the \
-                  widest this component ever has to hold."
+            note="Namespaces truncate from the right, the opposite of FileRow's paths: a \
+                  namespace is distinguished by its start. The time column is a 104px floor, \
+                  sized to the widest phrase RelativeTime can produce in the widest system \
+                  face, and never a cap. The last cell is the worst-case phrase set, and \
+                  every one of them has to sit inside the column. `Changed in both places`, \
+                  at 22 characters, is the widest label a list row ever carries."
         >
             <Cell full=true label="long namespace truncates right, state keeps its place">
                 <PackageRow
@@ -434,21 +429,11 @@ pub fn PackagesScene() -> impl IntoView {
         <Scene
             title="Scene · packages"
             note="Seventeen rows at the real ratio: three need something, the rest are \
-                  Latest. THE OPEN QUESTION IS HERE — does a column of Latest read as a \
-                  calm list, or as a wall of green that spends the signal the tone was \
-                  bought for? Switch the theme; light and dark disagree about this more \
-                  than about anything else in the kit. \
-                  \
-                  The toolbar differs from the files view: this one adds Sort and Create \
-                  package, and Group offers Bucket / Prefix / None rather than \
-                  None / Package. ListToolbar holds nothing itself, which is what lets \
-                  the two views compose different controls. \
-                  \
-                  All three Group options are live. Switch between Bucket and Prefix and \
-                  watch user/shared-archive move: it is a user/ package in s3://org-archive, \
-                  so the two axes cut the same list differently. That is also why only the \
-                  bucket axis annotates a group with a shared cause — a prefix spans \
-                  buckets, so no cause can be a property of one."
+                  Latest. The open question is here — does a column of Latest read as a calm \
+                  list, or as a wall of green that spends the signal the tone was bought \
+                  for? Switch the theme; light and dark disagree about this more than about \
+                  anything else in the kit. All three Group options are live: switch between \
+                  Bucket and Prefix and watch `user/shared-archive` move."
         >
             <PackagesRegion view_name="packages-view" />
         </Scene>

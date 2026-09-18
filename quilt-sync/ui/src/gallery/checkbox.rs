@@ -26,18 +26,12 @@ pub fn CheckboxStories() -> impl IntoView {
     view! {
         <Story
             title="Checkbox"
-            note="Three states, not two booleans. The DOM keeps `indeterminate` beside \
-                  `checked` and lets them disagree — a box set to both draws mixed and \
-                  silently ignores the tick — so the state is one value with three cases. \
-                  \
-                  Click any of the first three. Mixed resolves upwards, to everything \
-                  selected, which is what `3 of 17 selected` reading `17 of 17` means — and \
-                  there is no way to click your way back to it, which is why that cell \
-                  carries a reset. The third state is a report about a set, not something a \
-                  reader can ask for. \
-                  \
-                  The input is real and off-screen rather than replaced, so space still \
-                  toggles it and the accessibility tree gets a checkbox. Tab to one."
+            note="Three states as one value, because the DOM keeps `indeterminate` beside \
+                  `checked` and lets them disagree. Click any of the first three: mixed \
+                  resolves upwards to everything selected, and there is no way to click back \
+                  to it, which is why that cell carries a reset. The third state is a report \
+                  about a set, not something a reader can ask for. Tab to one — the input is \
+                  real and off-screen, so space still toggles it."
         >
             <Cell label="off — click it">
                 <Checkbox

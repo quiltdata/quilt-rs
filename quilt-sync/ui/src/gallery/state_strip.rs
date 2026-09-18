@@ -176,15 +176,11 @@ fn PausedWithReason() -> impl IntoView {
         <Scene
             title="Scene · paused, with a reason"
             note="The ordinary case, and there is no [Resume] anywhere in it. The card \
-                  REPORTS that publishing is on and not operating; the queue already \
-                  EXPLAINS why and carries the fix. Publish those two files and the pause \
-                  clears as a side effect, because committing is one of the seven sites \
-                  that calls clear_paused. \
-                  \
-                  So the paused label is a pointer, not a problem of its own: it tells you \
-                  the switch is not lying, and the row below tells you what to do. Adding a \
-                  paused row to the queue would count the same packages twice — once as the \
-                  cause and once as its consequence — including in the header count."
+                  reports that publishing is on and not operating; the queue explains why \
+                  and carries the fix. Publish those two files and the pause clears as a \
+                  side effect, because committing is one of the seven sites that call \
+                  `clear_paused`. Adding a paused row to the queue would count the same \
+                  packages twice, including in the header count."
         >
             <div class="g-strip">
                 <Card title="Autosync">
@@ -231,24 +227,14 @@ fn PausedStale() -> impl IntoView {
     view! {
         <Scene
             title="Scene · paused with nothing to fix — the 2026-07-11 bug"
-            note="THIS IS THE FAILURE STATE, rendered rather than described. The card says \
-                  paused and the queue says everything is Latest, which is a flat \
-                  contradiction — and it is exactly what the 2026-07-11 diagnostic bundle \
-                  showed: data.json had all 13 packages fully synced, commit == null and \
-                  base_hash == latest_hash, so the reason had gone away while the pause \
-                  persisted in memory. The user's only recovery was restarting the app. \
-                  \
-                  It cannot self-heal because autopull's tick skips any namespace already \
-                  in the paused set, so the tick that would prove the condition cleared is \
-                  the one that never runs. \
-                  \
-                  The fix is NOT a button. This state should not be reachable, and \
-                  qhq-usw0 is the bug. The escape hatch is deliberately left out of this \
-                  scene, because drawing one would make a backend defect look like a \
-                  feature — and because the UI cannot tell this case from the one above \
-                  unless the queue and the paused set are derived from ONE resolved state. \
-                  Today they are assembled from two sources, which is what lets them \
-                  disagree."
+            note="The failure state, rendered rather than described: the card says paused \
+                  and the queue says everything is Latest. That is what the 2026-07-11 \
+                  bundle showed — all 13 packages fully synced while the pause persisted in \
+                  memory, with restarting the app as the only recovery. It cannot self-heal, \
+                  because autopull's tick skips any namespace already in the paused set. The \
+                  fix is not a button: this state should not be reachable, and `qhq-usw0` is \
+                  the bug. An escape hatch drawn here would make a backend defect look like \
+                  a feature."
         >
             <div class="g-strip">
                 <Card title="Autosync">

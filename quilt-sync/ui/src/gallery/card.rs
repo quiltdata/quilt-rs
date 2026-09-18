@@ -16,17 +16,12 @@ pub fn CardStories() -> impl IntoView {
     view! {
         <Story
             title="Card"
-            note="The page's four regions are all one of these — both state-strip blocks, \
-                  the queue and the list — which is what makes the page read as a page \
-                  rather than as two widgets above some loose text. The rows were measured \
-                  against this surface too: their hairlines and hover tint assume \
-                  --q-bgColor-default under them. \
-                  \
-                  The card draws the hairline between any two children, so a card holding a \
-                  mix of row types stays evenly divided — which a rule inside one row's \
-                  module could not do. Pass ONE wrapper child to opt out, as the queue does. \
-                  The count is optional and must be derived from the rows; the title is \
-                  optional too, for the list card, whose SegmentedControl already names the view."
+            note="The page's four regions are all one of these. The card draws a hairline \
+                  between any two children, so a card holding a mix of row types stays \
+                  evenly divided — pass one wrapper child to opt out, as the queue does. The \
+                  rows were measured against this surface: their hairlines and hover tint \
+                  assume `--q-bgColor-default` under them. Title and count are both \
+                  optional, and the count must be derived from the rows."
         >
             <Cell wide=true label="two rows — hairline is the card's, not the row's">
                 <Card title="Autosync">

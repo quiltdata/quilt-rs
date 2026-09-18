@@ -48,15 +48,10 @@ pub fn PageScene() -> impl IntoView {
         <Scene
             title="Scene · the whole page, a busy day"
             note="The worst case: nineteen things needing a decision, and both expanders \
-                  still work. This is the scene that tests the design's central bet — that \
-                  a queue above the list earns the height it takes. The frame is 560px tall, \
-                  the window's minimum, so the fold is the real one: count how many package \
-                  rows survive above it, then expand a cause and count again. \
-                  \
-                  Read it top to bottom as a user would: what is running (Autosync), who \
-                  you are (Accounts), what wants you (the queue), then everything else \
-                  (the list). Nothing below the queue needs reading on a bad day, and \
-                  nothing in the queue exists on a good one."
+                  live. The frame is 560px, the window's minimum, so the fold is the real \
+                  one — count how many package rows survive above it, then expand a cause \
+                  and count again. This is the scene that tests the central bet, that a \
+                  queue above the list earns the height it takes."
         >
             <div class="g-window">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>

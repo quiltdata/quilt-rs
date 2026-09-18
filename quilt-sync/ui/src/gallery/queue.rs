@@ -129,25 +129,12 @@ fn QueueRowStory() -> impl IntoView {
     view! {
         <Story
             title="QueueRow"
-            note="The row IS the link. Every verb here opens a page — Publish the commit \
-                  page, Resolve the merge page, the other two the package's own — so a \
-                  button would promise an operation that does not happen on press. The \
-                  verb stays as text at the right edge, one tab stop per row, and the \
-                  accent this page never spends stays unspent. \
-                  \
-                  The state reads as a clause after the name rather than as a chip beside \
-                  it: name at weight 600 in default ink, clause muted, which is the \
-                  treatment HostRow already uses. The tone that was the chip's job is now \
-                  a rule on the row's edge, inset so a column of rows shows separate marks \
-                  rather than one band. Colour and nothing else, which is allowed because \
-                  the colour carries nothing on its own — the clause says the state in \
-                  words, and the chip needed a glyph only because its words were a short \
-                  label doing the same job as its tint. \
-                  \
-                  The leading column is CauseRow's expander column, which is what keeps a \
-                  cause and a package aligned on their text. It stays empty on a row that \
-                  has a state — the edge rule and the clause mark it twice already — and \
-                  carries a bullet only on a row that is a bare name."
+            note="The row is the link: every verb here opens a page, so a button would \
+                  promise an operation that does not happen on press. The verb stays as text \
+                  at the right edge, one tab stop per row. The state reads as a clause after \
+                  the name rather than as a chip beside it, and the tone the chip carried is \
+                  now an inset rule on the row's edge — colour and nothing else, which is \
+                  allowed because the clause says the state in words."
         >
             {actionable()
                 .into_iter()
@@ -205,22 +192,13 @@ fn CauseRowStory() -> impl IntoView {
     view! {
         <Story
             title="CauseRow"
-            note="One component with a trailing slot, not two components. Both appearances \
-                  do the same job — name a cause, count its packages, let you see which — \
-                  and only the slot's contents differ, which is data. The kit bans the \
-                  other kind of flag: one that would change the row's job, as \
-                  \"is the row clickable\" did for the two list rows. \
-                  \
-                  Role-denied carries a pointer line and no control on purpose. It is \
-                  fixed by switching role, which is host-scoped, so the control lives on \
-                  the host row in the Accounts card. A link may be duplicated across \
-                  scopes; a control may not, because the same control at two \
-                  granularities makes one of them a lie. \
-                  \
-                  These rows WRAP rather than truncate, unlike every other row in the \
-                  kit — a cause is a sentence and the end of it is where the specifics \
-                  are. The expanders are live; the packages they reveal belong to the \
-                  caller, which is why `expanded` is passed in."
+            note="One component with a trailing slot, not two components: both appearances \
+                  name a cause, count its packages and let you see which, and only the \
+                  slot's contents differ. Role-denied carries a pointer line and no control, \
+                  because the fix is host-scoped and the control lives on the host row. \
+                  These rows wrap rather than truncate, unlike every other row in the kit — \
+                  a cause is a sentence, and the specifics are at the end. The expanders are \
+                  live."
         >
             <Cell full=true label="collapsed with an action">
                 <CauseRow
@@ -353,23 +331,13 @@ pub fn QueueScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · needs your attention"
-            note="Shared causes first, then per-package rows in precedence order. Both \
-                  expanders work — open them and watch what nineteen items actually costs \
-                  in vertical space, because the region above the package list is the \
-                  thing this design spends to buy. \
-                  \
-                  Read down the verbs: five of them, one per row, each true of the row it \
-                  sits on. That column is what replaces 43 rows of Publish. Each row is a \
-                  link to the page that performs its verb, so the verb is text and not a \
-                  button — nothing here acts on press. \
-                  \
-                  Read down the left edge too: the tone marks band rather than scatter, \
-                  because the severe states sort first and Latest never enters the queue. \
-                  \
-                  The paused row is the exception and costs the most height: it carries \
-                  the engine's own rejection and goes nowhere, because no operation here \
-                  can restart a sync the remote refused. It is allowed to take the room — \
-                  that text is the only account of why the package stopped."
+            note="Shared causes first, then per-package rows in precedence order. Open both \
+                  expanders and watch what nineteen items costs in vertical space, because \
+                  that is what this design spends to buy the region. Read down the verbs: \
+                  five, one per row, each true of the row it sits on. Read down the left \
+                  edge: the tone marks band rather than scatter, since the severe states \
+                  sort first. The paused row costs the most height and goes nowhere — it \
+                  carries the engine's own rejection."
         >
             <QueueRegion />
         </Scene>

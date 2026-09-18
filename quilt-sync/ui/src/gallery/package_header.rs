@@ -259,48 +259,15 @@ pub fn PackageHeaderScene() -> impl IntoView {
     view! {
         <Scene
             title="The package header, state by state"
-            note="Thirteen cells for eleven states — `PendingChanges` and `PullConflict` \
-                  each appear twice, because the singular is written by hand and a \
-                  plural-only fixture never exercises it. \
-                  \
-                  Read down the action column first. Every control on the row answers \
-                  `what does this package need`, so it is the state's own action and \
-                  nothing else: a `Publish` split button where there is something to \
-                  ship, a plain button for `Get latest`, `Resolve` and `Choose S3 \
-                  bucket`, and an empty slot in the four states with nothing to do. \
-                  \
-                  `Create new revision` answers a different question — `what may I \
-                  choose to do` — which does not vary with state, so it lives in `[⋯]`, \
-                  present in all thirteen. It is also behind the split button's caret in \
-                  the publishing states. That duplication is deliberate: the menu is the \
-                  stable home, one place to learn and available even when there is no \
-                  `Publish` to hang a caret on; the caret is proximity, at the moment \
-                  somebody is about to publish and might want the other way to do it. \
-                  \
-                  Measured, not guessed. Shrinking each row until it wraps: the widest \
-                  is `Revision not published` at 568px, tied with `No S3 bucket yet`, \
-                  then `Newer revision available` at 564; the resting state needs 346. \
-                  The page has 992 at a 1024 window, so the worst case clears it by 424. \
-                  The package name truncates rather than pushing, \
-                  so a long namespace does not move these numbers. The list toolbar \
-                  below lost exactly this \
-                  argument — it needs 708 and gets 700 — which is why the header's was \
-                  measured rather than argued. \
-                  \
-                  Then read the tone column. The rubric the words were chosen against: \
-                  Success is the resting state and appears once; Neutral is a fact you \
-                  may act on; Attention is waiting on you; Danger is something the page \
-                  cannot fix by itself. Counted here: one Success, two Neutral, four \
-                  Attention and six Danger. Six of thirteen is what this scene is really \
-                  for — whether a page about one package can carry that much red without \
-                  it stopping meaning anything. \
-                  \
-                  `conflicts in 3 files` is the one label that is not capitalised. That \
-                  is a defect, not a choice, and it is filed. \
-                  \
-                  Missing: signed out, sign-in expired and unreachable. They are three \
-                  rows in the design's table and one `error` string in the backend, so \
-                  nothing can draw them apart yet."
+            note="Thirteen cells for eleven states; `PendingChanges` and `PullConflict` \
+                  appear twice because the singular is written by hand. Read down the action \
+                  column: every control answers what this package needs, so it is the \
+                  state's own action and nothing else, while `Create new revision` sits in \
+                  the overflow menu in all thirteen. Measured: the widest row is 568px \
+                  against the 992 the page has at 1024. Then read the tone column — one \
+                  Success, two Neutral, four Attention, six Danger. Whether one package's \
+                  page carries that much red is what this scene is for. Missing: signed out, \
+                  sign-in expired and unreachable, which the backend cannot tell apart."
         >
             {states()
                 .into_iter()
