@@ -45,7 +45,7 @@ pub const PAUSED_EVENT: &str = "autosync-paused";
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageStatusEvent {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub status: String,
     pub has_changes: bool,
     /// Digest of the observation this event reports — the upstream state
@@ -65,7 +65,7 @@ impl PackageStatusEvent {
         status: &quilt::lineage::InstalledPackageStatus,
     ) -> Self {
         Self {
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
             status: status.upstream_state.to_string(),
             has_changes: !status.changes.is_empty(),
             fingerprint: status_fingerprint(status),
@@ -124,7 +124,7 @@ pub(crate) fn clean_uptodate_fingerprint() -> String {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishedEvent {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub message: String,
 }
 
@@ -142,7 +142,7 @@ pub struct PublishedEvent {
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedEvent {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     /// Stable category: `"pendingChanges"`, `"pendingCommit"`,
     /// `"diverged"`, `"pullConflict"`, `"roleDenied"`, or `"other"`. Kept as
     /// a string so the wire format is independent of the Rust enum's variant
@@ -177,7 +177,7 @@ impl PausedEvent {
             PausedReason::Other(msg) => ("other", Some(msg.clone())),
         };
         Self {
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
             reason: reason_str.to_string(),
             message,
         }
@@ -504,7 +504,7 @@ impl StatusReporter for TauriEventReporter {
     fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
         info!("autosync: published namespace={namespace} host={host} message={message}");
         let payload = PublishedEvent {
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
             message: message.to_string(),
         };
         if let Err(err) = self.handle.emit(PUBLISHED_EVENT, &payload) {
@@ -657,7 +657,8 @@ mod tests {
     #[test]
     fn package_status_event_serializes_camel_case() {
         let event = PackageStatusEvent {
-            namespace: "acme/demo".to_string(),
+            namespace: quilt_uri::Namespace::try_from("acme/demo")
+                .expect("a valid fixture namespace"),
             status: "up_to_date".to_string(),
             has_changes: false,
             fingerprint: "up_to_date;".to_string(),
@@ -681,7 +682,8 @@ mod tests {
         assert_eq!(
             PausedEvent::from_reason(&ns, &PausedReason::PendingChanges),
             PausedEvent {
-                namespace: "acme/demo".to_string(),
+                namespace: quilt_uri::Namespace::try_from("acme/demo")
+                    .expect("a valid fixture namespace"),
                 reason: "pendingChanges".to_string(),
                 message: None,
             }

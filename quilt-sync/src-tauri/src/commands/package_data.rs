@@ -22,14 +22,14 @@ pub struct InstalledPackageEntryData {
     pub status: String,
     pub junky_pattern: Option<String>,
     pub ignored_by: Option<String>,
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
 pub struct InstalledPackageData {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
     pub status: String,
     /// The currently-installed revision's top-hash (the `remote` hash of the
@@ -168,7 +168,7 @@ async fn get_installed_package_data_from_model(
             status: status_str.to_string(),
             junky_pattern: junky_map.get(filename).cloned(),
             ignored_by: None,
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
         });
         if entries_list.len() > 1000 {
             break;
@@ -185,7 +185,7 @@ async fn get_installed_package_data_from_model(
                 status: "pristine".to_string(),
                 junky_pattern: None,
                 ignored_by: None,
-                namespace: namespace.to_string(),
+                namespace: namespace.clone(),
             });
         }
         if entries_list.len() > 1000 {
@@ -202,7 +202,7 @@ async fn get_installed_package_data_from_model(
             status: "remote".to_string(),
             junky_pattern: None,
             ignored_by: None,
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
         });
         if entries_list.len() > 1000 {
             break;
@@ -215,7 +215,7 @@ async fn get_installed_package_data_from_model(
             status: "pristine".to_string(),
             junky_pattern: None,
             ignored_by: Some(pattern.clone()),
-            namespace: namespace.to_string(),
+            namespace: namespace.clone(),
         });
         if entries_list.len() > 1000 {
             break;
@@ -256,7 +256,7 @@ async fn get_installed_package_data_from_model(
     let has_local_commit = lineage.commit.is_some();
 
     Ok(InstalledPackageData {
-        namespace: namespace.to_string(),
+        namespace: namespace.clone(),
         uri: typed_uri,
         status: status_str.to_string(),
         installed_hash,
@@ -327,7 +327,7 @@ mod tests {
         .await
         .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(

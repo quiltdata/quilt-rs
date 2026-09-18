@@ -29,7 +29,7 @@ pub struct InstalledPackagesListData {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPackageListItem {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub status: String,
     pub has_changes: bool,
     /// True when the package has a local commit. Setting a remote only
@@ -181,7 +181,7 @@ pub(super) async fn get_installed_packages_list_data_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
-    paused_reasons: &HashMap<String, PausedRow>,
+    paused_reasons: &HashMap<quilt_uri::Namespace, PausedRow>,
 ) -> Result<InstalledPackagesListData, Error> {
     // A roster load is the cadence the role refresh is pinned to. A switch is
     // server-side and global, so it can happen in the web catalog with the app
@@ -302,9 +302,9 @@ async fn load_package_item(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
     installed_package: &quilt::InstalledPackage,
-    paused_reasons: &HashMap<String, PausedRow>,
+    paused_reasons: &HashMap<quilt_uri::Namespace, PausedRow>,
 ) -> Result<InstalledPackageListItem, Error> {
-    let namespace = installed_package.namespace.to_string();
+    let namespace = installed_package.namespace.clone();
     let paused = paused_reasons.get(&namespace);
     let paused_reason = paused.map(|p| p.message.clone());
     let paused_kind = paused.map(|p| p.reason.clone());
@@ -383,7 +383,7 @@ pub async fn get_installed_packages_list_data(
     // named) surface on a row; the status string alone carries the rest. The
     // reason discriminant rides along so the UI can pick conflict-,
     // role- or generic guidance.
-    let paused_reasons: HashMap<String, PausedRow> = watcher
+    let paused_reasons: HashMap<quilt_uri::Namespace, PausedRow> = watcher
         .snapshot()
         .await
         .paused
@@ -865,7 +865,7 @@ mod tests {
         let find = |ns: &str| {
             data.packages
                 .iter()
-                .find(|p| p.namespace == ns)
+                .find(|p| p.namespace.to_string() == ns)
                 .unwrap_or_else(|| panic!("{ns} in roster"))
         };
         let unreachable = find("team/locked");
@@ -901,7 +901,7 @@ mod tests {
         let listed = data
             .packages
             .iter()
-            .find(|p| p.namespace == "team/open")
+            .find(|p| p.namespace.to_string() == "team/open")
             .expect("team/open in roster");
         assert!(!listed.no_access, "the pre-filter clears a listed bucket");
 
@@ -1126,7 +1126,7 @@ mod tests {
         let locked = data
             .packages
             .iter()
-            .find(|p| p.namespace == "team/locked")
+            .find(|p| p.namespace.to_string() == "team/locked")
             .expect("team/locked in roster");
         assert!(locked.no_access);
         assert!(locked.no_access_reason.is_some(), "still says why");
@@ -1255,7 +1255,7 @@ mod tests {
         .expect("list");
         data.packages
             .into_iter()
-            .find(|p| p.namespace == "team/locked")
+            .find(|p| p.namespace.to_string() == "team/locked")
             .expect("team/locked in roster")
             .no_access_reason
             .expect("a denied row says why")
@@ -1427,7 +1427,12 @@ mod tests {
 
         assert_eq!(data.packages.len(), 4);
 
-        let find = |ns: &str| data.packages.iter().find(|p| p.namespace == ns).unwrap();
+        let find = |ns: &str| {
+            data.packages
+                .iter()
+                .find(|p| p.namespace.to_string() == ns)
+                .unwrap()
+        };
 
         // Spot-check URI propagation on one package; the other packages
         // share the same fixture shape, and `S3PackageUri::from(&ManifestUri)`
@@ -1488,7 +1493,7 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/pkg");
+        assert_eq!(pkg.namespace.to_string(), "test/pkg");
         // Light phase derives status from lineage (up_to_date, not error)
         assert_eq!(pkg.status, "up_to_date");
         assert!(!pkg.has_changes); // Always false in light phase
@@ -1532,7 +1537,7 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/noorigin");
+        assert_eq!(pkg.namespace.to_string(), "test/noorigin");
         assert_eq!(pkg.status, "error");
         // URI is exposed (so the "Set remote" popup can pre-fill bucket)
         // but its catalog is unset.
@@ -1571,7 +1576,7 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/local");
+        assert_eq!(pkg.namespace.to_string(), "test/local");
         assert_eq!(pkg.status, "local");
         assert!(pkg.uri.is_none());
         assert!(pkg.remote_display.is_none());
@@ -1619,7 +1624,7 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/localpush");
+        assert_eq!(pkg.namespace.to_string(), "test/localpush");
         assert_eq!(pkg.status, "local");
         assert!(!pkg.has_changes);
         // Has origin (for Push button and disabled Catalog button in UI).
@@ -1867,7 +1872,7 @@ mod tests {
         // has an `Other` message.
         let mut paused_reasons = HashMap::new();
         paused_reasons.insert(
-            "test/paused".to_string(),
+            quilt_uri::Namespace::try_from("test/paused").expect("a valid fixture namespace"),
             PausedRow {
                 reason: "other".to_string(),
                 message: "workflow rejected metadata".to_string(),
@@ -1887,7 +1892,12 @@ mod tests {
         .await
         .map_err(|e| e.to_string())?;
 
-        let find = |ns: &str| data.packages.iter().find(|p| p.namespace == ns).unwrap();
+        let find = |ns: &str| {
+            data.packages
+                .iter()
+                .find(|p| p.namespace.to_string() == ns)
+                .unwrap()
+        };
         assert_eq!(
             find("test/paused").paused_reason.as_deref(),
             Some("workflow rejected metadata"),
@@ -1904,7 +1914,8 @@ mod tests {
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
         let item = InstalledPackageListItem {
-            namespace: "acme/data".to_string(),
+            namespace: quilt_uri::Namespace::try_from("acme/data")
+                .expect("a valid fixture namespace"),
             status: "paused".to_string(),
             has_changes: false,
             has_local_commit: false,

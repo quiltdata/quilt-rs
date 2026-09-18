@@ -702,7 +702,7 @@ pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, 
 /// One installed or published file, flat across every package. Mirrors the
 /// backend's `MainPageFile`; the owning package travels with the row rather
 /// than grouping it.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPageFileData {
     pub path: String,

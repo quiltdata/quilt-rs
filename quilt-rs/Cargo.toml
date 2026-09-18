@@ -49,12 +49,12 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
-quilt-uri = { path = "../quilt-uri", version = "0.4.0" }
+quilt-uri = { path = "../quilt-uri", version = "0.4.1-alpha1" }
 url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-quilt-uri = { path = "../quilt-uri", version = "0.4.0", features = ["test-support"] }
+quilt-uri = { path = "../quilt-uri", version = "0.4.1-alpha1", features = ["test-support"] }
 test-log.workspace = true
 
 [lints]

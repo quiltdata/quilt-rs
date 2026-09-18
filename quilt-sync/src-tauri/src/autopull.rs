@@ -601,7 +601,7 @@ mod tests {
         let entry_a = snapshot
             .paused
             .iter()
-            .find(|p| p.namespace == ns_a.to_string())
+            .find(|p| p.namespace.to_string() == ns_a.to_string())
             .expect("acme/demo missing from snapshot");
         assert_eq!(entry_a.reason, "pendingChanges");
         assert!(entry_a.message.is_none());
@@ -609,7 +609,7 @@ mod tests {
         let entry_b = snapshot
             .paused
             .iter()
-            .find(|p| p.namespace == ns_b.to_string())
+            .find(|p| p.namespace.to_string() == ns_b.to_string())
             .expect("acme/other missing from snapshot");
         assert_eq!(entry_b.reason, "other");
         let msg_b = entry_b
@@ -647,7 +647,7 @@ mod tests {
 
         let paused = watcher.snapshot().await.paused;
         assert_eq!(paused.len(), 1, "only the denial should clear: {paused:?}");
-        assert_eq!(paused[0].namespace, diverged.to_string());
+        assert_eq!(paused[0].namespace.to_string(), diverged.to_string());
     }
 
     #[tokio::test]

@@ -38,11 +38,31 @@ impl Default for RevisionPointer {
 /// In theory namespace is just a string.
 /// But in practice we use "prefix/name".
 /// For ease of serializing/deserializing and for validation we put it to a struct.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(any(test, feature = "test-support"), derive(Default))]
 pub struct Namespace {
     prefix: String,
     name: String,
+}
+
+impl Namespace {
+    /// The half before the `/`.
+    ///
+    /// Readers group by this — a prefix spans the packages one owner or project
+    /// published — and without it they re-derive it by splitting [`Display`]'s
+    /// output, which is the one split this type exists to have already done.
+    ///
+    /// [`Display`]: std::fmt::Display
+    #[must_use]
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    /// The half after the `/`.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl Ord for Namespace {
@@ -413,6 +433,46 @@ mod tests {
     use crate::fixtures;
 
     type Res<T = ()> = Result<T, UriError>;
+
+    /// The halves a reader wants, without re-splitting `Display`'s output.
+    #[test]
+    fn a_namespace_lends_its_halves() -> Res {
+        let ns: Namespace = "team/plate-07".try_into()?;
+        assert_eq!(ns.prefix(), "team");
+        assert_eq!(ns.name(), "plate-07");
+        // And the whole is still what it always was, so nothing reading the
+        // display form has to change.
+        assert_eq!(ns.to_string(), "team/plate-07");
+        Ok(())
+    }
+
+    /// A name may hold a `-`, a `.`, a `_`; only the first `/` divides, and
+    /// `try_from` has already rejected a second one. So `name()` never has to be
+    /// re-split by a caller either.
+    #[test]
+    fn only_the_first_slash_divides() -> Res {
+        let ns: Namespace = "my.team_1/plate-07.v2".try_into()?;
+        assert_eq!(ns.prefix(), "my.team_1");
+        assert_eq!(ns.name(), "plate-07.v2");
+        assert!(
+            Namespace::try_from("a/b/c").is_err(),
+            "a second / is refused"
+        );
+        Ok(())
+    }
+
+    /// `Hash`, so a caller can key a map by the package a row is about rather
+    /// than by a string spelling of it.
+    #[test]
+    fn a_namespace_can_key_a_map() -> Res {
+        use std::collections::HashMap;
+
+        let mut seen: HashMap<Namespace, u8> = HashMap::new();
+        seen.insert("team/plate-07".try_into()?, 1);
+        assert_eq!(seen.get(&Namespace::try_from("team/plate-07")?), Some(&1));
+        assert_eq!(seen.get(&Namespace::try_from("team/plate-08")?), None);
+        Ok(())
+    }
 
     #[test]
     fn test_implicit_str_parsing() -> Res {
