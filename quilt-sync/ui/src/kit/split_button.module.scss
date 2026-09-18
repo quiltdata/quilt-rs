@@ -113,3 +113,22 @@
   border-color: var(--q-borderColor-muted);
   color: var(--q-fgColor-disabled);
 }
+
+/* ── the seam, on primary ─────────────────────────────────────────────────
+ * The caret's left border IS the shared edge. On the default variant it is
+ * `borderColor-default` and visible; on primary the rules above paint the
+ * border the same navy as the fill, so the two halves fused into one slab with
+ * a chevron floating at the end of it.
+ *
+ * `overlay-onBrand-active` is the kit's light ink for a control sitting on the
+ * accent ground — white alpha, stated once because that ground does not flip
+ * with the theme, which is why this needs no dark-mode counterpart.
+ *
+ * Restated across hover and press because both of those set `border-color`
+ * wholesale and would otherwise take the seam with them.
+ */
+.primary,
+.primary:hover:not(:disabled),
+.primary:active:not(:disabled) {
+  border-left-color: var(--q-overlay-onBrand-active);
+}
