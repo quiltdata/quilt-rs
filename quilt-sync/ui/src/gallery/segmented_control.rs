@@ -24,7 +24,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
                 <SegmentedControl
                     aria_label="List view"
                     name="story-view"
-                    options=vec!["Packages".to_string(), "Recent files".to_string()]
+                    options=vec!["Packages".into(), "Recent files".into()]
                     selected=two
                 />
             </Cell>
@@ -32,11 +32,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
                 <SegmentedControl
                     aria_label="Grouping"
                     name="story-group"
-                    options=vec![
-                        "Bucket".to_string(),
-                        "Prefix".to_string(),
-                        "None".to_string(),
-                    ]
+                    options=vec!["Bucket".into(), "Prefix".into(), "None".into()]
                     selected=three
                 />
             </Cell>
@@ -44,10 +40,7 @@ pub fn SegmentedControlStories() -> impl IntoView {
                 <SegmentedControl
                     aria_label="List view"
                     name="story-long"
-                    options=vec![
-                        "Installed packages".to_string(),
-                        "Recently changed files".to_string(),
-                    ]
+                    options=vec!["Installed packages".into(), "Recently changed files".into()]
                     selected=long
                 />
             </Cell>

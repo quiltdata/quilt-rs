@@ -596,7 +596,7 @@ fn list_toolbar(
             <SegmentedControl
                 aria_label="List view"
                 name="main-page-view"
-                options=vec![PACKAGES_VIEW.to_string(), FILES_VIEW.to_string()]
+                options=vec![PACKAGES_VIEW.into(), FILES_VIEW.into()]
                 selected=view_selected
             />
             // Two selects, not one with reactive options: `Select`'s `options` is

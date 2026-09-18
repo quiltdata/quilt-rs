@@ -33,7 +33,7 @@ pub fn ListToolbarScene() -> impl IntoView {
                 <SegmentedControl
                     aria_label="List view"
                     name="toolbar-view"
-                    options=vec!["Packages".to_string(), "Recent files".to_string()]
+                    options=vec!["Packages".into(), "Recent files".into()]
                     selected=view_mode
                 />
                 <SearchInput value=query aria_label="Search packages" placeholder="Search…" />

@@ -130,8 +130,13 @@ pub fn EntryRow(
     #[prop(into)]
     name: String,
     /// The state's words, or nothing at all for a resting state.
+    ///
+    /// A `MaybeProp` and not an `Option`: a caller enumerating the states — the
+    /// page's own list does — computes this rather than writing it, and an
+    /// `optional` prop cannot be handed a `None` it worked out. It would have to
+    /// branch on presence and repeat the whole call.
     #[prop(optional, into)]
-    state: Option<String>,
+    state: MaybeProp<String>,
     /// How loudly. Ignored when `state` is absent.
     #[prop(optional)]
     tone: StateTone,
@@ -168,7 +173,9 @@ pub fn EntryRow(
             // the row above carries a label. Sizes exist to be compared, and
             // ragged ones cannot be.
             <span class=style::state>
-                {state.map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })}
+                {move || {
+                    state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
+                }}
             </span>
             <span class=style::size>{size}</span>
         }

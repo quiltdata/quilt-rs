@@ -42,6 +42,16 @@ pub fn Card(
     /// Rows. The card draws a hairline between any two of them, so children need not
     /// know they are in a list — pass a single wrapper element to opt out, as the queue
     /// does, where dividers would make a list of decisions read as a table.
+    /// The children reach the border, with no padding between. For a card whose
+    /// children are **rows that carry their own padding** — the installed
+    /// package's file list, whose group headings stick to the top edge on a
+    /// scroll and whose footer is a full-width hairline.
+    ///
+    /// It is the padding that decides which of those two things a card is, so it
+    /// is a prop and not a class a caller adds: a re-implemented surface is the
+    /// drift this kit already logged four times.
+    #[prop(optional)]
+    flush: bool,
     children: Children,
 ) -> impl IntoView {
     let heading_id = super::unique_id("card-title");
@@ -59,7 +69,7 @@ pub fn Card(
         // needs a different level, that is a prop — not a hard-coded guess repeated at
         // each call site.
         <section
-            class=style::root
+            class=if flush { format!("{} {}", style::root, style::flush) } else { String::from(style::root) }
             aria-labelledby=named
             aria-busy=move || busy.get().then_some("true")
         >

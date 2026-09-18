@@ -99,6 +99,7 @@ use crate::Story;
 use crate::kit::ListToolbar;
 use crate::kit::Naming;
 use crate::kit::SearchInput;
+use crate::kit::Segment;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::SelectAll;
@@ -291,7 +292,7 @@ fn toolbar(width: &'static str) -> AnyView {
                         "708px" => "facets-fits",
                         _ => "facets-narrow",
                     }
-                    options=options
+                    options=options.iter().cloned().map(Segment::new).collect()
                     selected=facet
                 />
                 </div>

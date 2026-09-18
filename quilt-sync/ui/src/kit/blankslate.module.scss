@@ -31,3 +31,17 @@
 .description {
   max-width: 46ch;
 }
+
+/* Inside a box that is already short — the installed package's file list, 264px
+ * at the window's height floor, where `space-10` alone is taller than the
+ * viewport it is centred in. The heading drops to body weight with it: at this
+ * height a lead-sized line and its description are the same block of text, and
+ * the size was doing hierarchy work there is no longer room for. */
+.root.compact {
+  gap: var(--q-space-2);
+  padding: var(--q-space-5) var(--q-space-4);
+}
+
+.root.compact .heading {
+  font-size: var(--q-text-body);
+}

@@ -80,3 +80,18 @@
   outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
   outline-offset: var(--q-focus-outlineOffset);
 }
+
+/* An inert segment — a facet matching nothing. Muted and cursor-less, and the
+ * disabled input takes it out of the tab order for free. It keeps its width, so
+ * a count dropping to zero never moves the segments beside it. */
+.input:disabled + .text {
+  color: var(--q-fgColor-disabled);
+}
+
+.option:has(.input:disabled) {
+  cursor: default;
+}
+
+.option:has(.input:disabled):hover .text {
+  color: var(--q-fgColor-disabled);
+}

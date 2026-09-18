@@ -63,3 +63,12 @@ ul.body {
   margin: 0;
   padding: 0;
 }
+
+/* Rows that carry their own padding. The file list's group headings stick to the
+ * card's top edge when it scrolls, and its footer hairline has to reach both
+ * borders — a padded card would inset both and leave a gutter the rows do not
+ * know about. Titled cards keep the padding; this one is named by `label` and
+ * draws no title at all. */
+.root.flush {
+  padding: 0;
+}

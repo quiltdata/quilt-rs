@@ -125,6 +125,7 @@ pub use relative_time::RelativeTime;
 pub use revision_row::CatalogLink;
 pub use revision_row::RevisionRow;
 pub use search_input::SearchInput;
+pub use segmented_control::Segment;
 pub use segmented_control::SegmentedControl;
 pub use select::Select;
 pub use select_all::SelectAll;

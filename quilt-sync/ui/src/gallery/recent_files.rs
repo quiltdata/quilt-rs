@@ -283,7 +283,7 @@ fn Empties() -> impl IntoView {
                         <SegmentedControl
                             aria_label="List view"
                             name="empty-view"
-                            options=vec!["Packages".to_string(), "Recent files".to_string()]
+                            options=vec!["Packages".into(), "Recent files".into()]
                             selected=RwSignal::new("Packages".to_string())
                         />
                     }
@@ -371,7 +371,7 @@ pub fn RecentFilesScene() -> impl IntoView {
                 <SegmentedControl
                     aria_label="List view"
                     name="recent-files-view"
-                    options=vec!["Packages".to_string(), "Recent files".to_string()]
+                    options=vec!["Packages".into(), "Recent files".into()]
                     selected=view_mode
                 />
                 <SearchInput value=query aria_label="Search files" placeholder="Search…" />
