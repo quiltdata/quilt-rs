@@ -1,15 +1,17 @@
 //! The kit's glyphs, drawn once and used by both binaries.
 //!
-//! The appbar's pair, plus the four the installed-package page needs. Each is a
-//! 16-unit `viewBox` filled with `currentColor` and hidden from assistive tech:
-//! the control that holds it carries the name.
+//! The appbar's pair, the four the installed-package page needs, the close mark
+//! and `SplitButton`'s tick. Each is a 16-unit `viewBox` drawn in
+//! `currentColor` and hidden from assistive tech: the control that holds it
+//! carries the name.
 //!
-//! Paths are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
-//! `chevron-down-16`, `chevron-right-16`, `kebab-horizontal-16` and `check-16` —
-//! MIT
+//! Seven are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
+//! `chevron-down-16`, `chevron-right-16`, `kebab-horizontal-16` and `check-16` — MIT
 //! License, Copyright (c) GitHub Inc. —
 //! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
 //! because at 15px a stroked gear's spokes read as a sun.
+//!
+//! [`x`] is ours, and stroked, because the two controls it replaced were.
 //!
 //! The kit owns them because four files had each drawn their own copy of the
 //! first two, and the page below would have made it six.
@@ -90,6 +92,33 @@ pub fn chevron_right() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
             <path d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// Close. The dismiss on a banner and the clear inside a search field — the two
+/// controls that take something off the screen.
+///
+/// Not `StateTone::Danger`'s glyph, which is also an X: that one is a *state*,
+/// drawn heavier and sized by whichever consumer holds it (`state_label.rs`).
+/// Two marks that happen to look alike and mean different things stay apart.
+///
+/// Stroked rather than filled, matching the controls it replaced, and drawn in
+/// the same 16-unit box as the rest of this file — the search field's copy was
+/// an 11-unit box, so its X now sits at the same inset as the banner's.
+#[must_use]
+pub fn x() -> AnyView {
+    view! {
+        <svg
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+        >
+            <path d="M4.2 4.2 11.8 11.8M11.8 4.2 4.2 11.8" />
         </svg>
     }
     .into_any()
