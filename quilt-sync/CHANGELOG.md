@@ -9,7 +9,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.3-alpha1] - 2026-09-16
+## [v0.22.3] - 2026-09-18
 
 ### Fixed
 
@@ -20,6 +20,24 @@
 ### Changed
 
 - Under the hood, a package's namespace now crosses between the app's backend and its interface as the validated address type it already was, rather than being flattened to plain text on the way out. No behaviour changes and the wire format is identical (<https://github.com/quiltdata/quilt-rs/pull/946>)
+- The new main page (Settings → Experimental → **New main page**, still off by default) is polished further. The current page is unchanged by all of it:
+  - A row in **Recent files** can now copy that file's `quilt+s3` address to your clipboard, ready to paste into a terminal or a message. The button turns to a tick to confirm, and a package that lives only on your machine shows no button, since no `quilt+s3` address names it (<https://github.com/quiltdata/quilt-rs/pull/953>)
+  - A card that cannot load its own data — **Autosync**, **Accounts**, your packages, recent files — now keeps its title, says it could not load, and offers **Try again**. Each used to draw nothing, which reads as an answer: no autosync on this machine, no accounts signed in (<https://github.com/quiltdata/quilt-rs/pull/939>)
+  - Typing in the search box no longer rebuilds the whole list under it. Every row a search left standing was thrown away and built again on each keystroke; at 500 packages, eight keystrokes cost 208ms of that work and now cost 17ms (<https://github.com/quiltdata/quilt-rs/pull/949>)
+  - A screen reader can move through the page: it has a title, each card is a named region, bucket headings are headings, and package rows, file rows and the queue are lists. They were an undifferentiated run of text with nothing to navigate by (<https://github.com/quiltdata/quilt-rs/pull/935>)
+  - Four more things a screen reader was told wrongly: a Recent files row announced as a single button, hiding the package link and the three actions on it; a card of placeholders that never said it was loading; a drop-down that read its value twice; and a timestamp on an unconfirmed row dimmed below readable contrast (<https://github.com/quiltdata/quilt-rs/pull/936>)
+  - The countdown ring beside a sync toggle no longer announces itself to a screen reader as a progress bar of unknown progress — a value it cannot honestly report. The toggle's own label already says the interval (<https://github.com/quiltdata/quilt-rs/pull/950>)
+  - Launching straight onto the new page with a dark desktop no longer flashes a white window first (<https://github.com/quiltdata/quilt-rs/pull/951>)
+  - A banner's close button and the search box's clear button now draw one shared mark, where each carried its own drawing of it at its own inset. Both render at the size they always have (<https://github.com/quiltdata/quilt-rs/pull/952>)
+- Under the hood, the component gallery is now arranged in tiers and holds the components, the split button and the header scene that the installed-package page will be assembled from, each with tests of its own (<https://github.com/quiltdata/quilt-rs/pull/938>, <https://github.com/quiltdata/quilt-rs/pull/947>, <https://github.com/quiltdata/quilt-rs/pull/955>)
+
+### quilt-rs
+
+- Updated [from v0.39.0 to v0.39.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.0...quilt-rs/v0.39.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.0 to v0.4.1](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.0...quilt-uri/v0.4.1) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.22.2] - 2026-09-15
 

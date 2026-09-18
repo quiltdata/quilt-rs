@@ -8,12 +8,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.4.1-alpha1] - 2026-09-17
+## [v0.4.1] - 2026-09-18
 
 ### Added
 
 - `Namespace::prefix()` and `Namespace::name()` lend the halves the type already validated. The struct had no `impl` block at all, so a caller wanting either had to split `Display`'s output — the split `try_from` has already done and already rejected a second slash for (<https://github.com/quiltdata/quilt-rs/pull/946>)
 - `Namespace` derives `Hash`, so it can key a map. A caller with a namespace per row previously had to key by a string spelling of it (<https://github.com/quiltdata/quilt-rs/pull/946>)
+
+### Fixed
+
+- `S3PackageUri::display` now escapes the characters a fragment is built from — `&`, `=`, `#`, `+` and `%` — in the namespace, path, catalog and tag, so an address round-trips through `try_from` whatever those values hold. It wrote every value raw while the parse side reads the fragment with `form_urlencoded`, so a logical key holding `&` came back truncated and the rest of it was read as a parameter the caller never wrote. `/` is still written literally: these addresses are read and pasted by hand, and `package=user%2Fplate-07` would be a worse answer than the bug (<https://github.com/quiltdata/quilt-rs/pull/953>)
 
 ## [v0.4.0] - 2026-07-22
 
