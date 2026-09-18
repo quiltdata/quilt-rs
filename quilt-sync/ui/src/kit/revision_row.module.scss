@@ -6,12 +6,16 @@
  * needs it.
  */
 
+/* `width` and not just `max-width`. A `PaneSection` lays its children out with
+ * `align-items: flex-start`, so a child is sized to its content and a long
+ * message grows the row past the pane instead of ellipsising inside it — which
+ * is invisible in a wide cell and immediate at the pane's 280px. */
 .root {
   display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
-  max-width: 100%;
+  width: 100%;
 }
 
 /* Ellipsised rather than wrapped. A revisions list is a column of these, and one
