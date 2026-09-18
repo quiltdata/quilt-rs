@@ -153,7 +153,7 @@ mod tests {
                 <SegmentedControl
                     aria_label="Group files by"
                     name="group-by"
-                    options=vec!["Flat".to_string(), "Package".to_string()]
+                    options=vec!["Flat".into(), "Package".into()]
                     selected=selected
                 />
             }
@@ -180,6 +180,32 @@ mod tests {
             group.get_attribute("aria-label").as_deref(),
             Some("Group files by")
         );
+    }
+
+    /// An option that matches nothing stays on screen and stops being choosable.
+    /// Both halves matter: a segment that vanished at zero would teach nothing
+    /// and move the segments beside it, and one that stayed clickable would lead
+    /// to a view with no rows.
+    #[wasm_bindgen_test]
+    fn an_inert_option_is_present_and_disabled() {
+        let el = mount(|| {
+            view! {
+                <SegmentedControl
+                    aria_label="Filter files"
+                    name="facets"
+                    options=vec![
+                        Segment::new("All 53"),
+                        Segment::inert("Changed 0"),
+                    ]
+                    selected=RwSignal::new("All 53".to_string())
+                />
+            }
+        });
+        let radios = radios(&el);
+
+        assert_eq!(radios.len(), 2, "the empty facet keeps its place");
+        assert!(!radios[0].disabled(), "the one with rows behind it");
+        assert!(radios[1].disabled(), "the one without");
     }
 
     /// One `name` across the options is what makes them one choice rather than
