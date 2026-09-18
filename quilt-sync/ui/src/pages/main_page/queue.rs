@@ -980,16 +980,12 @@ mod tests {
     // `Router`'s children are `TypedChildren`, which boxes as `dyn FnOnce() -> _
     // + Send` — harmless on wasm's single thread, but it means `f` must carry
     // the bound even though nothing here is ever sent across one.
+    /// Inside a `Router`, which the queue's rows navigate through: `use_navigate`
+    /// panics without one.
     fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + Send + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), move || {
+        crate::test_support::mount(move || {
             view! { <leptos_router::components::Router>{f()}</leptos_router::components::Router> }
         })
-        .forget();
-        container.into()
     }
 
     /// `autosync.rs`'s pattern: `dyn_into` to the concrete element, then the

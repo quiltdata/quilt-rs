@@ -189,17 +189,9 @@ pub fn SplitButton(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
-
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     fn buttons(root: &web_sys::Element) -> Vec<web_sys::HtmlElement> {
         let list = root.query_selector_all("button").unwrap();

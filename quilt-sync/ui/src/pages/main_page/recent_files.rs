@@ -413,32 +413,14 @@ fn file_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mount;
+    use crate::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// The scenes name packages as text; the payloads carry the type.
     fn ns(text: &str) -> Namespace {
         Namespace::try_from(text).expect("a namespace")
-    }
-
-    /// `main_page.rs`'s pattern.
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
-
-    /// `main_page.rs`'s pattern: let the queue drain before asserting.
-    async fn sleep_ms(ms: i32) {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            window()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-                .unwrap();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
     }
 
     fn file(path: &str, namespace: &str, changed_at: f64) -> MainPageFileData {

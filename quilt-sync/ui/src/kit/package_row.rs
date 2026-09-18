@@ -135,18 +135,8 @@ pub fn PackageRow(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wasm_bindgen::JsCast;
+    use crate::test_support::mount;
     use wasm_bindgen_test::*;
-
-    /// `file_row.rs`'s pattern: mount into a fresh attached `div` and query it.
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     /// The row's own root, not a descendant — which is the point of these two.
     fn root_class(el: &web_sys::Element) -> String {
