@@ -1,0 +1,18 @@
+/*
+ * LoadFailure. A sentence and the button that tries again.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--q-space-3);
+}
+
+/* Measured rather than filled: a failure sentence is one line of prose, and prose
+ * set the full width of a card is read at a line length nothing else on the page
+ * uses. */
+.words {
+  margin: 0;
+  max-width: 70ch;
+}

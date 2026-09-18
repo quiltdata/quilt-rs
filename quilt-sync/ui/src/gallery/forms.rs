@@ -33,18 +33,12 @@ fn Inputs() -> impl IntoView {
     view! {
         <Story
             title="TextInput"
-            note="Separate from SearchInput rather than a variant of it: a search field has \
-                  a clear button, type=search, and a value the user expects to throw away, \
-                  while this is a value being ENTERED and can be invalid. \
-                  \
-                  Invalid draws the border and nothing else. A red fill behind text the \
-                  user is still typing makes it harder to read at the moment they are \
-                  trying to fix it — and the border plus FormControl's message already say it \
-                  twice. \
-                  \
-                  Every cell here is wrapped in a FormControl, because a bare TextInput no longer \
-                  COMPILES: it demands a ControlId and the only source of one is FormControl's \
-                  control closure. That is deliberate — see the FormControl story below."
+            note="Separate from SearchInput: that has a clear button and a value you expect \
+                  to throw away, while this is a value being entered and can be invalid. \
+                  Invalid draws the border and nothing else — a red fill behind text \
+                  somebody is still fixing makes it harder to read. Every cell is wrapped in \
+                  a FormControl, because a bare TextInput does not compile: it demands a \
+                  `ControlId`, and FormControl is the only source of one."
         >
             <Cell wide=true label="empty, with a placeholder">
                 <FormControl
@@ -104,23 +98,13 @@ fn FormControls() -> impl IntoView {
     view! {
         <Story
             title="FormControl"
-            note="FormControl hands its control the ids it allocated, through a closure. That \
-                  closure is the whole design: ControlId's constructor is PRIVATE, every \
-                  control that belongs in a form demands one, so an unlabelled control is a \
-                  compile error. Primer leaves that to eslint and axe in CI — we have \
-                  neither, and we shipped exactly that bug once when Select's label rendered \
-                  nowhere. \
-                  \
-                  The ids also buy what the previous wrapping-label version could not: the \
-                  caption and the message are now aria-describedby, so they are ANNOUNCED. \
-                  They could never be inside the label, because everything in a label \
-                  becomes part of the name, and 'Package name owner/package-name Use \
-                  owner/name' is a worse name than 'Package name'. \
-                  \
-                  The error carries the Danger tone's own glyph, so it agrees with every \
-                  other red thing on the page and survives greyscale. Required says the \
-                  word rather than showing an asterisk, which is a convention you have to \
-                  have learned."
+            note="FormControl hands its control the ids it allocated, through a closure. \
+                  `ControlId`'s constructor is private and every form control demands one, \
+                  so an unlabelled control is a compile error rather than an audit finding — \
+                  we shipped exactly that bug once, when Select's label rendered nowhere. \
+                  The caption and the message are `aria-describedby`, so they are announced; \
+                  inside a label they would have become part of the name. Required says the \
+                  word rather than drawing an asterisk."
         >
             <Cell wide=true label="label only">
                 <FormControl
@@ -304,19 +288,12 @@ pub fn DialogScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · the two dialogs"
-            note="OPEN THEM — the parts worth reviewing are the ones only a modal has. Tab: \
-                  focus is trapped inside, which none of v1's four overlays does. Escape \
-                  closes, which none of them handles. The backdrop is the platform's top \
-                  layer, so there is no z-index and nothing can clip it — v1's \
-                  div.popup-overlay could be clipped by any ancestor's overflow. \
-                  \
-                  Clicking the backdrop does NOT close them, deliberately unlike v1. Every \
-                  one of these holds a form, and a stray click discarding what you typed is \
-                  a bad trade for saving a movement to Cancel. \
-                  \
-                  This one <dialog> replaces four hand-rolled overlays: set_remote_popup, \
-                  ignore_popup, workflow_select, and the create-package form inside \
-                  installed_packages_list."
+            note="Open them. Tab: focus is trapped, which none of v1's four overlays does. \
+                  Escape closes, which none of them handles. The backdrop is the platform's \
+                  top layer, so there is no z-index and no ancestor can clip it. Clicking \
+                  the backdrop does not close them, deliberately: each holds a form, and a \
+                  stray click discarding what you typed is a bad trade for saving a movement \
+                  to Cancel."
         >
             <div class="g-inline">
                 <Button on_click=move |_| bucket_open.set(true)>"Choose S3 bucket"</Button>

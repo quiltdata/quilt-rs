@@ -16,21 +16,12 @@ pub fn ActionMenuStories() -> impl IntoView {
     view! {
         <Story
             title="ActionMenu"
-            note="Select picks a value; ActionMenu fires a command. That sentence is why \
-                  this is allowed where the design ships no listbox and no combobox — those \
-                  replace a native control that already works, and there is no native \
-                  element for `run one of these`. \
-                  \
-                  No role=menu, deliberately: that role promises arrow-key navigation, and \
-                  hand-writing roving focus is the specific thing the rule forbids. These \
-                  are buttons, reached with Tab, in the order they are read. Open one and \
-                  Tab through it. \
-                  \
-                  A disabled command carries its reason rather than a flag, because the \
-                  component makes the explanation the only way to grey one out — an \
-                  unexplained grey item is what people file bugs about. The destructive \
-                  command sits below a rule and takes a confirmation afterwards; the menu \
-                  picks the command, the dialog accepts the consequence."
+            note="Select picks a value; ActionMenu fires a command — and there is no native \
+                  element for `run one of these`. Open one and Tab through it: these are \
+                  buttons in reading order, with no `role=menu`, because that role promises \
+                  arrow keys and hand-writing roving focus is the thing the design forbids. \
+                  A disabled command carries its reason rather than a flag. The destructive \
+                  one sits below a rule and takes a confirmation afterwards."
         >
             <Cell wide=true label="a file's row menu">
                 <ActionMenu

@@ -49,6 +49,7 @@ mod gallery {
     pub mod card;
     pub mod checkbox;
     pub mod choice_group;
+    pub mod context_pane;
     pub mod countdown;
     pub mod entry_group;
     pub mod entry_row;
@@ -58,6 +59,7 @@ mod gallery {
     pub mod forms;
     pub mod host_row;
     pub mod list_toolbar;
+    pub mod load_failure;
     pub mod package_header;
     pub mod packages;
     pub mod page;
@@ -86,6 +88,7 @@ use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
 use crate::gallery::checkbox::CheckboxStories;
 use crate::gallery::choice_group::ChoiceGroupStories;
+use crate::gallery::context_pane::ContextPaneScene;
 use crate::gallery::countdown::CountdownStories;
 use crate::gallery::entry_group::EntryGroupStories;
 use crate::gallery::entry_row::EntryRowStories;
@@ -97,6 +100,7 @@ use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::list_toolbar::ListToolbarScene;
+use crate::gallery::load_failure::LoadFailureStories;
 use crate::gallery::package_header::PackageHeaderScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
@@ -196,6 +200,7 @@ fn Gallery() -> impl IntoView {
                 ("PaneSection", view! { <PaneSectionStories /> }.into_any()),
                 ("RevisionRow", view! { <RevisionRowStories /> }.into_any()),
                 ("ChoiceGroup", view! { <ChoiceGroupStories /> }.into_any()),
+                ("LoadFailure", view! { <LoadFailureStories /> }.into_any()),
                 ("SelectAll", view! { <SelectAllStories /> }.into_any()),
                 ("EntryRow", view! { <EntryRowStories /> }.into_any()),
                 ("EntryGroup", view! { <EntryGroupStories /> }.into_any()),
@@ -236,6 +241,10 @@ fn Gallery() -> impl IntoView {
                     view! { <PackageHeaderScene /> }.into_any(),
                 ),
                 (
+                    "The context pane",
+                    view! { <ContextPaneScene /> }.into_any(),
+                ),
+                (
                     "A check that failed",
                     view! { <UncheckedScene /> }.into_any(),
                 ),
@@ -258,6 +267,11 @@ fn Gallery() -> impl IntoView {
                 <Button on_click=move |_| dark.update(|d| *d = !*d)>
                     {move || if dark.get() { "Light theme" } else { "Dark theme" }}
                 </Button>
+                // The index scrolls, the theme toggle does not: the nav is taller
+                // than a short window long before the gallery is finished, and a
+                // control that scrolls out of a pinned sidebar is a control nobody
+                // finds again.
+                <div class="g-nav__index">
                 {index
                     .into_iter()
                     .map(|(tier, labels)| {
@@ -280,6 +294,7 @@ fn Gallery() -> impl IntoView {
                         }
                     })
                     .collect_view()}
+                </div>
             </nav>
             <main class="g-main">
                 <header class="g-head">

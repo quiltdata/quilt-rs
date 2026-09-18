@@ -38,16 +38,11 @@ pub fn SelectStories() -> impl IntoView {
         <Story
             title="Select"
             note="A native select in a bordered wrapper: our closed state, the OS's open \
-                  dropdown. Open one — the list is the platform's, which is the whole point \
-                  and the thing to check in Epiphany. Clicking anywhere on the box opens it, \
-                  because the select itself is stretched over the whole wrapper at opacity 0 \
-                  — a wrapping label would not have done it, since browsers deliberately \
-                  never synthesise 'open the dropdown' from a label click. \
-                  \
+                  dropdown. Open one — the list is the platform's, which is the point, and \
+                  the thing to check in Epiphany. Clicking anywhere on the box opens it, \
+                  because the select is stretched over the whole wrapper at opacity 0. \
                   Naming is a required enum with no anonymous variant, so there is no way to \
-                  build a select nobody can name. Three ways, all three below: Prefix draws \
-                  the name inside the control, Hidden puts it in aria-label, and FormControl \
-                  hands the naming to a FormControl's label and takes its ids."
+                  build a select nobody can name; all three ways are below."
         >
             <Cell label="visible label — the toolbar's form">
                 <Select naming=Naming::Prefix("Group".to_string()) options=axes() selected=group />

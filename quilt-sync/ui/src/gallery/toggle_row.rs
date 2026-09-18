@@ -25,30 +25,14 @@ fn TrailingStates() -> impl IntoView {
     view! {
         <Story
             title="ToggleRow — armed · idle · paused"
-            note="ARMED counts down. IDLE says why it is not counting, because a blank \
-                  leaves the user guessing between broken, working, and nothing to do. \
-                  PAUSED is the third state the earlier design had no representation for, \
-                  and it is the whole of the 2026-07-11 report: autosync stopped on a \
-                  transient error, never re-armed, and said nothing — so the app looked \
-                  stuck while its switch read on. \
-                  \
-                  Note what paused does NOT do. The checkbox stays ON, because the setting \
-                  IS on — what stopped is the machinery, and a checkbox that lied about \
-                  the setting would be worse. And it stays ENABLED, because flipping it \
-                  off and on is one of only three ways to clear the pause today; \
-                  disabling it would remove the user's only lever. \
-                  \
-                  It is a StateLabel rather than plain text, so the pause gets the tone's \
-                  glyph and survives greyscale like every other attention state on the \
-                  page. \
-                  \
-                  There is no Resume button, here or anywhere. All six PausedReason \
-                  variants are things the USER must fix — RoleDenied says outright that \
-                  retrying cannot help, and Other is documented as non-transient — so a \
-                  resume control would offer to retry something that pauses again on the \
-                  next tick. The fix always lives in the queue row that named the reason, \
-                  and publishing or resolving clears the pause as a side effect. See the \
-                  two paused scenes."
+            note="Armed counts down. Idle says why it is not counting, because a blank \
+                  leaves the reader guessing between broken, working, and nothing to do. \
+                  Paused is the third state the earlier design had no representation for, \
+                  and it is the whole of the 2026-07-11 report. Note what paused does not \
+                  do: the checkbox stays on, because the setting is on and what stopped is \
+                  the machinery, and it stays enabled, because flipping it is one of only \
+                  three ways to clear the pause today. There is no Resume button anywhere — \
+                  all six `PausedReason` variants are things the user has to fix."
         >
             <Cell wide=true label="armed — a next tick exists">
                 <Card title="Autosync">

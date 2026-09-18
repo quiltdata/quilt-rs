@@ -6,12 +6,39 @@
  * needs it.
  */
 
+/* `width` and not just `max-width`. A `PaneSection` lays its children out with
+ * `align-items: flex-start`, so a child is sized to its content and a long
+ * message grows the row past the pane instead of ellipsising inside it — which
+ * is invisible in a wide cell and immediate at the pane's 280px. */
 .root {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  min-width: 0;
+  width: 100%;
+}
+
+/* The message over the time, beside the glyph rather than under it: a list of
+ * these is a column, and a time indented to clear an icon reads as a second
+ * kind of row. */
+.body {
   display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
-  max-width: 100%;
+  flex: 1;
+}
+
+/* Quiet, and the same size as the text it stands beside. It states a fact about
+ * the revision, not a status the page is asking anyone to act on — the `2px`
+ * lifts it onto the message's baseline. */
+.glyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  color: var(--q-fgColor-muted);
 }
 
 /* Ellipsised rather than wrapped. A revisions list is a column of these, and one
@@ -23,6 +50,34 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--q-text-body);
+}
+
+/* A link, and styled as one. The row is not: the time beside the message is when
+ * *this copy* obtained the revision, which is not a fact the catalog holds. */
+.link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-accent);
+  text-decoration: none;
+}
+
+/* The placeholder keeps its italics and takes the link colour: two classes beat
+ * the one that greys it, so an unnamed revision still reads as reachable. */
+.link.empty {
+  color: var(--q-fgColor-accent);
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.link:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+  border-radius: var(--q-radius);
 }
 
 .empty {

@@ -97,21 +97,13 @@ fn root_files(pending: RwSignal<bool>, grouped: RwSignal<bool>) -> AnyView {
 }
 
 const NOTE: &str = "A container, not a heading: it holds its rows, owns whether they are \
-                  shown, and carries a box that ticks all of them. GroupHeading stays flat \
-                  for the pages that emit one between runs of rows. \
-                  \
-                  A collapsed group renders nothing — `Show`, not `display: none`. The \
-                  1000-entry cap is argued partly on grouping sparing the DOM, and a hidden \
-                  subtree is still built, so hiding with CSS would have made that argument \
-                  false while looking identical. Collapse one and inspect it. \
-                  \
-                  The heading cannot be a label, because it holds the disclosure button and \
-                  a label may not contain another labelable element — so the box names \
-                  itself, and the name says which group, since a list of them all reading \
-                  `Select all` names nothing. \
-                  \
-                  Scroll the last cell: the heading sticks, and it costs 29px against a \
-                  32px row, which at the height floor is most of a row per heading.";
+                    shown, and carries a box that ticks all of them. A collapsed group \
+                    renders nothing — `Show`, not `display: none`, because the 1000-entry \
+                    cap is argued partly on grouping sparing the DOM. Collapse one and \
+                    inspect it. The heading cannot be a label, since it holds the disclosure \
+                    button, so the box names its own group: a column of `Select all` names \
+                    nothing. Scroll the last cell — the heading sticks, and costs 29px \
+                    against a 32px row.";
 
 /// The group whose heading box is derived from its three rows, so the heading
 /// and the rows can never disagree about how many are ticked.

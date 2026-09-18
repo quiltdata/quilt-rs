@@ -27,6 +27,15 @@
   color: var(--q-fgColor-muted);
 }
 
+/* A section inside a section fills the one above it. `align-items: flex-start`
+ * sizes children to their content, which is what keeps a Button from stretching
+ * — but it also lets a nested section take its own width from its widest child,
+ * and a child that has to ellipsise inside a 280px pane can then never see the
+ * width it is supposed to fit. */
+.root > .root {
+  width: 100%;
+}
+
 /* A section inside a section. The tracking goes and the weight drops, so two
  * levels of label are two levels to look at. */
 .nested > .label {
@@ -42,4 +51,18 @@
  * quieter of the two. */
 .root > .root + .root {
   margin-top: var(--q-space-2);
+}
+
+/* Two blocks of a pane are divided, and the rule gets the same air above it as
+ * below. `Card` draws a flush hairline between any two of its children, which is
+ * right for rows — they carry their own padding — and wrong here: against a
+ * section that has none it lands on the last control and reads as that control's
+ * underline. `margin` is the space above the rule, `padding` the space below.
+ *
+ * Top-level sections only. Two nested ones are the sides of a resolve, which the
+ * sentence above them has already joined. */
+.root:not(.nested) + .root:not(.nested) {
+  border-top: 1px solid var(--q-borderColor-muted);
+  margin-top: var(--q-space-3);
+  padding-top: var(--q-space-3);
 }
