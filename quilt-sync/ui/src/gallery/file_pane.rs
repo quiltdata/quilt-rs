@@ -124,7 +124,7 @@ use quilt_sync_ui::util::format_size;
 /// The pane at a 1024 window: 1024 less `page_layout`'s 32 of padding, less the
 /// context pane's fixed 280 and the gap between them. Every measurement this
 /// scene reports is at this width.
-const PANE: &str = "width:700px; max-width:100%";
+const PANE: &str = "width:700px; max-width:100%; gap:var(--q-space-2)";
 
 /// The list's viewport with nothing ticked, and with a footer under it. §9's
 /// number is the second one, and it quotes it as the page's capacity — which is
