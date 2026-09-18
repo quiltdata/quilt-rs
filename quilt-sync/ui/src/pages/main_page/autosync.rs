@@ -337,29 +337,10 @@ pub fn AutosyncCard(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mount;
+    use crate::test_support::sleep_ms;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
-
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
-
-    /// A promise-backed sleep. The crate has no `gloo-timers` and needs none:
-    /// this is four lines over `set_timeout` and `wasm-bindgen-futures` is
-    /// already a dependency.
-    async fn sleep_ms(ms: i32) {
-        let promise = js_sys::Promise::new(&mut |resolve, _| {
-            window()
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
-                .unwrap();
-        });
-        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
-    }
 
     /// Pull armed `ms` from now, publish with nothing to do.
     fn armed_in_ms(ms: f64) -> MainPageWatcherData {
