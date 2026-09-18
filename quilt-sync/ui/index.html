@@ -3,6 +3,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    The first paint, before the wasm module exists. `theme::follow_os` and
+    `theme::set_v2` set these same two things, but only once Rust is running, and
+    a document with no theme and no marker paints white whatever the OS says.
+
+    The flag is last session's answer, not this one's: `/` reads the real setting
+    and `set_v2` corrects the marker. A first-ever launch has nothing stored and
+    opens light.
+
+    `data-booting` keeps this to the empty frame — `_base.scss` hangs the dark
+    canvas off it, and `main` clears it before the mount.
+  -->
+  <script>
+    (function () {
+      var root = document.documentElement;
+      try {
+        if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+          root.setAttribute("data-theme", "dark");
+        } else {
+          root.setAttribute("data-theme", "light");
+        }
+      } catch (e) {}
+      try {
+        if (window.localStorage.getItem("quiltsync.main-page-v2") === "1") {
+          root.classList.add("qui-v2");
+          root.setAttribute("data-booting", "");
+        }
+      } catch (e) {}
+    })();
+  </script>
   <!-- copy assets into dist/ -->
   <link data-trunk rel="copy-dir" href="assets" />
   <!-- fonts -->

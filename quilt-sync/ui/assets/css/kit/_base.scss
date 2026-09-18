@@ -51,6 +51,17 @@ body {
   color-scheme: dark;
 }
 
+/* The launch window. Every rule above needs an element, and the frame before the
+ * wasm module mounts has none — its canvas is the UA's. `index.html` sets the
+ * three attributes this reads before the first paint, and `theme::stop_booting`
+ * clears `data-booting` in `main` before the mount, so the dark canvas covers
+ * the empty frame and nothing after it. That scoping is the point: a v2 reader
+ * opens v1's pages too, and those draw on a light canvas. */
+:root.qui-v2[data-theme="dark"][data-booting] {
+  color-scheme: dark;
+  background: var(--q-bgColor-page);
+}
+
 /* Every button here is styled, so strip native chrome: one that forgets its
  * module renders as bare text — a visible reminder rather than a subtly-wrong
  * native widget. */
