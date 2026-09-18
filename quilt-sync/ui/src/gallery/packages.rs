@@ -467,7 +467,7 @@ pub fn PackagesScene() -> impl IntoView {
         <Scene
             title="Scene · packages, no results"
             note="One Blankslate component for both empties. No results carries no action \
-                  *yet* — an empty list is a frustration and the way out of it is still to \
+                  yet — an empty list is a frustration and the way out of it is still to \
                   design, which is a deferral rather than the rule this note used to state."
         >
             <Blankslate

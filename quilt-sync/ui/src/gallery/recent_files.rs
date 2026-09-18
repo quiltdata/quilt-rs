@@ -264,7 +264,7 @@ fn Empties() -> impl IntoView {
     view! {
         <Story
             title="Blankslate"
-            note="One component for both empties. No results carries no action *yet* — an \
+            note="One component for both empties. No results carries no action yet — an \
                   empty list is a frustration and the way out of it is still to design, which \
                   is a deferral rather than the rule this note used to state."
         >
