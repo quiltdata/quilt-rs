@@ -567,16 +567,17 @@ mod tests {
         assert!(matches!(parsed, PackageState::Unknown));
     }
 
-    /// The header borrows the list's chip words for every state but `Behind`, and
-    /// that single exception is the whole reason [`Site::PageHeader`] exists.
+    /// Every variant, as one fixture the sweeps below share.
     ///
-    /// Written as a sweep rather than a table so it fails from both directions: a
-    /// second divergence added without thought breaks it, and so does someone
-    /// deleting the one divergence and leaving the site behind as a synonym for
-    /// `ListRow`.
-    #[wasm_bindgen_test]
-    fn the_page_header_borrows_the_list_except_for_behind() {
-        let all = [
+    /// The guard underneath is an exhaustive match that binds nothing, so adding
+    /// a `PackageState` **fails to compile here**. That is the point: the
+    /// production matches in `words`, `tone` and `action` already force a new
+    /// state to answer for itself, but a hand-written test array does not — a new
+    /// state could quietly escape every sweep while they all still passed. The
+    /// compiler now sends you to this one place, and the comment tells you what
+    /// to do when it does.
+    fn every_state() -> Vec<PackageState> {
+        let all = vec![
             PackageState::Latest,
             PackageState::Behind,
             PackageState::PendingChanges { files: 2 },
@@ -591,6 +592,37 @@ mod tests {
             PackageState::Paused,
             PackageState::Unknown,
         ];
+
+        // When this stops compiling, add the new variant to `all` above.
+        for state in &all {
+            match state {
+                PackageState::Latest
+                | PackageState::Behind
+                | PackageState::PendingChanges { .. }
+                | PackageState::PendingCommit
+                | PackageState::Diverged
+                | PackageState::PullConflict { .. }
+                | PackageState::RoleDenied { .. }
+                | PackageState::NoRemote
+                | PackageState::Unpublished
+                | PackageState::Paused
+                | PackageState::Unknown => {}
+            }
+        }
+
+        all
+    }
+
+    /// The header borrows the list's chip words for every state but `Behind`, and
+    /// that single exception is the whole reason [`Site::PageHeader`] exists.
+    ///
+    /// Written as a sweep rather than a table so it fails from both directions: a
+    /// second divergence added without thought breaks it, and so does someone
+    /// deleting the one divergence and leaving the site behind as a synonym for
+    /// `ListRow`.
+    #[wasm_bindgen_test]
+    fn the_page_header_borrows_the_list_except_for_behind() {
+        let all = every_state();
 
         for state in &all {
             let header = render(state, Site::PageHeader).words;
@@ -619,21 +651,7 @@ mod tests {
         const BANNED: &[&str] = &[
             "commit", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty",
         ];
-        let all = [
-            PackageState::Latest,
-            PackageState::Behind,
-            PackageState::PendingChanges { files: 2 },
-            PackageState::PendingCommit,
-            PackageState::Diverged,
-            PackageState::PullConflict { files: vec![] },
-            PackageState::RoleDenied {
-                role: Some("analyst".to_string()),
-            },
-            PackageState::NoRemote,
-            PackageState::Unpublished,
-            PackageState::Paused,
-            PackageState::Unknown,
-        ];
+        let all = every_state();
         for state in &all {
             for site in [Site::ListRow, Site::QueueRow, Site::Cause, Site::PageHeader] {
                 let words = render(state, site).words.to_lowercase();

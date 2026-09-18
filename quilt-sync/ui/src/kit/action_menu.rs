@@ -217,8 +217,15 @@ pub(super) fn surface(actions: Vec<MenuAction>, open: RwSignal<bool>) -> AnyView
 /// deliberately does not hand-write — the same reason `ActionMenu` declines
 /// `role="menu"`. `aria-current` states which one is active and claims nothing
 /// about how to move between them.
+///
+/// **`current` and `selected` are two different things and must stay so.**
+/// `current` is what the face is showing, already normalised; `selected` is the
+/// caller's raw store, which a stale preference can put out of range. Marking
+/// from the raw value leaves every option unticked while the face shows one of
+/// them — the menu saying "none of these" about a button that is about to run.
 pub(super) fn choices(
     labels: Vec<String>,
+    current: Signal<usize>,
     selected: RwSignal<usize>,
     open: RwSignal<bool>,
 ) -> AnyView {
@@ -227,7 +234,7 @@ pub(super) fn choices(
         .enumerate()
         .map(|(index, label)| {
             let class = format!("{} {}", style::item, style::choice);
-            let is_current = move || selected.get() == index;
+            let is_current = move || current.get() == index;
             view! {
                 <button
                     type="button"

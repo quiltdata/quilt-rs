@@ -180,7 +180,7 @@ pub fn SplitButton(
                 align=Align::End
                 tight=true
             >
-                {action_menu::choices(labels, selected, open)}
+                {action_menu::choices(labels, index, selected, open)}
             </AnchoredOverlay>
         </div>
     }
@@ -346,6 +346,18 @@ mod tests {
         assert_eq!(buttons(&root)[0].text_content().unwrap().trim(), "Publish");
         buttons(&root)[0].click();
         assert_eq!(ran.get_untracked(), vec!["publish".to_string()]);
+
+        // And the menu agrees with the face. Marking from the raw selection
+        // rather than the fallback leaves every option unticked while the face
+        // shows one of them — the menu would be saying "none of these" about a
+        // button that is about to run `Publish`.
+        let found = buttons(&root);
+        assert_eq!(
+            found[2].get_attribute("aria-current").as_deref(),
+            Some("true"),
+            "the option the face fell back to must be the marked one"
+        );
+        assert_eq!(found[3].get_attribute("aria-current"), None);
     }
 
     #[wasm_bindgen_test]
