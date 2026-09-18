@@ -93,7 +93,9 @@ pub fn RecentFilesRegion(
                 files: visible,
             }];
         }
-        // `BTreeMap` gives the alphabetical group order. Pushing in arrival
+        // `BTreeMap` gives the group order, and it is the namespace's own —
+        // owner, then package — not the display string's, which sorts `/` after
+        // `-` and would put `acme-labs/x` ahead of `acme/y`. Pushing in arrival
         // order keeps the backend's newest-first order inside a group, which
         // nothing here re-derives.
         let mut by_namespace: BTreeMap<Namespace, Vec<MainPageFileData>> = BTreeMap::new();
@@ -603,6 +605,25 @@ mod tests {
             "groups are alphabetical, NOT ordered by their newest file — that is \
              the arrangement §3.2 rejects: {text}"
         );
+    }
+
+    /// The one case where the namespace's order and its text's disagree: an
+    /// owner that is a prefix of another owner. `acme` sorts before `acme-labs`
+    /// as owners do, though `acme-labs/plate` would come first as text.
+    #[wasm_bindgen_test]
+    fn the_feed_orders_owners_as_owners_not_as_text() {
+        let el = mount_feed_grouped(
+            vec![
+                file("one.csv", "acme-labs/plate", 9_000.0),
+                file("two.csv", "acme/plate", 1_000.0),
+            ],
+            GROUP_PACKAGE,
+        );
+
+        let text = el.text_content().unwrap();
+        let acme = text.find("acme/plate").expect("acme");
+        let labs = text.find("acme-labs/plate").expect("acme-labs");
+        assert!(acme < labs, "got: {text}");
     }
 
     #[wasm_bindgen_test]
