@@ -76,9 +76,12 @@ pub(crate) fn detailed_row(
     detail: Option<String>,
 ) -> AnyView {
     let rendered = render(state, Site::QueueRow);
+    // The scenes name their packages as literals; the rows address them through
+    // the type, exactly as the page does.
+    let addressed = quilt_uri::Namespace::try_from(namespace).expect("a scene namespace");
     let remedy = rendered.action.map(|action| Remedy {
         action,
-        href: action_href(action, namespace),
+        href: action_href(action, &addressed),
     });
     view! {
         <QueueRow

@@ -31,6 +31,7 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
+use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
 use crate::commands;
@@ -229,7 +230,7 @@ struct PackageStore {
     /// rather than a signal: seeding fixes the keys for the life of the payload,
     /// and only the signals inside an entry ever change — so nothing that reads
     /// the map should re-run when a row settles.
-    rows: StoredValue<HashMap<String, RowSignals>>,
+    rows: StoredValue<HashMap<Namespace, RowSignals>>,
     /// Heavy-phase calls not yet answered. R3: the queue may not claim an
     /// all-clear while any of them is outstanding, and `provisional` cannot
     /// carry that — a failed refresh stays provisional forever.
@@ -258,7 +259,7 @@ impl PackageStore {
 
     /// This package's live state, or `None` for a namespace the store was not
     /// seeded with.
-    fn row(&self, namespace: &str) -> Option<RowSignals> {
+    fn row(&self, namespace: &Namespace) -> Option<RowSignals> {
         self.rows.with_value(|rows| rows.get(namespace).copied())
     }
 
@@ -366,8 +367,8 @@ fn record_refresh(
 /// The rows are looked up BEFORE the counter is raised, so a namespace with no row
 /// cannot leave `outstanding` permanently above zero and the queue silent forever
 /// (R3) — the same hazard the resolve's own `store.answered()` arm guards.
-fn recheck(store: PackageStore, namespaces: &[String]) {
-    let rows: Vec<(String, RowSignals)> = namespaces
+fn recheck(store: PackageStore, namespaces: &[Namespace]) {
+    let rows: Vec<(Namespace, RowSignals)> = namespaces
         .iter()
         .filter_map(|namespace| Some((namespace.clone(), store.row(namespace)?)))
         .collect();
@@ -375,7 +376,7 @@ fn recheck(store: PackageStore, namespaces: &[String]) {
     for (namespace, row) in rows {
         row.mark_pending();
         leptos::task::spawn_local(async move {
-            let result = commands::refresh_main_page_package(namespace).await;
+            let result = commands::refresh_main_page_package(namespace.to_string()).await;
             record_refresh(row, store, result);
         });
     }
@@ -389,7 +390,7 @@ fn recheck(store: PackageStore, namespaces: &[String]) {
 /// to be mounted.
 #[component]
 fn PackageListRow(
-    namespace: String,
+    namespace: Namespace,
     /// This package's live state, owned by the page's [`PackageStore`].
     row: RowSignals,
     changed_at: Option<f64>,
@@ -400,7 +401,7 @@ fn PackageListRow(
 
     view! {
         <PackageRow
-            namespace=namespace
+            namespace=namespace.to_string()
             href=href
             changed_at=changed_at
             state=words
@@ -673,7 +674,7 @@ fn files_view(
     // failed, which is why it is passed rather than read here: the feed is a
     // payload of its own and stands whatever the other one did, but with no
     // packages there are no addresses and so no Copy buttons.
-    addresses: HashMap<String, S3PackageUri>,
+    addresses: HashMap<Namespace, S3PackageUri>,
 ) -> AnyView {
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
@@ -975,7 +976,8 @@ fn MainPageRegions(
                             let namespace = package.namespace.clone();
                             leptos::task::spawn_local(async move {
                                 let result =
-                                    commands::refresh_main_page_package(namespace).await;
+                                    commands::refresh_main_page_package(namespace.to_string())
+                                        .await;
                                 record_refresh(row, store, result);
                             });
                         }
@@ -990,14 +992,14 @@ fn MainPageRegions(
                         // The feed's Copy action addresses a package, and only
                         // this payload carries the bucket. A package without one
                         // is absent here, and its rows draw no Copy button.
-                        let addresses: HashMap<String, S3PackageUri> = light
+                        let addresses: HashMap<Namespace, S3PackageUri> = light
                             .iter()
                             .filter_map(|p| {
                                 let uri = util::package_uri(
                                     p.bucket.as_deref()?,
                                     &p.namespace,
                                     p.host.as_deref(),
-                                )?;
+                                );
                                 Some((p.namespace.clone(), uri))
                             })
                             .collect();
@@ -1020,7 +1022,7 @@ fn MainPageRegions(
                         let unchecked = Signal::derive(move || store.unchecked(&unchecked_light));
                         let in_flight = Signal::derive(move || store.in_flight());
                         let retry =
-                            Callback::new(move |namespaces: Vec<String>| {
+                            Callback::new(move |namespaces: Vec<Namespace>| {
                                 recheck(store, &namespaces);
                             });
                         // The accounts read is awaited here too, for the queue's
@@ -1363,7 +1365,7 @@ const STATUS_BURST: std::time::Duration = std::time::Duration::from_millis(250);
 #[derive(Clone, Copy)]
 struct StatusWatch {
     /// The last fingerprint acted on, per namespace.
-    seen: StoredValue<HashMap<String, String>>,
+    seen: StoredValue<HashMap<Namespace, String>>,
     timer: StoredValue<Option<TimeoutHandle>>,
     reload: Trigger,
 }
@@ -1446,12 +1448,17 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
+    /// The scenes name packages as text; the payloads carry the type.
+    fn ns(text: &str) -> Namespace {
+        Namespace::try_from(text).expect("a namespace")
+    }
+
     /// One light-phase row, in any state the caller names. `provisional: true`
     /// as the light phase always delivers it, and every other field empty: the
     /// store's tests are about the signals, not about the payload's trimmings.
     fn pkg(namespace: &str, state: PackageState) -> MainPagePackageData {
         MainPagePackageData {
-            namespace: namespace.to_string(),
+            namespace: ns(namespace),
             state,
             changed_at: None,
             bucket: None,
@@ -1496,13 +1503,13 @@ mod tests {
             pkg("a/two", PackageState::Behind),
         ]);
 
-        let one = store.row("a/one").expect("seeded from this payload");
+        let one = store.row(&ns("a/one")).expect("seeded from this payload");
         assert_eq!(one.state.get_untracked(), PackageState::Latest);
         assert!(
             one.confidence.get_untracked() == Confidence::Pending,
             "the light phase's guess is provisional by construction"
         );
-        assert!(store.row("b/absent").is_none());
+        assert!(store.row(&ns("b/absent")).is_none());
         assert_eq!(store.outstanding.get_untracked(), 2, "one call per package");
     }
 
@@ -1542,7 +1549,7 @@ mod tests {
         let settled = store.settled(&light);
 
         assert_eq!(settled.len(), 1, "the conflict, and only the conflict");
-        assert_eq!(settled[0].namespace, "a/paused");
+        assert_eq!(settled[0].namespace.to_string(), "a/paused");
         assert_eq!(
             settled[0].state,
             PackageState::PullConflict {
@@ -1562,7 +1569,7 @@ mod tests {
         ];
         let store = PackageStore::seed(&light);
         store
-            .row("a/confirmed")
+            .row(&ns("a/confirmed"))
             .unwrap()
             .apply(MainPagePackageRefreshData {
                 state: PackageState::PendingChanges { files: 1 },
@@ -1571,7 +1578,7 @@ mod tests {
 
         let settled = store.settled(&light);
         assert_eq!(settled.len(), 1, "only the confirmed one");
-        assert_eq!(settled[0].namespace, "a/confirmed");
+        assert_eq!(settled[0].namespace.to_string(), "a/confirmed");
         assert_eq!(
             settled[0].state,
             PackageState::PendingChanges { files: 1 },
@@ -1597,7 +1604,7 @@ mod tests {
             "nothing is confirmed yet (R2)"
         );
 
-        settle(store, "user/plate-07", PackageState::Behind);
+        settle(store, &ns("user/plate-07"), PackageState::Behind);
         leptos::task::tick().await;
 
         assert_eq!(
@@ -1621,7 +1628,7 @@ mod tests {
         assert!(el.text_content().unwrap().contains("Latest"));
 
         store
-            .row("user/plate-07")
+            .row(&ns("user/plate-07"))
             .unwrap()
             .apply(MainPagePackageRefreshData {
                 state: PackageState::Behind,
@@ -1713,7 +1720,7 @@ mod tests {
         MainPagePackagesData {
             packages: vec![
                 MainPagePackageData {
-                    namespace: "user/plate-07".to_string(),
+                    namespace: ns("user/plate-07"),
                     state: PackageState::Unknown,
                     changed_at: None,
                     bucket: None,
@@ -1722,7 +1729,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/plate-08".to_string(),
+                    namespace: ns("user/plate-08"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: None,
@@ -1917,7 +1924,7 @@ mod tests {
         MainPagePackagesData {
             packages: vec![
                 MainPagePackageData {
-                    namespace: "user/beta".to_string(),
+                    namespace: ns("user/beta"),
                     state: PackageState::Latest,
                     changed_at: Some(5_000.0),
                     bucket: None,
@@ -1926,7 +1933,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/gamma".to_string(),
+                    namespace: ns("user/gamma"),
                     state: PackageState::Latest,
                     changed_at: Some(9_000.0),
                     bucket: None,
@@ -1935,7 +1942,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/alpha".to_string(),
+                    namespace: ns("user/alpha"),
                     state: PackageState::Latest,
                     changed_at: Some(1_000.0),
                     bucket: None,
@@ -1954,7 +1961,7 @@ mod tests {
         MainPagePackagesData {
             packages: vec![
                 MainPagePackageData {
-                    namespace: "user/plate-07".to_string(),
+                    namespace: ns("user/plate-07"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("team-bucket".to_string()),
@@ -1963,7 +1970,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/plate-08".to_string(),
+                    namespace: ns("user/plate-08"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("team-bucket".to_string()),
@@ -1982,7 +1989,7 @@ mod tests {
         MainPagePackagesData {
             packages: vec![
                 MainPagePackageData {
-                    namespace: "user/alpha-plate".to_string(),
+                    namespace: ns("user/alpha-plate"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("first-bucket".to_string()),
@@ -1991,7 +1998,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/beta-plate".to_string(),
+                    namespace: ns("user/beta-plate"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("second-bucket".to_string()),
@@ -2012,7 +2019,7 @@ mod tests {
         MainPagePackagesData {
             packages: vec![
                 MainPagePackageData {
-                    namespace: "user/plate-07".to_string(),
+                    namespace: ns("user/plate-07"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("team-bucket".to_string()),
@@ -2021,7 +2028,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/plate-08".to_string(),
+                    namespace: ns("user/plate-08"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("team-bucket".to_string()),
@@ -2030,7 +2037,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/solo-plate".to_string(),
+                    namespace: ns("user/solo-plate"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("solo-bucket".to_string()),
@@ -2053,7 +2060,7 @@ mod tests {
         MainPageRecentFilesData {
             files: vec![MainPageFileData {
                 path: "readings/plate-07.csv".to_string(),
-                namespace: "user/plate-07".to_string(),
+                namespace: ns("user/plate-07"),
                 changed_at: 1_700_000_000_000.0,
             }],
         }
@@ -2063,7 +2070,7 @@ mod tests {
     fn file_data(path: &str, namespace: &str, changed_at: f64) -> MainPageFileData {
         MainPageFileData {
             path: path.to_string(),
-            namespace: namespace.to_string(),
+            namespace: ns(namespace),
             changed_at,
         }
     }
@@ -2546,7 +2553,7 @@ mod tests {
         let payload = MainPagePackagesData {
             packages: vec![
                 MainPagePackageData {
-                    namespace: "user/plate-07".to_string(),
+                    namespace: ns("user/plate-07"),
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: Some("team-bucket".to_string()),
@@ -2555,7 +2562,7 @@ mod tests {
                     role_switch_host: None,
                 },
                 MainPagePackageData {
-                    namespace: "user/plate-08".to_string(),
+                    namespace: ns("user/plate-08"),
                     state: PackageState::RoleDenied {
                         role: Some("analyst".to_string()),
                     },
@@ -2609,7 +2616,7 @@ mod tests {
 
     /// The heavy phase's answer for one row, as [`record_refresh`] would apply it
     /// if there were a Tauri host to answer the call.
-    fn settle(store: PackageStore, namespace: &str, state: PackageState) {
+    fn settle(store: PackageStore, namespace: &Namespace, state: PackageState) {
         store
             .row(namespace)
             .expect("the store was seeded with this namespace")
@@ -2784,10 +2791,10 @@ mod tests {
 
         settle(
             seeded_store(slot),
-            "user/plate-07",
+            &ns("user/plate-07"),
             PackageState::PendingChanges { files: 1 },
         );
-        settle(seeded_store(slot), "user/other", PackageState::Latest);
+        settle(seeded_store(slot), &ns("user/other"), PackageState::Latest);
         leptos::task::tick().await;
 
         let queue = queue_text(&el).expect("the queue has something to say");
@@ -2881,7 +2888,7 @@ mod tests {
         let store = seeded_store(slot);
         // One answered, one whose call failed: still provisional, and no longer
         // outstanding. That combination is the whole of this test.
-        settle(store, "user/plate-07", PackageState::Latest);
+        settle(store, &ns("user/plate-07"), PackageState::Latest);
         store.outstanding.set(0);
         leptos::task::tick().await;
 
@@ -2893,7 +2900,7 @@ mod tests {
 
         // And the moment it can be read, the sentence appears — naming both
         // packages, not the one that happened to answer first.
-        settle(store, "user/unreachable", PackageState::Latest);
+        settle(store, &ns("user/unreachable"), PackageState::Latest);
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
         assert!(
@@ -3570,7 +3577,7 @@ mod tests {
         // The other half, so the test above cannot pass on a `record_refresh` that
         // never writes anything at all.
         let store = PackageStore::seed(&[pkg("user/a", PackageState::Latest)]);
-        let row = store.row("user/a").expect("seeded");
+        let row = store.row(&ns("user/a")).expect("seeded");
 
         record_refresh(
             row,
@@ -3878,7 +3885,7 @@ mod tests {
     /// One status event, carrying the two fields a refetch decision reads.
     fn status_event(namespace: &str, fingerprint: &str) -> commands::PackageStatusEvent {
         commands::PackageStatusEvent {
-            namespace: namespace.to_string(),
+            namespace: ns(namespace),
             status: "behind".to_string(),
             has_changes: false,
             fingerprint: fingerprint.to_string(),
@@ -4019,21 +4026,21 @@ mod tests {
         ];
         let store = PackageStore::seed(&light);
         store
-            .row("a/confirmed")
+            .row(&ns("a/confirmed"))
             .unwrap()
             .apply(MainPagePackageRefreshData {
                 state: PackageState::Latest,
                 role_switch_host: None,
             });
         record_refresh(
-            store.row("a/failed").unwrap(),
+            store.row(&ns("a/failed")).unwrap(),
             store,
             Err("no route to host".to_string()),
         );
 
         let unchecked = store.unchecked(&light);
         assert_eq!(unchecked.len(), 1, "only the one whose check failed");
-        assert_eq!(unchecked[0].namespace, "a/failed");
+        assert_eq!(unchecked[0].namespace.to_string(), "a/failed");
     }
 
     #[wasm_bindgen_test]
@@ -4045,13 +4052,13 @@ mod tests {
         let light = vec![pkg("a/failed", PackageState::Behind)];
         let store = PackageStore::seed(&light);
         record_refresh(
-            store.row("a/failed").unwrap(),
+            store.row(&ns("a/failed")).unwrap(),
             store,
             Err("credential vending failed".to_string()),
         );
 
         assert_eq!(
-            store.row("a/failed").unwrap().state.get_untracked(),
+            store.row(&ns("a/failed")).unwrap().state.get_untracked(),
             PackageState::Behind,
             "a failed check must not overwrite what the light phase knew"
         );

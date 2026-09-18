@@ -182,14 +182,15 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // so each row re-reads its `paused_reason` from the backend.
     let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
         let is_paused = ev.status == "paused";
-        let was_paused = paused_seen.with_untracked(|seen| seen.contains(&ev.namespace));
+        let was_paused =
+            paused_seen.with_untracked(|seen| seen.contains(&ev.namespace.to_string()));
         if is_paused != was_paused {
             let ns = ev.namespace.clone();
             paused_seen.update(|seen| {
                 if is_paused {
-                    seen.insert(ns);
+                    seen.insert(ns.to_string());
                 } else {
-                    seen.remove(&ns);
+                    seen.remove(&ns.to_string());
                 }
             });
             refetch.notify();
@@ -223,7 +224,8 @@ pub fn InstalledPackagesList() -> impl IntoView {
         // diverged) are already legible from the per-row status string;
         // `other` and `pullConflict` carry information it drops, so only
         // those toast (see `paused_toast`).
-        let Some(msg) = paused_toast(&ev.reason, &ev.namespace, ev.message.as_deref()) else {
+        let Some(msg) = paused_toast(&ev.reason, &ev.namespace.to_string(), ev.message.as_deref())
+        else {
             return;
         };
         notification.set(Some(Notification::Error(msg)));
@@ -387,7 +389,7 @@ fn PackageItem(
 
     let ns = data.namespace.clone();
     leptos::task::spawn_local(async move {
-        let result = commands::refresh_package_status(ns).await;
+        let result = commands::refresh_package_status(ns.to_string()).await;
         if cancelled_flag.load(Ordering::Relaxed) {
             return;
         }
@@ -446,7 +448,7 @@ fn PackageItem(
 
     let pkg_href = crate::routes::package_page_href(&data.namespace);
 
-    let namespace_display = data.namespace.clone();
+    let namespace_display = data.namespace.to_string();
     let remote_display = data.remote_display.clone();
 
     // Attention hint lines under the URI. Red state and the lines are both
@@ -495,7 +497,7 @@ fn PackageItem(
         let is_behind = is_behind_now.get();
         async move {
             if is_behind {
-                match commands::package_pull_outcome(ns).await {
+                match commands::package_pull_outcome(ns.to_string()).await {
                     Ok(preview) => PullCheck::Ready(preview),
                     Err(_) => PullCheck::Failed,
                 }
@@ -642,7 +644,7 @@ fn build_package_menu(
         let ns = ns_for_open.clone();
         let uri = uri_for_open.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_file_browser(ns, uri).await {
+            match commands::open_in_file_browser(ns.to_string(), uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -667,7 +669,7 @@ fn build_package_menu(
         let uri = uri_for_uninstall.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::package_uninstall(ns, uri).await {
+            match commands::package_uninstall(ns.to_string(), uri).await {
                 Ok(msg) => {
                     ui_locked.set(false);
                     notification.set(Some(Notification::Success(msg)));
@@ -689,7 +691,7 @@ fn build_package_menu(
         move || {
             let ns = ns_for_publish.clone();
             let uri = uri_for_publish.clone();
-            async move { commands::package_publish(ns, uri).await }
+            async move { commands::package_publish(ns.to_string(), uri).await }
         },
         notification,
         Some(ui_locked),
@@ -703,7 +705,7 @@ fn build_package_menu(
         move || {
             let ns = ns_for_pull.clone();
             let uri = uri_for_pull.clone();
-            async move { commands::package_pull(ns, uri).await }
+            async move { commands::package_pull(ns.to_string(), uri).await }
         },
         notification,
         Some(ui_locked),
@@ -801,7 +803,7 @@ fn build_package_menu(
             <li class="menu-item">
                 <buttons::SetRemote
                     on_click=move |_| show_set_remote_popup.set(Some(SetRemotePopupData {
-                        namespace: ns_for_set_remote.clone(),
+                        namespace: ns_for_set_remote.to_string(),
                         current_host: current_host_for_popup.clone(),
                         current_bucket: current_bucket_for_popup.clone(),
                         has_local_commit: has_local_commit_for_popup,
