@@ -31,11 +31,31 @@ body {
   align-items: flex-start;
 }
 
+/* Pinned, and never taller than the window. Without the bound the index simply
+ * runs off the bottom of a short viewport: the sidebar is stuck, so the page
+ * scrolling underneath it never brings the last tier back. The space below it
+ * matches the space above. */
 .g-nav {
   position: sticky;
   top: var(--q-space-7);
   flex: none;
   width: 170px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - var(--q-space-7) * 2);
+}
+
+/* Only the index scrolls. The theme toggle above it stays put, because a control
+ * that scrolls out of a pinned sidebar is one nobody finds again — and the
+ * gallery is the one place both themes get compared.
+ *
+ * `overscroll-behavior` stops the page taking over at either end: reaching the
+ * bottom of the index should not start scrolling the sections beside it. */
+.g-nav__index {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .g-nav ul {

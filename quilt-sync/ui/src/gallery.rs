@@ -267,6 +267,11 @@ fn Gallery() -> impl IntoView {
                 <Button on_click=move |_| dark.update(|d| *d = !*d)>
                     {move || if dark.get() { "Light theme" } else { "Dark theme" }}
                 </Button>
+                // The index scrolls, the theme toggle does not: the nav is taller
+                // than a short window long before the gallery is finished, and a
+                // control that scrolls out of a pinned sidebar is a control nobody
+                // finds again.
+                <div class="g-nav__index">
                 {index
                     .into_iter()
                     .map(|(tier, labels)| {
@@ -289,6 +294,7 @@ fn Gallery() -> impl IntoView {
                         }
                     })
                     .collect_view()}
+                </div>
             </nav>
             <main class="g-main">
                 <header class="g-head">
