@@ -141,7 +141,7 @@ jobs:
   # either side.
   promote:
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # Shared with the crate `publish` gate — same approval policy
     # applies to both irreversible channels.
     environment: release-approval
