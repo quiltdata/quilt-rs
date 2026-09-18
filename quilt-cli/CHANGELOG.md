@@ -9,19 +9,27 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.32.0-alpha1] - 2026-09-16
+## [v0.32.0] - 2026-09-18
 
 ### Added
 
-- `--json` works on every command, not just `list` and `status`, so a script or an agent can read any result without parsing tables — `quilt push --json | jq .hash`. Failures are machine-readable too: `{"error": {"kind": "...", "message": "..."}}` on stderr, with a stable `kind` to branch on instead of matching English
+- `--json` works on every command, not just `list` and `status`, so a script or an agent can read any result without parsing tables — `quilt push --json | jq .hash`. Failures are machine-readable too: `{"error": {"kind": "...", "message": "..."}}` on stderr, with a stable `kind` to branch on instead of matching English (<https://github.com/quiltdata/quilt-rs/pull/941>)
 
 ### Fixed
 
-- The "you are not logged in" error now tells you to run `quilt login`. It named `quilt_rs`, the library crate, which ships no binary — so the command it handed you could not work
+- The "you are not logged in" error now tells you to run `quilt login`. It named `quilt_rs`, the library crate, which ships no binary — so the command it handed you could not work (<https://github.com/quiltdata/quilt-rs/pull/943>)
 
 ### Changed
 
-- A failure raised before a command runs — an unreadable domain, a rejected flag combination — now prints as a plain message on stderr, the same as any other command failure, instead of a decorated tracing line (`ERROR quilt: Failed to run command: ...`)
+- A failure raised before a command runs — an unreadable domain, a rejected flag combination — now prints as a plain message on stderr, the same as any other command failure, instead of a decorated tracing line (`ERROR quilt: Failed to run command: ...`) (<https://github.com/quiltdata/quilt-rs/pull/941>)
+
+### quilt-rs
+
+- Updated [from v0.39.0 to v0.39.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.0...quilt-rs/v0.39.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.0 to v0.4.1](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.0...quilt-uri/v0.4.1) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.31.2] - 2026-09-15
 

@@ -9,6 +9,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.39.1] - 2026-09-18
+
+### quilt-uri
+
+- Updated [from v0.4.0 to v0.4.1](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.0...quilt-uri/v0.4.1) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.39.0] - 2026-09-15
 
 ### Fixed
