@@ -454,7 +454,10 @@ requires retiring this rule first.
 - **Corner Style:** 4px.
 - **Background:** White in light, the second grey step in dark. Never elevated.
 - **Border:** 1px in the control-outline role.
-- **Internal Padding:** 12px.
+- **Internal Padding:** 12px — or none, for a card whose children are rows that
+  carry their own padding. A list that scrolls under sticky headings and ends in
+  a full-width footer needs its children to reach the border; everything else
+  keeps the padding.
 - **Title:** Upper-cased, tracked, muted, at the body size. Letter-spacing does
   the work that shrinking would otherwise do, since the type floor forbids
   shrinking.
@@ -490,6 +493,19 @@ radius is the shell's radius minus the shell's 2px padding. A truncating segment
 label is the
 signal that the options are too long for a segmented control and belong in a
 select.
+
+Two or three short options, and the count is a rule of thumb about width rather
+than about taste. It loses to discoverability: the installed package's file
+facets are four, counted, and 58% of their toolbar, and they stay segments
+because they are the page's statement of *what can be filtered* — a reader
+learns that ignoring exists by seeing `Ignored 3`, and behind a select it is
+hidden again. Reach for a select when the options are a choice the reader
+already knows they have.
+
+An option can be present and unchoosable, for a facet that currently matches
+nothing. It is a disabled radio, so the platform takes it out of the tab order
+and announces it; it keeps its place, because a segment that disappears at zero
+teaches nothing and moves the segments beside it.
 
 ### State Label
 
