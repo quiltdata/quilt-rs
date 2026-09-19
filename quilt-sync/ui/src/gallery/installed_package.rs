@@ -60,7 +60,9 @@
 //! **Both ends are drawn, two cells apart rather than one click apart.** The
 //! exit is a `BackLink` because leaving the mode is a navigation — the page
 //! drops `?resolve=1` and the router redraws it — so in a gallery, which has no
-//! router, it is an anchor that does nothing, the same way the revisions
+//! router, it is an anchor that does nothing — pointed at this cell's own
+//! window, because an anchor aimed anywhere further away scrolls, and a link
+//! that says it does nothing must not move the page. The same way the revisions
 //! surface's catalog links have no browser to open. The last cell is the mode
 //! open and its header without a primary; the other four are the same page with
 //! `Resolve` back on the header.
@@ -131,6 +133,7 @@ fn page(
 
     view! {
         <div
+            id=name
             class="g-window"
             style=format!("width:{width}px; --q-frame-height:{height}px; max-width:100%")
         >
@@ -143,7 +146,12 @@ fn page(
                     />
                     <div class="g-ip-shell">
                         <FilePaneRegion name=name ticked=ticked marked=resolving />
-                        <ContextPaneRegion resolving=resolving scope=scope pending=2 />
+                        <ContextPaneRegion
+                            resolving=resolving
+                            scope=scope
+                            pending=2
+                            exit=format!("#{name}")
+                        />
                     </div>
                 </div>
             </PageLayout>

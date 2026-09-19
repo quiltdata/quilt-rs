@@ -293,12 +293,8 @@ fn in_page(pane: AnyView) -> AnyView {
 /// kit has no Danger button and should not — Danger is a *status* colour in this
 /// system, so a red confirm would read as *this errored* — which leaves the
 /// weight to be carried by the arrangement and by the dialog's own copy.
-fn resolve(on_page: bool) -> AnyView {
-    let exit = if on_page {
-        "#installed-package"
-    } else {
-        "#contextpane"
-    };
+fn resolve(exit: &str, on_page: bool) -> AnyView {
+    let exit = exit.to_string();
 
     view! {
         <aside
@@ -311,11 +307,14 @@ fn resolve(on_page: bool) -> AnyView {
                     // The mode's exit, and **inert in a gallery**. Leaving
                     // resolve is a navigation — the real page drops `?resolve=1`
                     // and the router redraws — so this is an anchor rather than
-                    // a control, and there is no router here to answer it. It
-                    // points at the section it is already in so that clicking it
-                    // goes nowhere surprising; what the exit *does* is two cells
-                    // apart, not one click apart, and the page scene draws both
-                    // ends: with the mode open the header has no primary, and in
+                    // a control, and there is no router here to answer it.
+                    //
+                    // The caller says where it points, and every caller points
+                    // it at the cell the pane is already inside: an anchor to
+                    // anything further away scrolls, and a link that says it
+                    // does nothing should not move the page. What the exit
+                    // *does* is two cells apart rather than one click apart —
+                    // with the mode open the header has no primary, and in
                     // every other cell `Resolve` is back on it.
                     <BackLink href=exit label=NAMESPACE />
                     <PaneSection>
@@ -377,10 +376,14 @@ pub fn ContextPaneRegion(
     /// whether `Keeping` carries a download action at all.
     #[prop(optional)]
     pending: usize,
+    /// Where resolve mode's exit points. The page's own anchor, so that a link
+    /// with no router behind it does not scroll somebody somewhere else.
+    #[prop(into, optional)]
+    exit: String,
 ) -> impl IntoView {
     let open = RwSignal::new(false);
     if resolving {
-        resolve(true)
+        resolve(&exit, true)
     } else {
         pane(open, revision_list(), scope, pending, true)
     }
@@ -443,7 +446,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                 )}
             </Cell>
             <Cell wide=true label="resolve mode, with the exit the design left open">
-                {resolve(false)}
+                {resolve("#contextpane", false)}
             </Cell>
         </Scene>
     }
