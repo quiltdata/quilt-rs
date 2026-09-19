@@ -364,18 +364,29 @@ body {
    * rather than one under the other — the same trade the page makes at full
    * width, one level down: horizontal room is what this arrangement has and
    * vertical room is what it is short of. Every pixel the pane does not take is
-   * a row of the list under it.
+   * a row of the list under it. Worth 130px, measured: 170 against 300.
    *
-   * The divider turns with them. `PaneSection` draws the rule between two
-   * top-level sections as a `border-top` with `space-3` above and below; in a
-   * row that is the wrong edge, so it becomes a `border-left` with the same air
-   * on either side. Structural selectors rather than the module's own class
-   * names, which are hashed and not addressable from here — the shape is
-   * `aside > section(Card) > div(body) > section(PaneSection)`, and it is the
+   * Three things change with the direction, and all three are the same idea —
+   * the divider was doing work that the arrangement now does by itself:
+   *
+   * - **The space between them is `gap`, not the second section's margin.** A
+   *   margin belongs to a box; the space between two columns belongs to the row
+   *   holding them, and only the row knows which axis it is on.
+   * - **No rule.** Stacked, two blocks in one narrow card need a line to say
+   *   they are two subjects. Side by side, the columns already say it, and a
+   *   vertical rule sized to the shorter of them hangs rather than divides.
+   * - **`Keeping` starts a label's height lower**, so `REVISION` is the only
+   *   thing on the card's top line and reads as the title of the whole pane,
+   *   with the second block's own label below it. 28px is the label's 20 plus
+   *   `PaneSection`'s own `space-2` — the line `Revision`'s content starts on.
+   *
+   * Structural selectors rather than the module's hashed class names: the shape
+   * is `aside > section(Card) > div(body) > section(PaneSection)`, which is the
    * page's own markup rather than a component's internals. */
   .g-ip-contextpane > section > div {
     display: flex;
     align-items: flex-start;
+    gap: var(--q-space-4);
   }
 
   .g-ip-contextpane > section > div > section {
@@ -383,12 +394,13 @@ body {
     min-width: 0;
   }
 
-  .g-ip-contextpane > section > div > section + section {
-    border-top: 0;
-    margin-top: 0;
-    padding-top: 0;
-    border-left: 1px solid var(--q-borderColor-muted);
-    margin-left: var(--q-space-3);
-    padding-left: var(--q-space-3);
+  /* The three values `PaneSection` reads. No rule; no margin, because the row's
+   * `gap` is what holds the columns apart; and the second block starts a
+   * label's height lower — 28px, the label's 20 plus the section's own
+   * `space-2`, which is the line `Revision`'s content starts on. */
+  .g-ip-contextpane {
+    --q-pane-divider: 0 none;
+    --q-pane-divider-above: 0;
+    --q-pane-divider-below: var(--q-space-7);
   }
 }
