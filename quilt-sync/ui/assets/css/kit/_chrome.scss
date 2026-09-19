@@ -276,3 +276,85 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .g-fp-footer { animation: none; }
 }
+
+/* The installed package page's two-pane shell. Page layout rather than gallery
+ * chrome, here until the page's own region is written, and it moves with it.
+ *
+ * The page is a column: the header takes its own height and the shell takes the
+ * rest, with `min-height: 0` so the list inside it can be shorter than the
+ * package and scroll instead of pushing the page taller.
+ *
+ * `container-type: inline-size` on the page rather than a viewport media query:
+ * what decides whether two panes fit side by side is the room the shell has, and
+ * in a gallery cell that is not the window's width. The rule is the same one §1
+ * describes, stated about the thing it is actually about. */
+.g-ip-page {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  flex: 1;
+  min-height: 0;
+}
+
+.g-ip-shell {
+  display: flex;
+  gap: var(--q-space-3);
+  flex: 1;
+  min-height: 0;
+}
+
+/* The file pane's own geometry on the page. A class and not an inline style,
+ * because the stacked arrangement below raises this `min-height` and a container
+ * query cannot outrank an attribute. */
+.g-ip-filepane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--q-space-2);
+}
+
+/* §1: below ~800 the panes stack, context above files — the region with no upper
+ * bound on its length goes last.
+ *
+ * `order`, and NOT `column-reverse`, which was drawn first and had to be thrown
+ * away: a reversed column starts at the bottom, so content taller than the box
+ * overflows *upward*. Measured at 760x560 — the aside laid out 54px above the
+ * window's own top edge, over the appbar, with no scroll position that could
+ * reach it. `order` puts the same pane first and leaves the overflow going the
+ * way a scrollbar can follow.
+ *
+ * Both leave the DOM alone, so at narrow the focus order still reaches the file
+ * pane before the context pane above it. That one a stylesheet cannot fix; the
+ * page should render the two in the other order behind a media query. */
+@container (max-width: 800px) {
+  .g-ip-shell {
+    flex-direction: column;
+  }
+
+  .g-ip-shell > aside {
+    order: -1;
+  }
+
+  /* The list keeps a floor and the PAGE scrolls, rather than the list taking
+   * what the context pane leaves. Measured at 760x560: the pane is 300 of the
+   * shell's 388, so the leftover is 88px — two rows and a half of the region
+   * the whole screen is about. Eight rows is the same list the wide
+   * arrangement gives at the floor, and a page that scrolls to reach them is a
+   * better trade than a list that cannot show one. */
+  .g-ip-filepane {
+    min-height: 269px;
+  }
+
+  /* Stacked, it shares a row with nothing, so 280px would leave two thirds of
+   * the column empty beside it. */
+  .g-ip-contextpane {
+    width: 100%;
+  }
+}
+
+/* The context pane's width on the page. 280 is the design's own bet — the file
+ * list grows and this does not — and it holds only while the two share a row. */
+.g-ip-contextpane {
+  width: 280px;
+}

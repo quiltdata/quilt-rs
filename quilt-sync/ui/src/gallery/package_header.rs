@@ -249,6 +249,25 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>) -> AnyView {
     .into_any()
 }
 
+/// The region itself, so the whole-page scene composes this code rather than a
+/// copy of it. A mockup that hand-writes a region is a mockup that stops being
+/// true the first time somebody edits the region.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; `header` borrows it from there"
+)]
+pub fn PackageHeaderRegion(
+    /// Which state the package is in. The header is state-driven and nothing
+    /// else: the tone, the words and the primary action all come from `render`.
+    state: PackageState,
+    /// Shared with the page's other cells, so the split button's choice is the
+    /// page's preference rather than one cell's.
+    publish_choice: RwSignal<usize>,
+) -> impl IntoView {
+    header(&state, publish_choice)
+}
+
 #[component]
 pub fn PackageHeaderScene() -> impl IntoView {
     // One signal across every cell, so picking in any of them moves them all —

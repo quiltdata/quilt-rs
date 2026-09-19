@@ -210,7 +210,13 @@ fn download(scope: RwSignal<String>, pending: usize) -> AnyView {
 /// between them; `PaneSection` supplies the air on either side of it. A flush
 /// hairline is right for rows, which carry their own padding — against a section
 /// that has none it lands on the last control and reads as its underline.
-fn pane(open: RwSignal<bool>, body: AnyView, scope: RwSignal<String>, pending: usize) -> AnyView {
+fn pane(
+    open: RwSignal<bool>,
+    body: AnyView,
+    scope: RwSignal<String>,
+    pending: usize,
+    on_page: bool,
+) -> AnyView {
     let sections = view! {
         <PaneSection label="Revision">
             <RevisionRow message="Add Caihong folder-upload note" at=ago(2.0 * HOUR) />
@@ -237,8 +243,15 @@ fn pane(open: RwSignal<bool>, body: AnyView, scope: RwSignal<String>, pending: u
         </PaneSection>
     };
 
+    // On the page the width is a class, not an inline style: stacked under 800px
+    // the pane stops sharing a row with anything and takes the column, and a
+    // container query cannot outrank an attribute.
     view! {
-        <aside aria-label="About this package" style=PANE>
+        <aside
+            aria-label="About this package"
+            class=on_page.then_some("g-ip-contextpane")
+            style=(!on_page).then_some(PANE)
+        >
             <Card>{sections}</Card>
         </aside>
     }
@@ -329,6 +342,31 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
     Unresolved: `Replace mine with the published one` does not fit 280px and \
     truncates.";
 
+/// The region itself, for the whole-page scene.
+///
+/// The revisions surface opens leftwards over the file list, which is the one
+/// part of this pane whose behaviour is about where the pane sits — so on the
+/// page it is drawn by the real arrangement rather than by a cell imitating it.
+#[component]
+pub fn ContextPaneRegion(
+    /// `?resolve=1`: the pane swaps to the choice between two revisions.
+    #[prop(optional)]
+    resolving: bool,
+    /// The standing scope, shared with whatever else on the page reads it.
+    scope: RwSignal<String>,
+    /// How many files the scope leaves outstanding, which is what decides
+    /// whether `Keeping` carries a download action at all.
+    #[prop(optional)]
+    pending: usize,
+) -> impl IntoView {
+    let open = RwSignal::new(false);
+    if resolving {
+        resolve()
+    } else {
+        pane(open, revision_list(), scope, pending, true)
+    }
+}
+
 #[component]
 pub fn ContextPaneScene() -> impl IntoView {
     // One open signal per pane: a popover of `auto` type closes any other, so
@@ -354,19 +392,19 @@ pub fn ContextPaneScene() -> impl IntoView {
             note=NOTE
         >
             <Cell wide=true label="at rest — files I pick, two outstanding">
-                {pane(resting, revision_list(), pick, 2)}
+                {pane(resting, revision_list(), pick, 2, false)}
             </Cell>
             <Cell wide=true label="the whole package, two files outstanding">
-                {pane(outstanding, revision_list(), whole, 2)}
+                {pane(outstanding, revision_list(), whole, 2, false)}
             </Cell>
             <Cell wide=true label="the whole package, nothing outstanding — no action">
-                {pane(settled, revision_list(), complete, 0)}
+                {pane(settled, revision_list(), complete, 0, false)}
             </Cell>
             <Cell full=true label="click the trigger — the revisions this copy holds">
-                {in_page(pane(listed, revision_list(), listing, 2))}
+                {in_page(pane(listed, revision_list(), listing, 2, false))}
             </Cell>
             <Cell full=true label="click it — the call has not answered yet">
-                {in_page(pane(waiting_surface, revision_skeleton(), waiting, 2))}
+                {in_page(pane(waiting_surface, revision_skeleton(), waiting, 2, false))}
             </Cell>
             <Cell full=true label="click it — the call failed">
                 {in_page(
@@ -381,6 +419,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                             .into_any(),
                         broken,
                         2,
+                        false,
                     ),
                 )}
             </Cell>

@@ -59,6 +59,7 @@ mod gallery {
     pub mod file_toolbar;
     pub mod forms;
     pub mod host_row;
+    pub mod installed_package;
     pub mod list_toolbar;
     pub mod load_failure;
     pub mod package_header;
@@ -101,6 +102,7 @@ use crate::gallery::file_toolbar::FileToolbarStories;
 use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
 use crate::gallery::host_row::HostRowStories;
+use crate::gallery::installed_package::InstalledPackageScene;
 use crate::gallery::list_toolbar::ListToolbarScene;
 use crate::gallery::load_failure::LoadFailureStories;
 use crate::gallery::package_header::PackageHeaderScene;
@@ -255,7 +257,13 @@ fn Gallery() -> impl IntoView {
         ),
         (
             "Pages",
-            vec![("Main page", view! { <PageScene /> }.into_any())],
+            vec![
+                ("Main page", view! { <PageScene /> }.into_any()),
+                (
+                    "Installed package",
+                    view! { <InstalledPackageScene /> }.into_any(),
+                ),
+            ],
         ),
     ];
 
