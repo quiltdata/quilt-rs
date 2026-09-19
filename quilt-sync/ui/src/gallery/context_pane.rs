@@ -293,9 +293,13 @@ fn in_page(pane: AnyView) -> AnyView {
 /// kit has no Danger button and should not — Danger is a *status* colour in this
 /// system, so a red confirm would read as *this errored* — which leaves the
 /// weight to be carried by the arrangement and by the dialog's own copy.
-fn resolve() -> AnyView {
+fn resolve(on_page: bool) -> AnyView {
     view! {
-        <aside aria-label="About this package" style=PANE>
+        <aside
+            aria-label="About this package"
+            class=on_page.then_some("g-ip-contextpane")
+            style=(!on_page).then_some(PANE)
+        >
             <Card>
                 <div class="g-stack" style="gap:var(--q-space-3)">
                     <BackLink href="#contextpane" label=NAMESPACE />
@@ -361,7 +365,7 @@ pub fn ContextPaneRegion(
 ) -> impl IntoView {
     let open = RwSignal::new(false);
     if resolving {
-        resolve()
+        resolve(true)
     } else {
         pane(open, revision_list(), scope, pending, true)
     }
@@ -424,7 +428,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                 )}
             </Cell>
             <Cell wide=true label="resolve mode, with the exit the design left open">
-                {resolve()}
+                {resolve(false)}
             </Cell>
         </Scene>
     }

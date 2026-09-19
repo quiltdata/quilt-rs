@@ -47,6 +47,22 @@
 //! inside it — `Card`'s `fill`, and `FilePaneRegion`'s own `fill`, exist for
 //! exactly this and for nothing else.
 //!
+//! # One primary per screen
+//!
+//! The header's action is the way *into* a mode, so while the mode is on screen
+//! it hides. Resolve is the case: entering leaves `Make mine the shared one` as
+//! the page's one primary, and the pane's `BackLink` closes the mode and brings
+//! the header's `Resolve` back with it. The two read as one control in two
+//! states rather than as two controls, and the header keeps `Open folder`, the
+//! `[⋯]` and the Danger state label that says what is wrong. Settled 2026-09-19;
+//! it is also what settles what the resolve pane's exit is.
+//!
+//! The same rule has a second instance this page does **not** resolve: with
+//! files ticked, the header's `Get latest` and the footer's `[Download N]` are
+//! both primary. They are different verbs on different objects — the package and
+//! the rows you picked — and each is the primary of its own region, so they are
+//! left alone and named here rather than quietly changed.
+//!
 //! # The narrow arrangement is the shell's own decision
 //!
 //! §1 stacks the panes below ~800px, context above files, because the region
@@ -54,6 +70,14 @@
 //! the shell rather than a viewport media query: what decides the arrangement is
 //! the room the shell has, not the window's width, and in a gallery cell those
 //! are different numbers. The real page can keep the same rule.
+//!
+//! Stacked, the pane takes the whole column and its two blocks sit **side by
+//! side** rather than one under the other, with `PaneSection`'s divider turned
+//! from a `border-top` into a `border-left`. It is the same trade the page makes
+//! one level up — horizontal room is what this arrangement has and vertical room
+//! is what it lacks — and it is worth 130px: the pane measures 170px against the
+//! 300 it took stacked in a column, and every pixel of that is a row of the list
+//! under it.
 //!
 //! One thing that costs: `column-reverse` swaps what you see and leaves the DOM
 //! alone, so at narrow the focus order reaches the file pane before the context
@@ -104,7 +128,11 @@ fn page(
         >
             <PageLayout heading="QuiltSync" actions=appbar_actions()>
                 <div class="g-ip-page">
-                    <PackageHeaderRegion state=state publish_choice=publish_choice />
+                    <PackageHeaderRegion
+                        state=state
+                        publish_choice=publish_choice
+                        action_open=resolving
+                    />
                     <div class="g-ip-shell">
                         <FilePaneRegion name=name ticked=ticked marked=resolving />
                         <ContextPaneRegion resolving=resolving scope=scope pending=2 />

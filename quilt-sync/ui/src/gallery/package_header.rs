@@ -192,10 +192,19 @@ fn menu() -> Vec<MenuAction> {
 /// leaves at most the state's action, `Open folder` and `[⋯]`, so the wider gap
 /// would separate a group of one from a group of two and invite the reader to
 /// look for a distinction that is not doing any work. One uniform `space-2`.
-fn header(state: &PackageState, publish_choice: RwSignal<usize>) -> AnyView {
+/// `action_open`: the state's own action is already on screen somewhere else, so
+/// the header does not offer it a second time.
+///
+/// One primary per screen is the rule this serves. Resolve mode is the case: the
+/// header's `Resolve` is what opens the pane, and while the pane is open it
+/// would be a second primary button offering what is already being offered —
+/// beside the pane's own `Make mine the shared one`, which is the real one. The
+/// pane's `BackLink` closes the mode and the header's action comes back with it,
+/// so the pair reads as one control in two states rather than as two controls.
+fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bool) -> AnyView {
     let rendered = render(state, Site::PageHeader);
     let action = rendered.action;
-    let publishes = matches!(action, Some(PackageAction::Publish));
+    let publishes = !action_open && matches!(action, Some(PackageAction::Publish));
 
     view! {
         <div class="g-stack" style="gap:var(--q-space-2)">
@@ -229,6 +238,7 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>) -> AnyView {
                             }
                         })}
                     {action
+                        .filter(|_| !action_open)
                         .filter(|a| !matches!(a, PackageAction::Publish))
                         .map(|action| {
                             view! {
@@ -264,8 +274,12 @@ pub fn PackageHeaderRegion(
     /// Shared with the page's other cells, so the split button's choice is the
     /// page's preference rather than one cell's.
     publish_choice: RwSignal<usize>,
+    /// The state's action is already open elsewhere on the page — resolve mode's
+    /// pane — so the header drops it rather than drawing a second primary.
+    #[prop(optional)]
+    action_open: bool,
 ) -> impl IntoView {
-    header(&state, publish_choice)
+    header(&state, publish_choice, action_open)
 }
 
 #[component]
@@ -291,7 +305,7 @@ pub fn PackageHeaderScene() -> impl IntoView {
             {states()
                 .into_iter()
                 .map(|(label, state)| {
-                    view! { <Cell full=true label=label>{header(&state, publish_choice)}</Cell> }
+                    view! { <Cell full=true label=label>{header(&state, publish_choice, false)}</Cell> }
                 })
                 .collect_view()}
         </Scene>

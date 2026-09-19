@@ -314,6 +314,14 @@ body {
   gap: var(--q-space-2);
 }
 
+/* The context pane's width on the page. 280 is the design's own bet — the file
+ * list grows and this does not — and it holds only while the two share a row.
+ * Declared before the container query below, which narrows it: same specificity,
+ * so source order is what decides, and the query has to come second. */
+.g-ip-contextpane {
+  width: 280px;
+}
+
 /* §1: below ~800 the panes stack, context above files — the region with no upper
  * bound on its length goes last.
  *
@@ -351,10 +359,36 @@ body {
   .g-ip-contextpane {
     width: 100%;
   }
-}
 
-/* The context pane's width on the page. 280 is the design's own bet — the file
- * list grows and this does not — and it holds only while the two share a row. */
-.g-ip-contextpane {
-  width: 280px;
+  /* And with the whole column to spend, the pane's two blocks sit side by side
+   * rather than one under the other — the same trade the page makes at full
+   * width, one level down: horizontal room is what this arrangement has and
+   * vertical room is what it is short of. Every pixel the pane does not take is
+   * a row of the list under it.
+   *
+   * The divider turns with them. `PaneSection` draws the rule between two
+   * top-level sections as a `border-top` with `space-3` above and below; in a
+   * row that is the wrong edge, so it becomes a `border-left` with the same air
+   * on either side. Structural selectors rather than the module's own class
+   * names, which are hashed and not addressable from here — the shape is
+   * `aside > section(Card) > div(body) > section(PaneSection)`, and it is the
+   * page's own markup rather than a component's internals. */
+  .g-ip-contextpane > section > div {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .g-ip-contextpane > section > div > section {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .g-ip-contextpane > section > div > section + section {
+    border-top: 0;
+    margin-top: 0;
+    padding-top: 0;
+    border-left: 1px solid var(--q-borderColor-muted);
+    margin-left: var(--q-space-3);
+    padding-left: var(--q-space-3);
+  }
 }
