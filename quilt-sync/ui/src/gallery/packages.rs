@@ -354,7 +354,7 @@ pub fn PackagesRegion(
                     <SegmentedControl
                         aria_label="List view"
                         name=view_name
-                        options=vec!["Packages".to_string(), "Recent files".to_string()]
+                        options=vec!["Packages".into(), "Recent files".into()]
                         selected=view_mode
                     />
                     <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
@@ -465,9 +465,9 @@ pub fn PackagesScene() -> impl IntoView {
         </Scene>
         <Scene
             title="Scene · packages, no results"
-            note="One Blankslate component for both empties. No results carries no action — \
-                  the user already knows how to change their own search, so a button here \
-                  would be filler."
+            note="One Blankslate component for both empties. No results carries no action \
+                  yet — an empty list is a frustration and the way out of it is still to \
+                  design, which is a deferral rather than the rule this note used to state."
         >
             <Blankslate
                 heading="No packages match “plate-99”"

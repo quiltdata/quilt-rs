@@ -36,6 +36,15 @@ pub fn LoadFailureStories() -> impl IntoView {
                     />
                 </div>
             </Cell>
+            <Cell wide=true label="centred — in a box whose padding is its rows' own">
+                <Card flush=true label="Files">
+                    <LoadFailure
+                        centred=true
+                        words="Could not read this package's files."
+                        on_retry=Callback::new(|()| ())
+                    />
+                </Card>
+            </Cell>
             <Cell wide=true label="a longer sentence — 70ch, so it is read as prose">
                 <LoadFailure
                     words="Could not load your packages. Your files are still on this \

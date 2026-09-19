@@ -252,3 +252,27 @@ body {
 .g-strip { display: flex; gap: var(--q-space-3); flex-wrap: wrap; }
 .g-strip > * { flex: 1 1 300px; min-width: 0; }
 
+
+/* The installed package's file-pane footer. Page-local, not kit: it is a spacer
+ * and a Button inside the list `Card`, whose own rule draws the hairline above
+ * it. It lives here until the page's region is built, and moves with it.
+ *
+ * The one carve-out from the Never Move Geometry Rule, copied from the Banner:
+ * 4px and a fade, 160ms, and no exit animation — unticking the last row grows
+ * the list back, and animating that moves rows under the pointer, which is the
+ * thing the rule protects. Under reduced motion it simply appears. */
+.g-fp-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--q-space-2) var(--q-space-3);
+  animation: g-fp-footer-rise 160ms ease-out;
+}
+
+@keyframes g-fp-footer-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-fp-footer { animation: none; }
+}

@@ -55,6 +55,7 @@ mod gallery {
     pub mod entry_row;
     pub mod feedback;
     pub mod file_list;
+    pub mod file_pane;
     pub mod file_toolbar;
     pub mod forms;
     pub mod host_row;
@@ -95,6 +96,7 @@ use crate::gallery::entry_row::EntryRowStories;
 use crate::gallery::feedback::BannerScene;
 use crate::gallery::feedback::FeedbackStories;
 use crate::gallery::file_list::FileListStories;
+use crate::gallery::file_pane::FilePaneScene;
 use crate::gallery::file_toolbar::FileToolbarStories;
 use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
@@ -244,6 +246,7 @@ fn Gallery() -> impl IntoView {
                     "The context pane",
                     view! { <ContextPaneScene /> }.into_any(),
                 ),
+                ("The file pane", view! { <FilePaneScene /> }.into_any()),
                 (
                     "A check that failed",
                     view! { <UncheckedScene /> }.into_any(),

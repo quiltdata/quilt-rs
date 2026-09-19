@@ -264,9 +264,17 @@ fn Empties() -> impl IntoView {
     view! {
         <Story
             title="Blankslate"
-            note="One component for both empties. No results has no action — the user already \
-                  knows how to change their search, so a button there would be filler."
+            note="One component for both empties. No results carries no action yet — an \
+                  empty list is a frustration and the way out of it is still to design, which \
+                  is a deferral rather than the rule this note used to state."
         >
+            <Cell wide=true label="compact — for a box too short for the full one">
+                <Blankslate
+                    compact=true
+                    heading="No files match"
+                    description="Nothing in this view matches what you are looking for."
+                />
+            </Cell>
             <Cell wide=true label="no results — no action">
                 <Blankslate
                     heading="No files match “plate-99”"
@@ -283,7 +291,7 @@ fn Empties() -> impl IntoView {
                         <SegmentedControl
                             aria_label="List view"
                             name="empty-view"
-                            options=vec!["Packages".to_string(), "Recent files".to_string()]
+                            options=vec!["Packages".into(), "Recent files".into()]
                             selected=RwSignal::new("Packages".to_string())
                         />
                     }
@@ -371,7 +379,7 @@ pub fn RecentFilesScene() -> impl IntoView {
                 <SegmentedControl
                     aria_label="List view"
                     name="recent-files-view"
-                    options=vec!["Packages".to_string(), "Recent files".to_string()]
+                    options=vec!["Packages".into(), "Recent files".into()]
                     selected=view_mode
                 />
                 <SearchInput value=query aria_label="Search files" placeholder="Search…" />
