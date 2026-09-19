@@ -57,6 +57,14 @@
 //! `[⋯]` and the Danger state label that says what is wrong. Settled 2026-09-19;
 //! it is also what settles what the resolve pane's exit is.
 //!
+//! **Both ends are drawn, two cells apart rather than one click apart.** The
+//! exit is a `BackLink` because leaving the mode is a navigation — the page
+//! drops `?resolve=1` and the router redraws it — so in a gallery, which has no
+//! router, it is an anchor that does nothing, the same way the revisions
+//! surface's catalog links have no browser to open. The last cell is the mode
+//! open and its header without a primary; the other four are the same page with
+//! `Resolve` back on the header.
+//!
 //! The same rule has a second instance this page does **not** resolve: with
 //! files ticked, the header's `Get latest` and the footer's `[Download N]` are
 //! both primary. They are different verbs on different objects — the package and
@@ -168,7 +176,7 @@ pub fn InstalledPackageScene() -> impl IntoView {
             <Cell full=true label="760×560 — the shell stacks itself, context above files">
                 {page(760, 560, PackageState::Behind, "page-narrow", 0, false)}
             </Cell>
-            <Cell full=true label="1024×560 — resolve mode, the pane swapped and the rows marked">
+            <Cell full=true label="1024×560 — resolve mode: the pane swapped, the rows marked, no primary in the header">
                 {page(1024, 560, PackageState::Diverged, "page-resolve", 0, true)}
             </Cell>
         </Scene>

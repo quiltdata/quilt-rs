@@ -294,6 +294,12 @@ fn in_page(pane: AnyView) -> AnyView {
 /// system, so a red confirm would read as *this errored* — which leaves the
 /// weight to be carried by the arrangement and by the dialog's own copy.
 fn resolve(on_page: bool) -> AnyView {
+    let exit = if on_page {
+        "#installed-package"
+    } else {
+        "#contextpane"
+    };
+
     view! {
         <aside
             aria-label="About this package"
@@ -302,7 +308,16 @@ fn resolve(on_page: bool) -> AnyView {
         >
             <Card>
                 <div class="g-stack" style="gap:var(--q-space-3)">
-                    <BackLink href="#contextpane" label=NAMESPACE />
+                    // The mode's exit, and **inert in a gallery**. Leaving
+                    // resolve is a navigation — the real page drops `?resolve=1`
+                    // and the router redraws — so this is an anchor rather than
+                    // a control, and there is no router here to answer it. It
+                    // points at the section it is already in so that clicking it
+                    // goes nowhere surprising; what the exit *does* is two cells
+                    // apart, not one click apart, and the page scene draws both
+                    // ends: with the mode open the header has no primary, and in
+                    // every other cell `Resolve` is back on it.
+                    <BackLink href=exit label=NAMESPACE />
                     <PaneSection>
                         <p style="margin:0">
                             "2 files differ between these revisions — marked in the list."
