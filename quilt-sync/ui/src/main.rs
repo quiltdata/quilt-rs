@@ -38,7 +38,7 @@ fn App() -> impl IntoView {
             <Routes fallback=|| view! { <pages::NotFound /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=pages::Commit />
-                <Route path=path!("/installed-package") view=pages::InstalledPackage />
+                <Route path=path!("/installed-package") view=|| view! { <PackagePage /> } />
                 <Route path=path!("/installed-packages-list") view=pages::InstalledPackagesList />
                 <Route path=path!("/login") view=pages::Login />
                 <Route path=path!("/main") view=pages::MainPage />
@@ -67,10 +67,10 @@ fn Home() -> impl IntoView {
     let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
 
     view! {
-        <Suspense fallback=loading>
+        <Suspense fallback=|| loading("Loading QuiltSync")>
             {move || Suspend::new(async move {
                 let settings = settings.await;
-                let v2 = wants_v2(settings.as_ref().map_err(String::as_str));
+                let v2 = wants_main_page_v2(settings.as_ref().map_err(String::as_str));
                 // Recorded on the root here rather than fetched again out in
                 // `App`: this is the one read of the flag the app already makes,
                 // and `/` is where every session starts, so the marker is set
@@ -87,7 +87,32 @@ fn Home() -> impl IntoView {
     }
 }
 
-/// What `/` shows while it works out which page it is.
+/// `/installed-package` is one package's screen, and the flag decides which one.
+///
+/// The shape [`Home`] has, for the reason [`Home`] has it: one route, the flag
+/// read in place, so every link to a package — a roster row, a queue remedy, a
+/// deep link, a post-commit return — lands on the page the reader switched on
+/// rather than on whichever one the link was written against. There is no
+/// second address for either page.
+#[component]
+fn PackagePage() -> impl IntoView {
+    let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
+
+    view! {
+        <Suspense fallback=|| loading("Loading package")>
+            {move || Suspend::new(async move {
+                let settings = settings.await;
+                if wants_package_page_v2(settings.as_ref().map_err(String::as_str)) {
+                    view! { <pages::InstalledPackageV2 /> }.into_any()
+                } else {
+                    view! { <pages::InstalledPackage /> }.into_any()
+                }
+            })}
+        </Suspense>
+    }
+}
+
+/// What a flag-reading route shows while it works out which page it is.
 ///
 /// A spinner, which `kit::Spinner`'s own doc reserves for two jobs — this is the
 /// second, "filling a region that cannot be skeletonised because its contents are
@@ -97,11 +122,11 @@ fn Home() -> impl IntoView {
 ///
 /// No appbar around it. Drawing one page's chrome and then swapping it for the
 /// other's is the flicker this route exists to avoid.
-fn loading() -> AnyView {
+fn loading(aria_label: &'static str) -> AnyView {
     // `data-home-frame`: a v2 reader's ground for this frame, see `_base.scss`.
     view! {
         <div data-home-frame>
-            <kit::Spinner variant=kit::SpinnerVariant::Region aria_label="Loading QuiltSync" />
+            <kit::Spinner variant=kit::SpinnerVariant::Region aria_label=aria_label />
         </div>
     }
     .into_any()
@@ -111,8 +136,17 @@ fn loading() -> AnyView {
 ///
 /// `Err` — the fetch failed — falls back to v1, same as the flag being off:
 /// v1 is the page that has always worked.
-fn wants_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
+fn wants_main_page_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
     settings.is_ok_and(|data| data.experimental.main_page_v2)
+}
+
+/// Whether `/installed-package` renders v2, on the same terms.
+///
+/// A flag of its own rather than [`wants_main_page_v2`]: the two pages are not
+/// equally finished, so a reader may want either without the other. They merge
+/// into one switch when the v2 package page is done.
+fn wants_package_page_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
+    settings.is_ok_and(|data| data.experimental.package_page_v2)
 }
 
 #[cfg(test)]
@@ -125,7 +159,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    fn settings_stub(main_page_v2: bool) -> SettingsData {
+    fn settings_stub(main_page_v2: bool, package_page_v2: bool) -> SettingsData {
         SettingsData {
             version: String::new(),
             home_dir: None,
@@ -142,6 +176,7 @@ mod tests {
             experimental: ExperimentalSettingsData {
                 entire_package_sync: false,
                 main_page_v2,
+                package_page_v2,
             },
         }
     }
@@ -159,7 +194,7 @@ mod tests {
         let doc = web_sys::window().unwrap().document().unwrap();
         let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
         doc.body().unwrap().append_child(&host).unwrap();
-        leptos::mount::mount_to(host.clone(), loading).forget();
+        leptos::mount::mount_to(host.clone(), || loading("Loading QuiltSync")).forget();
 
         let el: web_sys::Element = host.into();
         // Inside the frame `_base.scss` grounds for a v2 reader — the two are
@@ -177,20 +212,50 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn flag_on_renders_v2() {
-        let settings = settings_stub(true);
-        assert!(wants_v2(Ok(&settings)));
+        let settings = settings_stub(true, false);
+        assert!(wants_main_page_v2(Ok(&settings)));
     }
 
     #[wasm_bindgen_test]
     fn flag_off_renders_v1() {
-        let settings = settings_stub(false);
-        assert!(!wants_v2(Ok(&settings)));
+        let settings = settings_stub(false, false);
+        assert!(!wants_main_page_v2(Ok(&settings)));
     }
 
     #[wasm_bindgen_test]
     fn fetch_error_falls_back_to_v1() {
         // The flag is unknowable, so the answer is the page that has always
         // worked — not a guess at what the reader chose.
-        assert!(!wants_v2(Err("boom")));
+        assert!(!wants_main_page_v2(Err("boom")));
+    }
+
+    #[wasm_bindgen_test]
+    fn package_flag_on_renders_v2() {
+        let settings = settings_stub(false, true);
+        assert!(wants_package_page_v2(Ok(&settings)));
+    }
+
+    #[wasm_bindgen_test]
+    fn package_flag_off_renders_v1() {
+        let settings = settings_stub(false, false);
+        assert!(!wants_package_page_v2(Ok(&settings)));
+    }
+
+    #[wasm_bindgen_test]
+    fn package_fetch_error_falls_back_to_v1() {
+        assert!(!wants_package_page_v2(Err("boom")));
+    }
+
+    /// The reason there are two flags rather than one. Both cells of each row
+    /// are asserted, so neither predicate can pass by reading the other's flag.
+    #[wasm_bindgen_test]
+    fn each_route_reads_only_its_own_flag() {
+        let main_only = settings_stub(true, false);
+        assert!(wants_main_page_v2(Ok(&main_only)));
+        assert!(!wants_package_page_v2(Ok(&main_only)));
+
+        let package_only = settings_stub(false, true);
+        assert!(!wants_main_page_v2(Ok(&package_only)));
+        assert!(wants_package_page_v2(Ok(&package_only)));
     }
 }

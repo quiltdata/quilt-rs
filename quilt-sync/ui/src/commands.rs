@@ -256,6 +256,8 @@ pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
     #[serde(default)]
     pub main_page_v2: bool,
+    #[serde(default)]
+    pub package_page_v2: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1014,18 +1016,21 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
 pub async fn update_experimental_settings(
     entire_package_sync: Option<bool>,
     main_page_v2: Option<bool>,
+    package_page_v2: Option<bool>,
 ) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         entire_package_sync: Option<bool>,
         main_page_v2: Option<bool>,
+        package_page_v2: Option<bool>,
     }
     tauri::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
             main_page_v2,
+            package_page_v2,
         },
     )
     .await
