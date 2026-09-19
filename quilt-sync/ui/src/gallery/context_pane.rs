@@ -366,6 +366,10 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
 /// part of this pane whose behaviour is about where the pane sits — so on the
 /// page it is drawn by the real arrangement rather than by a cell imitating it.
 #[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; `resolve` borrows the href from there"
+)]
 pub fn ContextPaneRegion(
     /// `?resolve=1`: the pane swaps to the choice between two revisions.
     #[prop(optional)]
