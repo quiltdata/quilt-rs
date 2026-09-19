@@ -210,7 +210,13 @@ fn download(scope: RwSignal<String>, pending: usize) -> AnyView {
 /// between them; `PaneSection` supplies the air on either side of it. A flush
 /// hairline is right for rows, which carry their own padding — against a section
 /// that has none it lands on the last control and reads as its underline.
-fn pane(open: RwSignal<bool>, body: AnyView, scope: RwSignal<String>, pending: usize) -> AnyView {
+fn pane(
+    open: RwSignal<bool>,
+    body: AnyView,
+    scope: RwSignal<String>,
+    pending: usize,
+    on_page: bool,
+) -> AnyView {
     let sections = view! {
         <PaneSection label="Revision">
             <RevisionRow message="Add Caihong folder-upload note" at=ago(2.0 * HOUR) />
@@ -237,8 +243,15 @@ fn pane(open: RwSignal<bool>, body: AnyView, scope: RwSignal<String>, pending: u
         </PaneSection>
     };
 
+    // On the page the width is a class, not an inline style: stacked under 800px
+    // the pane stops sharing a row with anything and takes the column, and a
+    // container query cannot outrank an attribute.
     view! {
-        <aside aria-label="About this package" style=PANE>
+        <aside
+            aria-label="About this package"
+            class=on_page.then_some("g-ip-contextpane")
+            style=(!on_page).then_some(PANE)
+        >
             <Card>{sections}</Card>
         </aside>
     }
@@ -280,12 +293,30 @@ fn in_page(pane: AnyView) -> AnyView {
 /// kit has no Danger button and should not — Danger is a *status* colour in this
 /// system, so a red confirm would read as *this errored* — which leaves the
 /// weight to be carried by the arrangement and by the dialog's own copy.
-fn resolve() -> AnyView {
+fn resolve(exit: &str, on_page: bool) -> AnyView {
+    let exit = exit.to_string();
+
     view! {
-        <aside aria-label="About this package" style=PANE>
+        <aside
+            aria-label="About this package"
+            class=on_page.then_some("g-ip-contextpane")
+            style=(!on_page).then_some(PANE)
+        >
             <Card>
                 <div class="g-stack" style="gap:var(--q-space-3)">
-                    <BackLink href="#contextpane" label=NAMESPACE />
+                    // The mode's exit, and **inert in a gallery**. Leaving
+                    // resolve is a navigation — the real page drops `?resolve=1`
+                    // and the router redraws — so this is an anchor rather than
+                    // a control, and there is no router here to answer it.
+                    //
+                    // The caller says where it points, and every caller points
+                    // it at the cell the pane is already inside: an anchor to
+                    // anything further away scrolls, and a link that says it
+                    // does nothing should not move the page. What the exit
+                    // *does* is two cells apart rather than one click apart —
+                    // with the mode open the header has no primary, and in
+                    // every other cell `Resolve` is back on it.
+                    <BackLink href=exit label=NAMESPACE />
                     <PaneSection>
                         <p style="margin:0">
                             "2 files differ between these revisions — marked in the list."
@@ -329,6 +360,39 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
     Unresolved: `Replace mine with the published one` does not fit 280px and \
     truncates.";
 
+/// The region itself, for the whole-page scene.
+///
+/// The revisions surface opens leftwards over the file list, which is the one
+/// part of this pane whose behaviour is about where the pane sits — so on the
+/// page it is drawn by the real arrangement rather than by a cell imitating it.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; `resolve` borrows the href from there"
+)]
+pub fn ContextPaneRegion(
+    /// `?resolve=1`: the pane swaps to the choice between two revisions.
+    #[prop(optional)]
+    resolving: bool,
+    /// The standing scope, shared with whatever else on the page reads it.
+    scope: RwSignal<String>,
+    /// How many files the scope leaves outstanding, which is what decides
+    /// whether `Keeping` carries a download action at all.
+    #[prop(optional)]
+    pending: usize,
+    /// Where resolve mode's exit points. The page's own anchor, so that a link
+    /// with no router behind it does not scroll somebody somewhere else.
+    #[prop(into, optional)]
+    exit: String,
+) -> impl IntoView {
+    let open = RwSignal::new(false);
+    if resolving {
+        resolve(&exit, true)
+    } else {
+        pane(open, revision_list(), scope, pending, true)
+    }
+}
+
 #[component]
 pub fn ContextPaneScene() -> impl IntoView {
     // One open signal per pane: a popover of `auto` type closes any other, so
@@ -354,19 +418,19 @@ pub fn ContextPaneScene() -> impl IntoView {
             note=NOTE
         >
             <Cell wide=true label="at rest — files I pick, two outstanding">
-                {pane(resting, revision_list(), pick, 2)}
+                {pane(resting, revision_list(), pick, 2, false)}
             </Cell>
             <Cell wide=true label="the whole package, two files outstanding">
-                {pane(outstanding, revision_list(), whole, 2)}
+                {pane(outstanding, revision_list(), whole, 2, false)}
             </Cell>
             <Cell wide=true label="the whole package, nothing outstanding — no action">
-                {pane(settled, revision_list(), complete, 0)}
+                {pane(settled, revision_list(), complete, 0, false)}
             </Cell>
             <Cell full=true label="click the trigger — the revisions this copy holds">
-                {in_page(pane(listed, revision_list(), listing, 2))}
+                {in_page(pane(listed, revision_list(), listing, 2, false))}
             </Cell>
             <Cell full=true label="click it — the call has not answered yet">
-                {in_page(pane(waiting_surface, revision_skeleton(), waiting, 2))}
+                {in_page(pane(waiting_surface, revision_skeleton(), waiting, 2, false))}
             </Cell>
             <Cell full=true label="click it — the call failed">
                 {in_page(
@@ -381,11 +445,12 @@ pub fn ContextPaneScene() -> impl IntoView {
                             .into_any(),
                         broken,
                         2,
+                        false,
                     ),
                 )}
             </Cell>
             <Cell wide=true label="resolve mode, with the exit the design left open">
-                {resolve()}
+                {resolve("#contextpane", false)}
             </Cell>
         </Scene>
     }

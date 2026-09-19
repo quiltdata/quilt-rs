@@ -72,3 +72,23 @@ ul.body {
 .root.flush {
   padding: 0;
 }
+
+/* A card that is the page's growing region. `min-height: 0` is the load-bearing
+ * half: a flex child defaults to `min-height: auto` and refuses to shrink below
+ * its content, so a card holding seven hundred rows pushes the page taller
+ * instead of scrolling inside it. The body is what scrolls, not the section, so
+ * a sticky heading inside it keeps a scroll container to stick to. */
+.root.fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.root.fill > .body,
+.root.fill > ul.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
