@@ -153,6 +153,7 @@ impl From<FsWatcherSettings> for FsWatcherSettingsData {
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
     pub main_page_v2: bool,
+    pub package_page_v2: bool,
 }
 
 impl From<ExperimentalSettings> for ExperimentalSettingsData {
@@ -160,6 +161,7 @@ impl From<ExperimentalSettings> for ExperimentalSettingsData {
         Self {
             entire_package_sync: s.entire_package_sync,
             main_page_v2: s.main_page_v2,
+            package_page_v2: s.package_page_v2,
         }
     }
 }
@@ -388,6 +390,7 @@ pub async fn update_experimental_settings(
     experimental: tauri::State<'_, SharedExperimentalSettings>,
     entire_package_sync: Option<bool>,
     main_page_v2: Option<bool>,
+    package_page_v2: Option<bool>,
 ) -> Result<(), String> {
     let app_handle = app_handle.lock().await;
     let data_dir = app_handle
@@ -397,7 +400,7 @@ pub async fn update_experimental_settings(
 
     // Read guard dropped before the write guard is taken.
     let mut new = { experimental.read().await.clone() };
-    new.patch(entire_package_sync, main_page_v2);
+    new.patch(entire_package_sync, main_page_v2, package_page_v2);
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *experimental.write().await = new;
     Ok(())
