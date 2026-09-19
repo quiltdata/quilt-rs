@@ -60,9 +60,20 @@
  * underline. `margin` is the space above the rule, `padding` the space below.
  *
  * Top-level sections only. Two nested ones are the sides of a resolve, which the
- * sentence above them has already joined. */
+ * sentence above them has already joined.
+ *
+ * **All three are custom properties, because the container decides.** Laid out
+ * side by side rather than stacked — which the installed package's pane does
+ * when it has a whole column to spend — there is no rule to draw: two columns
+ * say they are two subjects by being two columns, the space between them belongs
+ * to the row's `gap` rather than to either box's margin, and a vertical rule
+ * sized to the shorter column hangs rather than divides. A container cannot
+ * express that by overriding these declarations: this selector is four classes
+ * and anything reaching in from outside the module is worth less, so it would
+ * lose. Same reason `--q-entry-gutter` exists — one value, set by whoever knows
+ * the arrangement, read by whoever has to draw it. */
 .root:not(.nested) + .root:not(.nested) {
-  border-top: 1px solid var(--q-borderColor-muted);
-  margin-top: var(--q-space-3);
-  padding-top: var(--q-space-3);
+  border-top: var(--q-pane-divider, 1px solid var(--q-borderColor-muted));
+  margin-top: var(--q-pane-divider-above, var(--q-space-3));
+  padding-top: var(--q-pane-divider-below, var(--q-space-3));
 }

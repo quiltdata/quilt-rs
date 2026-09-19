@@ -128,6 +128,14 @@ use crate::kit::SkeletonBox;
 use crate::kit::state_label::StateTone;
 use quilt_sync_ui::util::format_size;
 
+/// The two files the resolve fixture has differing between the revisions. Both
+/// are local and both are in the first screen of the list, because a mark the
+/// reader has to scroll to proves nothing about the marking.
+const MARKED: &[&str] = &[
+    "README.md",
+    "investigations/2026-09-15-installed-package-page/design-01.md",
+];
+
 /// The pane at a 1024 window: 1024 less `page_layout`'s 32 of padding, less the
 /// context pane's fixed 280 and the gap between them. Every measurement this
 /// scene reports is at this width.
@@ -141,6 +149,12 @@ const LIST_WITH_FOOTER: &str = "max-height:264px";
 /// The cap notice is 36px, and at the height floor the pane cannot grow by it —
 /// so it comes out of the list rather than out of the page.
 const LIST_UNDER_NOTICE: &str = "max-height:277px";
+
+/// On the page, where the height is the window's to give, the pane's own
+/// geometry moves to a class — `g-ip-filepane` — because the narrow arrangement
+/// has to raise its `min-height` and an inline style cannot be overridden by a
+/// container query.
+const LIST_FILLING: &str = "flex:1; min-height:0";
 
 // ── the package ─────────────────────────────────────────────
 
@@ -521,6 +535,19 @@ fn row(
 
 // ── the pane ────────────────────────────────────────────────
 
+/// Where the pane is being drawn, which is what decides how it takes its height.
+///
+/// Not a `fill: bool` beside the others: the two framings differ in more than a
+/// flag's worth of behaviour, and naming the place says why the numbers differ.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    /// A gallery cell, where the list is capped at §5's own numbers because
+    /// those numbers are what the cell is about.
+    Cell,
+    /// The page, where the list takes what the window left and scrolls.
+    Page,
+}
+
 /// What the list box holds when it is not holding rows.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Body {
@@ -554,6 +581,8 @@ struct Pane {
     ticked: usize,
     /// The download is in flight.
     running: bool,
+    /// Where it is drawn, which decides whether the list is capped or fills.
+    framing: Framing,
     body: Body,
 }
 
@@ -569,6 +598,7 @@ impl Pane {
             marked: &[],
             ticked: 0,
             running: false,
+            framing: Framing::Cell,
             body: Body::Rows,
         }
     }
@@ -588,6 +618,7 @@ fn pane(p: Pane) -> AnyView {
         marked,
         ticked,
         running,
+        framing,
         body,
     } = p;
 
@@ -666,6 +697,7 @@ fn pane(p: Pane) -> AnyView {
     let narrowed =
         Signal::derive(move || !query_sig.get().is_empty() || !facet_sig.get().starts_with("All"));
 
+    let fill = framing == Framing::Page;
     let boxes = !whole;
     let footer_shown = Signal::derive(move || boxes && chosen.get() > 0);
     let marked: Vec<String> = marked.iter().map(|&p| p.to_string()).collect();
@@ -729,15 +761,29 @@ fn pane(p: Pane) -> AnyView {
     };
 
     view! {
-        <div class="g-stack" style=PANE>
+        <div
+            class=if fill { "g-stack g-ip-filepane" } else { "g-stack" }
+            style=if fill { "" } else { PANE }
+        >
             // Bare, both rows: verdict 17, they act on the list rather than
             // belonging to it. Search takes the pane's full width; the toolbar's
             // content is inset to the rows' checkbox column.
-            <SearchInput
-                value=query_sig
-                aria_label="Search files"
-                placeholder="Search files…"
-            />
+            // A row of its own, and the `display:flex` is load-bearing rather
+            // than decorative: `SearchInput` carries `flex: 1 1 auto` so it
+            // takes the free space in a toolbar — and dropped straight into
+            // this column that grew it *vertically*, to 162px, because in a
+            // column the main axis is the one it was asked to fill. The same
+            // mistake `Card` already has written up: a parent's layout living
+            // in a child, invisible until the parent is a column with height to
+            // give away. A row is what the component assumes, so a row is what
+            // it gets.
+            <div style="display:flex">
+                <SearchInput
+                    value=query_sig
+                    aria_label="Search files"
+                    placeholder="Search files…"
+                />
+            </div>
             {match body {
                 Body::Loading => {
                     view! {
@@ -817,7 +863,7 @@ fn pane(p: Pane) -> AnyView {
             // The box. `flush`, because the rows carry their own padding: the
             // headings stick to its top edge and the footer's hairline — which
             // is `Card`'s own rule about two children — reaches both borders.
-            <Card flush=true label="Files">
+            <Card flush=true label="Files" fill=fill>
                 {match body {
                     Body::Failed => {
                         view! {
@@ -879,10 +925,14 @@ fn pane(p: Pane) -> AnyView {
                                 style=move || {
                                     format!(
                                         "{}; overflow-y:auto; --q-entry-gutter:{}",
-                                        match (footer_shown.get(), body) {
-                                            (true, _) => LIST_WITH_FOOTER,
-                                            (false, Body::Capped) => LIST_UNDER_NOTICE,
-                                            (false, _) => LIST_RESTING,
+                                        if fill {
+                                            LIST_FILLING
+                                        } else {
+                                            match (footer_shown.get(), body) {
+                                                (true, _) => LIST_WITH_FOOTER,
+                                                (false, Body::Capped) => LIST_UNDER_NOTICE,
+                                                (false, _) => LIST_RESTING,
+                                            }
                                         },
                                         if group_sig.get() == "None" { "0" } else { "16px" },
                                     )
@@ -1084,6 +1134,34 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
     and visible: under `Group: None` the ellipsis eats the leaf, and `Ignored` is three \
     files under two headings.";
 
+/// The region itself, for the whole-page scene.
+///
+/// `fill` is the difference between the two places it is drawn: the cells below
+/// cap the list at §5's own numbers because those numbers are what they are
+/// about, and the page hands it whatever height the window left.
+#[component]
+pub fn FilePaneRegion(
+    /// The radio group's name, unique per cell on the page.
+    name: &'static str,
+    /// How many rows start ticked, which is what puts the footer on screen.
+    #[prop(optional)]
+    ticked: usize,
+    /// Resolve mode: mark the files that differ between the two revisions.
+    #[prop(optional)]
+    marked: bool,
+    /// `Keeping → The whole package`, which takes the per-file choice away.
+    #[prop(optional)]
+    whole: bool,
+) -> impl IntoView {
+    pane(Pane {
+        ticked,
+        whole,
+        marked: if marked { MARKED } else { &[] },
+        framing: Framing::Page,
+        ..Pane::new(name)
+    })
+}
+
 #[component]
 pub fn FilePaneScene() -> impl IntoView {
     // The standalone trigger has no row behind it, so it names one.
@@ -1106,10 +1184,7 @@ pub fn FilePaneScene() -> impl IntoView {
                 })}
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
-                {pane(Pane {
-                    marked: &["README.md", "investigations/2026-09-15-installed-package-page/design-01.md"],
-                    ..Pane::new("fp-marked")
-                })}
+                {pane(Pane { marked: MARKED, ..Pane::new("fp-marked") })}
             </Cell>
             <Cell full=true label="Keeping → the whole package: no boxes, no select-all, no footer">
                 {pane(Pane { whole: true, ..Pane::new("fp-whole") })}

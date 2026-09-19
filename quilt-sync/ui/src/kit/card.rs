@@ -52,6 +52,15 @@ pub fn Card(
     /// drift this kit already logged four times.
     #[prop(optional)]
     flush: bool,
+    /// Take the height its parent column leaves, and let the body scroll inside
+    /// it. For the one region on a page with no bound on its length — the
+    /// installed package's file list, which is as long as the package is.
+    ///
+    /// `min-height: 0` is the whole of it: a flex child's default `min-height:
+    /// auto` refuses to shrink below its content, so a card full of rows pushes
+    /// the page taller instead of scrolling.
+    #[prop(optional)]
+    fill: bool,
     children: Children,
 ) -> impl IntoView {
     let heading_id = super::unique_id("card-title");
@@ -64,12 +73,22 @@ pub fn Card(
     };
     let named = heading.is_some().then_some(labelled_by);
 
+    let class = [
+        Some(style::root),
+        flush.then_some(style::flush),
+        fill.then_some(style::fill),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ");
+
     view! {
         // `h2`: the page's regions are h2, and a card is a region. If a caller ever
         // needs a different level, that is a prop — not a hard-coded guess repeated at
         // each call site.
         <section
-            class=if flush { format!("{} {}", style::root, style::flush) } else { String::from(style::root) }
+            class=class
             aria-labelledby=named
             aria-busy=move || busy.get().then_some("true")
         >
