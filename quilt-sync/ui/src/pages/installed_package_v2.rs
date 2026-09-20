@@ -1,15 +1,20 @@
 //! The v2 package page. Behind `ExperimentalSettings.package_page_v2`.
 //!
-//! A placeholder, and deliberately one: this landing is the *seam* — a flag, a
-//! route that reads it, and a page that proves the route parameter arrives. The
-//! page the design describes is built on top of this, region by region.
+//! The header is drawn; the regions below it are not. The namespace line under
+//! the header is what is left of the seam's placeholder, and it stays until the
+//! file pane takes that space.
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::use_query_map;
 
-use crate::kit::{Button, PageLayout, icons};
+use crate::commands;
+use crate::kit::{Button, LoadFailure, PageLayout, icons};
+
+mod header;
+
+use header::{PageHeader, PageHeaderSkeleton};
 
 /// What `/installed-package` renders for a reader with *New package page* on.
 #[component]
@@ -20,6 +25,17 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // parameter without remounting.
     let namespace = move || query.read().get("namespace").unwrap_or_default();
     let navigate = use_navigate();
+
+    // One read for the whole page. Re-runs when the address changes, because one
+    // route serves every package and a link from another page swaps the
+    // parameter without remounting; and when `retry` fires, which is the
+    // failure arm's way out.
+    let retry = Trigger::new();
+    let data = LocalResource::new(move || {
+        retry.track();
+        let namespace = query.read().get("namespace").unwrap_or_default();
+        async move { commands::get_package_page_data(namespace).await }
+    });
 
     // `heading` is not reactive and one route serves every package, so it names
     // the page rather than the package; the package's own name is on screen.
@@ -39,7 +55,27 @@ pub fn InstalledPackageV2() -> impl IntoView {
             }
                 .into_any()
         >
-            <h2>"It works!"</h2>
+            <Suspense fallback=|| view! { <PageHeaderSkeleton /> }>
+                {move || Suspend::new(async move {
+                    match data.await {
+                        Ok(d) => view! { <PageHeader data=d.header /> }.into_any(),
+                        // The page keeps its frame and states the failure in
+                        // place. A read that failed for a reason the header
+                        // could have worded — no session, a refused role —
+                        // never reaches here: the command resolves those to a
+                        // state, and the header draws them.
+                        Err(_) => {
+                            view! {
+                                <LoadFailure
+                                    words="Could not load this package."
+                                    on_retry=Callback::new(move |()| retry.notify())
+                                />
+                            }
+                                .into_any()
+                        }
+                    }
+                })}
+            </Suspense>
             <p>{namespace}</p>
         </PageLayout>
     }
@@ -64,12 +100,14 @@ mod tests {
             .unwrap();
     }
 
-    /// The one thing the placeholder is for: proving the route parameter
-    /// arrives. A page that drew a fixed string would pass a weaker test and
-    /// tell the next unit nothing.
-    /// The one thing the placeholder is for: proving the route parameter
-    /// arrives. A page drawing a fixed string would pass a weaker test and tell
-    /// the next unit nothing.
+    /// The route parameter arrives and the page names it. A page that drew a
+    /// fixed string would pass a weaker test and tell the next unit nothing.
+    ///
+    /// The seam's `It works!` is gone — the header took that space — and its
+    /// assertion went with it. What replaced it is stronger: there is no Tauri
+    /// host under the test runner, so the page's read fails, and this now also
+    /// holds the failure arm to keeping the frame and the package's name rather
+    /// than blanking the page.
     ///
     /// Async because the router resolves a location one tick after the mount —
     /// queried synchronously the container is still a comment marker.
@@ -87,8 +125,8 @@ mod tests {
         });
         sleep_ms(50).await;
 
-        element_saying(&el, "It works!");
         element_saying(&el, "team/dataset");
+        element_saying(&el, "Could not load this package.");
     }
 
     /// v2's frame, not v1's. `data-v2-page` is what the stylesheet keys the
