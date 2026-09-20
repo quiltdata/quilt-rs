@@ -67,7 +67,7 @@ fn Home() -> impl IntoView {
     let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
 
     view! {
-        <Suspense fallback=|| loading("Loading QuiltSync")>
+        <Suspense fallback=home_loading>
             {move || Suspend::new(async move {
                 let settings = settings.await;
                 let v2 = wants_main_page_v2(settings.as_ref().map_err(String::as_str));
@@ -121,13 +121,28 @@ fn PackagePage() -> impl IntoView {
 /// yet, so there is no shape to hold.
 ///
 /// No appbar around it. Drawing one page's chrome and then swapping it for the
-/// other's is the flicker this route exists to avoid.
+/// other's is the flicker this route exists to avoid. **And no ground** — see
+/// [`home_loading`] for who may paint one and why only they may.
 fn loading(aria_label: &'static str) -> AnyView {
-    // `data-home-frame`: a v2 reader's ground for this frame, see `_base.scss`.
+    view! { <kit::Spinner variant=kit::SpinnerVariant::Region aria_label=aria_label /> }.into_any()
+}
+
+/// `/`'s loading frame, which also paints a ground.
+///
+/// `data-home-frame` is styled off `theme::set_v2`'s root marker (`_base.scss`),
+/// and that marker records the *main page* opt-in. It may only be drawn where it
+/// predicts what is coming, which is here and nowhere else: `/` renders v2
+/// exactly when the marker is set, so the ground it paints is the ground the
+/// page then keeps.
+///
+/// `/installed-package` gets [`loading`] bare for that reason. The marker says
+/// nothing about which package page is coming, so a frame painted from it is
+/// wrong for whichever flag disagrees — and a reader with the main page on and
+/// the package page off would have been shown a dark ground before v1's light
+/// chrome, having opted into nothing.
+fn home_loading() -> AnyView {
     view! {
-        <div data-home-frame>
-            <kit::Spinner variant=kit::SpinnerVariant::Region aria_label=aria_label />
-        </div>
+        <div data-home-frame>{loading("Loading QuiltSync")}</div>
     }
     .into_any()
 }
@@ -194,7 +209,7 @@ mod tests {
         let doc = web_sys::window().unwrap().document().unwrap();
         let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
         doc.body().unwrap().append_child(&host).unwrap();
-        leptos::mount::mount_to(host.clone(), || loading("Loading QuiltSync")).forget();
+        leptos::mount::mount_to(host.clone(), home_loading).forget();
 
         let el: web_sys::Element = host.into();
         // Inside the frame `_base.scss` grounds for a v2 reader — the two are
@@ -207,6 +222,39 @@ mod tests {
             status.text_content().unwrap().trim(),
             "Loading QuiltSync",
             "and it says what it is waiting on"
+        );
+    }
+
+    /// The ground is `/`'s alone, so the frame the package route uses must not
+    /// carry one.
+    ///
+    /// `data-home-frame` is painted from the main-page marker, so on the package
+    /// route it is wrong for whichever flag disagrees — a reader with the main
+    /// page on and the package page off got a dark full-viewport ground before
+    /// v1's light chrome, having opted into nothing.
+    ///
+    /// **What this does not pin:** that `PackagePage` names this fallback rather
+    /// than `home_loading`. Reading that wiring needs the route mounted with its
+    /// settings fetch still pending, and the fetch resolves to `Err` at once in
+    /// this harness — the binary's tests also have no `sleep_ms`, since
+    /// `test_support` belongs to the library. The wiring is held by the two
+    /// functions being named apart and by `home_loading`'s doc, not by a test.
+    #[wasm_bindgen_test]
+    fn the_package_frame_paints_no_ground() {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&host).unwrap();
+        leptos::mount::mount_to(host.clone(), || loading("Loading package")).forget();
+
+        let el: web_sys::Element = host.into();
+        assert!(
+            el.query_selector("[role=status]").unwrap().is_some(),
+            "it says what it is waiting on"
+        );
+        assert!(
+            el.query_selector("[data-home-frame]").unwrap().is_none(),
+            "and paints no ground; markup was {}",
+            el.inner_html()
         );
     }
 
