@@ -1,6 +1,7 @@
 mod commit;
 mod error;
 mod installed_package;
+mod installed_package_v2;
 mod installed_packages_list;
 mod login;
 mod main_page;
@@ -13,6 +14,7 @@ mod setup;
 pub use commit::Commit;
 pub use error::Error;
 pub use installed_package::InstalledPackage;
+pub use installed_package_v2::InstalledPackageV2;
 pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
 pub use main_page::MainPage;
