@@ -45,6 +45,12 @@ pub(super) fn ExperimentalSection(
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
 ) -> impl IntoView {
+    // The section owns the signals rather than each row, because the package row
+    // reads the main-page row's live state and not the value the page loaded with.
+    let entire_package_sync = RwSignal::new(entire_package_sync);
+    let main_page_v2 = RwSignal::new(main_page_v2);
+    let package_page_v2 = RwSignal::new(package_page_v2);
+
     view! {
         <section class="settings-section qui-experimental-settings">
             <h2 class="section-title">"Experimental"</h2>
@@ -54,7 +60,7 @@ pub(super) fn ExperimentalSection(
                     description="Adds a per-package choice — sync the entire package, including \
                                  files added later, instead of picking files. Off until you \
                                  choose it on a package."
-                    initial=entire_package_sync
+                    enabled=entire_package_sync
                     flag=Flag::EntirePackageSync
                     notification=notification
                     refetch=refetch
@@ -63,7 +69,7 @@ pub(super) fn ExperimentalSection(
                     label="New main page"
                     description="One page for everything that needs you, over separate package \
                                  screens. Switch back at any time — nothing is lost."
-                    initial=main_page_v2
+                    enabled=main_page_v2
                     flag=Flag::MainPageV2
                     notification=notification
                     refetch=refetch
@@ -77,10 +83,13 @@ pub(super) fn ExperimentalSection(
                     description="The package screen, being rebuilt. Unfinished — today it is a \
                                  placeholder, not the screen you know. Switch back at any time \
                                  — nothing is lost."
-                    initial=package_page_v2
+                    enabled=package_page_v2
                     flag=Flag::PackagePageV2
                     notification=notification
                     refetch=refetch
+                    disabled_when=Signal::derive(move || !main_page_v2.get())
+                    disabled_note="Turn on New main page first — the rebuilt screen is drawn in \
+                                   that design and leads back to that page."
                 />
             </dl>
         </section>
@@ -95,15 +104,23 @@ pub(super) fn ExperimentalSection(
 fn ExperimentalToggle(
     label: &'static str,
     description: &'static str,
-    initial: bool,
+    enabled: RwSignal<bool>,
     flag: Flag,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
     #[prop(optional)] navigate_to: Option<&'static str>,
+    /// When this row cannot be operated, and why. A disabled control with no
+    /// reason beside it is a dead end, so the two arrive together.
+    ///
+    /// The box keeps showing what is stored while it is disabled: the flag is
+    /// not cleared, so re-enabling what gates it resumes the reader's choice.
+    #[prop(optional)]
+    disabled_when: Option<Signal<bool>>,
+    #[prop(optional)] disabled_note: Option<&'static str>,
 ) -> impl IntoView {
-    let enabled = RwSignal::new(initial);
     let saving = RwSignal::new(false);
     let navigate = use_navigate();
+    let blocked = move || disabled_when.is_some_and(|when| when.get());
 
     let on_toggle = move |ev: leptos::ev::Event| {
         let new_enabled = event_target_checked(&ev);
@@ -149,10 +166,16 @@ fn ExperimentalToggle(
                 <input
                     type="checkbox"
                     prop:checked=move || enabled.get()
-                    prop:disabled=move || saving.get()
+                    prop:disabled=move || saving.get() || blocked()
                     on:change=on_toggle
                 />
-                <span class="value default">{description}</span>
+                <span class="value default">
+                    {description}
+                    {disabled_note
+                        .map(|note| {
+                            view! { <Show when=blocked><span class="note">{note}</span></Show> }
+                        })}
+                </span>
             </label>
         </dd>
     }

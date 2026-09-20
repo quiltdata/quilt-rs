@@ -155,13 +155,21 @@ fn wants_main_page_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
     settings.is_ok_and(|data| data.experimental.main_page_v2)
 }
 
-/// Whether `/installed-package` renders v2, on the same terms.
+/// Whether `/installed-package` renders v2, on the same terms — and only under
+/// the main page's opt-in.
 ///
-/// A flag of its own rather than [`wants_main_page_v2`]: the two pages are not
-/// equally finished, so a reader may want either without the other. They merge
-/// into one switch when the v2 package page is done.
+/// **Both flags**, because the v2 package page assumes a v2 app around it: it is
+/// drawn in that design, and its way back leads to the main page. A flag of its
+/// own still, so the unfinished page is not forced on every reader of the v2
+/// main page; but it narrows that opt-in rather than standing beside it. The two
+/// merge into one switch when the page is finished.
+///
+/// The gate is on the effect, not only on the Settings row. A disabled box over
+/// a live flag is a flag with no way to turn it off — and gating the effect is
+/// how `entire_package_sync`'s gate already behaves: the stored choice is left
+/// written, so restoring what gates it resumes the reader's answer.
 fn wants_package_page_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.is_ok_and(|data| data.experimental.package_page_v2)
+    settings.is_ok_and(|data| data.experimental.main_page_v2 && data.experimental.package_page_v2)
 }
 
 #[cfg(test)]
@@ -279,13 +287,13 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn package_flag_on_renders_v2() {
-        let settings = settings_stub(false, true);
+        let settings = settings_stub(true, true);
         assert!(wants_package_page_v2(Ok(&settings)));
     }
 
     #[wasm_bindgen_test]
     fn package_flag_off_renders_v1() {
-        let settings = settings_stub(false, false);
+        let settings = settings_stub(true, false);
         assert!(!wants_package_page_v2(Ok(&settings)));
     }
 
@@ -294,16 +302,22 @@ mod tests {
         assert!(!wants_package_page_v2(Err("boom")));
     }
 
-    /// The reason there are two flags rather than one. Both cells of each row
-    /// are asserted, so neither predicate can pass by reading the other's flag.
+    /// All four rows, because the interesting one is the third: a package flag
+    /// left on from before the main page was switched off does not render v2.
+    /// The stored value is untouched — Settings still shows it ticked, disabled
+    /// — so restoring the main page resumes it.
     #[wasm_bindgen_test]
-    fn each_route_reads_only_its_own_flag() {
-        let main_only = settings_stub(true, false);
-        assert!(wants_main_page_v2(Ok(&main_only)));
-        assert!(!wants_package_page_v2(Ok(&main_only)));
+    fn the_package_page_needs_both_flags() {
+        assert!(!wants_package_page_v2(Ok(&settings_stub(false, false))));
+        assert!(!wants_package_page_v2(Ok(&settings_stub(true, false))));
+        assert!(!wants_package_page_v2(Ok(&settings_stub(false, true))));
+        assert!(wants_package_page_v2(Ok(&settings_stub(true, true))));
+    }
 
-        let package_only = settings_stub(false, true);
-        assert!(!wants_main_page_v2(Ok(&package_only)));
-        assert!(wants_package_page_v2(Ok(&package_only)));
+    /// And the main page is not gated in return — the dependency runs one way.
+    #[wasm_bindgen_test]
+    fn the_main_page_does_not_read_the_package_flag() {
+        assert!(wants_main_page_v2(Ok(&settings_stub(true, false))));
+        assert!(!wants_main_page_v2(Ok(&settings_stub(false, true))));
     }
 }
