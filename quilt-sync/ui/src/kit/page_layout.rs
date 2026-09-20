@@ -29,9 +29,12 @@
 //!
 //! # What is deliberately not here yet
 //!
-//! **Breadcrumbs** — the main page is the root, so its trail is one item, and a breadcrumb
-//! of one is decoration. The first v2 page with a parent adds them. That is the only thing
-//! left; the banner host arrived, and `ui_locked` is not arriving.
+//! **Breadcrumbs** — not here, and the first v2 page with a parent did not add
+//! them. The package page's trail is a `BackLink` in its own header: a trail of
+//! two is a back-link in costume, the second crumb restating the title an inch
+//! below it, and it costs a band against that page's vertical budget. The trail
+//! earns an appbar of its own at three, which is `/commit`. The banner host
+//! arrived, and `ui_locked` is not arriving.
 
 use leptos::prelude::*;
 
