@@ -13,7 +13,7 @@
 
 ### Added
 
-- A new opt-in, **New package page** (Settings → Experimental, off by default), switches a package's own screen to the rebuilt one. It is unfinished — today it shows a placeholder rather than the screen you know — and the package screen is untouched for everyone who leaves it off. It is a separate switch from **New main page**, so either can be on without the other (<https://github.com/quiltdata/quilt-rs/pull/966>)
+- A new opt-in, **New package page** (Settings → Experimental, off by default), switches a package's own screen to the rebuilt one. It is unfinished — today it shows a placeholder rather than the screen you know, drawn in the new design and following your desktop's light or dark setting — and the package screen is untouched for everyone who leaves it off. It is a separate switch from **New main page**, so either can be on without the other (<https://github.com/quiltdata/quilt-rs/pull/966>)
 
 ## [v0.22.3] - 2026-09-18
 
