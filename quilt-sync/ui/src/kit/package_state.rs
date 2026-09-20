@@ -50,6 +50,26 @@ pub enum PackageState {
     },
     NoRemote,
     Unpublished,
+    /// There is no session for this package's deployment — never signed in, or
+    /// signed out.
+    ///
+    /// `host` is optional because a bare bucket reached on ambient AWS
+    /// credentials has no deployment to sign in to. A `None` host means the
+    /// remedy is the credentials file rather than a sign-in, and the surface has
+    /// to be able to say so.
+    NoSession {
+        host: Option<String>,
+    },
+    /// A session that existed and was refused.
+    ///
+    /// Separate from [`Self::NoSession`] although the engine's
+    /// `Error::is_session_absent` merges them: that predicate answers "can this
+    /// caller proceed", which is one bit, and a surface may say more than the
+    /// bit. Being told you were signed out when you never signed in is a
+    /// different sentence from being told your sign-in lapsed underneath you.
+    SignInExpired {
+        host: Option<String>,
+    },
     /// Autosync stopped for this package for a reason no other state covers —
     /// §5's row 3, which nothing rendered until this existed (qhq-8mgw.36). The
     /// pauses that DO have a state resolve into it instead, in the light phase.
@@ -106,6 +126,9 @@ pub enum PackageAction {
     /// package-level choice between Certify Latest and Reset Local.
     Resolve,
     ChooseS3Bucket,
+    /// Sign in to the deployment the state names. Never offered for a denial —
+    /// signing in again re-vends the same role.
+    SignIn,
 }
 
 impl PackageAction {
@@ -118,6 +141,7 @@ impl PackageAction {
             Self::Publish => "Publish",
             Self::Resolve => "Resolve",
             Self::ChooseS3Bucket => "Choose S3 bucket",
+            Self::SignIn => "Sign in",
         }
     }
 }
@@ -240,6 +264,14 @@ fn words(state: &PackageState, site: Site) -> String {
         (PackageState::Unknown, Site::ListRow) => "Sync stopped".to_string(),
         (PackageState::Unknown, Site::QueueRow) => "cannot be checked".to_string(),
 
+        // Worded the same at every site: a session is a fact about the deployment
+        // rather than about this package, so there is no list-versus-header
+        // reading of it to diverge. Written with a `_` site rather than left to
+        // the delegation below because the words are chosen here, not borrowed.
+        (PackageState::NoSession { host: Some(host) }, _) => format!("Signed out of {host}"),
+        (PackageState::NoSession { host: None }, _) => "Signed out".to_string(),
+        (PackageState::SignInExpired { .. }, _) => "Sign-in expired".to_string(),
+
         // Every remaining cause and header. Delegated rather than written out,
         // because a heading, a header chip and a list chip all want the same noun
         // phrase; the arms above still force a new state to answer for both of the
@@ -271,6 +303,8 @@ fn tone(state: &PackageState) -> StateTone {
         PackageState::Diverged
         | PackageState::PullConflict { .. }
         | PackageState::RoleDenied { .. }
+        | PackageState::NoSession { .. }
+        | PackageState::SignInExpired { .. }
         | PackageState::Paused
         | PackageState::Unknown => StateTone::Danger,
     }
@@ -293,6 +327,13 @@ fn action(state: &PackageState) -> Option<PackageAction> {
         PackageState::Diverged => Some(PackageAction::Resolve),
 
         PackageState::NoRemote => Some(PackageAction::ChooseS3Bucket),
+
+        // The one state whose remedy is not about this package at all. Offered
+        // for both conditions because the remedy is the same one; the words are
+        // what tell them apart.
+        PackageState::NoSession { .. } | PackageState::SignInExpired { .. } => {
+            Some(PackageAction::SignIn)
+        }
 
         // Nothing on offer. A denial is fixed at the host, and there is no resume for
         // a pause — see `commands/main_page.rs`. §5's lattice gives the pause row
@@ -338,6 +379,61 @@ mod tests {
         assert_eq!(rendered.words, "cannot be read");
         assert_eq!(rendered.tone, StateTone::Danger);
         assert_eq!(rendered.action, None);
+    }
+
+    #[wasm_bindgen_test]
+    fn a_missing_session_names_its_deployment_in_the_header() {
+        let s = PackageState::NoSession {
+            host: Some("demo.quiltdata.com".to_string()),
+        };
+        assert_eq!(
+            render(&s, Site::PageHeader).words,
+            "Signed out of demo.quiltdata.com"
+        );
+        assert_eq!(
+            render(&s, Site::PageHeader).action,
+            Some(PackageAction::SignIn)
+        );
+    }
+
+    /// A bare bucket on ambient AWS credentials has no deployment to sign in to,
+    /// so the words cannot name one — and the remedy is the credentials file.
+    #[wasm_bindgen_test]
+    fn a_missing_session_without_a_host_says_so_without_naming_one() {
+        let s = PackageState::NoSession { host: None };
+        assert_eq!(render(&s, Site::PageHeader).words, "Signed out");
+    }
+
+    #[wasm_bindgen_test]
+    fn an_expired_sign_in_is_its_own_state_with_the_same_remedy() {
+        let expired = PackageState::SignInExpired {
+            host: Some("demo.quiltdata.com".to_string()),
+        };
+        let absent = PackageState::NoSession {
+            host: Some("demo.quiltdata.com".to_string()),
+        };
+        assert_eq!(render(&expired, Site::PageHeader).words, "Sign-in expired");
+        assert_ne!(
+            render(&expired, Site::PageHeader).words,
+            render(&absent, Site::PageHeader).words,
+            "two conditions the engine's is_session_absent merges, told apart on this surface"
+        );
+        assert_eq!(
+            render(&expired, Site::PageHeader).action,
+            Some(PackageAction::SignIn)
+        );
+    }
+
+    /// Both are wrong and neither is waiting on the package, so both are Danger —
+    /// the same side of `StateTone`'s split that `RoleDenied` is on.
+    #[wasm_bindgen_test]
+    fn both_session_states_are_danger() {
+        for s in [
+            PackageState::NoSession { host: None },
+            PackageState::SignInExpired { host: None },
+        ] {
+            assert_eq!(render(&s, Site::PageHeader).tone, StateTone::Danger);
+        }
     }
 
     /// Every state as the queue draws it: the clause, the tone and the verb.
@@ -589,6 +685,13 @@ mod tests {
             },
             PackageState::NoRemote,
             PackageState::Unpublished,
+            // A host on one and not the other: `NoSession` is the variant that
+            // interpolates one, and it is the interpolated form the banned-word
+            // sweep below has to see.
+            PackageState::NoSession {
+                host: Some("demo.quiltdata.com".to_string()),
+            },
+            PackageState::SignInExpired { host: None },
             PackageState::Paused,
             PackageState::Unknown,
         ];
@@ -605,6 +708,8 @@ mod tests {
                 | PackageState::RoleDenied { .. }
                 | PackageState::NoRemote
                 | PackageState::Unpublished
+                | PackageState::NoSession { .. }
+                | PackageState::SignInExpired { .. }
                 | PackageState::Paused
                 | PackageState::Unknown => {}
             }
