@@ -292,6 +292,17 @@ faintest fill in the system and a softer edge than its siblings. Read as log
 levels, danger is error, attention is warn, and success is *info*: it says you
 are safe, not well done.
 
+**The Whose Move Rule.** Attention and Danger are not degrees of severity. They
+say *who the next move belongs to*: Attention is waiting on the reader, Danger
+is something the surface cannot fix by itself. A package holding a revision it
+has not sent is Attention; one whose pull came back conflicted is Danger. Both
+offer the same verb, Publish, which is what makes the pair worth stating — the
+first waits on the reader to send work already recorded, the second on a
+resolution the row cannot reach. Neutral sits outside the pair, reporting a fact
+and taking no position on it, which is why "2 files changed" is Neutral and not
+Attention; Success is the resting state. Picking a tone by how bad it feels is
+how the four collapse into two.
+
 **The Unbranded Status Rule.** The greys and the accent blue are custom scales
 tinted toward the brand navy. Green, amber, and red are stock and must stay
 stock. A green pulled toward navy stops reading as good, and reading as good is
