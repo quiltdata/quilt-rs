@@ -32,7 +32,7 @@ use leptos::prelude::*;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
-use super::appbar::{end_spin_when_ready, v2_appbar_actions};
+use super::appbar::v2_appbar_actions;
 use super::status_watch::StatusWatch;
 use crate::commands;
 use crate::commands::MainPageAccountsData;
@@ -1287,11 +1287,12 @@ pub fn MainPage() -> impl IntoView {
             answer
         }
     });
-    let refreshing = RwSignal::new(false);
-    end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
 
     view! {
-        <PageLayout heading="QuiltSync" actions=v2_appbar_actions(reload, refreshing)>
+        <PageLayout
+            heading="QuiltSync"
+            actions=v2_appbar_actions(reload, Signal::derive(move || outstanding.get() > 0))
+        >
             <PackageStatusListener reload=reload />
             <MainPageRegions
                 packages=packages
@@ -4169,11 +4170,17 @@ mod tests {
     }
     /// `aria-busy` and `disabled` on the element rather than the signal: those are
     /// what `Button`'s `loading` produces, so an unwired prop reddens this.
+    ///
+    /// The button is raised by **the page's** in-flight state and never by its
+    /// own click, so this drives that state directly and never presses. The
+    /// regression it pins: a reload the watcher started refetched the page under
+    /// a button that said nothing was happening, because the button only knew
+    /// about presses it had seen.
     #[wasm_bindgen_test]
-    async fn refresh_reports_itself_busy_the_moment_it_is_pressed() {
+    async fn refresh_reports_a_read_nobody_pressed_for() {
         let reload = Trigger::new();
-        let refreshing = RwSignal::new(false);
-        let el = mount(move || super::super::appbar::refresh_button(reload, refreshing));
+        let busy = RwSignal::new(false);
+        let el = mount(move || super::super::appbar::refresh_button(reload, busy.into()));
 
         let button: web_sys::HtmlElement = el
             .query_selector("button")
@@ -4187,72 +4194,63 @@ mod tests {
             "at rest it is not busy"
         );
 
-        button.click();
+        // No click. This is the watcher's reload, or any other read the page
+        // started for itself.
+        busy.set(true);
         leptos::task::tick().await;
 
         assert_eq!(
             button.get_attribute("aria-busy").as_deref(),
             Some("true"),
-            "a press that moves nothing on screen has to say so itself"
+            "a read is out, so the button says so whoever asked for it"
         );
         assert!(
             button.has_attribute("disabled"),
-            "and a second press must not send a second read"
+            "and a second read must not be startable on top of it"
+        );
+
+        busy.set(false);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("false"),
+            "the read answered, so the button is free again"
         );
     }
 
-    /// The path a refresh from a loaded page takes. Both resources read as present
-    /// throughout one, so only the count tells one answer from both.
+    /// The other half: pressing it asks the page to read again. Without this the
+    /// test above passes against a button wired to nothing.
     #[wasm_bindgen_test]
-    async fn a_refresh_from_a_loaded_page_spins_until_the_last_read_answers() {
-        let outstanding = RwSignal::new(0usize);
-        let refreshing = RwSignal::new(false);
-        end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
+    async fn pressing_refresh_asks_the_page_to_read_again() {
+        let reload = Trigger::new();
+        let reads = RwSignal::new(0);
+        let el = mount(move || {
+            Effect::new(move |_| {
+                reload.track();
+                reads.update(|n| *n += 1);
+            });
+            super::super::appbar::refresh_button(reload, Signal::derive(|| false))
+        });
+        leptos::task::tick().await;
+        let before = reads.get_untracked();
+
+        let button: web_sys::HtmlElement = el
+            .query_selector("button")
+            .unwrap()
+            .expect("the Refresh button")
+            .dyn_into()
+            .unwrap();
+        button.click();
         leptos::task::tick().await;
 
-        // The press, and the two reads it starts.
-        refreshing.set(true);
-        outstanding.set(2);
-        leptos::task::tick().await;
-        assert!(refreshing.get_untracked(), "both reads are still out");
-
-        outstanding.set(1);
-        leptos::task::tick().await;
-        assert!(
-            refreshing.get_untracked(),
-            "one of two answering is not the end of the press"
-        );
-
-        outstanding.set(0);
-        leptos::task::tick().await;
-        assert!(
-            !refreshing.get_untracked(),
-            "the last read answered, so the press is finished"
-        );
-    }
-
-    /// The ending rule alone. A version that cleared unconditionally passes the
-    /// second assertion and fails the first.
-    #[wasm_bindgen_test]
-    async fn the_spin_ends_when_the_light_phase_answers_and_not_before() {
-        let refreshing = RwSignal::new(true);
-        let ready = RwSignal::new(false);
-        end_spin_when_ready(refreshing, ready.into());
-        leptos::task::tick().await;
-
-        assert!(
-            refreshing.get_untracked(),
-            "still reading: the spinner stays"
-        );
-
-        ready.set(true);
-        leptos::task::tick().await;
-
-        assert!(
-            !refreshing.get_untracked(),
-            "the light phase answered, so the press is finished"
+        assert_eq!(
+            reads.get_untracked() - before,
+            1,
+            "a press notifies the page's reload trigger exactly once"
         );
     }
+
     /// Pins which trigger a card's retry notifies. The resources here are the test's,
     /// so `MainPage`'s own definitions are out of scope.
     #[wasm_bindgen_test]

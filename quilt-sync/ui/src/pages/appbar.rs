@@ -27,47 +27,37 @@ use leptos_router::hooks::use_navigate;
 use crate::kit::Button;
 use crate::kit::icons;
 
-/// The appbar's Refresh. `loading` spins it and disables it, so a second press
-/// cannot send a second read.
+/// The appbar's Refresh.
+///
+/// `busy` is the page's own answer to *is a read out* — a count on the main
+/// page, a flag on the package page — and it drives `loading`, which spins the
+/// button and blocks a second press.
+///
+/// **Read, not owned.** The button used to raise a signal of its own on click
+/// and have an effect lower it when the page went quiet, which meant it reported
+/// only the presses it had seen: a reload the watcher started refetched the page
+/// under a button that said nothing was happening. Reading the page's own
+/// in-flight state instead makes it honest whoever asked, and deletes the effect
+/// that lowered it — a read either is out or is not, and the page already knows.
 ///
 /// Separate from the pages so it mounts without a Tauri host.
-pub(super) fn refresh_button(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
+pub(super) fn refresh_button(reload: Trigger, busy: Signal<bool>) -> AnyView {
     view! {
-        <Button
-            leading_visual=icons::sync()
-            loading=refreshing
-            on_click=move |_| {
-                refreshing.set(true);
-                reload.notify();
-            }
-        >
+        <Button leading_visual=icons::sync() loading=busy on_click=move |_| reload.notify()>
             "Refresh"
         </Button>
     }
     .into_any()
 }
 
-/// Clears `refreshing` when `ready` goes true.
-///
-/// `ready` means no read is outstanding, never "the resource holds a value": a
-/// refetching `LocalResource` keeps its previous value until the new one lands,
-/// so that second question is true for the whole of a refresh.
-pub(super) fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
-    Effect::new(move |_| {
-        if ready.get() {
-            refreshing.set(false);
-        }
-    });
-}
-
 /// Refresh, then Settings — the pair every v2 page carries, in that order.
 ///
 /// Refresh first because it acts on the page you are looking at; Settings is the
 /// way off it.
-pub(super) fn v2_appbar_actions(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
+pub(super) fn v2_appbar_actions(reload: Trigger, busy: Signal<bool>) -> AnyView {
     let navigate = use_navigate();
     view! {
-        {refresh_button(reload, refreshing)}
+        {refresh_button(reload, busy)}
         <Button
             leading_visual=icons::gear()
             on_click=move |_| navigate("/settings", NavigateOptions::default())

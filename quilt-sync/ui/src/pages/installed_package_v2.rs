@@ -10,7 +10,7 @@ use leptos_router::hooks::use_query_map;
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 
-use super::appbar::{end_spin_when_ready, v2_appbar_actions};
+use super::appbar::v2_appbar_actions;
 use super::status_watch::StatusWatch;
 
 mod header;
@@ -38,13 +38,10 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // Whether the one read is out. The main page counts, because it has four;
     // one read needs a flag.
     //
-    // It ENDS the spin, and does not start it. Refresh spins only for a press,
-    // here and on the main page both: `loading` implies `disabled`, so spinning
-    // on a reload the watcher started would take the manual escape hatch away
-    // for a reason the reader did not cause — and this button is the escape
-    // hatch, the one answer to a pause whose clearing nothing announces. A
-    // background refetch keeps the previous value on screen until the new one
-    // lands, so nothing flickers while it runs.
+    // It drives Refresh's spinner, so the button reports a read the watcher
+    // started as readily as one the reader asked for — the page is working
+    // either way, and a button that only knows about presses says nothing while
+    // the page refetches under it.
     let in_flight = RwSignal::new(false);
     let data = LocalResource::new(move || {
         reload.track();
@@ -56,9 +53,6 @@ pub fn InstalledPackageV2() -> impl IntoView {
             answer
         }
     });
-
-    let refreshing = RwSignal::new(false);
-    end_spin_when_ready(refreshing, Signal::derive(move || !in_flight.get()));
 
     // `heading` is not reactive and one route serves every package, so it names
     // the page rather than the package; the package's own name is on screen.
@@ -82,7 +76,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
                 </Suspense>
             }
                 .into_any()
-            actions=v2_appbar_actions(reload, refreshing)
+            actions=v2_appbar_actions(reload, in_flight.into())
         >
             <Suspense fallback=|| view! { <PageHeaderSkeleton /> }>
                 {move || Suspend::new(async move {
