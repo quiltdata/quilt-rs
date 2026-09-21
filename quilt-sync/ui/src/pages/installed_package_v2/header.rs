@@ -22,13 +22,21 @@
 //! which is the one place the vocabulary lives. A header that hand-wrote its own
 //! strings would keep agreeing with itself after the vocabulary moved.
 //!
-//! # The commands are not wired yet
+//! # Read-only, and disabled rather than inert
 //!
-//! Every item selects into a no-op, and the primary action does not act. This
-//! unit draws the header; each command lands with the region that owns it, and
-//! wiring them here would put five package mutations behind a surface whose
-//! panes do not exist. The one thing that IS live is the trail, which is a
-//! link.
+//! This unit draws the header; the commands land with the regions and dialogs
+//! that own them. So every command is **disabled and says why** rather than
+//! enabled and doing nothing — a control that accepts a click and answers with
+//! silence is worse than one that shows it is not available.
+//!
+//! Two things stay live. The trail, because it is a link and the only way back.
+//! And the `[⋯]` trigger, because the arrangement is what this unit is for and a
+//! menu that will not open cannot be read.
+//!
+//! The one real reason a command could carry — `Undo last revision`'s "Nothing
+//! has been committed yet" — is replaced by the uniform one while this holds.
+//! It would be the lesser truth: the item is unavailable whether or not there
+//! is a commit to undo.
 
 use leptos::prelude::*;
 
@@ -50,6 +58,10 @@ use crate::util;
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
 
+/// Why every command is unavailable, as the item's `title` and its accessible
+/// description. One string, because there is one reason — see the module doc.
+const NOT_YET: &str = "Not available on this page yet";
+
 /// The package-level commands. Fixed across states on purpose: the menu is where
 /// everything that is *not* the one primary action lives, so it does not change
 /// shape as the state does. What varies is what a command can be offered *for* —
@@ -58,7 +70,7 @@ fn menu(data: &commands::PackageHeaderData) -> Vec<MenuAction> {
     let mut actions = vec![MenuAction {
         label: "Create new revision".to_string(),
         tone: ActionTone::Default,
-        disabled: None,
+        disabled: Some(NOT_YET.to_string()),
         on_select: Callback::new(|()| ()),
         separated: false,
     }];
@@ -69,7 +81,7 @@ fn menu(data: &commands::PackageHeaderData) -> Vec<MenuAction> {
         actions.push(MenuAction {
             label: "Open in catalog".to_string(),
             tone: ActionTone::Default,
-            disabled: None,
+            disabled: Some(NOT_YET.to_string()),
             on_select: Callback::new(|()| ()),
             separated: false,
         });
@@ -85,7 +97,7 @@ fn menu(data: &commands::PackageHeaderData) -> Vec<MenuAction> {
             "Change bucket".to_string()
         },
         tone: ActionTone::Default,
-        disabled: None,
+        disabled: Some(NOT_YET.to_string()),
         on_select: Callback::new(|()| ()),
         separated: false,
     });
@@ -93,10 +105,11 @@ fn menu(data: &commands::PackageHeaderData) -> Vec<MenuAction> {
     actions.push(MenuAction {
         label: "Undo last revision".to_string(),
         tone: ActionTone::Danger,
-        // Disabled and stating why, rather than dropped: the command belongs to
-        // this package whether or not it has something to undo, and its absence
-        // would read as the menu having forgotten it.
-        disabled: (!data.has_local_commit).then(|| "Nothing has been committed yet".to_string()),
+        // Its own reason — "Nothing has been committed yet", gated on
+        // `has_local_commit` — comes back when the command does. While the page
+        // is read-only that reason would be the lesser truth, since the item is
+        // unavailable either way.
+        disabled: Some(NOT_YET.to_string()),
         on_select: Callback::new(|()| ()),
         separated: true,
     });
@@ -104,7 +117,7 @@ fn menu(data: &commands::PackageHeaderData) -> Vec<MenuAction> {
     actions.push(MenuAction {
         label: "Remove".to_string(),
         tone: ActionTone::Danger,
-        disabled: None,
+        disabled: Some(NOT_YET.to_string()),
         on_select: Callback::new(|()| ()),
         separated: false,
     });
@@ -144,6 +157,7 @@ pub fn PageHeader(data: commands::PackageHeaderData) -> impl IntoView {
                             view! {
                                 <span class=style::action_slot data-primary-action>
                                     <SplitButton
+                                        disabled=true
                                         options=vec![
                                             SplitOption::new("Publish", Callback::new(|()| ())),
                                             SplitOption::new(
@@ -163,13 +177,17 @@ pub fn PageHeader(data: commands::PackageHeaderData) -> impl IntoView {
                         .map(|action| {
                             view! {
                                 <span class=style::action_slot data-primary-action>
-                                    <Button variant=ButtonVariant::Primary on_click=|_| ()>
+                                    <Button
+                                        variant=ButtonVariant::Primary
+                                        disabled=true
+                                        on_click=|_| ()
+                                    >
                                         {action.label()}
                                     </Button>
                                 </span>
                             }
                         })}
-                    <Button on_click=|_| ()>"Open folder"</Button>
+                    <Button disabled=true on_click=|_| ()>"Open folder"</Button>
                     <ActionMenu
                         aria_label="More actions for this package"
                         actions=actions
@@ -202,7 +220,11 @@ pub fn PageHeaderSkeleton() -> impl IntoView {
 mod tests {
     use super::*;
     use crate::test_support::{element_saying, mount};
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
+
+    /// The split button's preference menu, which holds choices and not commands.
+    const SPLIT_CHOICES: &str = "[aria-label='Change what this button does']";
 
     fn data(state: kit::PackageState) -> commands::PackageHeaderData {
         commands::PackageHeaderData {
@@ -254,6 +276,47 @@ mod tests {
         );
     }
 
+    /// Read-only by design, stated here so it cannot lapse by accident. A
+    /// control that takes a click and answers with silence is worse than one
+    /// that shows it is unavailable, so every command is disabled and says why.
+    ///
+    /// The overflow trigger is the one button that stays live — the arrangement
+    /// is what this unit is for, and a menu that will not open cannot be read.
+    /// The trail is an `<a>`, so it is not in this sweep at all.
+    ///
+    /// Both a plain primary and a split one, because they are different controls
+    /// and the split has two halves to leave enabled.
+    #[wasm_bindgen_test]
+    fn every_command_is_disabled_while_the_header_is_read_only() {
+        // `Behind` draws a plain primary, `PendingCommit` draws the split one.
+        for state in [kit::PackageState::Behind, kit::PackageState::PendingCommit] {
+            let el = mount(move || view! { <PageHeader data=data(state.clone()) /> });
+            let buttons = el.query_selector_all("button").unwrap();
+            let mut live = Vec::new();
+            for i in 0..buttons.length() {
+                let b: web_sys::Element = buttons.item(i).unwrap().unchecked_into();
+                // The split button's own choice list is not a command: the kit's
+                // `choices` sets which verb the face shows and explicitly does
+                // not run it, so leaving those enabled publishes nothing. Its
+                // caret is disabled with the face, so they are unreachable too.
+                if b.closest(SPLIT_CHOICES).unwrap().is_some() {
+                    continue;
+                }
+                if !b.has_attribute("disabled") {
+                    live.push(b.get_attribute("aria-label").unwrap_or_else(|| {
+                        b.text_content().unwrap_or_default().trim().to_string()
+                    }));
+                }
+            }
+            assert_eq!(
+                live,
+                vec!["More actions for this package".to_string()],
+                "markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
     /// The design's rule: the row is state-driven, the menu is not. This command
     /// answers "what may I choose to do", so it is present in every state.
     #[wasm_bindgen_test]
@@ -264,7 +327,21 @@ mod tests {
             kit::PackageState::NoSession { host: None },
         ] {
             let el = mount(move || view! { <PageHeader data=data(state.clone()) /> });
-            element_saying(&el, "Create new revision");
+            // Not `element_saying`: a disabled item draws its reason inside the
+            // same button, so the button's text is the label followed by it.
+            let items = el.query_selector_all("button").unwrap();
+            let mut found = false;
+            for i in 0..items.length() {
+                let b: web_sys::Element = items.item(i).unwrap().unchecked_into();
+                if b.closest(SPLIT_CHOICES).unwrap().is_none()
+                    && b.text_content()
+                        .unwrap_or_default()
+                        .starts_with("Create new revision")
+                {
+                    found = true;
+                }
+            }
+            assert!(found, "markup was {}", el.inner_html());
         }
     }
 }
