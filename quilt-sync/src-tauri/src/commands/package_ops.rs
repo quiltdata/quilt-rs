@@ -542,6 +542,31 @@ pub async fn package_uninstall(
         )
 }
 
+/// Step the package back to the revision before its newest local commit.
+///
+/// Not `reset_local`, which is this operation's inverse: that one throws local
+/// work away against the *remote's* latest, and this one walks the pending
+/// commit chain back by one. A package with a remote has no chain — pushing
+/// consumes it — so the engine refuses there, which is why the surface offering
+/// this gates on the package having none.
+#[tauri::command]
+pub async fn undo_commit(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+) -> Result<String, String> {
+    let namespace =
+        quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?;
+    let msg_init = format!("Undoing the last revision of {namespace}");
+    let msg_ok = format!("Undid the last revision of {namespace}");
+    let msg_err = |err: &Error| format!("Failed to undo the last revision: {err}");
+
+    Notify::new(msg_init).map(
+        model::package_undo_commit(&*m, &namespace).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
 /// Typed response for the `set_remote` command. `resolution_warning` is
 /// `Some(reason)` when the remote was set but the bucket's default workflow
 /// could not be resolved (best-effort path) — the UI raises a warning notice
