@@ -5,13 +5,12 @@
 //! file pane takes that space.
 
 use leptos::prelude::*;
-use leptos_router::NavigateOptions;
-use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::use_query_map;
 
 use crate::commands;
-use crate::kit::{Banner, BannerVariant, Button, LoadFailure, PageLayout, icons};
+use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 
+use super::appbar::{end_spin_when_ready, v2_appbar_actions};
 use super::status_watch::StatusWatch;
 
 mod header;
@@ -26,7 +25,6 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // one route serves every package and a link from another page swaps the
     // parameter without remounting.
     let namespace = move || query.read().get("namespace").unwrap_or_default();
-    let navigate = use_navigate();
 
     // One read for the whole page. Re-runs when the address changes, because one
     // route serves every package and a link from another page swaps the
@@ -37,11 +35,24 @@ pub fn InstalledPackageV2() -> impl IntoView {
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
 
     let reload = Trigger::new();
+    // Whether the one read is out. The main page counts, because it has four;
+    // this needs a flag, and it is raised inside the future so a refetch the
+    // watcher started spins the button too — the reader sees the page working
+    // whoever asked.
+    let in_flight = RwSignal::new(false);
     let data = LocalResource::new(move || {
         reload.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
-        async move { commands::get_package_page_data(namespace).await }
+        async move {
+            in_flight.set(true);
+            let answer = commands::get_package_page_data(namespace).await;
+            in_flight.set(false);
+            answer
+        }
     });
+
+    let refreshing = RwSignal::new(false);
+    end_spin_when_ready(refreshing, Signal::derive(move || !in_flight.get()));
 
     // `heading` is not reactive and one route serves every package, so it names
     // the page rather than the package; the package's own name is on screen.
@@ -65,18 +76,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
                 </Suspense>
             }
                 .into_any()
-            actions=view! {
-                // The one control the placeholder genuinely needs: it is reached
-                // by a switch in Settings, so it has to offer the way back to it.
-                // The logo only reaches `/`.
-                <Button
-                    leading_visual=icons::gear()
-                    on_click=move |_| navigate("/settings", NavigateOptions::default())
-                >
-                    "Settings"
-                </Button>
-            }
-                .into_any()
+            actions=v2_appbar_actions(reload, refreshing)
         >
             <Suspense fallback=|| view! { <PageHeaderSkeleton /> }>
                 {move || Suspend::new(async move {
@@ -354,6 +354,34 @@ mod tests {
             "a different pause is news again; markup was {}",
             fresh.inner_html()
         );
+    }
+
+    /// The appbar carries the v2 pair, in order.
+    ///
+    /// *Refresh* matters more here than it looks: the page follows the watcher,
+    /// so this is not the staleness fix it would once have been — it is the
+    /// escape hatch for the one thing the streams cannot report, a pause
+    /// CLEARING, which emits no event at all. A page showing the pause band can
+    /// otherwise keep showing it after autosync is re-enabled.
+    ///
+    /// *Settings* is the way off a page the logo cannot leave: `/` renders
+    /// whichever main page is switched on, so it is not an exit from v2.
+    #[wasm_bindgen_test]
+    async fn the_appbar_offers_refresh_and_settings() {
+        go_to("/installed-package?namespace=team%2Fdataset");
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route path=path!("/installed-package") view=InstalledPackageV2 />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(50).await;
+
+        element_saying(&el, "Refresh");
+        element_saying(&el, "Settings");
     }
 
     /// v2's frame, not v1's. `data-v2-page` is what the stylesheet keys the

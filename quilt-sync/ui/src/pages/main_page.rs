@@ -28,12 +28,11 @@ mod recent_files;
 use std::collections::HashMap;
 
 use leptos::prelude::*;
-use leptos_router::NavigateOptions;
-use leptos_router::hooks::use_navigate;
 
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
+use super::appbar::{end_spin_when_ready, v2_appbar_actions};
 use super::status_watch::StatusWatch;
 use crate::commands;
 use crate::commands::MainPageAccountsData;
@@ -66,7 +65,6 @@ use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::Site;
 use crate::kit::ZeroLineSkeleton;
-use crate::kit::icons;
 use crate::kit::render;
 
 /// The fixed sentence shown when the fetch fails. The backend's error text is
@@ -1248,39 +1246,6 @@ fn MainPageRegions(
     }
 }
 
-/// The appbar's Refresh. `loading` spins it and disables it, so a second press
-/// cannot send a second read.
-///
-/// Separate from `MainPage` so it mounts without a Tauri host.
-fn refresh_button(reload: Trigger, refreshing: RwSignal<bool>) -> AnyView {
-    view! {
-        <Button
-            leading_visual=icons::sync()
-            loading=refreshing
-            on_click=move |_| {
-                refreshing.set(true);
-                reload.notify();
-            }
-        >
-            "Refresh"
-        </Button>
-    }
-    .into_any()
-}
-
-/// Clears `refreshing` when `ready` goes true.
-///
-/// `ready` means no read is outstanding, never "both resources hold a value": a
-/// refetching `LocalResource` keeps its previous value until the new one lands, so
-/// that second question is true for the whole of a refresh.
-fn end_spin_when_ready(refreshing: RwSignal<bool>, ready: Signal<bool>) {
-    Effect::new(move |_| {
-        if ready.get() {
-            refreshing.set(false);
-        }
-    });
-}
-
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
@@ -1322,23 +1287,11 @@ pub fn MainPage() -> impl IntoView {
             answer
         }
     });
-    let navigate = use_navigate();
     let refreshing = RwSignal::new(false);
     end_spin_when_ready(refreshing, Signal::derive(move || outstanding.get() == 0));
 
     view! {
-        <PageLayout heading="QuiltSync" actions=view! {
-            {refresh_button(reload, refreshing)}
-            // The only way back to Settings from here. `/` redirects straight back to
-            // this page while the experiment is on, so the logo is not an escape.
-            <Button
-                leading_visual=icons::gear()
-                on_click=move |_| navigate("/settings", NavigateOptions::default())
-            >
-                "Settings"
-            </Button>
-        }
-            .into_any()>
+        <PageLayout heading="QuiltSync" actions=v2_appbar_actions(reload, refreshing)>
             <PackageStatusListener reload=reload />
             <MainPageRegions
                 packages=packages
@@ -4220,7 +4173,7 @@ mod tests {
     async fn refresh_reports_itself_busy_the_moment_it_is_pressed() {
         let reload = Trigger::new();
         let refreshing = RwSignal::new(false);
-        let el = mount(move || refresh_button(reload, refreshing));
+        let el = mount(move || super::super::appbar::refresh_button(reload, refreshing));
 
         let button: web_sys::HtmlElement = el
             .query_selector("button")
