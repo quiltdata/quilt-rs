@@ -297,9 +297,11 @@ fn tone(state: &PackageState) -> StateTone {
         | PackageState::NoRemote
         | PackageState::Unpublished => StateTone::Attention,
 
-        // Danger and not Attention for the last three: `StateTone`'s own split is
-        // "waiting on you" versus "wrong, and the row cannot fix it", and neither a
-        // refused bucket nor a stopped sync is waiting on anybody.
+        // Danger and not Attention: the split is an ordinary step outstanding
+        // versus something having gone wrong, and a refused bucket, a failed
+        // pull and a stopped sync are all the second. Deliberately NOT "who can
+        // fix it" — `PendingCommit` above and `PullConflict` here both offer
+        // `Publish` on the same page, so that question cannot separate them.
         PackageState::Diverged
         | PackageState::PullConflict { .. }
         | PackageState::RoleDenied { .. }
@@ -461,8 +463,8 @@ mod tests {
         );
     }
 
-    /// Both are wrong and neither is waiting on the package, so both are Danger —
-    /// the same side of `StateTone`'s split that `RoleDenied` is on.
+    /// A session that never existed and one that lapsed are both failures rather
+    /// than outstanding steps, which is the side of the split `RoleDenied` is on.
     #[wasm_bindgen_test]
     fn both_session_states_are_danger() {
         for s in [

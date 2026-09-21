@@ -52,10 +52,14 @@ pub enum StateTone {
     /// A fact, not a problem. `2 files changed`.
     #[default]
     Neutral,
-    /// Waiting on you. `Not the latest`, `Not published yet`.
+    /// An ordinary step is outstanding — nothing went wrong to get here.
+    /// `Not the latest`, `Not published yet`.
     Attention,
-    /// Something is wrong and the row cannot fix it. `No access`, `conflicts in 2
-    /// files`.
+    /// Something went wrong. `No access`, `conflicts in 2 files`.
+    ///
+    /// Not "the row cannot fix it": `Revision not published` is Attention and
+    /// `conflicts in 2 files` is Danger, and both offer `Publish` on the same
+    /// page. The tone says what happened, not who acts.
     Danger,
 }
 
