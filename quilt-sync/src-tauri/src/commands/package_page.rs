@@ -54,9 +54,17 @@ pub struct PackageHeaderData {
     /// Whether the remote is pinned by a push — decides whether the menu offers
     /// to change the bucket or only to show it.
     pub remote_locked: bool,
-    /// Whether there is a local commit to undo. Not derivable from `state`: a
-    /// diverged package may hold one, and only the settled arm of the resolver
-    /// consults it.
+    /// Whether there is a local commit. Not derivable from `state`: a diverged
+    /// package may hold one, and only the settled arm of the resolver consults
+    /// it.
+    ///
+    /// **Not "undo is available"**, and the menu must not gate on it as if it
+    /// were. `InstalledPackage::undo_commit` refuses three ways, and this
+    /// answers only the first: it also requires no configured remote — pushing
+    /// consumes the commit chain — and a non-empty `prev_hashes`, since a
+    /// package's first revision has nothing behind it. A dirty tree is refused
+    /// too, at execution, with a message. Wiring that command means computing
+    /// availability from all three rather than reusing this.
     pub has_local_commit: bool,
 }
 
