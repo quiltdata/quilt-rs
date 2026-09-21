@@ -15,7 +15,7 @@ use super::status_watch::StatusWatch;
 
 mod header;
 
-use header::{PageHeader, PageHeaderSkeleton};
+use header::{Outcome, PageHeader, PageHeaderSkeleton, Wiring};
 
 /// What `/installed-package` renders for a reader with *New package page* on.
 #[component]
@@ -33,6 +33,13 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // What the reader has already read and closed. Keyed on the message, so a
     // different pause is news again — see `pause_banner`.
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
+
+    // A command is running: every control on the header reads this, so a second
+    // cannot start on top of the first.
+    let busy = RwSignal::new(false);
+    // What the last command said. Transient, where the pause band below is a
+    // standing condition — so they stack rather than one replacing the other.
+    let outcome: RwSignal<Option<Outcome>> = RwSignal::new(None);
 
     let reload = Trigger::new();
     // Whether the one read is out. The main page counts, because it has four;
@@ -69,8 +76,17 @@ pub fn InstalledPackageV2() -> impl IntoView {
                 <Suspense fallback=|| ()>
                     {move || Suspend::new(async move {
                         match data.await {
-                            Ok(d) => pause_banner(d.sync_paused.clone(), dismissed),
-                            Err(_) => ().into_any(),
+                            Ok(d) => {
+                                view! {
+                                    {outcome_banner(outcome)}
+                                    {pause_banner(d.sync_paused.clone(), dismissed)}
+                                }
+                                    .into_any()
+                            }
+                            // A failed read still reports its commands: the page
+                            // states the read's own failure below, and a command
+                            // that ran before it has news of its own.
+                            Err(_) => outcome_banner(outcome),
                         }
                     })}
                 </Suspense>
@@ -81,7 +97,15 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <Suspense fallback=|| view! { <PageHeaderSkeleton /> }>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => view! { <PageHeader data=d.header /> }.into_any(),
+                        Ok(d) => {
+                            view! {
+                                <PageHeader
+                                    data=d.header
+                                    w=Wiring { busy, outcome, reload }
+                                />
+                            }
+                                .into_any()
+                        }
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
@@ -102,6 +126,49 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <p>{namespace}</p>
         </PageLayout>
     }
+}
+
+/// What the last command said.
+///
+/// # Above the pause band, and not instead of it
+///
+/// A pause is a standing condition and this is what just happened, so both can
+/// be true at once and both are drawn. This one sits first because it answers a
+/// press the reader is waiting on.
+///
+/// # Critical, where the pause band is Warning
+///
+/// Here the variant's own rule applies without the argument the pause band
+/// needed: the reader asked for something and it did not happen, which is what
+/// `role="alert"` is for. A success is `role="status"` and waits, because it did.
+///
+/// # It carries the backend's sentence
+///
+/// Every command already returns one written for a reader — *"Successfully
+/// uninstalled package …"*, or the engine's own refusal. Rewording them here
+/// would be a second vocabulary for the same events, and the one on the wire is
+/// the one the notification stack already uses.
+fn outcome_banner(outcome: RwSignal<Option<Outcome>>) -> AnyView {
+    view! {
+        <Show when=move || outcome.get().is_some() fallback=|| ()>
+            {
+                let said = outcome.get().expect("checked by the guard above");
+                view! {
+                    <Banner
+                        variant=if said.ok {
+                            BannerVariant::Success
+                        } else {
+                            BannerVariant::Critical
+                        }
+                        on_dismiss=move |_| outcome.set(None)
+                    >
+                        {said.message}
+                    </Banner>
+                }
+            }
+        </Show>
+    }
+    .into_any()
 }
 
 /// The band that says autosync has stopped, and why.

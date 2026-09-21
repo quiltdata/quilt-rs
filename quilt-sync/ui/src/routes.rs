@@ -30,6 +30,22 @@ pub fn package_page_href(namespace: &Namespace) -> String {
     format!("/installed-package?namespace={namespace}&filter=unmodified")
 }
 
+/// Where the [Sign in] button goes. `pages/login.rs` reads both parameters from
+/// the query string; `back` is where login returns the user afterwards.
+///
+/// `back` is `/`, not `/main`: `/` renders whichever main page is switched on, so
+/// it comes back here for a reader who has this one, and it is a route the
+/// backend can read. OAuth login parses `back` in `routes::Paths` — an address
+/// only the client router knows is not a way back at all.
+///
+/// Shared, not page-local: the roster's Accounts card, the queue's own
+/// `[Sign in]` (§4.3) and the v2 package header all send a reader to the same
+/// place, and a second copy of the format string is a copy that drifts.
+pub fn sign_in_href(host: &str) -> String {
+    let back = urlencoding::encode("/");
+    format!("/login?host={host}&back={back}")
+}
+
 /// The commit screen for one package.
 pub fn commit_href(namespace: &Namespace) -> String {
     let namespace = namespace.to_string();
