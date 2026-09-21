@@ -277,7 +277,14 @@ fn precedence(state: &PackageState) -> u8 {
         // conflict names its files and is the more specific fact about the same
         // disk; a stopped sync is a fact, where `Unknown` is the absence of one.
         PackageState::Paused => 1,
-        PackageState::Unknown => 2,
+        // The attributable half of that same error rank, named rather than
+        // inferred. A signed-out package normally reaches the queue as a member
+        // of its host's `CauseAction::SignIn` group and never as a row of its
+        // own; these arms are for one that escaped grouping, and they put it
+        // where the group would have sat rather than at the foot of the lattice.
+        PackageState::Unknown
+        | PackageState::NoSession { .. }
+        | PackageState::SignInExpired { .. } => 2,
         PackageState::Diverged => 3,
         PackageState::Behind => 4,
         PackageState::PendingChanges { .. } | PackageState::PendingCommit => 5,
@@ -416,7 +423,14 @@ pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
         PackageAction::Publish => crate::routes::commit_href(namespace),
         PackageAction::Resolve => crate::routes::merge_href(namespace),
         // Shared with the list row's own link — `super::package_page_href`.
-        PackageAction::GetLatest | PackageAction::ChooseS3Bucket => {
+        //
+        // `SignIn` joins them, and does NOT go to `/login`: a sign-in is scoped
+        // to a host and this function is given a namespace. The queue's own
+        // `[Sign in]` is a cause's, built from `sign_in_href` where the host is
+        // in hand (ruling 5); a row that reaches this match has no host, so the
+        // honest answer is the package's own page, whose header offers the
+        // host-scoped control.
+        PackageAction::GetLatest | PackageAction::ChooseS3Bucket | PackageAction::SignIn => {
             super::package_page_href(namespace)
         }
     }
@@ -1307,8 +1321,15 @@ mod tests {
             action_href(PackageAction::ChooseS3Bucket, &ns("org/pkg")),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified"
         );
-        // The fifth label ruling 5 names: `[Sign in]`, which `cause_trailing`
-        // builds from `sign_in_href` directly rather than through this match.
+        // A row's `SignIn` has no host to sign in to, so it lands on the
+        // package's page rather than inventing one.
+        assert_eq!(
+            action_href(PackageAction::SignIn, &ns("org/pkg")),
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified"
+        );
+        // The fifth label ruling 5 names: a cause's `[Sign in]`, which
+        // `cause_trailing` builds from `sign_in_href` directly rather than
+        // through this match — that one HAS a host.
         assert_eq!(
             sign_in_href("custom.registry.io"),
             "/login?host=custom.registry.io&back=%2F"

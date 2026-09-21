@@ -1,0 +1,45 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+// One row, wrapping. The widest arrangement was measured at 568px in the
+// gallery scene against the 992 the page has at 1024, so the wrap is a floor
+// for narrow windows rather than the normal case.
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  flex-wrap: wrap;
+}
+
+// Truncates rather than wrapping: a long namespace must not push the controls
+// onto a second line and change the header's height with the package.
+.name {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--q-text-title);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// One uniform gap, not two groups. Moving `Create new revision` into the menu
+// leaves at most the state's action, `Open folder` and `[⋯]` — a wider gap
+// would separate a group of one from a group of two and invite the reader to
+// look for a distinction that is not there.
+.actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: var(--q-space-2);
+}
+
+// The test's handle on the state's own action, and nothing else. `contents`
+// rather than a default `inline`: this is an attribute hook, so it must not
+// become a flex item of `.actions` and put a line box between the row and the
+// button it holds.
+.action_slot {
+  display: contents;
+}

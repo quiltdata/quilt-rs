@@ -358,6 +358,43 @@ pub enum RemoteBanner {
     LocalOnly,
 }
 
+/// The v2 package page's payload. Mirrors
+/// `src-tauri/src/commands/package_page.rs` field for field.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackagePageData {
+    pub header: PackageHeaderData,
+    /// Why autosync stopped, when the reason is one no state covers. `None` for
+    /// every other pause, because those resolve into `header.state`.
+    pub sync_paused: Option<String>,
+}
+
+/// The header region: identity, one resolved condition, and what the overflow
+/// menu may offer.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageHeaderData {
+    pub namespace: Namespace,
+    /// Carried whole rather than as a catalog URL: the menu builds an
+    /// entry-level link from the same value, and `util::catalog_url` owns that
+    /// formatting.
+    pub uri: Option<S3PackageUri>,
+    pub state: crate::kit::PackageState,
+    /// Whether the remote is pinned by a push — decides whether the menu offers
+    /// to change the bucket or only to show it.
+    pub remote_locked: bool,
+    /// Whether there is a pending commit. **Not "undo is available"** — see
+    /// `commit_has_parent`.
+    pub has_local_commit: bool,
+    /// Whether that pending commit has a revision behind it. Undo's floor.
+    ///
+    /// Undo is bounded by three facts and the menu must compose all of them:
+    /// `has_local_commit`, this, and `uri.is_none()` — the engine refuses on any
+    /// remote, because a push consumes the commit chain. The words for each
+    /// refusal live here, not on the wire.
+    pub commit_has_parent: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemotePackageResult {
@@ -384,6 +421,19 @@ pub async fn get_installed_package_data(
         filter: Option<String>,
     }
     tauri::invoke("get_installed_package_data", &Args { namespace, filter }).await
+}
+
+/// Read everything the v2 package page draws, for one package.
+///
+/// One read for the page rather than one per region — see
+/// `src-tauri/src/commands/package_page.rs`.
+pub async fn get_package_page_data(namespace: String) -> Result<PackagePageData, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("get_package_page_data", &Args { namespace }).await
 }
 
 pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {

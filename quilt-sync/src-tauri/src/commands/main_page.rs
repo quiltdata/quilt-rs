@@ -55,6 +55,27 @@ pub enum PackageStateDto {
     },
     NoRemote,
     Unpublished,
+    /// There is no session for this package's deployment — never signed in, or
+    /// signed out.
+    ///
+    /// `host` is optional because a bare bucket reached on ambient AWS
+    /// credentials has no deployment to sign in to; the same reason
+    /// [`quilt::LoginError::NoSession`] carries an optional one. A `None` host
+    /// means the remedy is the credentials file rather than a sign-in, and the
+    /// surface has to be able to say so.
+    NoSession {
+        host: Option<String>,
+    },
+    /// A session that existed and was refused.
+    ///
+    /// Separate from [`Self::NoSession`] although `quilt::Error::is_session_absent`
+    /// merges them: that predicate answers "can this caller proceed", which is one
+    /// bit, and a surface may say more than the bit. Being told you were signed out
+    /// when you never signed in is a different sentence from being told your
+    /// sign-in lapsed underneath you.
+    SignInExpired {
+        host: Option<String>,
+    },
     /// Autosync stopped for this package for a reason no other state covers —
     /// §5's row 3, which nothing rendered until this existed. The reasons that DO
     /// have a state resolve into it instead: `PendingChanges`, `PendingCommit` and
@@ -250,7 +271,7 @@ fn account_hosts(rows: &[Row], auth_hosts: &[String]) -> Vec<String> {
 /// looked yet, which is the light phase. It can only reach rank 7 of §5's
 /// precedence lattice: `Diverged` and `Behind` outrank it, and a package with
 /// nowhere to publish to has no use for a file count.
-fn resolve_state(
+pub(super) fn resolve_state(
     upstream: UpstreamState,
     has_local_commit: bool,
     has_remote: bool,
@@ -291,7 +312,7 @@ fn resolve_state(
 ///
 /// v2's word for it is `Unknown` — "Sync stopped" — which is where v1's `error`
 /// status lands too (`package_list.rs:311-324`).
-fn misconfigured_remote(lineage: &quilt::lineage::PackageLineage) -> bool {
+pub(super) fn misconfigured_remote(lineage: &quilt::lineage::PackageLineage) -> bool {
     lineage
         .remote_uri
         .as_ref()
@@ -316,11 +337,11 @@ fn misconfigured_remote(lineage: &quilt::lineage::PackageLineage) -> bool {
 /// state of its own (`PullConflict`, `RoleDenied`). `Other` is the catch-all —
 /// a workflow rejection, a hash mismatch — and it is non-transient, so a package
 /// left in it stays stopped until something outside this app changes.
-fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
+pub(super) fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
     matches!(paused, Some(PausedReason::Other(_)))
 }
 
-fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
+pub(super) fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
     match paused {
         Some(PausedReason::PullConflict(files)) => Some(files.clone()),
         _ => None,
