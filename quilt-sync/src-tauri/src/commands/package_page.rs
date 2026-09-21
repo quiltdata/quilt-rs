@@ -58,14 +58,34 @@ pub struct PackageHeaderData {
     /// package may hold one, and only the settled arm of the resolver consults
     /// it.
     ///
-    /// **Not "undo is available"**, and the menu must not gate on it as if it
-    /// were. `InstalledPackage::undo_commit` refuses three ways, and this
-    /// answers only the first: it also requires no configured remote — pushing
-    /// consumes the commit chain — and a non-empty `prev_hashes`, since a
-    /// package's first revision has nothing behind it. A dirty tree is refused
-    /// too, at execution, with a message. Wiring that command means computing
-    /// availability from all three rather than reusing this.
+    /// **Not "undo is available" on its own.** Undo is scoped by the pending
+    /// commit chain, and this is one of the three facts that bound it — see
+    /// [`Self::commit_has_parent`] for the other two and how they compose.
     pub has_local_commit: bool,
+    /// Whether the pending commit has a revision behind it.
+    ///
+    /// Undo's **floor**: the initial commit from `create` has no parent, so
+    /// there is nothing to step back to and the engine refuses. `uninstall` is
+    /// the different act.
+    ///
+    /// # The three facts that bound undo
+    ///
+    /// Undo is scoped by the pending commit chain — the only on-disk record of
+    /// a revision's parent, which a push consumes. A surface offering it must
+    /// compose all three, and every one of them is already here:
+    ///
+    /// - [`Self::has_local_commit`] — there is a pending commit at all;
+    /// - this — it is not the floor;
+    /// - [`Self::uri`] is `None` — the shipped guard, and **narrower than the
+    ///   scope rule**: a remote-backed package with unpushed commits still has
+    ///   an intact chain, but the engine refuses on *any* remote, because
+    ///   undoing there leaves a pending commit equal to the package's own base.
+    ///
+    /// Composed on the surface rather than answered here, because the reasons a
+    /// command is unavailable are words and words live in the UI. A dirty tree
+    /// is a fourth refusal, but it belongs to execution and not to this gate:
+    /// it is transient, and the engine states it rather than hiding the command.
+    pub commit_has_parent: bool,
 }
 
 /// The state a failed remote read resolves to, when the failure is itself a
@@ -156,6 +176,10 @@ async fn get_package_page_data_from_model(
     let lineage = m.get_installed_package_lineage(&installed).await?;
 
     let has_local_commit = lineage.commit.is_some();
+    let commit_has_parent = lineage
+        .commit
+        .as_ref()
+        .is_some_and(|commit| !commit.prev_hashes.is_empty());
     let has_remote = lineage.remote_uri.is_some();
     let remote_locked = lineage
         .remote_uri
@@ -223,6 +247,7 @@ async fn get_package_page_data_from_model(
             state,
             remote_locked,
             has_local_commit,
+            commit_has_parent,
         },
     })
 }
@@ -353,6 +378,33 @@ mod tests {
         assert_eq!(
             header_state(Err(access_denied_error()), Some(&paused)).await,
             PackageStateDto::RoleDenied { role: None },
+        );
+    }
+
+    /// The three facts that bound undo, and the two the payload was missing.
+    ///
+    /// `mock_one_package`'s lineage is `from_remote` with no commit, which is
+    /// the shape that exposed the bug: `has_local_commit` alone said undo was
+    /// available for a remote-backed package, and the engine refuses on any
+    /// remote. Asserted together because composing them is the point — each
+    /// alone is true of packages undo would reject.
+    #[tokio::test]
+    async fn the_payload_carries_every_fact_that_bounds_undo() {
+        let header = page(Ok(settled()), None).await.header;
+
+        assert!(
+            !header.has_local_commit,
+            "this fixture has no pending commit"
+        );
+        assert!(
+            !header.commit_has_parent,
+            "and so nothing behind one either"
+        );
+        assert!(
+            header.uri.is_some(),
+            "but it DOES have a remote, which is the guard `has_local_commit` \
+             could not express — a surface reading that field alone would offer \
+             undo where the engine refuses"
         );
     }
 

@@ -383,8 +383,16 @@ pub struct PackageHeaderData {
     /// Whether the remote is pinned by a push — decides whether the menu offers
     /// to change the bucket or only to show it.
     pub remote_locked: bool,
-    /// Whether there is a local commit to undo.
+    /// Whether there is a pending commit. **Not "undo is available"** — see
+    /// `commit_has_parent`.
     pub has_local_commit: bool,
+    /// Whether that pending commit has a revision behind it. Undo's floor.
+    ///
+    /// Undo is bounded by three facts and the menu must compose all of them:
+    /// `has_local_commit`, this, and `uri.is_none()` — the engine refuses on any
+    /// remote, because a push consumes the commit chain. The words for each
+    /// refusal live here, not on the wire.
+    pub commit_has_parent: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

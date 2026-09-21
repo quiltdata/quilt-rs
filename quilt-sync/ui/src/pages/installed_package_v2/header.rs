@@ -233,6 +233,7 @@ mod tests {
             state,
             remote_locked: false,
             has_local_commit: false,
+            commit_has_parent: false,
         }
     }
 
