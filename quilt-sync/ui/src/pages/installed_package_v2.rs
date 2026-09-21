@@ -12,6 +12,8 @@ use leptos_router::hooks::use_query_map;
 use crate::commands;
 use crate::kit::{Button, LoadFailure, PageLayout, icons};
 
+use super::status_watch::StatusWatch;
+
 mod header;
 
 use header::{PageHeader, PageHeaderSkeleton};
@@ -28,11 +30,11 @@ pub fn InstalledPackageV2() -> impl IntoView {
 
     // One read for the whole page. Re-runs when the address changes, because one
     // route serves every package and a link from another page swaps the
-    // parameter without remounting; and when `retry` fires, which is the
-    // failure arm's way out.
-    let retry = Trigger::new();
+    // parameter without remounting; and whenever `reload` fires — the watcher
+    // reporting news about this package, or the failure arm's way out.
+    let reload = Trigger::new();
     let data = LocalResource::new(move || {
-        retry.track();
+        reload.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
         async move { commands::get_package_page_data(namespace).await }
     });
@@ -40,6 +42,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // `heading` is not reactive and one route serves every package, so it names
     // the page rather than the package; the package's own name is on screen.
     view! {
+        <PackageEventListener reload=reload />
         <PageLayout
             heading="Package"
             actions=view! {
@@ -68,7 +71,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
                             view! {
                                 <LoadFailure
                                     words="Could not load this package."
-                                    on_retry=Callback::new(move |()| retry.notify())
+                                    on_retry=Callback::new(move |()| reload.notify())
                                 />
                             }
                                 .into_any()
@@ -79,6 +82,73 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <p>{namespace}</p>
         </PageLayout>
     }
+}
+
+/// Ask the backend again when the watcher reports news about **this** package.
+///
+/// Renders nothing; it exists for the two subscriptions, which are dropped with
+/// it. Its own component so they are registered once rather than rebuilt with a
+/// payload — `main_page`'s `PackageStatusListener` for the same reason.
+///
+/// # Two streams, because one of them cannot see a pause
+///
+/// `package-status-changed` carries a fingerprint of the observation — the
+/// upstream state and the changed paths — and [`StatusWatch`] drops an event
+/// that repeats the last one. A pause moves neither: a workflow rejection or a
+/// refused role stops syncing over a tree that has not changed, so the status
+/// stream reports the same observation and the fingerprint rule correctly calls
+/// it old news. `autosync-paused` is the only thing that says a pause happened,
+/// so the header would never learn of one without it.
+///
+/// # What is still missed, and why it is not fixed here
+///
+/// Nothing announces a pause **clearing**. `Watcher::clear_paused` drops the
+/// entry and notifies the tray, and emits no event, so the page learns a pause
+/// is over only from the next status event whose fingerprint differs. For the
+/// ordinary case that is enough — a pull that resolves a conflict rewrites the
+/// tree, and the filesystem watcher reports it — but re-enabling autosync clears
+/// every pause while moving nothing, and this page would keep the stale answer
+/// until something else moved. That is an engine gap, not a page one.
+///
+/// # Both filters are on the namespace
+///
+/// One route serves every package and the watcher reports all of them, so
+/// without the filter this page would refetch on every other package's news.
+/// Read untracked: the listener reads the address at the moment an event
+/// arrives, and must not subscribe to it.
+#[component]
+fn PackageEventListener(reload: Trigger) -> impl IntoView {
+    let query = use_query_map();
+    let watch = StatusWatch::new(reload);
+
+    let is_ours = move |namespace: &quilt_uri::Namespace| {
+        query.read_untracked().get("namespace").as_deref() == Some(namespace.to_string().as_str())
+    };
+
+    let status = crate::tauri::listen::<commands::PackageStatusEvent>(
+        commands::PACKAGE_STATUS_EVENT,
+        move |event| {
+            if is_ours(&event.namespace) {
+                watch.observe(&event);
+            }
+        },
+    );
+    let paused = crate::tauri::listen::<commands::PausedEvent>(
+        commands::AUTOSYNC_PAUSED_EVENT,
+        move |event| {
+            if is_ours(&event.namespace) {
+                // No fingerprint to compare: a pause is news the status stream
+                // cannot report. The refetch re-reads the watcher's map, which
+                // is authoritative, so a repeat costs one read and says the
+                // same thing.
+                watch.nudge();
+            }
+        },
+    );
+    on_cleanup(move || {
+        drop(status);
+        drop(paused);
+    });
 }
 
 #[cfg(test)]

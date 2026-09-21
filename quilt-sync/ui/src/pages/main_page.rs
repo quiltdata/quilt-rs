@@ -34,6 +34,7 @@ use leptos_router::hooks::use_navigate;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
+use super::status_watch::StatusWatch;
 use crate::commands;
 use crate::commands::MainPageAccountsData;
 use crate::commands::MainPagePackageData;
@@ -1347,69 +1348,6 @@ pub fn MainPage() -> impl IntoView {
                 accounts_retry=accounts_retry
             />
         </PageLayout>
-    }
-}
-
-/// How long news is allowed to gather before the page asks the backend again.
-///
-/// A watcher tick reports every package, so news about several arrives as several
-/// events a few milliseconds apart. Without a window, each would restart the read
-/// the last one began.
-const STATUS_BURST: std::time::Duration = std::time::Duration::from_millis(250);
-
-/// Refetch decisions for the watcher's package-status events.
-///
-/// **Decisions only, never rendering** — so nothing drawn can go stale from what
-/// is remembered here. v1 makes the same split for the same reason
-/// (`installed_packages_list.rs:170-175`).
-#[derive(Clone, Copy)]
-struct StatusWatch {
-    /// The last fingerprint acted on, per namespace.
-    seen: StoredValue<HashMap<Namespace, String>>,
-    timer: StoredValue<Option<TimeoutHandle>>,
-    reload: Trigger,
-}
-
-impl StatusWatch {
-    fn new(reload: Trigger) -> Self {
-        let watch = Self {
-            seen: StoredValue::new(HashMap::new()),
-            timer: StoredValue::new(None),
-            reload,
-        };
-        // The pending window must not outlive the page —
-        // `components/set_remote_popup.rs`'s shape for the same hazard.
-        on_cleanup(move || {
-            if let Some(Some(handle)) = watch.timer.try_get_value() {
-                handle.clear();
-            }
-        });
-        watch
-    }
-
-    /// Act on one event, if it reports anything the last one for its namespace
-    /// did not.
-    ///
-    /// A namespace never seen counts as news. There is nothing to seed from — the
-    /// package payload carries no fingerprint — and a swallowed first sighting
-    /// would be exactly the pull that completed while the page was open.
-    fn observe(self, event: &commands::PackageStatusEvent) {
-        let known = self
-            .seen
-            .with_value(|seen| seen.get(&event.namespace) == Some(&event.fingerprint));
-        if known {
-            return;
-        }
-        self.seen.update_value(|seen| {
-            seen.insert(event.namespace.clone(), event.fingerprint.clone());
-        });
-        if let Some(handle) = self.timer.get_value() {
-            handle.clear();
-        }
-        let reload = self.reload;
-        if let Ok(handle) = set_timeout_with_handle(move || reload.notify(), STATUS_BURST) {
-            self.timer.set_value(Some(handle));
-        }
     }
 }
 
@@ -3965,6 +3903,45 @@ mod tests {
             calls.get_untracked() - before,
             1,
             "a changed tree must ask the backend again"
+        );
+    }
+
+    /// Why `nudge` exists beside `observe`, and the gap it closes.
+    ///
+    /// `status_fingerprint` digests the upstream state and the changed paths. A
+    /// package can stop syncing over a tree that has moved neither — a workflow
+    /// rejection, a refused role — so the status stream reports the same
+    /// observation and the fingerprint rule correctly calls it old news. The
+    /// `autosync-paused` event is the only thing that says a pause happened and
+    /// it carries no fingerprint, so the page still has to ask again.
+    ///
+    /// Both halves matter: without the first the test would not prove the
+    /// fingerprint rule is what swallows the repeat, and without the second it
+    /// would not prove a nudge escapes it.
+    #[wasm_bindgen_test]
+    async fn a_nudge_asks_again_over_a_tree_the_fingerprint_says_has_not_moved() {
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        let before = calls.get_untracked();
+
+        // The same observation again, which the fingerprint rule drops.
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        assert_eq!(
+            calls.get_untracked(),
+            before,
+            "a repeated observation is not news"
+        );
+
+        // A pause over that same unchanged tree is.
+        watch.nudge();
+        sleep_ms(400).await;
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "a pause must ask again, since no fingerprint reports it"
         );
     }
 

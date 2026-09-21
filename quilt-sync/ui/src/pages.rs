@@ -10,6 +10,7 @@ mod not_found;
 mod remote_package;
 mod settings;
 mod setup;
+mod status_watch;
 
 pub use commit::Commit;
 pub use error::Error;
