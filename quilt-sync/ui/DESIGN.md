@@ -294,12 +294,14 @@ are safe, not well done.
 
 **The Whose Move Rule.** Attention and Danger are not degrees of severity. They
 say *who the next move belongs to*: Attention is waiting on the reader, Danger
-is something the surface cannot fix by itself. So a package with uncommitted
-changes is Attention and one with conflicts is Danger, although both are one
-operation from resolution and the second is not obviously worse. Neutral sits
-outside that pair — it reports a fact and takes no position on it — and Success
-is the resting state. Picking a tone by how bad it feels is how the four collapse
-into two.
+is something the surface cannot fix by itself. A package holding a revision it
+has not sent is Attention; one whose pull came back conflicted is Danger. Both
+offer the same verb, Publish, which is what makes the pair worth stating — the
+first waits on the reader to send work already recorded, the second on a
+resolution the row cannot reach. Neutral sits outside the pair, reporting a fact
+and taking no position on it, which is why "2 files changed" is Neutral and not
+Attention; Success is the resting state. Picking a tone by how bad it feels is
+how the four collapse into two.
 
 **The Unbranded Status Rule.** The greys and the accent blue are custom scales
 tinted toward the brand navy. Green, amber, and red are stock and must stay
