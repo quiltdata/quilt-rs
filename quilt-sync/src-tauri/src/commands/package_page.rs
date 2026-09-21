@@ -22,6 +22,22 @@ use crate::quilt;
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
     pub header: PackageHeaderData,
+    /// Why autosync stopped for this package, when the reason is one no state
+    /// covers — the **residue**, which is `PausedReason::Other`: a workflow
+    /// rejection, a hash mismatch, remote config drift.
+    ///
+    /// `None` for every other pause, because those resolve into `header.state`
+    /// and the header says them: a conflict names its files, a denial names the
+    /// refusal, pending work names the work. The residue is the one fact the
+    /// header has no word for, and it is carried beside the state rather than
+    /// displacing it — the package still has a real upstream state while the
+    /// worker is stopped, and a header that said `Sync paused` over a package
+    /// with a newer revision upstream would hide what the package needs.
+    ///
+    /// Prose, and the one field here that is. The vocabulary stays UI-owned —
+    /// the surface writes the sentence and renders this as its detail — but the
+    /// detail is the engine's own refusal text and nothing else knows it.
+    pub sync_paused: Option<String>,
 }
 
 /// The header region: identity, one resolved condition, and what the overflow
@@ -153,18 +169,19 @@ async fn get_package_page_data_from_model(
         // A blocked read is a state, not an error: the page still draws, and the
         // header says what is wrong and what to do about it.
         match m.get_installed_package_status(&installed, None).await {
-            // Both pause arms, in the main page's order and below the denial the
-            // `Err` side catches — a denial is rank 1 and outranks a pause. A
-            // pause outranks what the tree says because it is WHY the tree is
-            // not being acted on, and without these two arms this page measures
-            // straight past it and reports `Latest` over a package that stopped
-            // syncing. `PullConflict` and `Paused` have no other source: nothing
-            // about the tree or the upstream hash says a package is paused.
+            // One pause arm, not the main page's two. A conflict names a
+            // condition of the package's FILES and carries the action that
+            // clears it, so it belongs in the header's precedence — and the
+            // watcher's map is its only source, so without this arm the header
+            // could never show it. The residue names a condition of the
+            // WORKER, and displacing the package's real state with it would
+            // hide what the package needs; it travels as `sync_paused` and the
+            // page states it beside the header instead.
+            //
+            // Below the denial the `Err` side catches: a denial is rank 1.
             Ok(status) => {
                 if let Some(files) = conflict_files(paused) {
                     PackageStateDto::PullConflict { files }
-                } else if unexplained_pause(paused) {
-                    PackageStateDto::Paused
                 } else {
                     resolve_state(
                         status.upstream_state,
@@ -184,6 +201,14 @@ async fn get_package_page_data_from_model(
     };
 
     Ok(PackagePageData {
+        // The residue only. `unexplained_pause` is `Other` and nothing else, so
+        // a pause with a state of its own is reported once, by the header.
+        sync_paused: unexplained_pause(paused)
+            .then(|| match paused {
+                Some(PausedReason::Other(message)) => Some(message.clone()),
+                _ => None,
+            })
+            .flatten(),
         header: PackageHeaderData {
             namespace: namespace.to_owned(),
             uri,
@@ -232,17 +257,22 @@ mod tests {
         model
     }
 
-    async fn header_state(
+    async fn page(
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
         paused: Option<&PausedReason>,
-    ) -> PackageStateDto {
+    ) -> PackagePageData {
         let m = mock_one_package(status);
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
         get_package_page_data_from_model(&m, &ns, paused)
             .await
             .expect("a blocked read is a state, not an error")
-            .header
-            .state
+    }
+
+    async fn header_state(
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+        paused: Option<&PausedReason>,
+    ) -> PackageStateDto {
+        page(status, paused).await.header.state
     }
 
     fn settled() -> quilt::lineage::InstalledPackageStatus {
@@ -267,15 +297,43 @@ mod tests {
         );
     }
 
-    /// The residue: a pause no other state covers. `Latest` by hash and stopped
-    /// by a workflow rejection is the case this exists for.
+    /// The residue does NOT displace the package's own state, and that is the
+    /// ruling rather than an omission: a package `Latest` by hash and stopped by
+    /// a workflow rejection needs both facts, and a header reading `Sync paused`
+    /// would hide the one the package is actually in. It travels beside the
+    /// state and the page states it in a banner.
     #[tokio::test]
-    async fn an_unexplained_pause_is_not_measured_past() {
+    async fn the_residue_travels_beside_the_state_rather_than_over_it() {
         let paused = PausedReason::Other("workflow rejected the revision".to_string());
+        let page = page(Ok(settled()), Some(&paused)).await;
+
+        assert_eq!(page.header.state, PackageStateDto::Latest);
         assert_eq!(
-            header_state(Ok(settled()), Some(&paused)).await,
-            PackageStateDto::Paused,
+            page.sync_paused.as_deref(),
+            Some("workflow rejected the revision"),
         );
+    }
+
+    /// A pause with a state of its own is reported once, by the header. Both
+    /// halves: the conflict wins the state, and it does not also fill the
+    /// banner, which would say the same thing twice on one screen.
+    #[tokio::test]
+    async fn a_pause_the_header_can_word_does_not_also_fill_the_banner() {
+        let paused = PausedReason::PullConflict(vec!["a.csv".to_string()]);
+        let page = page(Ok(settled()), Some(&paused)).await;
+
+        assert_eq!(
+            page.header.state,
+            PackageStateDto::PullConflict {
+                files: vec!["a.csv".to_string()],
+            },
+        );
+        assert_eq!(page.sync_paused, None);
+    }
+
+    #[tokio::test]
+    async fn an_unpaused_package_has_no_banner() {
+        assert_eq!(page(Ok(settled()), None).await.sync_paused, None);
     }
 
     /// Rank 1 beats rank 2. The denial is caught on the `Err` side, so it wins

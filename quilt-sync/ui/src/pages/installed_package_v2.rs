@@ -10,7 +10,7 @@ use leptos_router::hooks::use_navigate;
 use leptos_router::hooks::use_query_map;
 
 use crate::commands;
-use crate::kit::{Button, LoadFailure, PageLayout, icons};
+use crate::kit::{Banner, BannerVariant, Button, LoadFailure, PageLayout, icons};
 
 use super::status_watch::StatusWatch;
 
@@ -32,6 +32,10 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // route serves every package and a link from another page swaps the
     // parameter without remounting; and whenever `reload` fires — the watcher
     // reporting news about this package, or the failure arm's way out.
+    // What the reader has already read and closed. Keyed on the message, so a
+    // different pause is news again — see `pause_banner`.
+    let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
+
     let reload = Trigger::new();
     let data = LocalResource::new(move || {
         reload.track();
@@ -45,6 +49,22 @@ pub fn InstalledPackageV2() -> impl IntoView {
         <PackageEventListener reload=reload />
         <PageLayout
             heading="Package"
+            // Its own `Suspense`, so the band can sit in the frame's slot —
+            // directly under the appbar, pushing the page down — while the data
+            // it needs arrives with the body's read. An empty fallback: a
+            // skeleton here would reserve a band for news that usually is not
+            // there, and the page would settle by collapsing it.
+            banner=view! {
+                <Suspense fallback=|| ()>
+                    {move || Suspend::new(async move {
+                        match data.await {
+                            Ok(d) => pause_banner(d.sync_paused.clone(), dismissed),
+                            Err(_) => ().into_any(),
+                        }
+                    })}
+                </Suspense>
+            }
+                .into_any()
             actions=view! {
                 // The one control the placeholder genuinely needs: it is reached
                 // by a switch in Settings, so it has to offer the way back to it.
@@ -82,6 +102,78 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <p>{namespace}</p>
         </PageLayout>
     }
+}
+
+/// The band that says autosync has stopped, and why.
+///
+/// # Beside the state, not instead of it
+///
+/// The header says what the package needs; this says why the worker stopped.
+/// Different sentences, and a package can need both at once — a newer revision
+/// upstream and a workflow that rejected the last one. Folding the second into
+/// the header's one label would hide the first.
+///
+/// Only the residue reaches here. Every other pause resolves into a state the
+/// header words — a conflict names its files, a denial names the refusal — and
+/// the backend sends `None` for those, so the two surfaces cannot say the same
+/// thing twice.
+///
+/// # The words are the page's; the detail is the engine's
+///
+/// The lead sentence is written here, because the vocabulary is UI-owned. The
+/// message is the engine's own refusal text — a workflow's complaint, a hash
+/// mismatch — and nothing else knows it, so it renders as the detail after it.
+///
+/// # Warning, not Critical, and the two are one choice here
+///
+/// `BannerVariant` ties the colour to the announcement: `Critical` is
+/// `role="alert"`, which interrupts, and its doc earns that by saying the thing
+/// the user asked for did not happen. Nobody asked for anything here — the pause
+/// was already true when the page was opened, and reading a page is not a
+/// request that failed, so interrupting a screen reader on arrival would be the
+/// wrong announcement. `Warning` is `role="status"`, which waits.
+///
+/// The colour follows the same way. `kit::PackageState::Paused` is toned Danger,
+/// but that is a chip's severity while scanning many packages; the product's own
+/// rendering of a pause as a standing condition — the autosync card's `Paused`
+/// mark — is Attention, which is what `Warning` maps to. The header no longer
+/// draws this state at all, so there is no chip on this screen for it to
+/// disagree with.
+///
+/// # Dismissal is keyed on the message
+///
+/// The bar has no timer and the caller owns its dismissal. A pause is a standing
+/// fact, so dismissing hides a thing that is still true — which is the reader's
+/// call to make about a message they have read. But a *different* pause is news
+/// again, so what is remembered is the message dismissed rather than a flag.
+fn pause_banner(message: Option<String>, dismissed: RwSignal<Option<String>>) -> AnyView {
+    // `StoredValue` so the derived closure is `Copy` and can be handed to both
+    // the `when` and the body without cloning the message at each use.
+    let message = StoredValue::new(message);
+    let showing = move || {
+        message
+            .get_value()
+            .filter(|m| dismissed.get().as_ref() != Some(m))
+    };
+
+    view! {
+        <Show when=move || showing().is_some() fallback=|| ()>
+            {
+                let message = showing().unwrap_or_default();
+                let remembered = message.clone();
+                view! {
+                    <Banner
+                        variant=BannerVariant::Warning
+                        on_dismiss=move |_| dismissed.set(Some(remembered.clone()))
+                    >
+                        "Autosync has stopped for this package. "
+                        {message}
+                    </Banner>
+                }
+            }
+        </Show>
+    }
+    .into_any()
 }
 
 /// Ask the backend again when the watcher reports news about **this** package.
@@ -197,6 +289,71 @@ mod tests {
 
         element_saying(&el, "team/dataset");
         element_saying(&el, "Could not load this package.");
+    }
+
+    /// The residue's own words, and the engine's message after them. A band that
+    /// only repeated the backend's sentence would be the vocabulary leaving the
+    /// UI; one that dropped it would lose the only part naming what to fix.
+    #[wasm_bindgen_test]
+    fn the_pause_band_says_what_stopped_and_what_the_engine_reported() {
+        let dismissed = RwSignal::new(None);
+        let el = mount(move || {
+            pause_banner(
+                Some("workflow rejected the revision".to_string()),
+                dismissed,
+            )
+        });
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(
+            text.contains("Autosync has stopped for this package"),
+            "the page writes the sentence; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            text.contains("workflow rejected the revision"),
+            "and the engine's own reason is the detail; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// No pause, no band. The slot must not reserve a strip for news that is
+    /// usually absent.
+    #[wasm_bindgen_test]
+    fn an_unpaused_package_draws_no_band() {
+        let dismissed = RwSignal::new(None);
+        let el = mount(move || pause_banner(None, dismissed));
+        assert_eq!(el.text_content().unwrap_or_default().trim(), "");
+    }
+
+    /// Dismissal is keyed on the message, not a flag: a pause the reader has
+    /// read and closed stays closed, and a different one is news again. Both
+    /// halves, because a flag would pass the first and fail the second.
+    #[wasm_bindgen_test]
+    fn a_dismissed_pause_stays_closed_and_a_different_one_does_not() {
+        let dismissed = RwSignal::new(Some("workflow rejected the revision".to_string()));
+
+        let closed = mount(move || {
+            pause_banner(
+                Some("workflow rejected the revision".to_string()),
+                dismissed,
+            )
+        });
+        assert_eq!(
+            closed.text_content().unwrap_or_default().trim(),
+            "",
+            "the message the reader closed stays closed"
+        );
+
+        let fresh = mount(move || pause_banner(Some("hash mismatch".to_string()), dismissed));
+        assert!(
+            fresh
+                .text_content()
+                .unwrap_or_default()
+                .contains("hash mismatch"),
+            "a different pause is news again; markup was {}",
+            fresh.inner_html()
+        );
     }
 
     /// v2's frame, not v1's. `data-v2-page` is what the stylesheet keys the

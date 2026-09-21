@@ -364,6 +364,9 @@ pub enum RemoteBanner {
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
     pub header: PackageHeaderData,
+    /// Why autosync stopped, when the reason is one no state covers. `None` for
+    /// every other pause, because those resolve into `header.state`.
+    pub sync_paused: Option<String>,
 }
 
 /// The header region: identity, one resolved condition, and what the overflow
