@@ -337,11 +337,11 @@ pub(super) fn misconfigured_remote(lineage: &quilt::lineage::PackageLineage) -> 
 /// state of its own (`PullConflict`, `RoleDenied`). `Other` is the catch-all —
 /// a workflow rejection, a hash mismatch — and it is non-transient, so a package
 /// left in it stays stopped until something outside this app changes.
-fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
+pub(super) fn unexplained_pause(paused: Option<&PausedReason>) -> bool {
     matches!(paused, Some(PausedReason::Other(_)))
 }
 
-fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
+pub(super) fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String>> {
     match paused {
         Some(PausedReason::PullConflict(files)) => Some(files.clone()),
         _ => None,

@@ -7,8 +7,12 @@
 
 use serde::Serialize;
 
+use crate::autopull::PausedReason;
+use crate::autopull::Watcher;
 use crate::commands::main_page::PackageStateDto;
-use crate::commands::main_page::{misconfigured_remote, resolve_state};
+use crate::commands::main_page::{
+    conflict_files, misconfigured_remote, resolve_state, unexplained_pause,
+};
 use crate::error::Error;
 use crate::model;
 use crate::quilt;
@@ -98,13 +102,19 @@ fn session_host(err: &Error) -> Option<String> {
 #[tauri::command]
 pub async fn get_package_page_data(
     m: tauri::State<'_, model::Model>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<PackagePageData, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_package_page_data_from_model(&*m, &namespace)
+    // One lookup, at the moment of the read. The watcher's map is the only
+    // source for a pause: nothing about the working tree or the upstream hash
+    // says a package stopped syncing.
+    let paused = watcher.paused_reason(&namespace).await;
+
+    get_package_page_data_from_model(&*m, &namespace, paused.as_ref())
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -112,6 +122,7 @@ pub async fn get_package_page_data(
 async fn get_package_page_data_from_model(
     m: &impl model::QuiltModel,
     namespace: &quilt_uri::Namespace,
+    paused: Option<&PausedReason>,
 ) -> Result<PackagePageData, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -142,14 +153,29 @@ async fn get_package_page_data_from_model(
         // A blocked read is a state, not an error: the page still draws, and the
         // header says what is wrong and what to do about it.
         match m.get_installed_package_status(&installed, None).await {
-            Ok(status) => resolve_state(
-                status.upstream_state,
-                has_local_commit,
-                has_remote,
-                // The count is measured, not guessed. This page reads one
-                // package, so it has no light phase to be provisional for.
-                Some(status.changes.len()),
-            ),
+            // Both pause arms, in the main page's order and below the denial the
+            // `Err` side catches — a denial is rank 1 and outranks a pause. A
+            // pause outranks what the tree says because it is WHY the tree is
+            // not being acted on, and without these two arms this page measures
+            // straight past it and reports `Latest` over a package that stopped
+            // syncing. `PullConflict` and `Paused` have no other source: nothing
+            // about the tree or the upstream hash says a package is paused.
+            Ok(status) => {
+                if let Some(files) = conflict_files(paused) {
+                    PackageStateDto::PullConflict { files }
+                } else if unexplained_pause(paused) {
+                    PackageStateDto::Paused
+                } else {
+                    resolve_state(
+                        status.upstream_state,
+                        has_local_commit,
+                        has_remote,
+                        // The count is measured, not guessed. This page reads one
+                        // package, so it has no light phase to be provisional for.
+                        Some(status.changes.len()),
+                    )
+                }
+            }
             Err(err) => match blocked_state(&err) {
                 Some(state) => state,
                 None => return Err(err),
@@ -173,6 +199,105 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+    use crate::commands::test_support::{
+        access_denied_error, make_installed_package, make_manifest_uri,
+    };
+    use crate::quilt::lineage::UpstreamState;
+
+    const NS: &str = "team/dataset";
+
+    /// One installed package whose status call answers `status`.
+    fn mock_one_package(
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+    ) -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                ))
+            });
+        // `return_once`, not `returning`: `Error` is not `Clone`. `.times(1)`
+        // makes "exactly one status call" an assertion — without it a caller
+        // that skipped the call entirely would pass silently.
+        model
+            .expect_get_installed_package_status()
+            .times(1)
+            .return_once(move |_, _| status);
+        model
+    }
+
+    async fn header_state(
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+        paused: Option<&PausedReason>,
+    ) -> PackageStateDto {
+        let m = mock_one_package(status);
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        get_package_page_data_from_model(&m, &ns, paused)
+            .await
+            .expect("a blocked read is a state, not an error")
+            .header
+            .state
+    }
+
+    fn settled() -> quilt::lineage::InstalledPackageStatus {
+        quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::UpToDate,
+            quilt::lineage::ChangeSet::new(),
+        )
+    }
+
+    /// A pause outranks what the tree says, because it is WHY the tree is not
+    /// being acted on. Without the arm this page measures straight past the
+    /// pause and reports `Latest` over a package that stopped syncing — and
+    /// `PullConflict` has no other source, so the header could never show it.
+    #[tokio::test]
+    async fn a_pull_conflict_pause_outranks_the_settled_tree() {
+        let paused = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
+        assert_eq!(
+            header_state(Ok(settled()), Some(&paused)).await,
+            PackageStateDto::PullConflict {
+                files: vec!["a.csv".to_string(), "b.csv".to_string()],
+            },
+        );
+    }
+
+    /// The residue: a pause no other state covers. `Latest` by hash and stopped
+    /// by a workflow rejection is the case this exists for.
+    #[tokio::test]
+    async fn an_unexplained_pause_is_not_measured_past() {
+        let paused = PausedReason::Other("workflow rejected the revision".to_string());
+        assert_eq!(
+            header_state(Ok(settled()), Some(&paused)).await,
+            PackageStateDto::Paused,
+        );
+    }
+
+    /// Rank 1 beats rank 2. The denial is caught on the `Err` side, so it wins
+    /// without the pause arms ever running — the same ordering the main page's
+    /// heavy phase has.
+    #[tokio::test]
+    async fn a_denial_outranks_a_pause() {
+        let paused = PausedReason::PullConflict(vec!["a.csv".to_string()]);
+        assert_eq!(
+            header_state(Err(access_denied_error()), Some(&paused)).await,
+            PackageStateDto::RoleDenied { role: None },
+        );
+    }
+
+    /// No pause, so the tree answers for itself.
+    #[tokio::test]
+    async fn an_unpaused_package_resolves_from_its_status() {
+        assert_eq!(
+            header_state(Ok(settled()), None).await,
+            PackageStateDto::Latest,
+        );
+    }
 
     fn host() -> quilt_uri::Host {
         quilt_uri::Host::from_str("demo.quiltdata.com").unwrap()
