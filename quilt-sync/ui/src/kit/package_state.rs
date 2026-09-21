@@ -328,19 +328,28 @@ fn action(state: &PackageState) -> Option<PackageAction> {
 
         PackageState::NoRemote => Some(PackageAction::ChooseS3Bucket),
 
-        // The one state whose remedy is not about this package at all. Offered
-        // for both conditions because the remedy is the same one; the words are
-        // what tell them apart.
-        PackageState::NoSession { .. } | PackageState::SignInExpired { .. } => {
-            Some(PackageAction::SignIn)
-        }
+        // The one remedy that is not about this package at all, and the only
+        // one gated on the state's own payload rather than its variant. A
+        // sign-in is scoped to a deployment: with a host there is one to sign
+        // in to, and without one — a bare bucket on ambient AWS credentials —
+        // there is nothing the button could open. Offering it anyway would name
+        // a remedy the app cannot carry out, which is the same mistake
+        // `RoleDenied` avoids by offering nothing.
+        PackageState::NoSession { host: Some(_) }
+        | PackageState::SignInExpired { host: Some(_) } => Some(PackageAction::SignIn),
 
         // Nothing on offer. A denial is fixed at the host, and there is no resume for
         // a pause — see `commands/main_page.rs`. §5's lattice gives the pause row
         // `[Dismiss]`, which names an operation the product does not have, exactly as
         // its `[Merge]` did at row 5.
+        // The two hostless session states join them for the same kind of reason:
+        // a bare bucket on ambient AWS credentials has no deployment to sign in
+        // to, so the button would open nothing, and the remedy — the credentials
+        // file — is not something the app edits.
         PackageState::Latest
         | PackageState::RoleDenied { .. }
+        | PackageState::NoSession { host: None }
+        | PackageState::SignInExpired { host: None }
         | PackageState::Paused
         | PackageState::Unknown => None,
     }
@@ -402,6 +411,34 @@ mod tests {
     fn a_missing_session_without_a_host_says_so_without_naming_one() {
         let s = PackageState::NoSession { host: None };
         assert_eq!(render(&s, Site::PageHeader).words, "Signed out");
+    }
+
+    /// A sign-in is scoped to a deployment. Without a host there is none, so the
+    /// button would open nothing — the app cannot edit the credentials file that
+    /// is the actual remedy, and naming a remedy it cannot carry out is what
+    /// `RoleDenied` already avoids by offering nothing.
+    #[wasm_bindgen_test]
+    fn a_session_state_with_no_deployment_offers_no_sign_in() {
+        for s in [
+            PackageState::NoSession { host: None },
+            PackageState::SignInExpired { host: None },
+        ] {
+            assert_eq!(render(&s, Site::PageHeader).action, None, "{s:?}");
+        }
+        for s in [
+            PackageState::NoSession {
+                host: Some("demo.quiltdata.com".to_string()),
+            },
+            PackageState::SignInExpired {
+                host: Some("demo.quiltdata.com".to_string()),
+            },
+        ] {
+            assert_eq!(
+                render(&s, Site::PageHeader).action,
+                Some(PackageAction::SignIn),
+                "{s:?}"
+            );
+        }
     }
 
     #[wasm_bindgen_test]
