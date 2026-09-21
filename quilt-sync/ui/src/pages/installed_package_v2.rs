@@ -124,21 +124,19 @@ pub fn InstalledPackageV2() -> impl IntoView {
 /// message is the engine's own refusal text — a workflow's complaint, a hash
 /// mismatch — and nothing else knows it, so it renders as the detail after it.
 ///
-/// # Warning, not Critical, and the two are one choice here
+/// # Critical, because a stopped sync is a failure
 ///
-/// `BannerVariant` ties the colour to the announcement: `Critical` is
-/// `role="alert"`, which interrupts, and its doc earns that by saying the thing
-/// the user asked for did not happen. Nobody asked for anything here — the pause
-/// was already true when the page was opened, and reading a page is not a
-/// request that failed, so interrupting a screen reader on arrival would be the
-/// wrong announcement. `Warning` is `role="status"`, which waits.
+/// `DESIGN.md` requires a band and a chip to agree — *"a warning on the page and
+/// a warning on a row cannot disagree about what amber means"* — and the kit
+/// tones `PackageState::Paused` Danger. Amber here said the opposite of red
+/// there about one fact.
 ///
-/// The colour follows the same way. `kit::PackageState::Paused` is toned Danger,
-/// but that is a chip's severity while scanning many packages; the product's own
-/// rendering of a pause as a standing condition — the autosync card's `Paused`
-/// mark — is Attention, which is what `Warning` maps to. The header no longer
-/// draws this state at all, so there is no chip on this screen for it to
-/// disagree with.
+/// The cost is taken deliberately rather than worked around. `BannerVariant`
+/// welds colour to announcement, so `Critical` is also `role="alert"`, which
+/// interrupts a reader on arrival for something that was already true before
+/// they opened the page. That is the wrong shape of announcement and the right
+/// colour, and the colour wins: autosync having stopped is a failure, and a band
+/// that says so quietly in amber understates it.
 ///
 /// # Dismissal is keyed on the message
 ///
@@ -163,7 +161,7 @@ fn pause_banner(message: Option<String>, dismissed: RwSignal<Option<String>>) ->
                 let remembered = message.clone();
                 view! {
                     <Banner
-                        variant=BannerVariant::Warning
+                        variant=BannerVariant::Critical
                         on_dismiss=move |_| dismissed.set(Some(remembered.clone()))
                     >
                         "Autosync has stopped for this package. "
@@ -313,6 +311,32 @@ mod tests {
         assert!(
             text.contains("workflow rejected the revision"),
             "and the engine's own reason is the detail; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The band agrees with the chip, which `DESIGN.md` requires of every tone
+    /// and this one got wrong: `PackageState::Paused` is Danger, so the band is
+    /// `Critical`. Asserted through `role`, which is what the variant produces
+    /// — a test on the enum would restate the call site.
+    #[wasm_bindgen_test]
+    fn the_pause_band_is_toned_as_the_failure_it_reports() {
+        let dismissed = RwSignal::new(None);
+        let el = mount(move || {
+            pause_banner(
+                Some("workflow rejected the revision".to_string()),
+                dismissed,
+            )
+        });
+
+        let band = el
+            .query_selector("[role]")
+            .unwrap()
+            .expect("the band carries a role");
+        assert_eq!(
+            band.get_attribute("role").as_deref(),
+            Some("alert"),
+            "markup was {}",
             el.inner_html()
         );
     }
