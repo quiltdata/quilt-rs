@@ -36,9 +36,15 @@ pub fn InstalledPackageV2() -> impl IntoView {
 
     let reload = Trigger::new();
     // Whether the one read is out. The main page counts, because it has four;
-    // this needs a flag, and it is raised inside the future so a refetch the
-    // watcher started spins the button too — the reader sees the page working
-    // whoever asked.
+    // one read needs a flag.
+    //
+    // It ENDS the spin, and does not start it. Refresh spins only for a press,
+    // here and on the main page both: `loading` implies `disabled`, so spinning
+    // on a reload the watcher started would take the manual escape hatch away
+    // for a reason the reader did not cause — and this button is the escape
+    // hatch, the one answer to a pause whose clearing nothing announces. A
+    // background refetch keeps the previous value on screen until the new one
+    // lands, so nothing flickers while it runs.
     let in_flight = RwSignal::new(false);
     let data = LocalResource::new(move || {
         reload.track();
