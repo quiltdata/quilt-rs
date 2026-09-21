@@ -2,12 +2,20 @@
 //!
 //! # Why a scene and not a component
 //!
-//! `PageHeader` is page-level and not built. This draws the header's *shape* —
-//! trail, identity, one state label, one primary action, `Open folder`, `[⋯]` —
-//! from the kit pieces that do exist, so the states can be read against each
-//! other before the region is written. The same reasoning the component record
-//! applies to `DegradedBand`: the degraded states are not a component, they are
-//! the header with different props, and the place to see that is here.
+//! This settled the header's *shape* — trail, identity, one state label, one
+//! primary action, `Open folder`, `[⋯]` — from the kit pieces that exist, so the
+//! states could be read against each other before the region was written. The
+//! same reasoning the component record applies to `DegradedBand`: the degraded
+//! states are not a component, they are the header with different props, and the
+//! place to see that is here.
+//!
+//! **`pages::installed_package_v2::header::PageHeader` is built now, and this is
+//! still a parallel drawing of it.** Two differences keep it that way for the
+//! moment: the page's header takes a payload where this takes a bare state, and
+//! this has an `action_open` the page has no use for until resolve mode exists —
+//! the whole-page scene's one cell that needs it. Worth collapsing once resolve
+//! mode lands, because a scene that hand-draws a region it could render is a
+//! scene that stops being true the first time somebody edits the region.
 //!
 //! # The words are not chosen here
 //!
@@ -25,13 +33,18 @@
 //! divergence is the whole reason the site exists, and a test in
 //! `package_state.rs` holds it to exactly one.
 //!
-//! # Three states are missing, and cannot be added yet
+//! # One state is still missing
 //!
-//! Signed out, sign-in expired and unreachable are three separate rows in the
-//! design's header table and one `error` string in today's backend — the
-//! "three failures the page cannot currently tell apart". None is a
-//! `PackageState`, so none can be drawn until the `Blocked` value lands on the
-//! DTO. The cells below are what exists, not what the page will finally show.
+//! Signed out, sign-in expired and unreachable were three separate rows in the
+//! design's header table and one `error` string in the backend — the "three
+//! failures the page cannot currently tell apart". Two of them are states now:
+//! `NoSession` and `SignInExpired`, told apart because `is_invalid_credentials`
+//! and `LoginError::NoSession` are distinguishable at the point the read fails.
+//!
+//! `Unreachable` is not, and cannot be drawn: `S3ErrorKind` has no transport
+//! variant, so a connection failure is indistinguishable from a failed list or
+//! get, and nothing could construct the state. It draws as `Unknown` until the
+//! engine can tell them apart.
 
 use leptos::prelude::*;
 
@@ -64,6 +77,11 @@ const NAMESPACE: &str = "user/plate-07";
 /// `RoleDenied` appears once. It carries an optional role, but the list site
 /// never names it — `No access` either way — so a second cell would draw the
 /// same header twice.
+///
+/// `NoSession` appears twice for the opposite reason: it DOES name its host, so
+/// the two shapes draw different headers, and the hostless one is the widest
+/// case the row has to survive in reverse — the shortest label beside the same
+/// controls.
 fn states() -> Vec<(&'static str, PackageState)> {
     vec![
         ("nothing to do", PackageState::Latest),
@@ -102,6 +120,22 @@ fn states() -> Vec<(&'static str, PackageState)> {
         ),
         ("no bucket chosen yet", PackageState::NoRemote),
         ("has a bucket, never published", PackageState::Unpublished),
+        (
+            "no session for the deployment",
+            PackageState::NoSession {
+                host: Some("demo.quiltdata.com".to_string()),
+            },
+        ),
+        (
+            "a bare bucket on ambient credentials, so no deployment to name",
+            PackageState::NoSession { host: None },
+        ),
+        (
+            "a session that existed and was refused",
+            PackageState::SignInExpired {
+                host: Some("demo.quiltdata.com".to_string()),
+            },
+        ),
         ("syncing stopped for this package", PackageState::Paused),
         (
             "a state this build does not recognise",
@@ -292,15 +326,19 @@ pub fn PackageHeaderScene() -> impl IntoView {
     view! {
         <Scene
             title="The package header, state by state"
-            note="Thirteen cells for eleven states; `PendingChanges` and `PullConflict` \
-                  appear twice because the singular is written by hand. Read down the action \
+            note="Sixteen cells for thirteen states; `PendingChanges`, `PullConflict` and \
+                  `NoSession` appear twice, the first two because the singular is written by \
+                  hand and the third because only it names a host. Read down the action \
                   column: every control answers what this package needs, so it is the \
                   state's own action and nothing else, while `Create new revision` sits in \
-                  the overflow menu in all thirteen. Measured: the widest row is 568px \
-                  against the 992 the page has at 1024. Then read the tone column — one \
-                  Success, two Neutral, four Attention, six Danger. Whether one package's \
-                  page carries that much red is what this scene is for. Missing: signed out, \
-                  sign-in expired and unreachable, which the backend cannot tell apart."
+                  the overflow menu in all sixteen. Measured: the widest row is 609px — \
+                  `Signed out of demo.quiltdata.com`, which took the title from `Revision \
+                  not published` at 568 — against the 992 the page has at 1024, and every \
+                  row is 32px tall, so the page does not jump between states. Then read the \
+                  tone column — one Success, two Neutral, four Attention, nine Danger. \
+                  Whether one package's page carries that much red is what this scene is \
+                  for. Missing: unreachable, which the backend still cannot tell from any \
+                  other failed read."
         >
             {states()
                 .into_iter()
