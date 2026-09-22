@@ -117,6 +117,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         flow::list_revisions(&self.paths, &self.storage, &self.namespace).await
     }
 
+    /// The revision this copy is currently on.
+    ///
+    /// Unlike [`Self::revisions`], this reads only the manifest selected by
+    /// [`lineage::PackageLineage::current_hash`]. That distinction keeps an
+    /// unrelated damaged historical manifest from breaking a read of the
+    /// current package state.
+    pub async fn current_revision(&self) -> Res<Option<flow::Revision>> {
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let Some(hash) = lineage.current_hash().map(str::to_owned) else {
+            return Ok(None);
+        };
+
+        // `manifest` preserves the existing cache-recovery behavior for a
+        // remote-backed package whose installed manifest is missing.
+        let manifest = self.manifest().await?;
+        let installed_path = self.paths.installed_manifest(&self.namespace, &hash);
+        let obtained = self.storage.modified_timestamp(&installed_path).await?;
+
+        Ok(Some(flow::Revision {
+            hash,
+            obtained,
+            message: manifest.header.message,
+        }))
+    }
+
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         let Some(hash) = lineage.current_hash() else {
@@ -971,6 +996,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     }
 }
 
+#[cfg(test)]
+mod current_revision_tests;
 #[cfg(test)]
 mod set_remote_tests;
 #[cfg(test)]
