@@ -1,8 +1,8 @@
 //! The v2 package page. Behind `ExperimentalSettings.package_page_v2`.
 //!
-//! The header is drawn; the regions below it are not. The namespace line under
-//! the header is what is left of the seam's placeholder, and it stays until the
-//! file pane takes that space.
+//! The header and the first context-pane slice are drawn from one authoritative
+//! read. The file pane has not landed yet, so the shell deliberately leaves its
+//! growing left side empty rather than drawing provisional content.
 
 use leptos::prelude::*;
 use leptos_router::hooks::use_query_map;
@@ -13,9 +13,52 @@ use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use super::appbar::v2_appbar_actions;
 use super::status_watch::StatusWatch;
 
+pub(crate) mod context_pane;
 mod header;
 
+use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use header::{PageHeader, PageHeaderSkeleton};
+
+stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
+
+/// Render one successful page payload. Kept pure so its atomic shape can be
+/// tested without pretending the wasm runner has a Tauri host.
+fn package_body(data: commands::PackagePageData) -> AnyView {
+    view! {
+        <div class=style::page>
+            <PageHeader data=data.header />
+            <div class=style::shell>
+                <CurrentRevisionPane data=data.context />
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+fn package_skeleton() -> AnyView {
+    view! {
+        <div class=style::page>
+            <PageHeaderSkeleton />
+            <div class=style::shell>
+                <CurrentRevisionPaneSkeleton />
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+fn package_failure(namespace: String, reload: Trigger) -> AnyView {
+    view! {
+        <div class=style::page>
+            <h2 class=style::identity>{namespace}</h2>
+            <LoadFailure
+                words="Could not load this package."
+                on_retry=Callback::new(move |()| reload.notify())
+            />
+        </div>
+    }
+    .into_any()
+}
 
 /// What `/installed-package` renders for a reader with *New package page* on.
 #[component]
@@ -78,28 +121,19 @@ pub fn InstalledPackageV2() -> impl IntoView {
                 .into_any()
             actions=v2_appbar_actions(reload, in_flight.into())
         >
-            <Suspense fallback=|| view! { <PageHeaderSkeleton /> }>
+            <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => view! { <PageHeader data=d.header /> }.into_any(),
+                        Ok(d) => package_body(d),
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
                         // never reaches here: the command resolves those to a
                         // state, and the header draws them.
-                        Err(_) => {
-                            view! {
-                                <LoadFailure
-                                    words="Could not load this package."
-                                    on_retry=Callback::new(move |()| reload.notify())
-                                />
-                            }
-                                .into_any()
-                        }
+                        Err(_) => package_failure(namespace(), reload),
                     }
                 })}
             </Suspense>
-            <p>{namespace}</p>
         </PageLayout>
     }
 }
@@ -258,6 +292,66 @@ mod tests {
             .unwrap()
             .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(address))
             .unwrap();
+    }
+
+    fn page_data() -> commands::PackagePageData {
+        commands::PackagePageData {
+            header: commands::PackageHeaderData {
+                namespace: "team/dataset".try_into().unwrap(),
+                uri: None,
+                state: crate::kit::PackageState::Latest,
+                remote_locked: false,
+                has_local_commit: false,
+                commit_has_parent: false,
+            },
+            context: commands::PackageContextData {
+                revision: commands::CurrentRevisionData {
+                    message: Some("Initial upload".to_string()),
+                    obtained_at: 1_758_500_000_000.0,
+                },
+                bucket: Some("quilt-lab-plates".to_string()),
+            },
+            sync_paused: None,
+        }
+    }
+
+    /// A successful payload swaps the header and pane together. The old loose
+    /// paragraph was only scaffolding; package identity now belongs to the
+    /// header while the pane is a named complementary landmark.
+    #[wasm_bindgen_test]
+    fn a_successful_payload_draws_the_real_body_without_the_placeholder() {
+        let el = mount(|| package_body(page_data()));
+        let aside = el
+            .query_selector("aside")
+            .unwrap()
+            .expect("the context pane");
+        assert_eq!(
+            aside.get_attribute("aria-label").as_deref(),
+            Some("About this package")
+        );
+        assert!(
+            el.query_selector("p").unwrap().is_none(),
+            "the loose namespace placeholder is gone; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The pane's fixed measure is a wide-layout decision, and the page's own
+    /// inline container releases it when that shell narrows.
+    #[test]
+    fn the_shell_and_pane_styles_own_the_responsive_width() {
+        const PAGE: &str = include_str!("installed_package_v2.module.scss");
+        const PANE: &str = include_str!("installed_package_v2/context_pane.module.scss");
+
+        assert!(PAGE.contains("container-type: inline-size"));
+        assert!(PAGE.contains("justify-content: flex-end"));
+        assert!(PANE.contains("width: 280px"));
+        assert!(PANE.contains("@container (max-width: 800px)"));
+        assert!(PANE.contains("width: 100%"));
+        assert!(
+            !PANE.contains('#'),
+            "the slice introduces no literal colour"
+        );
     }
 
     /// The route parameter arrives and the page names it. A page that drew a

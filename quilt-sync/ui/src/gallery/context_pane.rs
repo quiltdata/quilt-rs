@@ -417,6 +417,17 @@ pub fn ContextPaneScene() -> impl IntoView {
             title="The context pane"
             note=NOTE
         >
+            <Cell wide=true label="live slice — current revision and bucket">
+                <crate::pages::CurrentRevisionPane
+                    data=crate::commands::PackageContextData {
+                        revision: crate::commands::CurrentRevisionData {
+                            message: Some("Add Caihong folder-upload note".to_string()),
+                            obtained_at: ago(2.0 * HOUR),
+                        },
+                        bucket: Some("quilt-lab-plates".to_string()),
+                    }
+                />
+            </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">
                 {pane(resting, revision_list(), pick, 2, false)}
             </Cell>

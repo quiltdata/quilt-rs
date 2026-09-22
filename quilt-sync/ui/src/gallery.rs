@@ -38,6 +38,7 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 // see `src/lib.rs`. `pub(crate)` so the story modules keep reaching it as
 // `crate::kit`, which is what they were written against.
 pub(crate) use quilt_sync_ui::kit;
+pub(crate) use quilt_sync_ui::{commands, pages};
 
 // One module per component. Adding a story means adding a file here and one line
 // in `Gallery` below — there is no registry to keep in step.

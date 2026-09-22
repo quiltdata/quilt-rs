@@ -117,8 +117,44 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         flow::list_revisions(&self.paths, &self.storage, &self.namespace).await
     }
 
+    /// The revision selected by one lineage snapshot.
+    ///
+    /// Unlike [`Self::revisions`], this reads only the manifest selected by
+    /// [`lineage::PackageLineage::current_hash`]. That distinction keeps an
+    /// unrelated damaged historical manifest from breaking a read of the
+    /// current package state. The caller supplies the snapshot so adjacent
+    /// facts such as the bucket cannot come from a different revision if the
+    /// lineage changes while a page read is in flight.
+    pub async fn current_revision(
+        &self,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Option<flow::Revision>> {
+        let Some(hash) = lineage.current_hash().map(str::to_owned) else {
+            return Ok(None);
+        };
+
+        let manifest = self.manifest_from_lineage(lineage).await?;
+        let installed_path = self.paths.installed_manifest(&self.namespace, &hash);
+        let obtained = self.storage.modified_timestamp(&installed_path).await?;
+
+        Ok(Some(flow::Revision {
+            hash,
+            obtained,
+            message: manifest.header.message,
+        }))
+    }
+
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
+        self.manifest_from_lineage(&lineage).await
+    }
+
+    /// Read the manifest selected by an already-read lineage snapshot.
+    ///
+    /// Keeping selection and recovery on that same value prevents a concurrent
+    /// lineage edit from changing which manifest supplies the message halfway
+    /// through a larger read.
+    async fn manifest_from_lineage(&self, lineage: &lineage::PackageLineage) -> Res<Manifest> {
         let Some(hash) = lineage.current_hash() else {
             return Ok(Manifest::default());
         };
@@ -971,6 +1007,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     }
 }
 
+#[cfg(test)]
+mod current_revision_tests;
 #[cfg(test)]
 mod set_remote_tests;
 #[cfg(test)]

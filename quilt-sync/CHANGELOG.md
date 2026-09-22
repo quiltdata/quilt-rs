@@ -17,6 +17,7 @@
 
 ### Changed
 
+- **New package page** now shows which revision this computer has, when it obtained it, and the package's S3 bucket in a read-only context pane. A package that lives only on this computer says it has no S3 bucket (<https://github.com/quiltdata/quilt-rs/pull/978>)
 - **New package page** (Settings → Experimental, off by default) now opens on the package's header instead of a placeholder: its name, the one state it is in, the one action that state calls for, **Open folder**, and the rest of the package's commands behind `⋯`. The header reads; it does not act yet — every command is shown but unavailable and says so, and the regions below the header are still to come. **Refresh** joins Settings on its toolbar, as on the new main page. The page already follows the background sync on its own; the button is for the one thing that goes unannounced, an autosync pause being lifted. When autosync has stopped for a reason the state cannot carry — a workflow that rejected your revision, say — a band above the page says so and repeats what the engine reported, while the header goes on saying what the package itself needs. Two conditions the app used to report the same way now read apart on it — signed out of a package's deployment, and a sign-in that lapsed underneath you (<https://github.com/quiltdata/quilt-rs/pull/970>)
 
 ## [v0.22.3] - 2026-09-18
