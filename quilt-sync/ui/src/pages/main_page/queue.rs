@@ -12,7 +12,6 @@ use leptos_router::hooks::use_navigate;
 use quilt_uri::Namespace;
 
 use super::super::main_page::list_class;
-use super::accounts::sign_in_href;
 use crate::commands::AccountHostData;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
@@ -27,6 +26,7 @@ use crate::kit::Remedy;
 use crate::kit::Site;
 use crate::kit::ZeroLine;
 use crate::kit::render;
+use crate::routes::sign_in_href;
 
 /// One row in the queue, in draw order: a cause shared by several packages,
 /// or a package needing its own decision.

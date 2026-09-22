@@ -21,6 +21,34 @@ use header::{PageHeader, PageHeaderSkeleton};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
 
+/// What a command reported, and which package it reported about.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Outcome {
+    pub namespace: String,
+    pub variant: BannerVariant,
+    /// The page's own sentence. Never the backend's.
+    pub lead: String,
+    /// The engine's text, when it says something the lead cannot.
+    pub detail: Option<String>,
+}
+
+/// The page's half of a command: what it blocks while it runs, where it
+/// reports, and what to re-read when it is done.
+///
+/// `pub(crate)` rather than `pub(super)`: `PageHeader`'s generated props struct
+/// carries it, and a prop type less visible than the props struct is what the
+/// `private_interfaces` lint fires on — and warnings are denied.
+#[derive(Clone, Copy)]
+#[expect(
+    dead_code,
+    reason = "no command reads it until the header takes it as a prop"
+)]
+pub(crate) struct Wiring {
+    pub busy: RwSignal<bool>,
+    pub outcome: RwSignal<Option<Outcome>>,
+    pub reload: Trigger,
+}
+
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
 fn package_body(data: commands::PackagePageData) -> AnyView {
@@ -76,6 +104,18 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // What the reader has already read and closed. Keyed on the message, so a
     // different pause is news again — see `pause_banner`.
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
+    // One command at a time. Every control on the header reads this, so a second
+    // cannot start on top of the first — two writes to one working tree is a race
+    // the page has no way to arbitrate.
+    #[expect(
+        unused_variables,
+        reason = "no command reads it until the header takes it as a prop"
+    )]
+    let busy = RwSignal::new(false);
+    // What the last command said, and which package it said it about. Keyed,
+    // because a result arriving for a package the page no longer shows is not
+    // this page's news — see `outcome_band`.
+    let outcome: RwSignal<Option<Outcome>> = RwSignal::new(None);
 
     let reload = Trigger::new();
     // Whether the one read is out. The main page counts, because it has four;
@@ -109,10 +149,14 @@ pub fn InstalledPackageV2() -> impl IntoView {
             // skeleton here would reserve a band for news that usually is not
             // there, and the page would settle by collapsing it.
             banner=view! {
+                {outcome_band(outcome, Signal::derive(namespace))}
                 <Suspense fallback=|| ()>
                     {move || Suspend::new(async move {
                         match data.await {
                             Ok(d) => pause_banner(d.sync_paused.clone(), dismissed),
+                            // A failed read still says nothing about a command that ran
+                            // before it; the outcome band above is outside this Suspense
+                            // for exactly that reason.
                             Err(_) => ().into_any(),
                         }
                     })}
@@ -136,6 +180,49 @@ pub fn InstalledPackageV2() -> impl IntoView {
             </Suspense>
         </PageLayout>
     }
+}
+
+/// What the last command said — the remainder channel.
+///
+/// # It carries only what no other surface says
+///
+/// A navigation reports by arriving, a dialog holds its own refusal, and a
+/// pull posts its report to the notification stack. What is left for this band
+/// is a non-dialog command's failure, an undo that succeeded (the state label
+/// can read the same before and after, so the re-read is not a report), and a
+/// remote set whose workflow could not be resolved.
+///
+/// # Keyed to the package, and dropped whole when it does not match
+///
+/// One route serves every package, so a command's result can arrive after the
+/// reader has moved to another one. It is discarded rather than drawn: a
+/// reader cannot tell a stale outcome from a fresh one by its text. Same rule
+/// the form dialog applies to a stale session.
+///
+/// # The lead is the page's and the detail is the engine's
+///
+/// The split the pause band already makes. The vocabulary is UI-owned, so the
+/// sentence saying what did not happen is written here; the engine's own
+/// refusal text is the part nothing else knows, and follows as the detail.
+fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<String>) -> AnyView {
+    let mine = move || outcome.get().filter(|o| o.namespace == showing.get());
+    view! {
+        <Show when=move || mine().is_some() fallback=|| ()>
+            {
+                let said = mine().expect("checked by the guard above");
+                view! {
+                    <Banner
+                        variant=said.variant
+                        on_dismiss=move |_| outcome.set(None)
+                    >
+                        {said.lead}
+                        {said.detail.map(|detail| view! { " " {detail} })}
+                    </Banner>
+                }
+            }
+        </Show>
+    }
+    .into_any()
 }
 
 /// The band that says autosync has stopped, and why.
@@ -313,6 +400,97 @@ mod tests {
                 bucket: Some("quilt-lab-plates".to_string()),
             },
             sync_paused: None,
+        }
+    }
+
+    fn said(namespace: &str, variant: BannerVariant, lead: &str, detail: Option<&str>) -> Outcome {
+        Outcome {
+            namespace: namespace.to_string(),
+            variant,
+            lead: lead.to_string(),
+            detail: detail.map(ToString::to_string),
+        }
+    }
+
+    /// The band is the surface's sentence first and the engine's text after it —
+    /// the same split the pause band makes. A band that only repeated the
+    /// backend would be the vocabulary leaving the UI; one that dropped it would
+    /// lose the only part naming what went wrong.
+    #[wasm_bindgen_test]
+    fn the_outcome_band_leads_with_the_page_s_sentence() {
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Critical,
+            "Could not get the latest revision.",
+            Some("Failed to pull package: connection reset"),
+        )));
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(text.contains("Could not get the latest revision."));
+        assert!(
+            text.contains("connection reset"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The keying. A result arriving for a package the page no longer shows is
+    /// dropped WHOLE — not greyed, not queued. A reader cannot tell a stale
+    /// outcome from a fresh one by its text, which is the defect quilt-rs#974's
+    /// review found.
+    #[wasm_bindgen_test]
+    fn an_outcome_for_another_package_is_dropped_whole() {
+        let outcome = RwSignal::new(Some(said(
+            "team/other",
+            BannerVariant::Success,
+            "The last revision was undone.",
+            None,
+        )));
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+
+        assert_eq!(el.text_content().unwrap_or_default().trim(), "");
+    }
+
+    /// Both bands at once. A pause is a standing condition and an outcome is
+    /// what just happened; a package can be both, and neither replaces the other.
+    #[wasm_bindgen_test]
+    fn an_outcome_and_a_pause_stack_rather_than_replacing_each_other() {
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Success,
+            "The last revision was undone.",
+            None,
+        )));
+        let dismissed = RwSignal::new(None);
+        let el = mount(move || {
+            view! {
+                {outcome_band(outcome, Signal::derive(|| "team/dataset".to_string()))}
+                {pause_banner(Some("workflow rejected the revision".to_string()), dismissed)}
+            }
+        });
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(text.contains("The last revision was undone."));
+        assert!(text.contains("Autosync has stopped for this package"));
+    }
+
+    /// A success waits for a pause in the reader's work; a failure cuts across
+    /// it. That is `BannerVariant`'s own rule and the band must not quietly
+    /// invert it.
+    #[wasm_bindgen_test]
+    fn a_failure_interrupts_and_a_success_does_not() {
+        for (variant, role) in [
+            (BannerVariant::Critical, "alert"),
+            (BannerVariant::Success, "status"),
+        ] {
+            let outcome = RwSignal::new(Some(said("team/dataset", variant, "Something.", None)));
+            let el =
+                mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+            let band = el.query_selector("[role]").unwrap().expect("a band");
+            assert_eq!(band.get_attribute("role").as_deref(), Some(role));
         }
     }
 
