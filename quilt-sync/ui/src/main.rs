@@ -8,6 +8,7 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 // The modules themselves live in the library beside this file — see `src/lib.rs`
 // for why. Imported rather than declared, so this binary and the gallery share
 // one compilation of them and neither can call an item dead that the other uses.
+use quilt_sync_ui::build_profile::BuildProfile;
 use quilt_sync_ui::commands;
 use quilt_sync_ui::components;
 use quilt_sync_ui::kit;
@@ -65,12 +66,15 @@ fn App() -> impl IntoView {
 #[component]
 fn Home() -> impl IntoView {
     let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
+    // Resolved once here rather than inside the gate, so the gate takes a value
+    // a test can supply — see `build_profile.rs`.
+    let profile = BuildProfile::resolve();
 
     view! {
         <Suspense fallback=home_loading>
             {move || Suspend::new(async move {
                 let settings = settings.await;
-                let v2 = wants_main_page_v2(settings.as_ref().map_err(String::as_str));
+                let v2 = effective_design(settings.as_ref().map_err(String::as_str), profile);
                 // Recorded on the root here rather than fetched again out in
                 // `App`: this is the one read of the flag the app already makes,
                 // and `/` is where every session starts, so the marker is set
@@ -97,12 +101,13 @@ fn Home() -> impl IntoView {
 #[component]
 fn PackagePage() -> impl IntoView {
     let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
+    let profile = BuildProfile::resolve();
 
     view! {
         <Suspense fallback=|| loading("Loading package")>
             {move || Suspend::new(async move {
                 let settings = settings.await;
-                if wants_package_page_v2(settings.as_ref().map_err(String::as_str)) {
+                if package_page_v2(settings.as_ref().map_err(String::as_str), profile) {
                     view! { <pages::InstalledPackageV2 /> }.into_any()
                 } else {
                     view! { <pages::InstalledPackage /> }.into_any()
@@ -147,29 +152,31 @@ fn home_loading() -> AnyView {
     .into_any()
 }
 
-/// Whether `/` renders v2, given the settings fetch's outcome.
+/// Whether the redesigned application generation is effective, given the settings
+/// fetch's outcome and the build.
 ///
-/// `Err` — the fetch failed — falls back to v1, same as the flag being off:
-/// v1 is the page that has always worked.
-fn wants_main_page_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.is_ok_and(|data| data.experimental.main_page_v2)
+/// `Err` — the fetch failed — falls back to v1, same as the preference being off:
+/// v1 is the generation that has always worked.
+///
+/// The construction gate is an OR, not an AND: a developer turning on the
+/// unfinished page gets the application generation it is built inside, without
+/// the stored reader answer being rewritten. Turning the gate off resumes that
+/// answer.
+fn effective_design(
+    settings: Result<&commands::SettingsData, &str>,
+    profile: BuildProfile,
+) -> bool {
+    settings.is_ok_and(|data| data.experimental.main_page_v2) || package_page_v2(settings, profile)
 }
 
-/// Whether `/installed-package` renders v2, on the same terms — and only under
-/// the main page's opt-in.
+/// Whether `/installed-package` renders v2.
 ///
-/// **Both flags**, because the v2 package page assumes a v2 app around it: it is
-/// drawn in that design, and its way back leads to the main page. A flag of its
-/// own still, so the unfinished page is not forced on every reader of the v2
-/// main page; but it narrows that opt-in rather than standing beside it. The two
-/// merge into one switch when the page is finished.
-///
-/// The gate is on the effect, not only on the Settings row. A disabled box over
-/// a live flag is a flag with no way to turn it off — and gating the effect is
-/// how `entire_package_sync`'s gate already behaves: the stored choice is left
-/// written, so restoring what gates it resumes the reader's answer.
-fn wants_package_page_v2(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.is_ok_and(|data| data.experimental.main_page_v2 && data.experimental.package_page_v2)
+/// The build is `ANDed` here and not only in Settings: a disabled row over a live
+/// flag is a flag with no way to turn it off, and a release build must not honour
+/// a value a development build left behind.
+fn package_page_v2(settings: Result<&commands::SettingsData, &str>, profile: BuildProfile) -> bool {
+    profile.allows_construction_gates()
+        && settings.is_ok_and(|data| data.experimental.package_page_v2)
 }
 
 #[cfg(test)]
@@ -269,55 +276,70 @@ mod tests {
     #[wasm_bindgen_test]
     fn flag_on_renders_v2() {
         let settings = settings_stub(true, false);
-        assert!(wants_main_page_v2(Ok(&settings)));
+        assert!(effective_design(Ok(&settings), BuildProfile::Development));
     }
 
     #[wasm_bindgen_test]
     fn flag_off_renders_v1() {
         let settings = settings_stub(false, false);
-        assert!(!wants_main_page_v2(Ok(&settings)));
-    }
-
-    #[wasm_bindgen_test]
-    fn fetch_error_falls_back_to_v1() {
-        // The flag is unknowable, so the answer is the page that has always
-        // worked — not a guess at what the reader chose.
-        assert!(!wants_main_page_v2(Err("boom")));
+        assert!(!effective_design(Ok(&settings), BuildProfile::Development));
+        assert!(!package_page_v2(Ok(&settings), BuildProfile::Development));
     }
 
     #[wasm_bindgen_test]
     fn package_flag_on_renders_v2() {
         let settings = settings_stub(true, true);
-        assert!(wants_package_page_v2(Ok(&settings)));
+        assert!(package_page_v2(Ok(&settings), BuildProfile::Development));
+        assert!(effective_design(Ok(&settings), BuildProfile::Development));
     }
 
     #[wasm_bindgen_test]
     fn package_flag_off_renders_v1() {
         let settings = settings_stub(true, false);
-        assert!(!wants_package_page_v2(Ok(&settings)));
+        assert!(!package_page_v2(Ok(&settings), BuildProfile::Development));
     }
 
+    /// The gate implies the generation rather than depending on it — the
+    /// inversion this change turns on. A developer opens the unfinished page
+    /// without first opting into the preview, and gets the design it is drawn in.
     #[wasm_bindgen_test]
-    fn package_fetch_error_falls_back_to_v1() {
-        assert!(!wants_package_page_v2(Err("boom")));
+    fn the_construction_gate_turns_the_design_on_without_the_stored_answer() {
+        let settings = settings_stub(false, true);
+        assert!(effective_design(Ok(&settings), BuildProfile::Development));
+        assert!(package_page_v2(Ok(&settings), BuildProfile::Development));
     }
 
-    /// All four rows, because the interesting one is the third: a package flag
-    /// left on from before the main page was switched off does not render v2.
-    /// The stored value is untouched — Settings still shows it ticked, disabled
-    /// — so restoring the main page resumes it.
+    /// And leaves it alone: the stored answer is still off, so turning the gate
+    /// off returns the reader to v1 rather than to whatever the gate implied.
     #[wasm_bindgen_test]
-    fn the_package_page_needs_both_flags() {
-        assert!(!wants_package_page_v2(Ok(&settings_stub(false, false))));
-        assert!(!wants_package_page_v2(Ok(&settings_stub(true, false))));
-        assert!(!wants_package_page_v2(Ok(&settings_stub(false, true))));
-        assert!(wants_package_page_v2(Ok(&settings_stub(true, true))));
+    fn the_construction_gate_does_not_rewrite_the_stored_answer() {
+        let settings = settings_stub(false, false);
+        assert!(!effective_design(Ok(&settings), BuildProfile::Development));
     }
 
-    /// And the main page is not gated in return — the dependency runs one way.
+    /// A value a development build persisted is inert in a release build — both
+    /// for the page and for the generation. This is the claim Settings alone
+    /// cannot make.
     #[wasm_bindgen_test]
-    fn the_main_page_does_not_read_the_package_flag() {
-        assert!(wants_main_page_v2(Ok(&settings_stub(true, false))));
-        assert!(!wants_main_page_v2(Ok(&settings_stub(false, true))));
+    fn a_release_build_ignores_a_stored_construction_value() {
+        let settings = settings_stub(false, true);
+        assert!(!package_page_v2(Ok(&settings), BuildProfile::Release));
+        assert!(!effective_design(Ok(&settings), BuildProfile::Release));
+    }
+
+    /// The reader's own preference is untouched by the build: a release reader
+    /// who opted in still gets the preview.
+    #[wasm_bindgen_test]
+    fn a_release_build_still_honours_the_reader_preference() {
+        let settings = settings_stub(true, true);
+        assert!(effective_design(Ok(&settings), BuildProfile::Release));
+        assert!(!package_page_v2(Ok(&settings), BuildProfile::Release));
+    }
+
+    /// A failed read is v1, unchanged from `wants_main_page_v2`'s rule.
+    #[wasm_bindgen_test]
+    fn a_failed_settings_read_is_v1() {
+        assert!(!effective_design(Err("nope"), BuildProfile::Development));
+        assert!(!package_page_v2(Err("nope"), BuildProfile::Development));
     }
 }
