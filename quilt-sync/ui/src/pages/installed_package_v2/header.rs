@@ -234,6 +234,7 @@ mod tests {
             remote_locked: false,
             has_local_commit: false,
             commit_has_parent: false,
+            role_switch: None,
         }
     }
 
