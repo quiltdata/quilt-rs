@@ -46,6 +46,7 @@
 #[cfg(test)]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
+pub mod build_profile;
 pub mod commands;
 pub mod components;
 pub mod error_handler;
