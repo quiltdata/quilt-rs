@@ -174,6 +174,12 @@ Navigate to next page or reload current page
 
 ### Popup cycle
 
+This is **v1's**. The v2 kit's `FormDialog` keeps the `RwSignal<bool>` and owns
+the rest: it takes the submit as an async action, holds the in-flight state,
+seals its fields and refuses Escape while that runs, closes on `Ok`, and draws
+an `Err` as a banner above the fields instead of leaving it to the page's
+notification slot — which sits behind the modal that raised it.
+
 Popups (ignore, set-remote, create-package) are **Leptos
 components** controlled by a `RwSignal<bool>`:
 
@@ -482,6 +488,7 @@ string props.
 | `StateLabel` | `StateLabel` / `Label` | ⚠️ see below |
 | `FormControl` | `FormControl` | ✅ was `Field` |
 | `ControlId`, `Naming` | — | ours; see below |
+| `FormDialog` | — (`Dialog` + a `<form>`) | ours |
 | `SearchInput` | — (`TextInput` + `trailingAction`) | ours |
 | `ToggleRow` | — (wraps `ToggleSwitch`) | ours |
 | `ListToolbar` | — | ours |
