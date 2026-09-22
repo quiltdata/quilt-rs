@@ -58,9 +58,10 @@ After login -> redirect to `back` URL (the page user came from)
 
 ### Main Page
 
-The main screen when Settings → Experimental → **New main page** is on. Off by
-default; `/` renders this or the Installed Packages List below according to that
-setting, and both stay reachable at `/main` and `/installed-packages-list`.
+The main screen when Settings → Experimental → **New design preview** is on. Off
+by default; `/` renders this or the Installed Packages List below according to
+the effective design generation, and both stay reachable at `/main` and
+`/installed-packages-list`.
 
 Four regions, in reading order. The queue is absent — not empty — when nothing
 needs a decision, and says so in one line instead.
@@ -112,8 +113,8 @@ recent files group by Package or None.
 ### Installed Packages List
 
 Lists all locally installed packages. The main screen unless Settings →
-Experimental → **New main page** is on, in which case that page takes `/` and
-this one stays at `/installed-packages-list`.
+Experimental → **New design preview** is on, in which case that page takes `/`
+and this one stays at `/installed-packages-list`.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -624,16 +625,16 @@ Application settings and diagnostics.
 |                                                         |
 |  Experimental                                           |
 |  ------------                                           |
-|  New main page                 [ ]                      |
-|  hint: replaces the packages list with a page that      |
-|        opens with what needs your attention. Switching  |
-|        it off returns you to the current page.          |
-|                                                         |
 |  Enable entire-package sync    [ ]                      |
 |  hint: adds a per-package choice — sync the entire      |
 |        package, including files added later, instead    |
 |        of picking files. Off until you choose it on a   |
 |        package.                                         |
+|                                                         |
+|  New design preview            [ ]                      |
+|  hint: the redesigned QuiltSync, switched on wherever   |
+|        it is ready. Switch back at any time — nothing   |
+|        is lost.                                         |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
@@ -650,6 +651,14 @@ Application settings and diagnostics.
 |                                                         |
 +---------------------------------------------------------+
 ```
+
+Two Experimental rows, as drawn above, is what a release build shows. A
+development build draws a third, **Unfinished package page** — the construction
+gate over the rebuilt package screen. It is absent rather than disabled for a
+reader, because a disabled row still tells them the unfinished page exists, and
+`main.rs` refuses a stored value in a release build too, so hiding it leaves no
+live flag behind. Turning it on also turns on the design preview it is drawn
+inside.
 
 ---
 

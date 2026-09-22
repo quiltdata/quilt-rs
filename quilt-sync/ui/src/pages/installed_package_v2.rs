@@ -60,7 +60,11 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
     .into_any()
 }
 
-/// What `/installed-package` renders for a reader with *New package page* on.
+/// What `/installed-package` renders behind the construction gate.
+///
+/// No reader reaches it: `main.rs`'s `package_page_v2` is the development
+/// build ANDed with *Unfinished package page*, and a release build draws no
+/// such row and honours no stored value.
 #[component]
 pub fn InstalledPackageV2() -> impl IntoView {
     let query = use_query_map();
