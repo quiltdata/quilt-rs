@@ -17,6 +17,9 @@ pub use commit::Commit;
 pub use error::Error;
 pub use installed_package::InstalledPackage;
 pub use installed_package_v2::InstalledPackageV2;
+// The gallery draws this exact live slice rather than maintaining another
+// approximation of the page component.
+pub use installed_package_v2::context_pane::CurrentRevisionPane;
 pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
 pub use main_page::MainPage;

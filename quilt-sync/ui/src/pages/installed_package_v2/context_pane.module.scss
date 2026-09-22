@@ -1,0 +1,15 @@
+.root {
+  width: 280px;
+  flex: none;
+}
+
+.bucket {
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+@container (max-width: 800px) {
+  .root {
+    width: 100%;
+  }
+}

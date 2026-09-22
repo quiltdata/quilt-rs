@@ -1,0 +1,21 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+  gap: var(--q-space-3);
+  flex: 1;
+  min-height: 0;
+}
+
+.shell {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--q-space-3);
+  flex: 1;
+  min-height: 0;
+}
+
+.identity {
+  margin: 0;
+  font-size: var(--q-text-title);
+}
