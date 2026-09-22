@@ -1289,6 +1289,20 @@ pub async fn certify_latest(
     tauri::invoke("certify_latest", &Args { namespace, uri }).await
 }
 
+/// Step the package back one revision along its pending commit chain.
+///
+/// Refuses on a package with any remote, on a first revision, and on a dirty
+/// tree — the first two are gated by the caller from the page payload, the
+/// third comes back as the message the confirm dialog draws.
+pub async fn undo_commit(namespace: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("undo_commit", &Args { namespace }).await
+}
+
 pub async fn reset_local(namespace: String, uri: Option<S3PackageUri>) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
