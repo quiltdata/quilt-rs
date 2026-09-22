@@ -73,53 +73,15 @@
 //! changed, and the release-notes popup has nothing to submit either. A second component
 //! for "a dialog with one button" would differ from this one by nothing.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::rc::Rc;
-
 use leptos::prelude::*;
 
-use super::Banner;
-use super::BannerVariant;
 use super::Button;
 use super::ButtonVariant;
 use super::Dialog;
+use super::Submit;
+use super::submission::Submission;
 
 stylance::import_crate_style!(style, "src/kit/form_dialog.module.scss");
-
-/// The caller's action, boxed so the component's signature does not carry its future's
-/// type. `Rc` and not `Arc`: this is a single-threaded wasm document, and the event handler
-/// only needs to clone it.
-type Action = Rc<dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), String>>>>>;
-
-/// What a [`FormDialog`]'s primary is called and what it does.
-///
-/// The two travel together because neither is useful alone: a label with no action is a
-/// button that lies, and an action with no label has nothing to draw.
-#[derive(Clone)]
-pub struct Submit {
-    label: String,
-    action: Action,
-}
-
-impl Submit {
-    /// `label` is the verb on the primary — `Save`, `Create`, `Add to .quiltignore`.
-    ///
-    /// `action` runs on submit and its `Err` becomes the dialog's banner, so its message is
-    /// read by a user rather than a log: it says what did not happen, not which layer
-    /// refused.
-    #[must_use]
-    pub fn new<F, Fut>(label: impl Into<String>, action: F) -> Self
-    where
-        F: Fn() -> Fut + 'static,
-        Fut: Future<Output = Result<(), String>> + 'static,
-    {
-        Self {
-            label: label.into(),
-            action: Rc::new(move || Box::pin(action())),
-        }
-    }
-}
 
 #[component]
 pub fn FormDialog(
@@ -132,65 +94,18 @@ pub fn FormDialog(
     /// The fields. Wrapped in the `<form>` when there is something to submit.
     children: Children,
 ) -> impl IntoView {
-    let submitting = RwSignal::new(false);
-    // Derived once and used twice: `disabled` on Cancel and `loading` on the primary are
-    // the same fact, and `MaybeProp` takes a signal rather than a bare closure.
-    let busy = Signal::derive(move || submitting.get());
-    let error = RwSignal::new(None::<String>);
-    // Which opening of this dialog is current. An action carries the one it was asked
-    // under, and an outcome from any other is discarded — see the module doc.
-    let session = RwSignal::new(0_usize);
+    // The session, the seal, the refusal and the stale-outcome rule — every rule the
+    // module doc argues — live in `Submission`, which `ConfirmDialog` shares.
+    let submission = Submission::new(open);
+    let busy = submission.busy;
     let form_id = super::unique_id("q-form");
-
-    // Every open and every close starts a new one. It drops the last session's in-flight
-    // state, because a dialog reopened is a fresh question and must not arrive sealed or
-    // carrying the previous answer.
-    // Only a real transition counts. An effect's first run lands after the first render,
-    // so bumping there would invalidate a submit made in between — including, in a test,
-    // one issued the moment the component mounted.
-    Effect::new(move |previous: Option<bool>| {
-        let now = open.get();
-        if previous.is_some_and(|was| was != now) {
-            session.update(|n| *n += 1);
-            submitting.set(false);
-            error.set(None);
-        }
-        now
-    });
-
-    let banner = view! {
-        <Show when=move || error.get().is_some()>
-            <Banner variant=BannerVariant::Critical on_dismiss=move |_| error.set(None)>
-                {move || error.get().unwrap_or_default()}
-            </Banner>
-        </Show>
-    };
+    let banner = submission.banner();
 
     let (body, footer) = if let Some(Submit { label, action }) = submit {
         let on_submit = move |ev: leptos::ev::SubmitEvent| {
             // The default is a navigation, which in a webview is the app disappearing.
             ev.prevent_default();
-            if submitting.get_untracked() {
-                return;
-            }
-            submitting.set(true);
-            error.set(None);
-            let mine = session.get_untracked();
-            let action = Rc::clone(&action);
-            leptos::task::spawn_local(async move {
-                let outcome = action().await;
-                // Closed and reopened while this ran, so it answers a question nobody is
-                // asking any more. Touching anything here would be this outcome editing
-                // somebody else's dialog.
-                if session.get_untracked() != mine {
-                    return;
-                }
-                submitting.set(false);
-                match outcome {
-                    Ok(()) => open.set(false),
-                    Err(message) => error.set(Some(message)),
-                }
-            });
+            submission.run(&action);
         };
         let body = view! {
             {banner}
