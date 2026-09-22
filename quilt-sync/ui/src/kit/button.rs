@@ -58,6 +58,21 @@ pub fn Button(
     /// The id of what it opens.
     #[prop(optional, into)]
     aria_controls: MaybeProp<String>,
+    /// Submits the form named by `form` rather than doing nothing on its own.
+    ///
+    /// The default is `type="button"` and stays that way: a `<button>` inside a `<form>`
+    /// submits it unless told otherwise, which is the accidental-submit bug every codebase
+    /// ships once. Opting in is the only way to get it.
+    #[prop(optional)]
+    submit: bool,
+    /// The `<form>` this button belongs to, by id — for a button that sits **outside** it.
+    ///
+    /// A [`FormDialog`](super::FormDialog)'s primary is exactly that case: the fields are a
+    /// `<form>` in the dialog's body and the buttons are in its footer, a sibling. The
+    /// association is what makes the form's Enter key reach this button, so it is not
+    /// cosmetic.
+    #[prop(optional, into)]
+    form: MaybeProp<String>,
     children: Children,
 ) -> impl IntoView {
     let is_loading = Signal::derive(move || loading.get().unwrap_or(false));
@@ -87,9 +102,13 @@ pub fn Button(
     // so the spinner swap costs no re-render.
     let visual = leading_visual.map(|glyph| view! { <span class=style::icon>{glyph}</span> });
 
+    // Fixed at the call site, not reactive: whether a button submits is what it is for.
+    let button_type = if submit { "submit" } else { "button" };
+
     view! {
         <button
-            type="button"
+            type=button_type
+            form=move || form.get()
             class=class
             disabled=move || is_disabled.get()
             aria-busy=move || if is_loading.get() { "true" } else { "false" }
@@ -240,8 +259,30 @@ mod tests {
 
     /// Inside a form the default would submit it.
     #[wasm_bindgen_test]
-    fn a_button_is_never_a_submit() {
+    fn a_button_does_not_submit_unless_it_was_asked_to() {
         let el = mount(|| view! { <Button on_click=|_| {}>"Publish"</Button> });
         assert_eq!(button(&el).get_attribute("type").as_deref(), Some("button"));
+        assert!(
+            !button(&el).has_attribute("form"),
+            "and it belongs to no form it was not given"
+        );
+    }
+
+    /// The opt-in, and the association that makes it reach a form it is not inside —
+    /// see [`FormDialog`](super::super::FormDialog), whose footer is that case.
+    #[wasm_bindgen_test]
+    fn a_submit_button_names_the_form_it_submits() {
+        let el = mount(|| {
+            view! {
+                <Button submit=true form="q-form-7" on_click=|_| {}>
+                    "Save"
+                </Button>
+            }
+        });
+        assert_eq!(button(&el).get_attribute("type").as_deref(), Some("submit"));
+        assert_eq!(
+            button(&el).get_attribute("form").as_deref(),
+            Some("q-form-7")
+        );
     }
 }

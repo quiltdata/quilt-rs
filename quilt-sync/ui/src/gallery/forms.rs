@@ -1,4 +1,4 @@
-//! `Dialog`, `TextInput`, `FormControl`, and the two forms the main page opens.
+//! `FormDialog`, `TextInput`, `FormControl`, and the forms the package page opens.
 //!
 //! Each form is a component rendered **twice**: inline in a cell, so it can be reviewed at
 //! a glance and screenshotted, and inside a real modal behind a button, so the parts only
@@ -10,17 +10,20 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
+use crate::kit::Banner;
+use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
-use crate::kit::Dialog;
 use crate::kit::FormControl;
+use crate::kit::FormDialog;
 use crate::kit::Naming;
 use crate::kit::Select;
+use crate::kit::Submit;
 use crate::kit::TextInput;
 
 #[component]
 pub fn FormsStories() -> impl IntoView {
-    view! { <Inputs /> <FormControls /> <FormBodies /> }
+    view! { <Inputs /> <FormControls /> <FormBodies /> <Submitting /> }
 }
 
 #[component]
@@ -150,12 +153,26 @@ fn FormControls() -> impl IntoView {
     }
 }
 
-/// The bucket form. `Choose S3 bucket` per the settled vocabulary — v1 calls this
-/// `Set remote`, which names a concept rather than the thing you pick.
+/// The bucket form, in both of its shapes.
+///
+/// `locked` is not a spare state: a package that has been pushed is pinned to its push
+/// history, so the header's command reads `Show remote` and the same three fields are
+/// shown rather than offered. The v2 header already makes that swap.
 #[component]
-pub fn BucketForm() -> impl IntoView {
+pub fn BucketForm(
+    /// Every field disabled — the remote as a fact rather than a choice.
+    #[prop(optional)]
+    locked: bool,
+) -> impl IntoView {
     let host = RwSignal::new("open.quiltdata.com".to_string());
-    let bucket = RwSignal::new(String::new());
+    // Locked means *showing a remote*, so there is one to show. Left empty it drew a grey
+    // placeholder, and a read-only form whose field is a placeholder reads as a value the
+    // reader cannot change rather than as the absence of one.
+    let bucket = RwSignal::new(if locked {
+        "quilt-example".to_string()
+    } else {
+        String::new()
+    });
     let workflow = RwSignal::new("Default".to_string());
 
     view! {
@@ -165,19 +182,54 @@ pub fn BucketForm() -> impl IntoView {
         // this is that place.
         <FormControl
             label="Host"
-            caption="Where this package is published. From your accounts."
+            // A caption instructs while the field is a choice and states once it is not.
+            // "From your accounts" tells a reader where to get a value they cannot enter.
+            caption=if locked {
+                "Where this package is published."
+            } else {
+                "Where this package is published. From your accounts."
+            }
             control=move |id| {
-                view! { <TextInput id=id value=host placeholder="open.quiltdata.com" /> }
+                view! {
+                    <TextInput
+                        id=id
+                        value=host
+                        placeholder="open.quiltdata.com"
+                        disabled=locked
+                    />
+                }
                     .into_any()
             }
         />
-        <FormControl
-            label="Bucket"
-            required=true
-            control=move |id| {
-                view! { <TextInput id=id value=bucket placeholder="my-s3-bucket" /> }.into_any()
+        // Two shapes rather than one with flags, because they differ in what they say and
+        // not only in whether they accept typing. Nothing is *required* of a reader who
+        // cannot type — `(required)` on a disabled field is the kind of thing only a
+        // screenshot catches — and the caption that replaces it is why the field is grey,
+        // which is otherwise a mystery the reader has to guess at.
+        {if locked {
+            view! {
+                <FormControl
+                    label="Bucket"
+                    caption="Fixed by this package's push history."
+                    control=move |id| {
+                        view! { <TextInput id=id value=bucket disabled=true /> }.into_any()
+                    }
+                />
             }
-        />
+                .into_any()
+        } else {
+            view! {
+                <FormControl
+                    label="Bucket"
+                    required=true
+                    control=move |id| {
+                        view! { <TextInput id=id value=bucket placeholder="my-s3-bucket" /> }
+                            .into_any()
+                    }
+                />
+            }
+                .into_any()
+        }}
         // Read from the bucket once it is known, so it is last and its options depend on
         // the field above it.
         //
@@ -193,6 +245,7 @@ pub fn BucketForm() -> impl IntoView {
                         naming=Naming::FormControl(id)
                         options=vec!["Default".to_string(), "None".to_string()]
                         selected=workflow
+                        disabled=locked
                     />
                 }
                     .into_any()
@@ -252,6 +305,94 @@ pub fn CreateForm() -> impl IntoView {
     }
 }
 
+// ── FormDialog ──
+
+/// A stand-in for a command. The delay is the point: an action that answers instantly
+/// never shows the in-flight footer it is here to demonstrate.
+async fn after_a_beat(ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        drop(
+            web_sys::window()
+                .expect("a window")
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms),
+        );
+    });
+    drop(wasm_bindgen_futures::JsFuture::from(promise).await);
+}
+
+/// One case, as the button that opens it. A `FormDialog` cannot be drawn inline —
+/// `show_modal()` puts it in the top layer over the whole page — so the only honest way
+/// to review a state is to open it.
+#[component]
+fn Case(
+    title: &'static str,
+    submit_label: &'static str,
+    /// `Some(reason)` makes the action fail with it; `None` makes it succeed.
+    #[prop(optional)]
+    rejects: Option<&'static str>,
+) -> impl IntoView {
+    let open = RwSignal::new(false);
+    view! {
+        <Button on_click=move |_| open.set(true)>{title}</Button>
+        <FormDialog
+            open=open
+            title=title
+            submit=Submit::new(
+                submit_label,
+                move || async move {
+                    after_a_beat(700).await;
+                    match rejects {
+                        Some(reason) => Err(reason.to_string()),
+                        None => Ok(()),
+                    }
+                },
+            )
+        >
+            <BucketForm />
+        </FormDialog>
+    }
+}
+
+/// The read-only shape: no submit, so no form and one way out.
+#[component]
+fn ShowRemoteCase() -> impl IntoView {
+    let open = RwSignal::new(false);
+    view! {
+        <Button on_click=move |_| open.set(true)>"Show remote"</Button>
+        <FormDialog open=open title="Show remote">
+            <BucketForm locked=true />
+        </FormDialog>
+    }
+}
+
+#[component]
+fn Submitting() -> impl IntoView {
+    view! {
+        <Story
+            title="FormDialog"
+            note="Open one and press Return in a field — it submits, which none of v1's \
+                  four overlays does. Watch the footer while it runs: the primary goes \
+                  busy and Cancel is refused, because dismissing would not stop a write \
+                  already in flight. A refusal stays open with the reason above the \
+                  fields, where v1 put it in the page's slot behind the modal."
+        >
+            <Cell label="it saves">
+                <Case title="Change bucket" submit_label="Save" />
+            </Cell>
+            <Cell label="it is refused">
+                <Case
+                    title="Change bucket"
+                    submit_label="Save"
+                    rejects="No permission to write to quilt-example."
+                />
+            </Cell>
+            <Cell label="nothing to submit — pushed">
+                <ShowRemoteCase />
+            </Cell>
+        </Story>
+    }
+}
+
 #[component]
 fn FormBodies() -> impl IntoView {
     view! {
@@ -280,53 +421,119 @@ fn FormBodies() -> impl IntoView {
     }
 }
 
+/// The refusal, at rest — and the real thing one click away.
+///
+/// Both, because they cannot be the same object. A `FormDialog` is modal: `show_modal()`
+/// puts it in the top layer and its backdrop takes every pointer event on the page, so a
+/// scene holding one open makes the rest of the gallery unclickable. Driving the real
+/// component into this state and leaving it there was tried and does exactly that.
+///
+/// So the resting copy is composed inline from the same kit pieces the dialog uses —
+/// `Banner`, the form, the footer's two buttons — which is how `StripErrorScene` shows a
+/// strip that could not load, and what this module's own doc means by rendering a form
+/// twice. The button beside it opens the real one, whose banner arrives the real way.
+#[component]
+pub fn RefusedScene() -> impl IntoView {
+    let live = RwSignal::new(false);
+    let dismissed = RwSignal::new(false);
+
+    view! {
+        <Scene
+            title="Scene · a dialog that was refused"
+            note="Where v1 puts this: the page's notification slot, behind the modal that \
+                  caused it. Here it is above the fields, the values are still there to \
+                  correct, and the reason names the bucket. This copy is inline, at the \
+                  width the modal gets, so it can be read and screenshotted without \
+                  taking the page's pointer events — press Open the real one for the \
+                  modal, whose banner arrives through an actual refused submit."
+        >
+            <div class="g-bars g-dialog-inline">
+                <Show when=move || !dismissed.get()>
+                    <Banner
+                        variant=BannerVariant::Critical
+                        on_dismiss=move |_| dismissed.set(true)
+                    >
+                        "No permission to write to quilt-example."
+                    </Banner>
+                </Show>
+                <BucketForm />
+                // The footer, in the dialog's own arrangement: right-aligned, primary last.
+                <div class="g-inline g-inline--end">
+                    <Button on_click=move |_| ()>"Cancel"</Button>
+                    <Button variant=ButtonVariant::Primary on_click=move |_| ()>"Save"</Button>
+                </div>
+            </div>
+            <div class="g-inline">
+                <Button on_click=move |_| live.set(true)>"Open the real one"</Button>
+            </div>
+            <FormDialog
+                open=live
+                title="Change bucket"
+                submit=Submit::new(
+                    "Save",
+                    || async { Err("No permission to write to quilt-example.".to_string()) },
+                )
+            >
+                <BucketForm />
+            </FormDialog>
+        </Scene>
+    }
+}
+
 #[component]
 pub fn DialogScene() -> impl IntoView {
     let bucket_open = RwSignal::new(false);
     let create_open = RwSignal::new(false);
+    let show_open = RwSignal::new(false);
 
     view! {
         <Scene
-            title="Scene · the two dialogs"
-            note="Open them. Tab: focus is trapped, which none of v1's four overlays does. \
-                  Escape closes, which none of them handles. The backdrop is the platform's \
-                  top layer, so there is no z-index and no ancestor can clip it. Clicking \
-                  the backdrop does not close them, deliberately: each holds a form, and a \
-                  stray click discarding what you typed is a bad trade for saving a movement \
-                  to Cancel."
+            title="Scene · the three dialogs"
+            note="The two forms and the read-only one, as the page opens them. Tab: focus \
+                  is trapped, which none of v1's four overlays does. Escape closes, which \
+                  none of them handles. The backdrop is the platform's top layer, so there \
+                  is no z-index and no ancestor can clip it — and clicking it does not \
+                  close them, deliberately: each holds a form, and a stray click \
+                  discarding what you typed is a bad trade for saving a movement to Cancel."
         >
             <div class="g-inline">
-                <Button on_click=move |_| bucket_open.set(true)>"Choose S3 bucket"</Button>
+                <Button on_click=move |_| bucket_open.set(true)>"Change bucket"</Button>
+                <Button on_click=move |_| show_open.set(true)>"Show remote"</Button>
                 <Button variant=ButtonVariant::Primary on_click=move |_| create_open.set(true)>
                     "Create package"
                 </Button>
             </div>
-            <Dialog
+            <FormDialog
                 open=bucket_open
-                title="Choose S3 bucket"
-                footer=view! {
-                    <Button on_click=move |_| bucket_open.set(false)>"Cancel"</Button>
-                    <Button variant=ButtonVariant::Primary on_click=move |_| bucket_open.set(false)>
-                        "Choose"
-                    </Button>
-                }
-                    .into_any()
+                title="Change bucket"
+                submit=Submit::new(
+                    "Save",
+                    move || async move {
+                        after_a_beat(700).await;
+                        Ok(())
+                    },
+                )
             >
                 <BucketForm />
-            </Dialog>
-            <Dialog
+            </FormDialog>
+            // A pushed package is pinned to its push history: the same fields, shown and
+            // not offered. The header swaps the command's label to match.
+            <FormDialog open=show_open title="Show remote">
+                <BucketForm locked=true />
+            </FormDialog>
+            <FormDialog
                 open=create_open
                 title="Create package"
-                footer=view! {
-                    <Button on_click=move |_| create_open.set(false)>"Cancel"</Button>
-                    <Button variant=ButtonVariant::Primary on_click=move |_| create_open.set(false)>
-                        "Create"
-                    </Button>
-                }
-                    .into_any()
+                submit=Submit::new(
+                    "Create",
+                    move || async move {
+                        after_a_beat(700).await;
+                        Ok(())
+                    },
+                )
             >
                 <CreateForm />
-            </Dialog>
+            </FormDialog>
         </Scene>
     }
 }

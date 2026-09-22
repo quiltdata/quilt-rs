@@ -101,6 +101,7 @@ use crate::gallery::file_pane::FilePaneScene;
 use crate::gallery::file_toolbar::FileToolbarStories;
 use crate::gallery::forms::DialogScene;
 use crate::gallery::forms::FormsStories;
+use crate::gallery::forms::RefusedScene;
 use crate::gallery::host_row::HostRowStories;
 use crate::gallery::installed_package::InstalledPackageScene;
 use crate::gallery::list_toolbar::ListToolbarScene;
@@ -228,7 +229,11 @@ fn Gallery() -> impl IntoView {
         (
             "Scenes",
             vec![
-                ("The two dialogs", view! { <DialogScene /> }.into_any()),
+                ("The three dialogs", view! { <DialogScene /> }.into_any()),
+                (
+                    "A dialog that was refused",
+                    view! { <RefusedScene /> }.into_any(),
+                ),
                 ("A banner in place", view! { <BannerScene /> }.into_any()),
                 ("State strip", view! { <StateStripScene /> }.into_any()),
                 ("Autosync paused", view! { <PausedScene /> }.into_any()),

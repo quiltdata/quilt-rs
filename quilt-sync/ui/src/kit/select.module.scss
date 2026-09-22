@@ -35,7 +35,7 @@
   transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.root:hover:not(.disabled) {
+.root:hover:not(.disabled):not(:has(.field:disabled)) {
   background: var(--q-overlay-hover);
   border-color: var(--q-borderColor-field-hover);
 }
@@ -49,7 +49,14 @@
   outline-offset: var(--q-focus-outlineOffset);
 }
 
-.root.disabled {
+/* `:has` as well as the class, because the two ways a select is disabled arrive
+ * differently. The prop puts `.disabled` on this wrapper; a `<fieldset disabled>` above it
+ * — how `FormDialog` seals a form in flight — disables the `<select>` inside and never
+ * touches the wrapper, which is a div and cannot match `:disabled` itself. Without this a
+ * sealed select is genuinely inert and still looks live. Same idiom as
+ * `segmented_control.module.scss`. */
+.root.disabled,
+.root:has(.field:disabled) {
   cursor: not-allowed;
   color: var(--q-fgColor-disabled);
   border-color: var(--q-borderColor-muted);
@@ -62,7 +69,9 @@
 }
 
 .root.disabled .prefix,
-.root.disabled .caret {
+.root.disabled .caret,
+.root:has(.field:disabled) .prefix,
+.root:has(.field:disabled) .caret {
   color: var(--q-fgColor-disabled);
 }
 

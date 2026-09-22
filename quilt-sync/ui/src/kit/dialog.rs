@@ -20,6 +20,15 @@
 //! centred native `<dialog>`" as one of the two honest options for anything that will not
 //! fit inline.
 //!
+//! # Escape can be held, and only from here
+//!
+//! Escape is the element's own: the UA fires `cancel` and closes, and nothing outside this
+//! component is in the way. So a caller with work in flight cannot refuse it on its own —
+//! [`held`](Dialog) is how it says so, and `preventDefault` on `cancel` is what honours it.
+//!
+//! Without it a dialog is closable mid-write by the one route it cannot refuse, and the
+//! result of that write arrives against a dialog nobody is looking at.
+//!
 //! # The backdrop does not close it
 //!
 //! Deliberately unlike v1, whose overlay closed on any outside click. Every one of these
@@ -39,6 +48,14 @@ pub fn Dialog(
     /// an Escape would leave the signal saying `true` and the next open would do nothing.
     open: RwSignal<bool>,
     #[prop(into)] title: String,
+    /// While true, Escape does not close it.
+    ///
+    /// For the stretch where closing would be a lie — work is in flight, and dismissing
+    /// neither stops it nor makes its result irrelevant. The caller's other ways out are
+    /// its own buttons, which it can simply disable; this one is the platform's and only
+    /// the element can refuse it.
+    #[prop(optional, into)]
+    held: MaybeProp<bool>,
     /// The buttons, right-aligned in the footer. Primary last, as everywhere else on this
     /// platform.
     footer: AnyView,
@@ -68,6 +85,13 @@ pub fn Dialog(
             node_ref=element
             class=style::root
             aria-label=title
+            // `cancel` is Escape's own event and fires before the close. Preventing it is
+            // the only thing that stops the UA closing the element.
+            on:cancel=move |ev: leptos::ev::Event| {
+                if held.get().unwrap_or(false) {
+                    ev.prevent_default();
+                }
+            }
             on:close=move |_| open.set(false)
         >
             <h2 class=style::title>{heading}</h2>
