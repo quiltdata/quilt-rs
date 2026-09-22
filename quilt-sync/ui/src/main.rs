@@ -135,16 +135,17 @@ fn loading(aria_label: &'static str) -> AnyView {
 /// `/`'s loading frame, which also paints a ground.
 ///
 /// `data-home-frame` is styled off `theme::set_v2`'s root marker (`_base.scss`),
-/// and that marker records the *main page* opt-in. It may only be drawn where it
-/// predicts what is coming, which is here and nowhere else: `/` renders v2
-/// exactly when the marker is set, so the ground it paints is the ground the
-/// page then keeps.
+/// and that marker records the *effective design generation* — see
+/// [`effective_design`]. It may only be drawn where it predicts what is coming,
+/// which is here and nowhere else: `/` renders v2 on exactly the value the marker
+/// is set from, so the ground it paints is the ground the page then keeps.
 ///
-/// `/installed-package` gets [`loading`] bare for that reason. The marker says
-/// nothing about which package page is coming, so a frame painted from it is
-/// wrong for whichever flag disagrees — and a reader with the main page on and
-/// the package page off would have been shown a dark ground before v1's light
-/// chrome, having opted into nothing.
+/// `/installed-package` gets [`loading`] bare for that reason. The generation says
+/// nothing about which package page is coming — [`package_page_v2`] is the
+/// narrower question — so a frame painted from the marker is wrong whenever the
+/// two disagree, and a reader in the preview with the unfinished page off would
+/// have been shown a dark ground before v1's light chrome, having opted into
+/// nothing.
 fn home_loading() -> AnyView {
     view! {
         <div data-home-frame>{loading("Loading QuiltSync")}</div>

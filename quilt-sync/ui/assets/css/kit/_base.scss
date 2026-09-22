@@ -24,10 +24,13 @@ body {
   line-height: var(--q-line-body);
 }
 
-/* The frame `/` shows while it reads the flag has no page to paint its ground,
- * and only a reader carrying `theme::set_v2`'s root marker wants one — `body`
- * itself must stay bare, since a v2 reader visits v1's pages too. An attribute,
- * like `[data-sr-only]`: it marks a role, on an element outside any module. */
+/* The frame `/` shows while it resolves the design generation has no page to
+ * paint its ground, and only a reader carrying `theme::set_v2`'s root marker
+ * wants one. That marker records the generation in effect — the reader's own
+ * preview, or the construction gate a development build implies it from — and
+ * `body` itself must stay bare regardless, since a v2 reader visits v1's pages
+ * too. An attribute, like `[data-sr-only]`: it marks a role, on an element
+ * outside any module. */
 :root.qui-v2 [data-home-frame] {
   min-height: 100vh;
   background: var(--q-bgColor-page);
@@ -38,10 +41,11 @@ body {
  * our tokens.
  *
  * On the v2 SURFACES, never on `:root`. The root's scheme decides the canvas, and
- * `qui-v2` marks a reader who opted in rather than a page that is showing — so a
- * root rule turned the canvas dark under v1's unswitched black ink the moment that
- * reader opened a v1 page. The document stays light; a v2 page paints its own ground
- * and carries its own scheme. */
+ * `qui-v2` marks the generation a reader is in rather than a page that is showing
+ * — so a root rule turned the canvas dark under v1's unswitched black ink the
+ * moment that reader opened a v1 page, and v1 pages are exactly what the
+ * generation leaves untouched. The document stays light; a v2 page paints its own
+ * ground and carries its own scheme. */
 :root {
   color-scheme: light;
 }

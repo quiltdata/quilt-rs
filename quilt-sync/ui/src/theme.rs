@@ -68,8 +68,13 @@ pub fn follow_os() {
 /// everything.
 pub const V2_CLASS: &str = "qui-v2";
 
-/// Record whether `main_page_v2` is on, for the chrome that sits outside every
-/// page and therefore cannot ask.
+/// Record which design generation is effective, for the chrome that sits outside
+/// every page and therefore cannot ask.
+///
+/// The effective generation, not the stored answer: `main.rs`'s `effective_design`
+/// is an OR over the reader's preference and the development construction gate, so
+/// a developer running that gate alone is in v2 with the preference off. A marker
+/// that recorded the preference would leave the toast layer v1 under v2 pages.
 ///
 /// v1's stylesheets read only their own `--q-ui-*` tokens, which no theme
 /// switches, so v1 stays light whatever the OS says. Anything shared between
@@ -89,16 +94,23 @@ pub fn set_v2(on: bool) {
     remember_v2(on);
 }
 
-/// Where the flag is kept for the *next* launch, read by `index.html`'s inline
-/// script before the first paint.
-const V2_KEY: &str = "quiltsync.main-page-v2";
-
-/// Record the flag for the next launch.
+/// Where the generation is kept for the *next* launch, read by `index.html`'s
+/// inline script before the first paint.
 ///
-/// Last session's answer, never this one's: `/` reads the real setting every
-/// time and [`set_v2`] corrects the marker either way. All this decides is which
-/// palette the empty launch window wears, and being one launch behind costs a
-/// reader who has just switched the flag exactly one boot in the old palette.
+/// Named for what it holds rather than for the setting it used to copy. The old
+/// name is not migrated: a reader who had it set opens once in the other palette
+/// and is written the new one, which is the same one-launch cost the marker
+/// already carries below — not worth a migration for the colour of an empty
+/// window.
+const DESIGN_KEY: &str = "quiltsync.design-preview";
+
+/// Record the generation for the next launch.
+///
+/// Last session's answer, never this one's: `/` resolves the real generation
+/// every time and [`set_v2`] corrects the marker either way. All this decides is
+/// which palette the empty launch window wears, and being one launch behind costs
+/// a reader who has just switched — or a developer who has just moved the
+/// construction gate — exactly one boot in the old palette.
 ///
 /// Every failure is ignored. A webview with no storage, a quota, a private mode
 /// — each leaves the next launch opening light, which is the fallback anyway.
@@ -106,7 +118,7 @@ fn remember_v2(on: bool) {
     let Some(Ok(Some(storage))) = web_sys::window().map(|w| w.local_storage()) else {
         return;
     };
-    drop(storage.set_item(V2_KEY, if on { "1" } else { "0" }));
+    drop(storage.set_item(DESIGN_KEY, if on { "1" } else { "0" }));
 }
 
 /// The attribute `index.html` sets while the document has no page on it.
@@ -144,6 +156,36 @@ mod tests {
         assert!(
             !root.class_list().contains(V2_CLASS),
             "turning the flag off must take the marker with it"
+        );
+    }
+
+    /// The remembered key's NAME is a contract with a file Rust never compiles:
+    /// `index.html`'s pre-paint script hard-codes it, and a rename on one side
+    /// alone costs every reader the launch palette for good rather than for the
+    /// one launch [`remember_v2`] budgets. `the_v2_marker_goes_on_and_comes_off_the_root`
+    /// covers the class; nothing covered the half no Rust caller can see.
+    #[wasm_bindgen_test]
+    fn the_remembered_key_says_which_design_the_next_launch_opens_in() {
+        assert_eq!(
+            DESIGN_KEY, "quiltsync.design-preview",
+            "the name `index.html`'s inline script reads before the first paint"
+        );
+        let storage = web_sys::window()
+            .and_then(|window| window.local_storage().ok().flatten())
+            .expect("a browser with storage");
+
+        set_v2(true);
+        assert_eq!(
+            storage.get_item(DESIGN_KEY).unwrap().as_deref(),
+            Some("1"),
+            "a reader in the new design launches into its palette"
+        );
+
+        set_v2(false);
+        assert_ne!(
+            storage.get_item(DESIGN_KEY).unwrap().as_deref(),
+            Some("1"),
+            "and one who switched back must not — the script opens dark on `1` alone"
         );
     }
 
