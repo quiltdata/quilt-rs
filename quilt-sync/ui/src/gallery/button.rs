@@ -40,8 +40,10 @@ fn Plain() -> impl IntoView {
     view! {
         <Story
             title="Button"
-            note="Two variants. Hover and active are pointer states — point at the first \
-                  two cells to review them. Disabled is not focusable; loading is."
+            note="Three variants. Hover and active are pointer states — point at the first \
+                  two cells to review them. Disabled is not focusable; loading is. Danger \
+                  is the verb on a confirmation and nowhere else — see Scenes · A \
+                  confirmation."
         >
             <Cell label="default">
                 <Button on_click=|_| ()>"Get latest"</Button>
@@ -72,6 +74,20 @@ fn Plain() -> impl IntoView {
             <Cell label="primary · long label">
                 <Button on_click=|_| () variant=ButtonVariant::Primary>
                     "Publish your changes to s3://vir-quilt-res-3-in-progress"
+                </Button>
+            </Cell>
+
+            <Cell label="danger">
+                <Button on_click=|_| () variant=ButtonVariant::Danger>"Remove"</Button>
+            </Cell>
+            <Cell label="danger · disabled — grey, like the others">
+                <Button on_click=|_| () variant=ButtonVariant::Danger disabled=true>
+                    "Remove"
+                </Button>
+            </Cell>
+            <Cell label="danger · loading">
+                <Button on_click=|_| () variant=ButtonVariant::Danger loading=true>
+                    "Removing\u{2026}"
                 </Button>
             </Cell>
 

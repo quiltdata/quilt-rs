@@ -1,6 +1,6 @@
 //! Text button.
 //!
-//! Two variants and six interaction states. `loading` and `disabled` are not
+//! Three variants and six interaction states. `loading` and `disabled` are not
 //! optional extras: the two-phase pull requires an action that is disabled
 //! while checking and offers a retry afterwards, so every caller needs both.
 
@@ -21,6 +21,12 @@ pub enum ButtonVariant {
     #[default]
     Default,
     Primary,
+    /// The verb on a confirmation — the one button a region steers you *away* from, so it
+    /// is never also `Primary`. Drawn in the danger tone's muted trio and never a solid
+    /// red: the tokens carry no emphasis role for a status tone, because no foreground
+    /// passes on a step-9 fill. Only `ConfirmDialog` draws one; a Danger button anywhere
+    /// else is a command that skipped its confirmation.
+    Danger,
 }
 
 /// Physical size. Orthogonal to [`ButtonVariant`] — any weight can be any size,
@@ -82,9 +88,16 @@ pub fn Button(
     // the module consts are plain `&'static str`, so this is just joining them.
     let class = move || {
         let mut out = String::from(style::btn);
-        if matches!(variant, ButtonVariant::Primary) {
-            out.push(' ');
-            out.push_str(style::primary);
+        match variant {
+            ButtonVariant::Default => {}
+            ButtonVariant::Primary => {
+                out.push(' ');
+                out.push_str(style::primary);
+            }
+            ButtonVariant::Danger => {
+                out.push(' ');
+                out.push_str(style::danger);
+            }
         }
         if matches!(size, ButtonSize::Large) {
             out.push(' ');
@@ -284,5 +297,46 @@ mod tests {
             button(&el).get_attribute("form").as_deref(),
             Some("q-form-7")
         );
+    }
+
+    /// The third variant. Marked in the class list, which is how the stylesheet finds it —
+    /// `contains`, because stylance hashes the name but keeps it, as the loading test relies on.
+    #[wasm_bindgen_test]
+    fn a_danger_button_is_marked_as_one() {
+        let el = mount(|| {
+            view! { <Button variant=ButtonVariant::Danger on_click=|_| {}>"Remove"</Button> }
+        });
+        let btn = button(&el);
+        assert!(
+            btn.class_name().contains("danger"),
+            "the variant reaches the stylesheet: {}",
+            btn.class_name()
+        );
+        assert_eq!(
+            btn.get_attribute("type").as_deref(),
+            Some("button"),
+            "a verb, not a submit"
+        );
+    }
+
+    /// Read from the source, as the loading test does. The danger rule spends the tone's
+    /// muted trio — the same three properties Banner's `.critical` reads — and no literal,
+    /// so a Danger verb and the refusal above it cannot disagree about what red means.
+    #[test]
+    fn the_danger_rule_reads_the_tones_muted_tokens_and_no_literal() {
+        const SHEET: &str = include_str!("button.module.scss");
+        let rule = SHEET
+            .split(".danger {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("a `.danger` rule");
+        for token in [
+            "--q-bgColor-danger-muted",
+            "--q-borderColor-danger-muted",
+            "--q-fgColor-danger-onMuted",
+        ] {
+            assert!(rule.contains(token), "the rule spends {token}: {rule}");
+        }
+        assert!(!rule.contains('#'), "tokens only, no literal: {rule}");
     }
 }

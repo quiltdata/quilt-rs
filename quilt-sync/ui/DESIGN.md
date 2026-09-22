@@ -108,6 +108,9 @@ components:
   button-primary-hover:
     backgroundColor: "{colors.accent-emphasis-hover}"
     textColor: "{colors.ink-on-emphasis}"
+  button-danger:
+    backgroundColor: "{colors.danger-fill}"
+    textColor: "{colors.danger-ink}"
   button-large:
     typography: "{typography.lead}"
     padding: "0 16px"
@@ -450,6 +453,13 @@ requires retiring this rule first.
 - **Primary:** Brand navy fill and border with white ink in the light theme. In
   dark the fill becomes the accent's vivid step instead, because a navy fill on
   a near-black card has no edge.
+- **Danger:** The danger tone's muted trio — alpha fill, step-7 edge, step-12
+  ink — the same three the Banner's critical and the State Label's danger read.
+  Not a solid red: the tokens carry no emphasis role for a status tone, because
+  no foreground passes on a step-9 fill. Hover strengthens the edge to the
+  tone's mark and leaves the fill, since the tone has no hover step and one is
+  not hand-written. Only for the verb on a confirmation, whose Cancel is where
+  the region steers; disabled it goes grey like the others.
 - **Hover / Focus:** Colour only, over 120ms. Hover darkens the fill and
   strengthens the border. Focus is the global ring.
 - **Active:** A 1px diagonal translate, untransitioned, plus a border that
