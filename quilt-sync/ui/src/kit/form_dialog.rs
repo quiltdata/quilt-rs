@@ -48,11 +48,23 @@
 //! back the moment the action settles, so a refusal can be corrected.
 //!
 //! Escape is sealed too, through [`Dialog`]'s `held`. It was the one way out this
-//! component could not refuse, and the hole it left was not merely a stale banner: a
-//! rejection arriving after an Escape lands on a closed dialog, and reopening *before* the
-//! action settled put the previous submission's reason on a form the reader had just
-//! reopened. Holding Escape removes the state that made that reachable, and the clear on
-//! open stays as the second line rather than the only one.
+//! component could refuse but did not.
+//!
+//! # An outcome belongs to the session that asked for it
+//!
+//! Sealing the ways *out* is not enough, because `open` is the caller's: a caller can close
+//! and reopen this dialog while an action is still running, and neither the disabled Cancel
+//! nor the held Escape is anywhere in that path.
+//!
+//! So each opening is a session, and an action carries the one it was asked under. An
+//! outcome arriving under a different one is dropped entirely — it is an answer to a
+//! question nobody is asking, and acting on it would be this outcome editing somebody
+//! else's dialog: a stale rejection drawn on a form the reader just opened, or a stale
+//! success closing it under them.
+//!
+//! Opening also drops the previous session's in-flight state, so a dialog reopened never
+//! arrives sealed or carrying the last answer. Together those replace what used to be a
+//! clear-on-open, which only covered the case where the action had already settled.
 //!
 //! # No submit makes it read-only
 //!
@@ -125,13 +137,25 @@ pub fn FormDialog(
     // the same fact, and `MaybeProp` takes a signal rather than a bare closure.
     let busy = Signal::derive(move || submitting.get());
     let error = RwSignal::new(None::<String>);
+    // Which opening of this dialog is current. An action carries the one it was asked
+    // under, and an outcome from any other is discarded — see the module doc.
+    let session = RwSignal::new(0_usize);
     let form_id = super::unique_id("q-form");
 
-    // Opening clears the last rejection — see the module doc on Escape.
-    Effect::new(move |_| {
-        if open.get() {
+    // Every open and every close starts a new one. It drops the last session's in-flight
+    // state, because a dialog reopened is a fresh question and must not arrive sealed or
+    // carrying the previous answer.
+    // Only a real transition counts. An effect's first run lands after the first render,
+    // so bumping there would invalidate a submit made in between — including, in a test,
+    // one issued the moment the component mounted.
+    Effect::new(move |previous: Option<bool>| {
+        let now = open.get();
+        if previous.is_some_and(|was| was != now) {
+            session.update(|n| *n += 1);
+            submitting.set(false);
             error.set(None);
         }
+        now
     });
 
     let banner = view! {
@@ -151,9 +175,16 @@ pub fn FormDialog(
             }
             submitting.set(true);
             error.set(None);
+            let mine = session.get_untracked();
             let action = Rc::clone(&action);
             leptos::task::spawn_local(async move {
                 let outcome = action().await;
+                // Closed and reopened while this ran, so it answers a question nobody is
+                // asking any more. Touching anything here would be this outcome editing
+                // somebody else's dialog.
+                if session.get_untracked() != mine {
+                    return;
+                }
                 submitting.set(false);
                 match outcome {
                     Ok(()) => open.set(false),
@@ -510,8 +541,14 @@ mod tests {
         assert!(el.query_selector("[role=alert]").unwrap().is_some());
 
         open.set(false);
+        // A task boundary, not just a tick: `<dialog>`'s `close` event is queued rather
+        // than fired synchronously (see `dialog.rs`), and a caller that reopens before it
+        // lands gets the write-back on top of the reopen. Frames apart is what a caller
+        // actually does.
+        sleep_ms(0).await;
         leptos::task::tick().await;
         open.set(true);
+        sleep_ms(0).await;
         leptos::task::tick().await;
         assert!(
             el.query_selector("[role=alert]").unwrap().is_none(),
@@ -565,6 +602,60 @@ mod tests {
         sleep_ms(80).await;
         leptos::task::tick().await;
         assert!(!escape(), "and answers again once it settles");
+    }
+
+    /// `open` is the caller's, so a caller can close and reopen while an action is still
+    /// running — neither the disabled Cancel nor the held Escape is in that path. The
+    /// outcome must then belong to the session that asked for it and to no other: it is a
+    /// different question now, and the answer to the last one is not an answer to it.
+    #[wasm_bindgen_test]
+    async fn an_outcome_cannot_reach_the_session_after_it() {
+        let open = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <FormDialog
+                    open=open
+                    title="Change bucket"
+                    submit=Submit::new(
+                        "Save",
+                        || async {
+                            sleep_ms(60).await;
+                            Err("No permission to write to quilt-example.".to_string())
+                        },
+                    )
+                >
+                    <Fields />
+                </FormDialog>
+            }
+        });
+        let input = el.query_selector("input").unwrap().expect("a field");
+
+        form(&el).request_submit().unwrap();
+        sleep_ms(0).await;
+        leptos::task::tick().await;
+        assert!(input.matches(":disabled").unwrap(), "in flight");
+
+        // The caller closes it mid-flight and opens it again — a route reset, a second
+        // package, a page that closes everything it owns.
+        open.set(false);
+        leptos::task::tick().await;
+        open.set(true);
+        leptos::task::tick().await;
+        assert!(
+            !input.matches(":disabled").unwrap(),
+            "the new session is not carrying the old one's in-flight state"
+        );
+
+        sleep_ms(100).await;
+        leptos::task::tick().await;
+        assert!(
+            el.query_selector("[role=alert]").unwrap().is_none(),
+            "and the old refusal never lands on it"
+        );
+        assert!(
+            !input.matches(":disabled").unwrap(),
+            "nor does its completion seal the new session's fields"
+        );
     }
 
     /// The read-only shape: `Show remote` on a package pinned to its push history.
