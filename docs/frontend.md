@@ -178,7 +178,10 @@ This is **v1's**. The v2 kit's `FormDialog` keeps the `RwSignal<bool>` and owns
 the rest: it takes the submit as an async action, holds the in-flight state,
 seals its fields and refuses Escape while that runs, closes on `Ok`, and draws
 an `Err` as a banner above the fields instead of leaving it to the page's
-notification slot — which sits behind the modal that raised it.
+notification slot — which sits behind the modal that raised it. `ConfirmDialog`
+is the same machinery with one consequence sentence in place of fields, a
+`Danger` primary carrying the verb, focus on Cancel and Escape answering Cancel
+— the confirmation every Danger menu item is followed by.
 
 Popups (ignore, set-remote, create-package) are **Leptos
 components** controlled by a `RwSignal<bool>`:
@@ -489,6 +492,7 @@ string props.
 | `FormControl` | `FormControl` | ✅ was `Field` |
 | `ControlId`, `Naming` | — | ours; see below |
 | `FormDialog` | — (`Dialog` + a `<form>`) | ours |
+| `ConfirmDialog` | — (`Dialog` + a sentence) | ours |
 | `SearchInput` | — (`TextInput` + `trailingAction`) | ours |
 | `ToggleRow` | — (wraps `ToggleSwitch`) | ours |
 | `ListToolbar` | — | ours |
