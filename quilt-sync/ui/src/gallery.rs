@@ -228,7 +228,7 @@ fn Gallery() -> impl IntoView {
         (
             "Scenes",
             vec![
-                ("The two dialogs", view! { <DialogScene /> }.into_any()),
+                ("The three dialogs", view! { <DialogScene /> }.into_any()),
                 ("A banner in place", view! { <BannerScene /> }.into_any()),
                 ("State strip", view! { <StateStripScene /> }.into_any()),
                 ("Autosync paused", view! { <PausedScene /> }.into_any()),

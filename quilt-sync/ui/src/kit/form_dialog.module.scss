@@ -1,0 +1,11 @@
+/*
+ * The fields, stacked. The dialog's own `.body` already spaces the banner from the form;
+ * this is the gap *between fields*, which the form element owns because the form is what
+ * holds them.
+ */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}
