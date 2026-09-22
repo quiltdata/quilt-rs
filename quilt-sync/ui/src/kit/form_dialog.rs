@@ -39,13 +39,20 @@
 //! wrong; this one is the backend declining the whole submission — no permission on the
 //! bucket, a host that does not answer — and belongs to no field.
 //!
-//! # Cancel is refused while the action runs
+//! # The form is sealed while the action runs
 //!
-//! Dismissing would not stop a write already in flight, and a dialog that closes on Cancel
-//! says it did. Escape is the gap: it is the element's own, `Dialog` owns the element, and
-//! the action outlives the close. A rejection arriving after that would set an error on a
-//! closed dialog, so **opening clears the last one** — which is also what stops a stale
-//! message greeting the next reader.
+//! Cancel is refused, because dismissing would not stop a write already in flight and a
+//! dialog that closes on Cancel says it did. The **fields** are sealed for a nearer reason:
+//! the values in flight are the values that were submitted, and a field left editable means
+//! a refusal hands back a form mixing what was sent with what was typed after it. Both come
+//! back the moment the action settles, so a refusal can be corrected.
+//!
+//! Escape is sealed too, through [`Dialog`]'s `held`. It was the one way out this
+//! component could not refuse, and the hole it left was not merely a stale banner: a
+//! rejection arriving after an Escape lands on a closed dialog, and reopening *before* the
+//! action settled put the previous submission's reason on a form the reader had just
+//! reopened. Holding Escape removes the state that made that reachable, and the clear on
+//! open stays as the second line rather than the only one.
 //!
 //! # No submit makes it read-only
 //!
@@ -156,8 +163,11 @@ pub fn FormDialog(
         };
         let body = view! {
             {banner}
-            <form id=form_id.clone() class=style::form on:submit=on_submit>
-                {children()}
+            <form id=form_id.clone() on:submit=on_submit>
+                // `<fieldset disabled>` rather than a prop each field honours: it is the
+                // platform's own way to seal a form, it reaches controls this component
+                // has never heard of, and a caller cannot forget it.
+                <fieldset class=style::fields disabled=busy>{children()}</fieldset>
             </form>
         }
         .into_any();
@@ -191,7 +201,7 @@ pub fn FormDialog(
         (body, footer)
     };
 
-    view! { <Dialog open=open title=title footer=footer>{body}</Dialog> }
+    view! { <Dialog open=open title=title held=busy footer=footer>{body}</Dialog> }
 }
 
 #[cfg(test)]
@@ -397,6 +407,54 @@ mod tests {
         assert!(open.get_untracked(), "still open while it runs");
     }
 
+    /// The values in flight are the values that were submitted. Left editable, a refusal
+    /// hands back a form mixing what was sent with what was typed after it.
+    ///
+    /// `:disabled` and not the input's own `disabled` property: the IDL attribute reflects
+    /// only the element's own, and says nothing about a `<fieldset>` above it. The
+    /// pseudo-class is what the browser actually acts on.
+    #[wasm_bindgen_test]
+    async fn the_fields_are_sealed_while_the_action_runs() {
+        let open = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <FormDialog
+                    open=open
+                    title="Change bucket"
+                    submit=Submit::new(
+                        "Save",
+                        || async {
+                            sleep_ms(50).await;
+                            Ok(())
+                        },
+                    )
+                >
+                    <Fields />
+                </FormDialog>
+            }
+        });
+        let input = el.query_selector("input").unwrap().expect("a field");
+        assert!(
+            !input.matches(":disabled").unwrap(),
+            "editable before anything is in flight"
+        );
+
+        form(&el).request_submit().unwrap();
+        sleep_ms(0).await;
+        leptos::task::tick().await;
+        assert!(
+            input.matches(":disabled").unwrap(),
+            "and sealed while the command runs"
+        );
+
+        sleep_ms(80).await;
+        leptos::task::tick().await;
+        assert!(
+            !input.matches(":disabled").unwrap(),
+            "and editable again once it settles, so a refusal can be corrected"
+        );
+    }
+
     /// A second submit while the first is in flight is dropped rather than queued.
     #[wasm_bindgen_test]
     async fn a_second_submit_mid_flight_is_dropped() {
@@ -459,6 +517,54 @@ mod tests {
             el.query_selector("[role=alert]").unwrap().is_none(),
             "a stale reason is not what the next reader asked to see"
         );
+    }
+
+    /// Escape is the element's own and fires `cancel` before it closes. While the action
+    /// runs the dialog refuses it, because dismissing neither stops the write nor makes
+    /// its result irrelevant — and a result landing on a closed dialog is what let a
+    /// previous submission's reason greet someone who reopened it.
+    #[wasm_bindgen_test]
+    async fn escape_is_refused_while_the_action_runs() {
+        let open = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <FormDialog
+                    open=open
+                    title="Change bucket"
+                    submit=Submit::new(
+                        "Save",
+                        || async {
+                            sleep_ms(50).await;
+                            Ok(())
+                        },
+                    )
+                >
+                    <Fields />
+                </FormDialog>
+            }
+        });
+        let dialog = el.query_selector("dialog").unwrap().expect("the dialog");
+
+        // `cancel` is cancelable, so `defaultPrevented` is the whole question: the UA
+        // closes unless something prevented it.
+        let escape = || {
+            let init = web_sys::EventInit::new();
+            init.set_cancelable(true);
+            let ev = web_sys::Event::new_with_event_init_dict("cancel", &init).unwrap();
+            dialog.dispatch_event(&ev).unwrap();
+            ev.default_prevented()
+        };
+
+        assert!(!escape(), "Escape closes it while nothing is in flight");
+
+        form(&el).request_submit().unwrap();
+        sleep_ms(0).await;
+        leptos::task::tick().await;
+        assert!(escape(), "and is refused while the command runs");
+
+        sleep_ms(80).await;
+        leptos::task::tick().await;
+        assert!(!escape(), "and answers again once it settles");
     }
 
     /// The read-only shape: `Show remote` on a package pinned to its push history.

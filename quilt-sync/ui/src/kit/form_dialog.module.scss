@@ -1,11 +1,18 @@
 /*
  * The fields, stacked. The dialog's own `.body` already spaces the banner from the form;
- * this is the gap *between fields*, which the form element owns because the form is what
- * holds them.
+ * this is the gap *between fields*, which the fieldset holds because the fieldset is what
+ * groups them — and what seals them while a submit is in flight.
  */
 
-.form {
+.fields {
   display: flex;
   flex-direction: column;
   gap: var(--q-space-3);
+  /* A `fieldset` ships a border, padding and a margin nobody here wants, and a
+   * `min-inline-size: min-content` that stops it shrinking inside a flex or grid parent —
+   * the one that turns up later as a dialog that will not narrow. */
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
