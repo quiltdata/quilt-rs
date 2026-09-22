@@ -120,6 +120,38 @@
   color: var(--q-fgColor-disabled);
 }
 
+/* ── danger ──────────────────────────────────────────────────────────────
+ * The tone's muted trio — alpha fill, step-7 edge, step-12 ink — and not a solid
+ * red: tier 2 carries NO `emphasis` role for a status tone, because no foreground
+ * passes on a step-9 fill (white on red-9 measures 3.91:1; see `_tokens.scss`).
+ * The same three properties Banner's `.critical` and StateLabel's `.danger` read,
+ * so the verb and the refusal above it cannot disagree about what red means.
+ *
+ * Disabled is `.btn:disabled`, which outranks `.danger` on specificity: a greyed
+ * destructive verb should not stay red, and no rule here says otherwise.
+ */
+.danger {
+  background: var(--q-bgColor-danger-muted);
+  border-color: var(--q-borderColor-danger-muted);
+  color: var(--q-fgColor-danger-onMuted);
+}
+
+/* Hover strengthens the edge to the tone's mark step, as an invalid field does on
+ * focus (`text_input.module.scss`). The fill stays: the tone has no hover fill token
+ * and the rule is not to hand-write one. Restated here because `.btn:hover` would
+ * otherwise win and turn the fill grey. */
+.danger:hover:not(:disabled) {
+  background: var(--q-bgColor-danger-muted);
+  border-color: var(--q-fgColor-danger);
+}
+
+/* Pressed: geometry and the ink-dark edge, as the primary does. */
+.danger:active:not(:disabled) {
+  background: var(--q-bgColor-danger-muted);
+  border-color: var(--q-fgColor-danger-onMuted);
+  transform: translate(1px, 1px);
+}
+
 /* ── loading ─────────────────────────────────────────────────────────────
  * CSS-only: no component, nothing to dispose of.
  */

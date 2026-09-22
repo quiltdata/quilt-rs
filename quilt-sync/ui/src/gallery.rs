@@ -50,6 +50,7 @@ mod gallery {
     pub mod card;
     pub mod checkbox;
     pub mod choice_group;
+    pub mod confirm_dialog;
     pub mod context_pane;
     pub mod countdown;
     pub mod entry_group;
@@ -91,6 +92,7 @@ use crate::gallery::button::ButtonStories;
 use crate::gallery::card::CardStories;
 use crate::gallery::checkbox::CheckboxStories;
 use crate::gallery::choice_group::ChoiceGroupStories;
+use crate::gallery::confirm_dialog::ConfirmScene;
 use crate::gallery::context_pane::ContextPaneScene;
 use crate::gallery::countdown::CountdownStories;
 use crate::gallery::entry_group::EntryGroupStories;
@@ -235,6 +237,7 @@ fn Gallery() -> impl IntoView {
                     "A dialog that was refused",
                     view! { <RefusedScene /> }.into_any(),
                 ),
+                ("A confirmation", view! { <ConfirmScene /> }.into_any()),
                 ("A banner in place", view! { <BannerScene /> }.into_any()),
                 ("State strip", view! { <StateStripScene /> }.into_any()),
                 ("Autosync paused", view! { <PausedScene /> }.into_any()),

@@ -1,0 +1,11 @@
+/*
+ * The consequence: one sentence, prose. `margin: 0` because it is a `p` and the reset
+ * leaves paragraph margins alone — the dialog's own `.body` gap spaces it from the banner
+ * above and the footer below. Capped at the kit's readable measure like every other
+ * sentence, though the dialog's 440px usually gets there first.
+ */
+.consequence {
+  margin: 0;
+  line-height: var(--q-line-body);
+  max-width: 70ch;
+}

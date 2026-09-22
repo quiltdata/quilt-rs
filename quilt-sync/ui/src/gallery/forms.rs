@@ -309,7 +309,7 @@ pub fn CreateForm() -> impl IntoView {
 
 /// A stand-in for a command. The delay is the point: an action that answers instantly
 /// never shows the in-flight footer it is here to demonstrate.
-async fn after_a_beat(ms: i32) {
+pub(crate) async fn after_a_beat(ms: i32) {
     let promise = js_sys::Promise::new(&mut |resolve, _| {
         drop(
             web_sys::window()

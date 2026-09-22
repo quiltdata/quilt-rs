@@ -41,6 +41,7 @@ pub mod card;
 pub mod cause_row;
 pub mod checkbox;
 pub mod choice_group;
+pub mod confirm_dialog;
 pub mod countdown;
 pub mod dialog;
 pub mod entry_group;
@@ -69,6 +70,7 @@ pub mod skeleton_box;
 pub mod spinner;
 pub mod split_button;
 pub mod state_label;
+mod submission;
 pub mod text_input;
 pub mod toggle_row;
 pub mod zero_line;
@@ -91,6 +93,7 @@ pub use checkbox::CheckState;
 pub use checkbox::Checkbox;
 pub use choice_group::Choice;
 pub use choice_group::ChoiceGroup;
+pub use confirm_dialog::ConfirmDialog;
 pub use countdown::Countdown;
 pub use dialog::Dialog;
 pub use entry_group::EntryGroup;
@@ -105,7 +108,6 @@ pub use form_control::ControlId;
 pub use form_control::FormControl;
 pub use form_control::Naming;
 pub use form_dialog::FormDialog;
-pub use form_dialog::Submit;
 pub use group_heading::GroupHeading;
 pub use host_row::HostRow;
 pub use icon_button::IconButton;
@@ -139,6 +141,7 @@ pub use split_button::SplitButton;
 pub use split_button::SplitOption;
 pub use state_label::StateLabel;
 pub use state_label::StateTone;
+pub use submission::Submit;
 pub use text_input::TextInput;
 pub use toggle_row::ToggleRow;
 pub use zero_line::ZeroLine;
@@ -175,7 +178,12 @@ mod tests {
     /// pixels does not.
     #[test]
     fn prose_is_capped_to_a_readable_measure() {
-        const PROSE: [(&str, &str, &str); 3] = [
+        const PROSE: [(&str, &str, &str); 4] = [
+            (
+                "confirm_dialog",
+                ".consequence",
+                include_str!("kit/confirm_dialog.module.scss"),
+            ),
             ("banner", ".message", include_str!("kit/banner.module.scss")),
             (
                 "toggle_row",
