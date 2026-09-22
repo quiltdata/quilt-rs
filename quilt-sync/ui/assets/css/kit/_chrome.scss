@@ -208,6 +208,9 @@ body {
  * stretch to the scene's width and the copy misstates the dialog's proportions — which is
  * the one thing an inline copy exists to get right. Mirrors `dialog.module.scss`. */
 .g-bars.g-dialog-inline { width: min(440px, 100%); }
+/* A confirmation's sentence shown inline. Mirrors `confirm_dialog.module.scss`, as
+ * `.g-dialog-inline` mirrors the dialog's width. */
+.g-consequence { margin: 0; line-height: var(--q-line-body); max-width: 70ch; }
 
 /* A column inside a cell, whose body is a flex row. For the cells that hold
  * several rows with no container of their own. */
