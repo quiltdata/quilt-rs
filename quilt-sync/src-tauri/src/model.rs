@@ -103,6 +103,13 @@ pub trait QuiltModel {
         Ok(package.lineage().await?)
     }
 
+    async fn get_installed_package_current_revision(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<Option<quilt::flow::Revision>, Error> {
+        Ok(package.current_revision().await?)
+    }
+
     async fn get_installed_package_records(
         &self,
         package: &quilt::InstalledPackage,

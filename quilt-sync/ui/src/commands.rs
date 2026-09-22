@@ -364,9 +364,26 @@ pub enum RemoteBanner {
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
     pub header: PackageHeaderData,
+    pub context: PackageContextData,
     /// Why autosync stopped, when the reason is one no state covers. `None` for
     /// every other pause, because those resolve into `header.state`.
     pub sync_paused: Option<String>,
+}
+
+/// The read-only facts shown beside the v2 package page.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageContextData {
+    pub revision: CurrentRevisionData,
+    pub bucket: Option<String>,
+}
+
+/// The current revision's user-facing facts.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentRevisionData {
+    pub message: Option<String>,
+    pub obtained_at: f64,
 }
 
 /// The header region: identity, one resolved condition, and what the overflow
@@ -1545,10 +1562,24 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, PackageItemData, PullOutcome, RolesData, ViolationField,
-        WorkflowInfo, WorkflowIntent,
+        CommitViolation, CommitWorkflows, PackageContextData, PackageItemData, PullOutcome,
+        RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
+
+    /// Anchored identically in the backend's
+    /// `current_revision_context_wire_form_is_verbatim` test.
+    #[test]
+    fn current_revision_context_wire_form_is_verbatim() {
+        let context = serde_json::from_str::<PackageContextData>(
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(context.revision.message.as_deref(), Some("Initial upload"));
+        assert_eq!(context.revision.obtained_at, 1_758_500_000_000.0);
+        assert_eq!(context.bucket.as_deref(), Some("quilt-lab-plates"));
+    }
 
     /// The mirror struct must deserialize the exact JSON the backend
     /// (`quilt_sync::commands::package_list::InstalledPackageListItem`)

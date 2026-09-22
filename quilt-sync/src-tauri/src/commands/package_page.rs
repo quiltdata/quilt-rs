@@ -5,6 +5,7 @@
 //! spec corpus for why a v2 surface gets its own module rather than a wider v1
 //! one.
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::autopull::PausedReason;
@@ -22,6 +23,7 @@ use crate::quilt;
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
     pub header: PackageHeaderData,
+    pub context: PackageContextData,
     /// Why autosync stopped for this package, when the reason is one no state
     /// covers — the **residue**, which is `PausedReason::Other`: a workflow
     /// rejection, a hash mismatch, remote config drift.
@@ -38,6 +40,24 @@ pub struct PackagePageData {
     /// the surface writes the sentence and renders this as its detail — but the
     /// detail is the engine's own refusal text and nothing else knows it.
     pub sync_paused: Option<String>,
+}
+
+/// The read-only facts shown beside the v2 package page.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageContextData {
+    pub revision: CurrentRevisionData,
+    /// Raw bucket name. Presentation (`s3://` or the absent-state copy) stays
+    /// in the UI rather than crossing the command boundary.
+    pub bucket: Option<String>,
+}
+
+/// The current revision's user-facing facts.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CurrentRevisionData {
+    pub message: Option<String>,
+    pub obtained_at: f64,
 }
 
 /// The header region: identity, one resolved condition, and what the overflow
@@ -136,6 +156,39 @@ fn session_host(err: &Error) -> Option<String> {
     }
 }
 
+/// `i64` milliseconds into `f64`, because JavaScript has no other number.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "epoch millis fit f64 exactly for any date this program can see"
+)]
+fn epoch_millis(at: DateTime<Utc>) -> f64 {
+    at.timestamp_millis() as f64
+}
+
+fn package_context_data(
+    namespace: &quilt_uri::Namespace,
+    lineage: &quilt::lineage::PackageLineage,
+    revision: Option<quilt::flow::Revision>,
+) -> Result<PackageContextData, Error> {
+    let revision = revision.ok_or_else(|| {
+        Error::General(format!(
+            "Installed package {namespace} has no current revision"
+        ))
+    })?;
+
+    Ok(PackageContextData {
+        revision: CurrentRevisionData {
+            message: revision.message,
+            obtained_at: epoch_millis(revision.obtained),
+        },
+        bucket: lineage
+            .remote_uri
+            .as_ref()
+            .map(|uri| uri.bucket.clone())
+            .filter(|bucket| !bucket.is_empty()),
+    })
+}
+
 /// The v2 package page's one read.
 ///
 /// One command for the page rather than one per region: the header's state and
@@ -174,6 +227,11 @@ async fn get_package_page_data_from_model(
         ))
     })?;
     let lineage = m.get_installed_package_lineage(&installed).await?;
+    let context = package_context_data(
+        namespace,
+        &lineage,
+        m.get_installed_package_current_revision(&installed).await?,
+    )?;
 
     let has_local_commit = lineage.commit.is_some();
     let commit_has_parent = lineage
@@ -233,6 +291,7 @@ async fn get_package_page_data_from_model(
     };
 
     Ok(PackagePageData {
+        context,
         // The residue only. `unexplained_pause` is `Other` and nothing else, so
         // a pause with a state of its own is reported once, by the header.
         sync_paused: unexplained_pause(paused)
@@ -280,6 +339,16 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
+        model
+            .expect_get_installed_package_current_revision()
+            .times(1)
+            .returning(|_| {
+                Ok(Some(quilt::flow::Revision {
+                    hash: "abcdef".to_string(),
+                    obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+                    message: Some("Initial upload".to_string()),
+                }))
+            });
         // `return_once`, not `returning`: `Error` is not `Clone`. `.times(1)`
         // makes "exactly one status call" an assertion — without it a caller
         // that skipped the call entirely would pass silently.
@@ -313,6 +382,92 @@ mod tests {
             UpstreamState::UpToDate,
             quilt::lineage::ChangeSet::new(),
         )
+    }
+
+    fn revision(message: &str) -> quilt::flow::Revision {
+        quilt::flow::Revision {
+            hash: "pending-hash".to_string(),
+            obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+            message: Some(message.to_string()),
+        }
+    }
+
+    #[test]
+    fn current_revision_context_wire_form_is_verbatim() {
+        let context = PackageContextData {
+            revision: CurrentRevisionData {
+                message: Some("Initial upload".to_string()),
+                obtained_at: 1_758_500_000_000.0,
+            },
+            bucket: Some("quilt-lab-plates".to_string()),
+        };
+
+        assert_eq!(
+            serde_json::to_string(&context).unwrap(),
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates"}"#,
+        );
+    }
+
+    #[test]
+    fn the_engine_selected_revision_crosses_with_raw_remote_bucket() {
+        let namespace: quilt_uri::Namespace = NS.try_into().unwrap();
+        let lineage = quilt::lineage::PackageLineage::from_remote(
+            make_manifest_uri(NS),
+            "remote-hash".to_string(),
+        );
+
+        let context =
+            package_context_data(&namespace, &lineage, Some(revision("Pending commit"))).unwrap();
+
+        assert_eq!(
+            context,
+            PackageContextData {
+                revision: CurrentRevisionData {
+                    message: Some("Pending commit".to_string()),
+                    obtained_at: 1_758_500_000_000.0,
+                },
+                bucket: Some("test".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn a_local_package_has_no_bucket() {
+        let namespace: quilt_uri::Namespace = NS.try_into().unwrap();
+        let context = package_context_data(
+            &namespace,
+            &quilt::lineage::PackageLineage::default(),
+            Some(revision("Local commit")),
+        )
+        .unwrap();
+
+        assert_eq!(context.bucket, None);
+    }
+
+    #[test]
+    fn an_empty_configured_bucket_is_absent() {
+        let namespace: quilt_uri::Namespace = NS.try_into().unwrap();
+        let mut uri = make_manifest_uri(NS);
+        uri.bucket.clear();
+        let lineage = quilt::lineage::PackageLineage::from_remote(uri, "remote-hash".to_string());
+
+        let context =
+            package_context_data(&namespace, &lineage, Some(revision("Initial upload"))).unwrap();
+
+        assert_eq!(context.bucket, None);
+    }
+
+    #[test]
+    fn an_installed_package_without_a_current_revision_is_a_read_failure() {
+        let namespace: quilt_uri::Namespace = NS.try_into().unwrap();
+        let err =
+            package_context_data(&namespace, &quilt::lineage::PackageLineage::default(), None)
+                .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "General error: Installed package team/dataset has no current revision"
+        );
     }
 
     /// A pause outranks what the tree says, because it is WHY the tree is not
