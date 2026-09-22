@@ -230,7 +230,8 @@ async fn get_package_page_data_from_model(
     let context = package_context_data(
         namespace,
         &lineage,
-        m.get_installed_package_current_revision(&installed).await?,
+        m.get_installed_package_current_revision(&installed, &lineage)
+            .await?,
     )?;
 
     let has_local_commit = lineage.commit.is_some();
@@ -342,7 +343,12 @@ mod tests {
         model
             .expect_get_installed_package_current_revision()
             .times(1)
-            .returning(|_| {
+            .returning(|_, lineage| {
+                assert_eq!(lineage.current_hash(), Some("abcdef"));
+                assert_eq!(
+                    lineage.remote_uri.as_ref().map(|uri| uri.bucket.as_str()),
+                    Some("test")
+                );
                 Ok(Some(quilt::flow::Revision {
                     hash: "abcdef".to_string(),
                     obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),

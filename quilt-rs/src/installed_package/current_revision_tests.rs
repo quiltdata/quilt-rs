@@ -18,9 +18,8 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
     let package = domain
         .create_package(namespace.clone(), None, Some("initial import".to_string()))
         .await?;
-    let expected_hash = package
-        .lineage()
-        .await?
+    let snapshot = package.lineage().await?;
+    let expected_hash = snapshot
         .current_hash()
         .expect("a created package has a current revision")
         .to_string();
@@ -37,8 +36,17 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
         )
         .await?;
 
+    // Change the stored lineage after the caller's snapshot. The revision read
+    // must stay on that snapshot rather than selecting again halfway through.
+    package
+        .lineage
+        .edit(&package.storage, |lineage| {
+            *lineage = crate::lineage::PackageLineage::default();
+        })
+        .await?;
+
     let revision = package
-        .current_revision()
+        .current_revision(&snapshot)
         .await?
         .expect("a created package has a current revision");
     let after = Utc::now();
@@ -81,8 +89,9 @@ async fn current_revision_prefers_a_pending_commit_over_the_remote_hash() -> Res
         })
         .await?;
 
+    let snapshot = package.lineage().await?;
     let revision = package
-        .current_revision()
+        .current_revision(&snapshot)
         .await?
         .expect("the pending commit is the current revision");
 
