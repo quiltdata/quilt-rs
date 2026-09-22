@@ -1577,7 +1577,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(context.revision.message.as_deref(), Some("Initial upload"));
-        assert_eq!(context.revision.obtained_at, 1_758_500_000_000.0);
+        assert!(
+            (context.revision.obtained_at - 1_758_500_000_000.0).abs() < f64::EPSILON,
+            "the timestamp crosses unchanged"
+        );
         assert_eq!(context.bucket.as_deref(), Some("quilt-lab-plates"));
     }
 
