@@ -10,6 +10,8 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
+use crate::kit::Banner;
+use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::FormControl;
@@ -416,6 +418,65 @@ fn FormBodies() -> impl IntoView {
                 </div>
             </Cell>
         </Story>
+    }
+}
+
+/// The refusal, at rest — and the real thing one click away.
+///
+/// Both, because they cannot be the same object. A `FormDialog` is modal: `show_modal()`
+/// puts it in the top layer and its backdrop takes every pointer event on the page, so a
+/// scene holding one open makes the rest of the gallery unclickable. Driving the real
+/// component into this state and leaving it there was tried and does exactly that.
+///
+/// So the resting copy is composed inline from the same kit pieces the dialog uses —
+/// `Banner`, the form, the footer's two buttons — which is how `StripErrorScene` shows a
+/// strip that could not load, and what this module's own doc means by rendering a form
+/// twice. The button beside it opens the real one, whose banner arrives the real way.
+#[component]
+pub fn RefusedScene() -> impl IntoView {
+    let live = RwSignal::new(false);
+    let dismissed = RwSignal::new(false);
+
+    view! {
+        <Scene
+            title="Scene · a dialog that was refused"
+            note="Where v1 puts this: the page's notification slot, behind the modal that \
+                  caused it. Here it is above the fields, the values are still there to \
+                  correct, and the reason names the bucket. This copy is inline, at the \
+                  width the modal gets, so it can be read and screenshotted without \
+                  taking the page's pointer events — press Open the real one for the \
+                  modal, whose banner arrives through an actual refused submit."
+        >
+            <div class="g-bars g-dialog-inline">
+                <Show when=move || !dismissed.get()>
+                    <Banner
+                        variant=BannerVariant::Critical
+                        on_dismiss=move |_| dismissed.set(true)
+                    >
+                        "No permission to write to quilt-example."
+                    </Banner>
+                </Show>
+                <BucketForm />
+                // The footer, in the dialog's own arrangement: right-aligned, primary last.
+                <div class="g-inline g-inline--end">
+                    <Button on_click=move |_| ()>"Cancel"</Button>
+                    <Button variant=ButtonVariant::Primary on_click=move |_| ()>"Save"</Button>
+                </div>
+            </div>
+            <div class="g-inline">
+                <Button on_click=move |_| live.set(true)>"Open the real one"</Button>
+            </div>
+            <FormDialog
+                open=live
+                title="Change bucket"
+                submit=Submit::new(
+                    "Save",
+                    || async { Err("No permission to write to quilt-example.".to_string()) },
+                )
+            >
+                <BucketForm />
+            </FormDialog>
+        </Scene>
     }
 }
 
