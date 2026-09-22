@@ -79,6 +79,11 @@ pub fn Button(
     /// cosmetic.
     #[prop(optional, into)]
     form: MaybeProp<String>,
+    /// Focused when the dialog holding it opens: `showModal()` hands focus to the first
+    /// `autofocus` inside the dialog. For the safe answer of a confirmation, so a stray
+    /// Return does nothing destructive. Same prop `TextInput` has for a form's first field.
+    #[prop(optional)]
+    autofocus: bool,
     children: Children,
 ) -> impl IntoView {
     let is_loading = Signal::derive(move || loading.get().unwrap_or(false));
@@ -122,6 +127,7 @@ pub fn Button(
         <button
             type=button_type
             form=move || form.get()
+            autofocus=autofocus
             class=class
             disabled=move || is_disabled.get()
             aria-busy=move || if is_loading.get() { "true" } else { "false" }
@@ -279,6 +285,16 @@ mod tests {
             !button(&el).has_attribute("form"),
             "and it belongs to no form it was not given"
         );
+    }
+
+    /// Rendered only when asked: a button that always asked for focus would take it from
+    /// a dialog's first field.
+    #[wasm_bindgen_test]
+    fn a_button_asks_for_focus_only_when_told_to() {
+        let plain = mount(|| view! { <Button on_click=|_| {}>"Cancel"</Button> });
+        assert!(!button(&plain).has_attribute("autofocus"));
+        let asked = mount(|| view! { <Button autofocus=true on_click=|_| {}>"Cancel"</Button> });
+        assert!(button(&asked).has_attribute("autofocus"));
     }
 
     /// The opt-in, and the association that makes it reach a form it is not inside —

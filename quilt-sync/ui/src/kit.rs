@@ -41,6 +41,7 @@ pub mod card;
 pub mod cause_row;
 pub mod checkbox;
 pub mod choice_group;
+pub mod confirm_dialog;
 pub mod countdown;
 pub mod dialog;
 pub mod entry_group;
@@ -92,6 +93,7 @@ pub use checkbox::CheckState;
 pub use checkbox::Checkbox;
 pub use choice_group::Choice;
 pub use choice_group::ChoiceGroup;
+pub use confirm_dialog::ConfirmDialog;
 pub use countdown::Countdown;
 pub use dialog::Dialog;
 pub use entry_group::EntryGroup;
@@ -176,7 +178,12 @@ mod tests {
     /// pixels does not.
     #[test]
     fn prose_is_capped_to_a_readable_measure() {
-        const PROSE: [(&str, &str, &str); 3] = [
+        const PROSE: [(&str, &str, &str); 4] = [
+            (
+                "confirm_dialog",
+                ".consequence",
+                include_str!("kit/confirm_dialog.module.scss"),
+            ),
             ("banner", ".message", include_str!("kit/banner.module.scss")),
             (
                 "toggle_row",
