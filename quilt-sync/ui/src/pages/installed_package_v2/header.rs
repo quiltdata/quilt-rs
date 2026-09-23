@@ -50,12 +50,14 @@ use crate::kit::BackLink;
 use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
+use crate::kit::ConfirmDialog;
 use crate::kit::MenuAction;
 use crate::kit::PackageAction;
 use crate::kit::SkeletonBox;
 use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
+use crate::kit::Submit;
 use crate::kit::render;
 use crate::util;
 
@@ -64,9 +66,6 @@ use super::role_dialog::RoleDialog;
 use super::{Outcome, Wiring};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
-
-/// Why a command whose surface has not landed on this page is unavailable.
-const NOT_YET: &str = "Not available on this page yet";
 
 /// While another command is running. One working tree, one command: two at
 /// once is a race the page has no way to arbitrate.
@@ -101,10 +100,6 @@ pub(crate) struct MenuItem {
 }
 
 /// Why undo is unavailable, when it is. `None` means it is available.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "applied to the menu with the undo command itself")
-)]
 fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
     // Order is the engine's: no commit, then the remote guard it applies
     // before it looks at the chain, then the chain's floor.
@@ -167,7 +162,10 @@ pub(crate) fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<
         label: "Undo last revision".to_string(),
         tone: ActionTone::Danger,
         separated: true,
-        disabled: Some(NOT_YET.to_string()),
+        // A standing fact outranks a transient one: telling a reader something
+        // else is running, when undo would refuse whatever happened, is the
+        // lesser truth.
+        disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
     });
 
     items.push(MenuItem {
@@ -175,7 +173,7 @@ pub(crate) fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<
         label: "Remove".to_string(),
         tone: ActionTone::Danger,
         separated: false,
-        disabled: Some(NOT_YET.to_string()),
+        disabled: refused(),
     });
 
     items
@@ -231,6 +229,8 @@ fn menu(
     w: Wiring,
     goto: RwSignal<Option<String>>,
     bucket_open: RwSignal<bool>,
+    undo_open: RwSignal<bool>,
+    remove_open: RwSignal<bool>,
 ) -> Vec<MenuAction> {
     let Wiring { busy, outcome, .. } = w;
     let ns = data.namespace.to_string();
@@ -256,9 +256,8 @@ fn menu(
                     );
                 }),
                 MenuCommand::Remote => Callback::new(move |()| bucket_open.set(true)),
-                // Their dialogs land in tasks 6 and 7; until then the item is
-                // disabled and nothing can reach this.
-                MenuCommand::Undo | MenuCommand::Remove => Callback::new(|()| ()),
+                MenuCommand::Undo => Callback::new(move |()| undo_open.set(true)),
+                MenuCommand::Remove => Callback::new(move |()| remove_open.set(true)),
             };
             MenuAction {
                 label: item.label,
@@ -377,6 +376,68 @@ fn primary_action(
     )
 }
 
+/// The confirmations behind the menu's two Danger items.
+fn danger_dialogs(
+    data: &commands::PackageHeaderData,
+    w: Wiring,
+    goto: RwSignal<Option<String>>,
+    undo_open: RwSignal<bool>,
+    remove_open: RwSignal<bool>,
+) -> impl IntoView + use<> {
+    let Wiring {
+        outcome, reload, ..
+    } = w;
+    let ns_undo = data.namespace.to_string();
+    let ns_remove = data.namespace.to_string();
+    let uri_remove = data.uri.clone();
+    view! {
+        <ConfirmDialog
+            open=undo_open
+            title="Undo the last revision"
+            consequence="Steps this package back to the revision before its newest one. \
+                         This cannot be redone."
+            confirm=Submit::new("Undo", move || {
+                let ns = ns_undo.clone();
+                async move {
+                    // No `busy` here, and that is the rule for all four dialogs:
+                    // `showModal()` makes the document behind it inert, so there is
+                    // nothing outside to disable. The page's signal is for the
+                    // commands that run with no dialog holding them.
+                    commands::undo_commit(ns.clone()).await?;
+                    // The one success the band reports. The state label can read the
+                    // same before and after an undo, so the re-read is not a report.
+                    outcome.set(Some(Outcome {
+                        namespace: ns,
+                        variant: BannerVariant::Success,
+                        lead: "The last revision was undone.".to_string(),
+                        detail: None,
+                    }));
+                    reload.notify();
+                    Ok(())
+                }
+            })
+        />
+        <ConfirmDialog
+            open=remove_open
+            title="Remove this package"
+            consequence="Deletes this package's working files, including edits that have \
+                         never been committed. The object store keeps committed content only."
+            confirm=Submit::new("Remove", move || {
+                let ns = ns_remove.clone();
+                let uri = uri_remove.clone();
+                async move {
+                    commands::package_uninstall(ns, uri).await?;
+                    // Home, not a refetch: the package this page is about is gone, so
+                    // re-reading it would ask for something that no longer exists.
+                    // Remove's success is arriving on the package list.
+                    goto.set(Some("/".to_string()));
+                    Ok(())
+                }
+            })
+        />
+    }
+}
+
 /// The header, for one package.
 #[component]
 #[allow(
@@ -399,6 +460,10 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
     let role_dialog = data.role_switch.clone().map(|switch| {
         view! { <RoleDialog open=role_open switch=switch w=w /> }
     });
+    // The two Danger items: the menu picks the command, the dialog accepts the
+    // consequence.
+    let undo_open = RwSignal::new(false);
+    let remove_open = RwSignal::new(false);
 
     // Every navigation this header makes goes through one signal, because a
     // `Callback` must be `Send + Sync` and `use_navigate`'s closure is neither.
@@ -448,13 +513,21 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                     {move || view! {
                         <ActionMenu
                             aria_label="More actions for this package"
-                            actions=menu(&payload.read_value(), w, goto, bucket_open)
+                            actions=menu(
+                                &payload.read_value(),
+                                w,
+                                goto,
+                                bucket_open,
+                                undo_open,
+                                remove_open,
+                            )
                         />
                     }}
                 </div>
             </div>
             <BucketDialog open=bucket_open data=data.clone() w=w />
             {role_dialog}
+            {danger_dialogs(&data, w, goto, undo_open, remove_open)}
         </div>
     }
 }
@@ -960,6 +1033,205 @@ mod tests {
                 .unwrap_or_default()
                 .contains("analyst"),
             "and the refused role is not one of them"
+        );
+    }
+
+    /// The overflow menu's surface. The trigger shares its name, so the popover
+    /// attribute is what tells the list from the button that opens it.
+    const SURFACE: &str = "[popover][aria-label='More actions for this package']";
+
+    /// Open `[⋯]` the way a reader does.
+    fn open_menu(el: &web_sys::Element) {
+        el.query_selector(TRIGGER)
+            .unwrap()
+            .expect("the overflow trigger")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+    }
+
+    /// The menu's items, each with its label apart from any reason drawn inside it.
+    fn menu_entries(el: &web_sys::Element) -> Vec<(String, web_sys::Element)> {
+        let all = el.query_selector_all(&format!("{SURFACE} button")).unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .map(|b| {
+                let text = b.text_content().unwrap_or_default();
+                let reason = b
+                    .query_selector("span")
+                    .unwrap()
+                    .and_then(|s| s.text_content())
+                    .unwrap_or_default();
+                let label = text
+                    .strip_suffix(reason.as_str())
+                    .unwrap_or(&text)
+                    .trim()
+                    .to_string();
+                (label, b)
+            })
+            .collect()
+    }
+
+    /// The menu item with this label. A disabled item draws its reason inside
+    /// the same button, so the label is matched on its own.
+    fn menu_item(el: &web_sys::Element, label: &str) -> web_sys::HtmlButtonElement {
+        menu_entries(el)
+            .into_iter()
+            .find(|(text, _)| text == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no menu item says {label:?}; markup was {}",
+                    el.inner_html()
+                )
+            })
+            .1
+            .unchecked_into()
+    }
+
+    /// The labels of the menu's Danger items, read off the kit's own variant
+    /// marker as `confirm_dialog.rs` reads it off the Button.
+    fn menu_labels_with_tone_danger(el: &web_sys::Element) -> Vec<String> {
+        menu_entries(el)
+            .into_iter()
+            .filter(|(_, b)| b.class_name().contains("danger"))
+            .map(|(label, _)| label)
+            .collect()
+    }
+
+    /// The open dialog's footer, in document order. Scoped to `[open]` because
+    /// the header holds four dialogs and `Dialog` renders all of their children.
+    fn footer_labels(el: &web_sys::Element) -> Vec<String> {
+        let all = el.query_selector_all("dialog[open] button").unwrap();
+        (0..all.length())
+            .filter_map(|i| all.item(i).unwrap().text_content())
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    /// A Danger item picks the command; the dialog accepts the consequence. The
+    /// press must not run anything — which is the defect quilt-rs#974 shipped,
+    /// with Remove firing straight from the menu.
+    #[wasm_bindgen_test]
+    async fn remove_asks_before_it_runs_and_says_what_it_deletes() {
+        let el = mount_header(data(kit::PackageState::Latest));
+        open_menu(&el);
+        menu_item(&el, "Remove").click();
+        sleep_ms(20).await;
+
+        let dialog = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .expect("the confirmation");
+        let words = dialog.text_content().unwrap_or_default();
+        assert!(
+            words.contains("including edits that have never been committed"),
+            "the consequence names what is lost: {words}"
+        );
+        assert_eq!(
+            footer_labels(&el),
+            vec!["Cancel".to_string(), "Remove".to_string()]
+        );
+    }
+
+    /// Undo confirms too, for a different reason: it destroys nothing, and has
+    /// no redo.
+    #[wasm_bindgen_test]
+    async fn undo_asks_before_it_runs_and_says_it_cannot_be_redone() {
+        let mut d = data(kit::PackageState::Latest);
+        d.has_local_commit = true;
+        d.commit_has_parent = true;
+        let el = mount_header(d);
+        open_menu(&el);
+        menu_item(&el, "Undo last revision").click();
+        sleep_ms(20).await;
+
+        let dialog = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("cannot be redone")
+        );
+        assert_eq!(
+            footer_labels(&el),
+            vec!["Cancel".to_string(), "Undo".to_string()]
+        );
+    }
+
+    /// The transient refusal — a dirty tree — is drawn where it is discovered,
+    /// inside the dialog, and the dialog stays open. There is no bridge under
+    /// the runner, so the failure arm is what runs, which is the arm this claim
+    /// is about.
+    #[wasm_bindgen_test]
+    async fn a_refused_undo_stays_in_the_dialog_and_never_reaches_the_band() {
+        let outcome: RwSignal<Option<Outcome>> = RwSignal::new(None);
+        let mut d = data(kit::PackageState::Latest);
+        d.has_local_commit = true;
+        d.commit_has_parent = true;
+        let el = mount_with(
+            d,
+            Wiring {
+                busy: RwSignal::new(false),
+                outcome,
+                reload: Trigger::new(),
+            },
+        );
+        open_menu(&el);
+        menu_item(&el, "Undo last revision").click();
+        sleep_ms(20).await;
+        button(&el, "Undo").click();
+        sleep_ms(50).await;
+
+        let dialog = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .expect("still open");
+        assert!(
+            dialog.query_selector("[role=alert]").unwrap().is_some(),
+            "the reason is inside the dialog; markup was {}",
+            dialog.inner_html()
+        );
+        assert!(
+            outcome.get_untracked().is_none(),
+            "and nothing reached the band"
+        );
+    }
+
+    /// The three standing reasons reach the item, and an available undo is live.
+    #[wasm_bindgen_test]
+    fn the_undo_item_carries_the_reason_the_payload_gives_it() {
+        let mut blocked = data(kit::PackageState::Latest);
+        blocked.has_local_commit = false;
+        let el = mount_header(blocked);
+        open_menu(&el);
+        assert!(
+            menu_item(&el, "Undo last revision")
+                .text_content()
+                .unwrap_or_default()
+                .contains("Nothing has been committed yet"),
+        );
+
+        let mut available = data(kit::PackageState::Latest);
+        available.has_local_commit = true;
+        available.commit_has_parent = true;
+        let el = mount_header(available);
+        open_menu(&el);
+        assert!(!menu_item(&el, "Undo last revision").disabled());
+    }
+
+    /// Nothing else on this page confirms. A third `ConfirmDialog` would be a
+    /// tone rule nobody decided.
+    #[wasm_bindgen_test]
+    fn only_the_two_danger_items_are_followed_by_a_confirmation() {
+        let el = mount_header(data(kit::PackageState::Latest));
+        open_menu(&el);
+        let danger: Vec<String> = menu_labels_with_tone_danger(&el);
+        assert_eq!(
+            danger,
+            vec!["Undo last revision".to_string(), "Remove".to_string()],
         );
     }
 
