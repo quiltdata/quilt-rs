@@ -270,11 +270,10 @@ pub(super) async fn query_package_revisions(
             break;
         };
         let RevisionPage { total, page } = package.revisions;
-        // A page drops pointers that vanished before resolving, so only
-        // `total` says whether more pages follow; an empty page ends it anyway.
-        let empty = page.is_empty();
+        // A page drops pointers that vanished before resolving, so a short or
+        // even empty page is not the end: only `total` says whether more follow.
         hashes.extend(page.into_iter().map(|r| r.hash));
-        if empty || u64::from(number) * u64::from(REVISIONS_PER_PAGE) >= u64::from(total) {
+        if u64::from(number) * u64::from(REVISIONS_PER_PAGE) >= u64::from(total) {
             break;
         }
     }
@@ -444,6 +443,33 @@ mod tests {
                 serde_json::json!({"bucket": "quilt-bucket", "name": "team/dataset", "number": 2, "perPage": 100}),
             ]
         );
+        Ok(())
+    }
+
+    /// A whole page whose pointers all vanished comes back empty, and the
+    /// pages after it still hold revisions: only `total` ends the listing.
+    #[test(tokio::test)]
+    async fn query_package_revisions_reads_past_an_emptied_page() -> Res {
+        let mut slots: Vec<Option<String>> =
+            (0..250).map(|i| Some(format!("hash-{i:03}"))).collect();
+        slots[100..200].fill(None);
+        let client = GraphQlTestHttpClient {
+            package_revisions: Some(slots),
+            ..GraphQlTestHttpClient::default()
+        };
+        let namespace: Namespace = ("team", "dataset").into();
+
+        let listed = query_package_revisions(
+            &client,
+            &get_registry_host(),
+            "quilt-bucket",
+            &namespace,
+            ACCESS_TOKEN,
+        )
+        .await?;
+
+        assert_eq!(listed.len(), 150);
+        assert_eq!(listed.last().map(String::as_str), Some("hash-249"));
         Ok(())
     }
 
