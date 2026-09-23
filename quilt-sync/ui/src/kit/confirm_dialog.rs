@@ -58,9 +58,14 @@ pub fn ConfirmDialog(
     /// The verb and what it does. The label goes on the `Danger` primary; the action's
     /// `Err` becomes the banner.
     confirm: Submit,
+    /// True while a command the caller holds is running — including one an earlier
+    /// instance of this dialog submitted before the caller rebuilt it. Seals the dialog
+    /// exactly as its own submit does, and refuses a submit on top of it.
+    #[prop(optional, into)]
+    running: MaybeProp<bool>,
 ) -> impl IntoView {
     let Submit { label, action } = confirm;
-    let submission = Submission::new(open);
+    let submission = Submission::new(open, running);
     let busy = submission.busy;
     let banner = submission.banner();
 
@@ -276,6 +281,42 @@ mod tests {
             !open.get_untracked(),
             "and it closes once the action settles"
         );
+    }
+
+    /// The caller's command outlives the dialog: a dialog rebuilt while its
+    /// predecessor's action runs has no in-flight state of its own, so `running` is
+    /// what seals it — and what keeps its verb from starting a second command.
+    #[wasm_bindgen_test]
+    async fn a_command_the_caller_holds_seals_the_dialog_until_it_settles() {
+        let running = RwSignal::new(true);
+        let ran = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <ConfirmDialog
+                    open=RwSignal::new(true)
+                    title="Remove package"
+                    consequence=SENTENCE
+                    confirm=Submit::new("Remove", move || async move {
+                        ran.update(|n| *n += 1);
+                        Ok(())
+                    })
+                    running=running
+                />
+            }
+        });
+        leptos::task::tick().await;
+
+        let remove = button(&el, "Remove");
+        assert!(remove.disabled(), "the verb is refused");
+        assert_eq!(remove.get_attribute("aria-busy").as_deref(), Some("true"));
+        assert!(button(&el, "Cancel").disabled(), "and so is Cancel");
+        remove.click();
+        settle().await;
+        assert_eq!(ran.get_untracked(), 0, "nothing ran on top of it");
+
+        running.set(false);
+        leptos::task::tick().await;
+        assert!(!button(&el, "Remove").disabled(), "live once it settles");
     }
 
     /// The dialog unmounted mid-run — its caller rebuilt it over the same `open` —

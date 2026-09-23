@@ -30,7 +30,7 @@ use crate::components::workflow_select::{WorkflowView, WorkflowViewKind};
 use crate::kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
 use crate::util;
 
-use super::{Outcome, Wiring};
+use super::{Outcome, Wiring, holding};
 
 const HOST_INVALID: &str = "Enter a valid hostname";
 const BUCKET_MISSING: &str = "Enter an S3 bucket name";
@@ -104,10 +104,10 @@ pub(super) fn BucketDialog(
         tasks: ArcRwSignal::new(Default::default()),
     });
 
-    // `busy` is unused on purpose: `FormDialog` seals itself while its submit
-    // runs, and the page's signal is for commands no dialog is holding.
+    // `busy` is held for the command and seals the dialog, because a re-read
+    // rebuilds this dialog and its own seal goes with the old one.
     let Wiring {
-        busy: _,
+        busy,
         outcome,
         reload,
         ..
@@ -260,7 +260,8 @@ pub(super) fn BucketDialog(
                             .map(|option| option.intent)
                     })
                     .unwrap_or(WorkflowIntent::BucketDefault);
-                let response = commands::set_remote(ns.clone(), host, name, workflow).await?;
+                let response =
+                    holding(busy, commands::set_remote(ns.clone(), host, name, workflow)).await?;
                 // The remote is set either way. A workflow that could not be
                 // resolved is the one partial success the band carries: the
                 // package will publish ungoverned, and the reader should learn
@@ -396,7 +397,9 @@ pub(super) fn BucketDialog(
 
     match submit {
         Some(submit) => view! {
-            <FormDialog open=open title=title submit=submit>{fields()}</FormDialog>
+            <FormDialog open=open title=title submit=submit running=busy>
+                {fields()}
+            </FormDialog>
         }
         .into_any(),
         None => view! { <FormDialog open=open title=title>{fields()}</FormDialog> }.into_any(),

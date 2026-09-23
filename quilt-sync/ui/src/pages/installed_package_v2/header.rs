@@ -30,6 +30,10 @@
 //! them — one working tree, one command — and it is read reactively, so the
 //! menu follows the page rather than whatever was true when it was built.
 //!
+//! A dialog's command holds the same signal. The signal is the page's and the
+//! dialog's own seal is not, so a re-read that rebuilds the header mid-submit
+//! draws the new dialog sealed instead of ready to submit a second time.
+//!
 //! # Where each command reports
 //!
 //! Three channels — the notification stack, the page's band, a dialog — and
@@ -62,7 +66,7 @@ use crate::util;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
-use super::{Dialogs, Outcome, Wiring};
+use super::{Dialogs, Outcome, Wiring, holding};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
 
@@ -202,11 +206,8 @@ fn run(
     if busy.get_untracked() {
         return;
     }
-    busy.set(true);
     leptos::task::spawn_local(async move {
-        let answer = task.await;
-        busy.set(false);
-        match answer {
+        match holding(busy, task).await {
             Ok(_) => {
                 if let Some(reload) = after {
                     reload.notify();
@@ -385,7 +386,10 @@ fn danger_dialogs(
     remove_open: RwSignal<bool>,
 ) -> impl IntoView + use<> {
     let Wiring {
-        outcome, reload, ..
+        busy,
+        outcome,
+        reload,
+        ..
     } = w;
     let ns_undo = data.namespace.to_string();
     let ns_remove = data.namespace.to_string();
@@ -399,11 +403,7 @@ fn danger_dialogs(
             confirm=Submit::new("Undo", move || {
                 let ns = ns_undo.clone();
                 async move {
-                    // No `busy` here, and that is the rule for all four dialogs:
-                    // `showModal()` makes the document behind it inert, so there is
-                    // nothing outside to disable. The page's signal is for the
-                    // commands that run with no dialog holding them.
-                    commands::undo_commit(ns.clone()).await?;
+                    holding(busy, commands::undo_commit(ns.clone())).await?;
                     // The one success the band reports. The state label can read the
                     // same before and after an undo, so the re-read is not a report.
                     outcome.set(Some(Outcome {
@@ -416,6 +416,7 @@ fn danger_dialogs(
                     Ok(())
                 }
             })
+            running=busy
         />
         <ConfirmDialog
             open=remove_open
@@ -426,7 +427,7 @@ fn danger_dialogs(
                 let ns = ns_remove.clone();
                 let uri = uri_remove.clone();
                 async move {
-                    commands::package_uninstall(ns, uri).await?;
+                    holding(busy, commands::package_uninstall(ns, uri)).await?;
                     // Home, not a refetch: the package this page is about is gone, so
                     // re-reading it would ask for something that no longer exists.
                     // Remove's success is arriving on the package list.
@@ -434,6 +435,7 @@ fn danger_dialogs(
                     Ok(())
                 }
             })
+            running=busy
         />
     }
 }
@@ -1250,6 +1252,35 @@ mod tests {
             outcome.get_untracked().is_none(),
             "and nothing reached the band"
         );
+    }
+
+    /// A re-read rebuilds the header while a dialog's command runs, and the
+    /// dialog survives it on the page's flag. Mounted in that moment: the flag
+    /// open and the page's signal held. The new dialog has no in-flight state
+    /// of its own, so the page's is what keeps it from a second command.
+    #[wasm_bindgen_test]
+    async fn a_dialog_rebuilt_mid_command_cannot_run_it_again() {
+        let w = Wiring {
+            busy: RwSignal::new(true),
+            ..Wiring::new()
+        };
+        w.dialogs.remove.set(true);
+        let el = mount_with(data(kit::PackageState::Latest), w);
+        // The dialog opens from an effect, on the next tick.
+        leptos::task::tick().await;
+
+        let buttons = el.query_selector_all("dialog[open] button").unwrap();
+        let verb: web_sys::HtmlButtonElement = (0..buttons.length())
+            .map(|i| {
+                buttons
+                    .item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::HtmlButtonElement>()
+            })
+            .find(|b| b.text_content().unwrap_or_default().trim() == "Remove")
+            .unwrap_or_else(|| panic!("the confirmation; markup was {}", el.inner_html()));
+        assert!(verb.disabled(), "sealed while the first one runs");
+        assert_eq!(verb.get_attribute("aria-busy").as_deref(), Some("true"));
     }
 
     /// The three standing reasons reach the item, and an available undo is live.

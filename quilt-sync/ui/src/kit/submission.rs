@@ -58,9 +58,9 @@ impl Submit {
 pub(super) struct Submission {
     open: RwSignal<bool>,
     submitting: RwSignal<bool>,
-    /// `submitting` as the `Signal` that `MaybeProp` props take. Three props read it —
-    /// `disabled` on Cancel, `loading` on the primary, `held` on the dialog — and they are
-    /// one fact.
+    /// `submitting`, or the caller's `running`, as the `Signal` that `MaybeProp` props
+    /// take. Three props read it — `disabled` on Cancel, `loading` on the primary, `held`
+    /// on the dialog — and they are one fact.
     pub(super) busy: Signal<bool>,
     error: RwSignal<Option<String>>,
     /// Which opening is current. An action carries the one it was asked under, and an
@@ -69,7 +69,10 @@ pub(super) struct Submission {
 }
 
 impl Submission {
-    pub(super) fn new(open: RwSignal<bool>) -> Self {
+    /// `running` is the caller's own in-flight state, which outlives this dialog: a
+    /// dialog rebuilt while its predecessor's action still runs starts with none of its
+    /// own, and without the caller's it would accept a second submit.
+    pub(super) fn new(open: RwSignal<bool>, running: MaybeProp<bool>) -> Self {
         let submitting = RwSignal::new(false);
         let error = RwSignal::new(None::<String>);
         let session = RwSignal::new(0_usize);
@@ -93,7 +96,7 @@ impl Submission {
         Self {
             open,
             submitting,
-            busy: Signal::derive(move || submitting.get()),
+            busy: Signal::derive(move || submitting.get() || running.get().unwrap_or(false)),
             error,
             session,
         }
@@ -101,9 +104,10 @@ impl Submission {
 
     /// Runs `action` under the current session. `Ok` closes the dialog — the caller's
     /// reload happens inside the action, before it returns; `Err` becomes the banner. A
-    /// second call while one is in flight is dropped rather than queued.
+    /// second call while one is in flight — this dialog's or the caller's — is dropped
+    /// rather than queued.
     pub(super) fn run(self, action: &Action) {
-        if self.submitting.get_untracked() {
+        if self.busy.get_untracked() {
             return;
         }
         self.submitting.set(true);

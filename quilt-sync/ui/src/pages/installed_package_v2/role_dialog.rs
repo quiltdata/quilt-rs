@@ -14,7 +14,7 @@ use leptos::prelude::*;
 use crate::commands;
 use crate::kit::{FormControl, FormDialog, Naming, Select, Submit};
 
-use super::Wiring;
+use super::{Wiring, holding};
 
 /// The role switch, over the alternatives the payload offers.
 #[component]
@@ -27,14 +27,10 @@ pub(super) fn RoleDialog(
     switch: commands::RoleSwitch,
     w: Wiring,
 ) -> impl IntoView {
-    // Only `reload`: `FormDialog` seals itself while its submit runs, and a
-    // refusal is its banner's, inside the dialog — nothing goes to the band.
-    let Wiring {
-        busy: _,
-        outcome: _,
-        reload,
-        ..
-    } = w;
+    // No `outcome`: a refusal is the dialog's banner, and nothing goes to the
+    // band. `busy` is held for the command and seals the dialog, because a
+    // re-read rebuilds this dialog and its own seal goes with the old one.
+    let Wiring { busy, reload, .. } = w;
     let commands::RoleSwitch { host, alternatives } = switch;
     let chosen = RwSignal::new(alternatives.first().cloned().unwrap_or_default());
 
@@ -55,7 +51,7 @@ pub(super) fn RoleDialog(
         let host = host.clone();
         async move {
             let role = chosen.get_untracked();
-            commands::switch_role(host, role.clone())
+            holding(busy, commands::switch_role(host, role.clone()))
                 .await
                 .map_err(|err| format!("Could not switch to {role}: {err}"))?;
             reload.notify();
@@ -64,7 +60,7 @@ pub(super) fn RoleDialog(
     });
 
     view! {
-        <FormDialog open=open title="Switch role" submit=submit>
+        <FormDialog open=open title="Switch role" submit=submit running=busy>
             <FormControl
                 label="Role"
                 control=move |id| {

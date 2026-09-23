@@ -69,6 +69,17 @@ pub(crate) struct Wiring {
     pub dialogs: Dialogs,
 }
 
+/// Hold `busy` for as long as `task` runs. Every header command does, the
+/// dialogs' included: the signal is the page's and a dialog's own seal is not,
+/// so a dialog rebuilt mid-submit is drawn sealed by this one.
+async fn holding<T>(busy: RwSignal<bool>, task: impl std::future::Future<Output = T>) -> T {
+    busy.set(true);
+    let answer = task.await;
+    // `try_`: the signal is the page's, and the page can be gone by now.
+    busy.try_set(false);
+    answer
+}
+
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
 pub(crate) struct Dialogs {
