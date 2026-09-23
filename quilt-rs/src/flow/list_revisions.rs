@@ -39,6 +39,16 @@ pub struct Revision {
     pub message: Option<String>,
 }
 
+/// One revision this copy holds, and whether the package's registry lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub revision: Revision,
+    /// The registry of the lineage's remote lists it: a timestamped pointer
+    /// to it exists. Asked, never inferred from the pending commit chain —
+    /// see `published-grounding`.
+    pub published: bool,
+}
+
 /// List the revisions of `namespace` this copy has, newest `obtained` first.
 ///
 /// Hash breaks a genuine mtime tie so the order is stable across calls.
@@ -52,7 +62,7 @@ pub async fn list_revisions(
     let mut revisions = Vec::new();
 
     while let Some(entry) = entries.next_entry().await? {
-        if !entry.file_type().await?.is_file() {
+        if !is_revision(&entry).await? {
             continue;
         }
 
@@ -74,6 +84,31 @@ pub async fn list_revisions(
     });
 
     Ok(revisions)
+}
+
+/// How many revisions of `namespace` this copy has — the length
+/// `list_revisions` would return, without parsing any manifest.
+pub async fn count_revisions(
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    namespace: &Namespace,
+) -> Res<usize> {
+    let mut entries = storage
+        .read_dir(paths.installed_manifests_dir(namespace))
+        .await?;
+    let mut count = 0;
+    while let Some(entry) = entries.next_entry().await? {
+        if is_revision(&entry).await? {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Every file in the manifests directory is a revision, except a hidden one: a
+/// write's stranded `.tmp-<uuid>` (`io/storage/local.rs`) or the OS's own.
+async fn is_revision(entry: &tokio::fs::DirEntry) -> Res<bool> {
+    Ok(!entry.file_name().to_string_lossy().starts_with('.') && entry.file_type().await?.is_file())
 }
 
 #[cfg(test)]

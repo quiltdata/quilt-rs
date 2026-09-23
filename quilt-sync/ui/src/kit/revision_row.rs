@@ -32,8 +32,18 @@
 //! `published` says whether the revision reached the platform; `catalog` says
 //! where to read it and what opens it. They are separate because a published
 //! revision in a bucket with no catalog host has nowhere to point — it earns the
-//! cloud and stays text. The reverse never holds: a revision this copy has not
+//! cloud and no link. The reverse never holds: a revision this copy has not
 //! sent has no address.
+//!
+//! # The link is an icon, not the message
+//!
+//! The message is always text. In a list of revisions most rows are published,
+//! so a message that linked would make the column one long run of accent — and
+//! the cloud at the head of the row has already said which ones are published.
+//! What the colour would have added is only "this goes somewhere", and a glyph
+//! saying *open elsewhere* at the row's end says that more plainly, as an action
+//! rather than as a style. A row with nowhere to point draws nothing there and
+//! keeps no room for it.
 //!
 //! # The address and the opener arrive together
 //!
@@ -41,8 +51,8 @@
 //! the running application: the webview has no chrome to come back from. Every
 //! other catalog link in the app hands the URL to `open_in_web_browser` from a
 //! click handler, and the kit cannot do that itself — it holds no commands. So
-//! the row draws a real anchor, cancels the navigation, and calls what the
-//! caller gave it. A caller cannot supply one without the other, which is the
+//! the icon is a real anchor, the navigation is cancelled, and what the caller
+//! gave it is called. A caller cannot supply one without the other, which is the
 //! only way the rule survives the next call site.
 
 use leptos::prelude::*;
@@ -56,6 +66,9 @@ stylance::import_crate_style!(style, "src/kit/revision_row.module.scss");
 /// `MouseEvent.button` for the middle one. `auxclick` carries the right button
 /// under the same event, and that gesture is asking for the context menu.
 const MIDDLE_BUTTON: i16 = 1;
+
+/// The catalog link's name. The same words for the ear and the pointer.
+const OPEN_LABEL: &str = "Open in catalog";
 
 /// Where a revision is read, and what opens it.
 ///
@@ -93,9 +106,9 @@ pub fn RevisionRow(
     /// the section labels have already said it.
     #[prop(optional)]
     published: Option<bool>,
-    /// Where to read it, and what opens it. The message becomes a link; the
-    /// whole row does not, because the time beside it is this copy's fact and
-    /// not the platform's.
+    /// Where to read it, and what opens it. Draws the open icon at the row's
+    /// end; the message and the time stay text, and the time could not be the
+    /// link in any case — it is this copy's fact and not the platform's.
     ///
     /// `optional_no_strip` rather than `optional`: callers hold an `Option`
     /// already, because `util::catalog_url` answers `None` for a bucket with no
@@ -115,53 +128,48 @@ pub fn RevisionRow(
     };
     // The whole value rides in `title`, since the visible one is ellipsised. An
     // empty message loses the tooltip with it: there is nothing to put in one.
-    let full = message;
-    let (text, class, title) = match quoted {
-        Some(text) => (text, String::from(style::message), Some(full)),
-        // A revision published without a message is still a revision that was
-        // published, so the placeholder is a link like any other row. Dropping
-        // the link with the words would be the match arm deciding something
-        // nobody meant.
-        None => (String::from("No message"), String::from(style::empty), None),
+    let body = match quoted {
+        Some(text) => view! { <span class=style::message title=message>{text}</span> }.into_any(),
+        None => view! { <span class=style::empty>"No message"</span> }.into_any(),
     };
-    let body = match catalog {
-        Some(CatalogLink { href, open }) => {
-            let class = format!("{} {class}", style::link);
-            let followed = href.clone();
-            let middled = href.clone();
-            view! {
-                // A real anchor, so the address is there to copy and the pointer
-                // says where it goes — and then the navigation is cancelled,
-                // because following it would replace the application. `auxclick`
-                // as well as `click`: a middle button does not raise the latter,
-                // and a new webview window is the same loss by another door.
-                //
-                // `auxclick` fires for **every** non-primary button, so the
-                // middle one is checked for by number. Right-clicking asks for
-                // the context menu and nothing else, and the menu is where the
-                // address gets copied.
-                <a
-                    class=class
-                    href=href
-                    title=title
-                    on:click=move |ev| {
+
+    let link = catalog.map(|CatalogLink { href, open }| {
+        let followed = href.clone();
+        let middled = href.clone();
+        view! {
+            // A real anchor, so the address is there to copy and the pointer
+            // says where it goes — and then the navigation is cancelled,
+            // because following it would replace the application. `auxclick`
+            // as well as `click`: a middle button does not raise the latter,
+            // and a new webview window is the same loss by another door.
+            //
+            // `auxclick` fires for **every** non-primary button, so the
+            // middle one is checked for by number. Right-clicking asks for
+            // the context menu and nothing else, and the menu is where the
+            // address gets copied.
+            //
+            // The glyph has no words, so the anchor carries them: `aria-label`
+            // for a screen reader, `title` for the pointer.
+            <a
+                class=style::open
+                href=href
+                aria-label=OPEN_LABEL
+                title=OPEN_LABEL
+                on:click=move |ev| {
+                    ev.prevent_default();
+                    open.run(followed.clone());
+                }
+                on:auxclick=move |ev| {
+                    if ev.button() == MIDDLE_BUTTON {
                         ev.prevent_default();
-                        open.run(followed.clone());
+                        open.run(middled.clone());
                     }
-                    on:auxclick=move |ev| {
-                        if ev.button() == MIDDLE_BUTTON {
-                            ev.prevent_default();
-                            open.run(middled.clone());
-                        }
-                    }
-                >
-                    {text}
-                </a>
-            }
-            .into_any()
+                }
+            >
+                {icons::link_external()}
+            </a>
         }
-        None => view! { <span class=class title=title>{text}</span> }.into_any(),
-    };
+    });
 
     let glyph = published.map(|published| {
         let (icon, words) = if published {
@@ -189,6 +197,125 @@ pub fn RevisionRow(
                     <RelativeTime at=at />
                 </span>
             </div>
+            {link}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{element_saying, mount};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    const HREF: &str = "https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash";
+
+    fn published(open: Callback<String>) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <RevisionRow
+                    message="Sent"
+                    at=1_758_500_000_000.0
+                    published=true
+                    catalog=Some(CatalogLink::new(HREF, open))
+                />
+            }
+        })
+    }
+
+    #[wasm_bindgen_test]
+    fn a_catalog_row_links_from_a_named_icon_and_not_its_message() {
+        let el = published(Callback::new(|_: String| ()));
+
+        let links = el.query_selector_all("a").unwrap();
+        assert_eq!(
+            links.length(),
+            1,
+            "one link; markup was {}",
+            el.inner_html()
+        );
+        let link = el
+            .query_selector(&format!("a[href=\"{HREF}\"]"))
+            .unwrap()
+            .expect("the link goes to the revision's address");
+        assert_eq!(
+            link.get_attribute("aria-label").as_deref(),
+            Some("Open in catalog")
+        );
+        assert_eq!(
+            link.get_attribute("title").as_deref(),
+            Some("Open in catalog")
+        );
+        assert_eq!(
+            link.text_content().unwrap_or_default().trim(),
+            "",
+            "the link is the glyph; the message is not inside it"
+        );
+
+        let message = element_saying(&el, "\u{201c}Sent\u{201d}");
+        assert!(
+            message.closest("a").unwrap().is_none(),
+            "the message is text; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_without_a_catalog_draws_no_link() {
+        let el = mount(|| {
+            view! {
+                <RevisionRow message="Kept here" at=1_758_400_000_000.0 published=false />
+            }
+        });
+        assert!(
+            el.query_selector("a").unwrap().is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "Not published");
+    }
+
+    #[wasm_bindgen_test]
+    fn an_empty_message_is_a_placeholder_beside_the_link() {
+        let el = mount(|| {
+            view! {
+                <RevisionRow
+                    message=""
+                    at=1_758_500_000_000.0
+                    published=true
+                    catalog=Some(CatalogLink::new(HREF, Callback::new(|_: String| ())))
+                />
+            }
+        });
+        let placeholder = element_saying(&el, "No message");
+        assert!(placeholder.closest("a").unwrap().is_none());
+        assert!(
+            el.query_selector("[aria-label='Open in catalog']")
+                .unwrap()
+                .is_some(),
+            "an unnamed published revision is still reachable"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_icon_opens_through_the_callback_without_navigating() {
+        let opened: RwSignal<Option<String>> = RwSignal::new(None);
+        let el = published(Callback::new(move |url: String| opened.set(Some(url))));
+
+        let before = web_sys::window().unwrap().location().href().unwrap();
+        el.query_selector("[aria-label='Open in catalog']")
+            .unwrap()
+            .expect("the catalog link")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+
+        assert_eq!(opened.get_untracked().as_deref(), Some(HREF));
+        assert_eq!(
+            web_sys::window().unwrap().location().href().unwrap(),
+            before,
+            "the test page did not navigate"
+        );
     }
 }

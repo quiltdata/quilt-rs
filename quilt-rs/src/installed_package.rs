@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use tracing::log;
@@ -115,6 +116,47 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// order, not the order the revisions were made in.
     pub async fn revisions(&self) -> Res<Vec<flow::Revision>> {
         flow::list_revisions(&self.paths, &self.storage, &self.namespace).await
+    }
+
+    /// How many revisions this copy has, without parsing any of them.
+    ///
+    /// Equal to `self.revisions().await?.len()` when every manifest parses; a
+    /// damaged one is still counted, where [`Self::revisions`] fails on it.
+    pub async fn revision_count(&self) -> Res<usize> {
+        flow::count_revisions(&self.paths, &self.storage, &self.namespace).await
+    }
+
+    /// [`Self::revisions`], each marked by whether the registry of
+    /// `lineage`'s remote lists it — a timestamped pointer to it exists.
+    /// One listing for the whole package, never inferred from `CommitState`.
+    /// No remote, or a remote with no catalog host (so no registry to ask):
+    /// no remote call, and every entry is unpublished.
+    pub async fn revision_history(
+        &self,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Vec<flow::HistoryEntry>> {
+        let revisions = self.revisions().await?;
+        let published: HashSet<String> = match lineage.remote_uri.as_ref() {
+            Some(ManifestUri {
+                origin: Some(host),
+                bucket,
+                namespace,
+                ..
+            }) => self
+                .remote
+                .published_revisions(host, bucket, namespace)
+                .await?
+                .into_iter()
+                .collect(),
+            _ => HashSet::new(),
+        };
+        Ok(revisions
+            .into_iter()
+            .map(|revision| flow::HistoryEntry {
+                published: published.contains(&revision.hash),
+                revision,
+            })
+            .collect())
     }
 
     /// The revision selected by one lineage snapshot.
@@ -1009,6 +1051,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
 #[cfg(test)]
 mod current_revision_tests;
+#[cfg(test)]
+mod revision_history_tests;
 #[cfg(test)]
 mod set_remote_tests;
 #[cfg(test)]

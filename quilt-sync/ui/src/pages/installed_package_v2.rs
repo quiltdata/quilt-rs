@@ -17,6 +17,7 @@ use super::status_watch::StatusWatch;
 mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
+mod revision_history;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
@@ -136,15 +137,43 @@ impl Wiring {
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
 fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
+    let namespace = data.header.namespace.to_string();
+    let open_catalog = catalog_opener(namespace.clone(), w.outcome);
     view! {
         <div class=style::page>
             <PageHeader data=data.header w=w />
             <div class=style::shell>
-                <CurrentRevisionPane data=data.context />
+                <CurrentRevisionPane
+                    data=data.context
+                    namespace=namespace
+                    fetch=context_pane::fetch_revision_history
+                    open_catalog=open_catalog
+                />
             </div>
         </div>
     }
     .into_any()
+}
+
+/// Opens a revision's catalog page, reporting a failure on the keyed band.
+///
+/// Not `run`: opening a browser is not a working-tree command, so it neither
+/// takes `busy` nor clears the band. A link cannot be disabled, and one that
+/// silently did nothing while busy would be worse than one that opens.
+fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Callback<String> {
+    Callback::new(move |url: String| {
+        let namespace = namespace.clone();
+        leptos::task::spawn_local(async move {
+            if let Err(detail) = commands::open_in_web_browser(url).await {
+                outcome.try_set(Some(Outcome {
+                    namespace,
+                    variant: BannerVariant::Critical,
+                    lead: "Could not open this revision in the catalog.".to_string(),
+                    detail: Some(detail),
+                }));
+            }
+        });
+    })
 }
 
 fn package_skeleton() -> AnyView {
@@ -479,6 +508,7 @@ mod tests {
                     obtained_at: 1_758_500_000_000.0,
                 },
                 bucket: Some("quilt-lab-plates".to_string()),
+                revision_count: 1,
             },
             sync_paused: None,
         }
@@ -656,6 +686,29 @@ mod tests {
         assert!(
             !loose,
             "the loose namespace placeholder is gone; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The live pane's trigger arrives with the body, stating the page read's
+    /// count, and nothing opens until it is pressed: the list is lazy.
+    #[wasm_bindgen_test]
+    fn the_body_carries_the_revision_trigger() {
+        let el = mount(|| {
+            let w = Wiring::new();
+            view! { <Router>{package_body(page_data(), w)}</Router> }
+        });
+        let trigger = element_saying(&el, "Revisions you have (1)")
+            .closest("button")
+            .unwrap()
+            .expect("the trigger is a button");
+        assert_eq!(
+            trigger.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        assert!(
+            el.query_selector(":popover-open").unwrap().is_none(),
+            "no surface is open; markup was {}",
             el.inner_html()
         );
     }

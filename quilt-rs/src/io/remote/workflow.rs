@@ -512,6 +512,14 @@ mod tests {
         async fn verify_bucket(&self, _bucket: &str) -> Res {
             unreachable!("not part of the gate")
         }
+        async fn published_revisions(
+            &self,
+            _host: &Host,
+            _bucket: &str,
+            _namespace: &quilt_uri::Namespace,
+        ) -> Res<Vec<String>> {
+            unreachable!("not part of the gate")
+        }
     }
 
     /// The seam above the recovery: the gate makes the commit path's first S3

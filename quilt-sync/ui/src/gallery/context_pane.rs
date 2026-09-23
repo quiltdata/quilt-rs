@@ -32,6 +32,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
+use crate::commands::RevisionHistoryRow;
 use crate::kit::Align;
 use crate::kit::AnchoredOverlay;
 use crate::kit::BackLink;
@@ -66,24 +67,51 @@ fn ago(ms: f64) -> f64 {
 }
 
 /// The revisions this copy holds, newest first — which is what `list_revisions`
-/// returns and what the trigger counts. Four, because the trigger is hidden at
-/// one and a list of two never shows whether the surface scrolls.
+/// returns and what the trigger counts. Four, because a list of one or two
+/// never shows whether the surface scrolls.
 ///
 /// The newest has not been sent: that is the ordinary shape of this list, since
 /// the revision somebody is working on is the one they have not published, and a
 /// list where every row is identical on the one axis the glyph draws would prove
 /// nothing about the glyph.
 fn revisions() -> Vec<(&'static str, f64, Option<CatalogLink>)> {
+    held()
+        .into_iter()
+        .map(|(message, at, hash)| (message, at, hash.map(catalog)))
+        .collect()
+}
+
+/// [`revisions`] by the hash its catalog address carries, `None` for the one
+/// this copy has not sent — the one list both the hand-built cells and the live
+/// pane's answer draw from.
+fn held() -> Vec<(&'static str, f64, Option<&'static str>)> {
     vec![
         ("Add Caihong folder-upload note", ago(2.0 * HOUR), None),
         (
             "Re-run plate 7 with the corrected layout",
             ago(3.0 * DAY),
-            Some(catalog("c41d8f")),
+            Some("c41d8f"),
         ),
-        ("", ago(9.0 * DAY), Some(catalog("9a2b71"))),
-        ("Initial upload", ago(26.0 * DAY), Some(catalog("06e3ad"))),
+        ("", ago(9.0 * DAY), Some("9a2b71")),
+        ("Initial upload", ago(26.0 * DAY), Some("06e3ad")),
     ]
+}
+
+/// The live pane's answer: the same four revisions, as the backend sends them.
+/// Published is having a catalog address, as it is in every row above.
+fn history(
+    _namespace: String,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<RevisionHistoryRow>, String>>>> {
+    let rows = held()
+        .into_iter()
+        .map(|(message, at, hash)| RevisionHistoryRow {
+            message: Some(message.to_string()),
+            obtained_at: at,
+            published: hash.is_some(),
+            catalog_url: hash.map(catalog_href),
+        })
+        .collect();
+    Box::pin(async move { Ok(rows) })
 }
 
 /// Where a published revision is read. The hash is banned from the page's words
@@ -93,12 +121,11 @@ fn revisions() -> Vec<(&'static str, f64, Option<CatalogLink>)> {
 /// gallery has no Tauri host to hand an address to, and letting the anchor
 /// follow itself would take the gallery with it.
 fn catalog(revision: &str) -> CatalogLink {
-    CatalogLink::new(
-        format!(
-            "https://quilt-lab.example/b/quilt-lab-plates/packages/{NAMESPACE}/tree/{revision}/"
-        ),
-        Callback::new(|_url: String| ()),
-    )
+    CatalogLink::new(catalog_href(revision), Callback::new(|_url: String| ()))
+}
+
+fn catalog_href(revision: &str) -> String {
+    format!("https://quilt-lab.example/b/quilt-lab-plates/packages/{NAMESPACE}/tree/{revision}/")
 }
 
 fn scopes() -> Vec<Choice> {
@@ -354,8 +381,8 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
     Flip a radio and the caption and the download action answer together. \
     Click a trigger: the surface hangs leftwards over the file list, which is \
     the only direction the page has for it. In the list a published revision \
-    wears a cloud and links to the catalog; the unsent one wears the slashed \
-    cloud. \
+    wears a cloud and ends in an icon that opens the catalog; the unsent one \
+    wears the slashed cloud and no icon. \
     \
     Unresolved: `Replace mine with the published one` does not fit 280px and \
     truncates.";
@@ -417,7 +444,7 @@ pub fn ContextPaneScene() -> impl IntoView {
             title="The context pane"
             note=NOTE
         >
-            <Cell wide=true label="live slice — current revision and bucket">
+            <Cell wide=true label="live — current revision, bucket and history">
                 <crate::pages::CurrentRevisionPane
                     data=crate::commands::PackageContextData {
                         revision: crate::commands::CurrentRevisionData {
@@ -425,7 +452,11 @@ pub fn ContextPaneScene() -> impl IntoView {
                             obtained_at: ago(2.0 * HOUR),
                         },
                         bucket: Some("quilt-lab-plates".to_string()),
+                        revision_count: 4,
                     }
+                    namespace=NAMESPACE
+                    fetch=history
+                    open_catalog=Callback::new(|_: String| ())
                 />
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">

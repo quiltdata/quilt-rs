@@ -49,6 +49,13 @@ pub(super) struct GraphQlTestHttpClient {
     pub(super) top_level_error: Option<String>,
     pub(super) switch_result: serde_json::Value,
     pub(super) buckets: Vec<&'static str>,
+    /// The package's timestamped pointers, oldest first, for the `package`
+    /// query: `None` is no such package (`package: null`), and a `None` slot
+    /// is a pointer that vanished before it resolved — counted in `total`,
+    /// dropped from its page, as the registry's resolver does.
+    pub(super) package_revisions: Option<Vec<Option<String>>>,
+    /// Every `package` query's variables, in order.
+    pub(super) package_queries_seen: StdMutex<Vec<serde_json::Value>>,
     /// How many leading `/graphql` calls answer HTTP 401 before the endpoint
     /// starts working. Stands in for a session revoked server-side while the
     /// access token is still unexpired locally, so nothing on the client
@@ -73,6 +80,8 @@ impl Default for GraphQlTestHttpClient {
                 "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
             }),
             buckets: vec!["bucket-a", "bucket-b"],
+            package_revisions: None,
+            package_queries_seen: StdMutex::new(Vec::new()),
             graphql_fail_first_n: 0,
             tokens_seen: StdMutex::new(Vec::new()),
             token_calls: AtomicUsize::new(0),
@@ -89,6 +98,27 @@ impl GraphQlTestHttpClient {
             "role": {"name": self.me_role},
             "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
         })
+    }
+
+    /// One page of `package { revisions { total page { hash } } }`.
+    fn package_payload(&self, variables: &serde_json::Value) -> serde_json::Value {
+        self.package_queries_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(variables.clone());
+        let Some(slots) = &self.package_revisions else {
+            return serde_json::Value::Null;
+        };
+        let number = usize::try_from(variables["number"].as_u64().expect("number")).unwrap();
+        let per_page = usize::try_from(variables["perPage"].as_u64().expect("perPage")).unwrap();
+        let page = slots
+            .iter()
+            .skip((number - 1) * per_page)
+            .take(per_page)
+            .flatten()
+            .map(|hash| serde_json::json!({"hash": hash}))
+            .collect::<Vec<_>>();
+        serde_json::json!({"revisions": {"total": slots.len(), "page": page}})
     }
 }
 
@@ -169,12 +199,12 @@ impl HttpClient for GraphQlTestHttpClient {
             }))?);
         }
 
-        let query = serde_json::to_value(body)?["query"]
-            .as_str()
-            .expect("query field")
-            .to_string();
+        let body = serde_json::to_value(body)?;
+        let query = body["query"].as_str().expect("query field").to_string();
 
-        let data = if query.contains("switchRole") {
+        let data = if query.contains("package(") {
+            serde_json::json!({"package": self.package_payload(&body["variables"])})
+        } else if query.contains("switchRole") {
             serde_json::json!({"switchRole": self.switch_result})
         } else if query.contains("buckets") {
             serde_json::json!({

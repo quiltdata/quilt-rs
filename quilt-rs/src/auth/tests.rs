@@ -1125,6 +1125,46 @@ async fn readable_buckets_returns_the_role_scoped_list() -> Res {
     Ok(())
 }
 
+/// The listing rides the role surface's retry: a revoked token is
+/// force-refreshed once and the listing asked again, and a refusal that
+/// outlives the retry is a missing session, not a bare transport error.
+#[test(tokio::test)]
+async fn package_revisions_recovers_from_a_revoked_token_by_forcing_a_refresh() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        package_revisions: Some(vec![Some("only-hash".to_string())]),
+        graphql_fail_first_n: 1,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let hashes = auth
+        .package_revisions(&client, &host, "bucket", &("team", "dataset").into())
+        .await?;
+
+    assert_eq!(hashes, vec!["only-hash"]);
+    assert_eq!(client.token_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn package_revisions_maps_a_persistent_401_to_login_required() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        graphql_fail_first_n: usize::MAX,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let result = auth
+        .package_revisions(&client, &host, "bucket", &("team", "dataset").into())
+        .await;
+
+    assert!(
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
+        "expected LoginRequired after a persistent 401, got: {result:?}"
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
     let storage = Arc::new(MockStorage::default());

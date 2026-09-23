@@ -471,6 +471,14 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
         std::future::ready(Err(rejected_credential()))
     }
+    fn published_revisions(
+        &self,
+        _host: &Host,
+        _bucket: &str,
+        _namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(rejected_credential()))
+    }
 }
 
 fn rejected_credential() -> Error {
@@ -480,7 +488,7 @@ fn rejected_credential() -> Error {
     })
 }
 
-struct LoggedOutRemote;
+pub(super) struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
     fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -526,12 +534,20 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
         std::future::ready(Ok(()))
     }
+    fn published_revisions(
+        &self,
+        _host: &Host,
+        _bucket: &str,
+        _namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
 }
 
 /// A remote that refuses every read with `AccessDenied`, simulating a role
 /// that cannot reach the bucket. Distinct from [`LoggedOutRemote`]: the
 /// credentials are valid, the request arrived, and it was refused.
-struct DeniedRemote;
+pub(super) struct DeniedRemote;
 
 impl crate::io::remote::Remote for DeniedRemote {
     fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -576,6 +592,19 @@ impl crate::io::remote::Remote for DeniedRemote {
     }
     fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
         std::future::ready(Ok(()))
+    }
+    fn published_revisions(
+        &self,
+        _host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        let pointers = S3Uri {
+            bucket: bucket.to_string(),
+            key: crate::paths::tag_key(namespace, ""),
+            version: None,
+        };
+        std::future::ready(Err(denied(&pointers)))
     }
 }
 
