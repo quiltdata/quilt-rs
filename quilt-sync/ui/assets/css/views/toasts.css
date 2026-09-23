@@ -180,8 +180,9 @@
    unconditionally would be dark over a white page for every v1 reader with a
    dark desktop, which is the DEFAULT today.
 
-   `.qui-v2` is set on the root from the `main_page_v2` flag (`theme::set_v2`),
-   so these apply exactly when the reader has asked for the new design system.
+   `.qui-v2` is set on the root from the reader's preview preference
+   (`theme::set_v2`, fed by `main.rs`'s `design_preview`), so these apply
+   whenever *New design preview* is on.
 
    Residue, knowingly accepted: with the flag on, /settings, /commit, /merge and
    the package pages are still v1-styled and still light, so a toast raised
