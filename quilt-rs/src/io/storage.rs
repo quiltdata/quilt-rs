@@ -51,6 +51,15 @@ pub trait Storage {
         path: impl AsRef<Path>,
     ) -> impl Future<Output = Res<DateTime<Utc>>>;
 
+    /// Hard-links `to` to the file at `from`, failing with
+    /// [`std::io::ErrorKind::AlreadyExists`] if anything is at `to`: an atomic
+    /// place-if-absent, unlike [`rename`](Self::rename), which replaces.
+    fn hard_link(
+        &self,
+        from: impl AsRef<Path> + Send,
+        to: impl AsRef<Path> + Send,
+    ) -> impl Future<Output = Result<(), std::io::Error>> + Send;
+
     /// Opens file (doesn't read contents)
     fn open_file(&self, path: impl AsRef<Path> + Send) -> impl Future<Output = Res<File>> + Send;
 
@@ -110,6 +119,14 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
 
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
         (**self).modified_timestamp(path).await
+    }
+
+    async fn hard_link(
+        &self,
+        from: impl AsRef<Path> + Send,
+        to: impl AsRef<Path> + Send,
+    ) -> Result<(), std::io::Error> {
+        (**self).hard_link(from, to).await
     }
 
     async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<File> {

@@ -77,7 +77,72 @@ async fn commit_staged(
     storage.modified_timestamp(&mutable_target).await
 }
 
-/// Renames each staged file onto its destination, refusing to overwrite one a
+/// How [`link_staged_into_place`] ended when it did not refuse.
+#[derive(Debug, PartialEq, Eq)]
+enum Placement {
+    /// Every staged file is linked at its destination.
+    Linked,
+    /// This filesystem has no hard links; nothing was placed.
+    LinksUnsupported,
+}
+
+/// Whether a failed first link means the filesystem cannot hard-link at all,
+/// rather than that this one link failed.
+///
+/// `Unsupported` is ENOTSUP/EOPNOTSUPP/ENOSYS (exFAT and SMB on macOS, FUSE),
+/// `PermissionDenied` is EPERM from Linux FAT, and `CrossesDevices` is EXDEV.
+/// A genuine EACCES lands here too, and the rename it falls back to fails the
+/// same way, so nothing is written either.
+fn links_unsupported(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::Unsupported
+            | std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::CrossesDevices
+    )
+}
+
+/// Links every staged file at its destination, refusing any destination that
+/// exists at the moment of its own link, and taking back the links it made
+/// before a refusal or error so that nothing is placed.
+///
+/// A hard link is the no-clobber counterpart of the rename: it fails with
+/// `AlreadyExists`, atomically, if anything is at the destination, so a file
+/// created after the preflight is refused rather than replaced. Every row is
+/// linked before any staged file goes, so a rollback loses nothing: each
+/// staged copy is still there, and the staging cleanup drops them after.
+async fn link_staged_into_place(
+    storage: &(impl Storage + Sync),
+    staged: &[(PathBuf, PathBuf, ManifestRow)],
+) -> Res<Placement> {
+    for (linked, (staged_path, working_dest, row)) in staged.iter().enumerate() {
+        if let Some(parent) = working_dest.parent() {
+            storage.create_dir_all(parent).await?;
+        }
+        let Err(err) = storage.hard_link(staged_path, working_dest).await else {
+            continue;
+        };
+        if linked == 0 && links_unsupported(&err) {
+            debug!("Hard links are unsupported here ({err}); renaming instead");
+            return Ok(Placement::LinksUnsupported);
+        }
+        // Only this call's links: row `linked` failed, so its destination is
+        // not ours to remove.
+        for (_, placed_dest, _) in &staged[..linked] {
+            let _ = storage.remove_file(placed_dest).await;
+        }
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            debug!("❌ A local file appeared at {}", working_dest.display());
+            return Err(Error::InstallPath(InstallPathError::LocalFileExists(vec![
+                row.logical_key.clone(),
+            ])));
+        }
+        return Err(err.into());
+    }
+    Ok(Placement::Linked)
+}
+
+/// Moves each staged file onto its destination, refusing to overwrite one a
 /// caller asked to protect that no longer holds the content it was verified at
 /// ([`Protect::BaseContent`]), or one that exists at all ([`Protect::Absent`]).
 ///
@@ -88,9 +153,13 @@ async fn commit_staged(
 /// each rename, the exposure is back to the two syscalls between them.
 ///
 /// [`Protect::Absent`] checks every destination in one pass before the first
-/// rename instead, so a refusal lands nothing: a row renamed before a later one
+/// move instead, so a refusal lands nothing: a row placed before a later one
 /// was refused would be left untracked, and a retry would refuse it in turn.
-/// The exposure is the local rename loop rather than the fetch.
+/// The move itself then refuses too: each file is hard-linked rather than
+/// renamed, which fails on an existing destination, and a refusal there takes
+/// back the rows already linked ([`link_staged_into_place`]). Only where the
+/// filesystem has no hard links does it fall back to renaming, leaving the
+/// rename loop exposed.
 ///
 /// Fail-safe in the same direction as the conflict rule: a file that cannot be
 /// read is treated as changed, so the worst case is a retryable refusal rather
@@ -114,6 +183,21 @@ async fn swap_staged_into_place(
                 appeared,
             )));
         }
+        if link_staged_into_place(storage, staged).await? == Placement::Linked {
+            for (_, working_dest, row) in staged {
+                lineage.paths.insert(
+                    row.logical_key.clone(),
+                    PathState {
+                        timestamp: storage.modified_timestamp(working_dest).await?,
+                        hash: row.hash.clone().into(),
+                    },
+                );
+                debug!("✔️ Linked in {}", working_dest.display());
+            }
+            return Ok(());
+        }
+        // No hard links on this filesystem: the preflight above is the only
+        // guard, and the renames below replace a file created after it.
     }
     for (staged_path, working_dest, row) in staged {
         if let Protect::BaseContent(expected) = protect
@@ -188,6 +272,9 @@ pub(crate) enum Protect<'a> {
     /// Replace nothing: refuse a destination that exists. Anything there is a
     /// file this copy does not track — the user's own, never committed — and
     /// writing over it would lose it just as surely as an edit to a tracked one.
+    /// Checked up front and then by the placement itself, a hard link that
+    /// fails on an existing file, so none created in between is overwritten
+    /// either (except where the filesystem has no hard links).
     Absent,
 }
 
@@ -261,8 +348,8 @@ pub async fn install_paths(
 ) -> Res<PackageLineage> {
     refuse_already_installed(&lineage, entries_paths)?;
     refuse_existing_working_files(storage, &working_dir, entries_paths).await?;
-    // Checked up front so a refusal fetches nothing, and again before each
-    // rename (`Protect::Absent`) because a file can appear during the fetch.
+    // Checked up front so a refusal fetches nothing, and again at placement
+    // (`Protect::Absent`) because a file can appear during the fetch.
     install_paths_over(
         lineage,
         manifest,
@@ -998,6 +1085,80 @@ mod tests {
 
         assert_eq!(storage.read_bytes(&working_dest).await?, b"remote bytes");
         assert!(lineage.paths.contains_key(&logical_key));
+
+        Ok(())
+    }
+
+    /// The preflight is a whole placement loop before the last move; a file
+    /// created at a later destination in that gap must not be overwritten, and
+    /// the rows already placed are taken back so the refusal lands nothing.
+    #[test(tokio::test)]
+    async fn a_file_created_after_the_preflight_is_kept_and_earlier_rows_are_rolled_back() -> Res {
+        let storage = MockStorage::default();
+        let row = |key: &str| -> Res<ManifestRow> {
+            Ok(ManifestRow {
+                logical_key: PathBuf::from(key),
+                hash: multihash::Multihash::wrap(0x12, b"anything")?.try_into()?,
+                ..ManifestRow::default()
+            })
+        };
+        let (first_staged, first_dest) = (PathBuf::from("staging/run/1"), PathBuf::from("work/a"));
+        let (second_staged, second_dest) =
+            (PathBuf::from("staging/run/2"), PathBuf::from("work/sub/b"));
+        for staged in [&first_staged, &second_staged] {
+            storage
+                .write_byte_stream(staged, ByteStream::from_static(b"remote bytes"))
+                .await?;
+        }
+        // Past the preflight: the user's file appears before the second move.
+        storage
+            .write_byte_stream(&second_dest, ByteStream::from_static(b"users new file"))
+            .await?;
+
+        let result = link_staged_into_place(
+            &storage,
+            &[
+                (first_staged.clone(), first_dest.clone(), row("a")?),
+                (second_staged.clone(), second_dest.clone(), row("sub/b")?),
+            ],
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result,
+                Err(Error::InstallPath(InstallPathError::LocalFileExists(ref p))) if p == &vec![PathBuf::from("sub/b")]
+            ),
+            "got {result:?}"
+        );
+        assert_eq!(storage.read_bytes(&second_dest).await?, b"users new file");
+        assert!(
+            !storage.exists(&first_dest).await,
+            "the first row is rolled back"
+        );
+        assert_eq!(storage.read_bytes(&first_staged).await?, b"remote bytes");
+        assert_eq!(storage.read_bytes(&second_staged).await?, b"remote bytes");
+
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn every_staged_file_is_linked_into_place_when_nothing_is_there() -> Res {
+        let storage = MockStorage::default();
+        let row = ManifestRow {
+            logical_key: PathBuf::from("sub/a"),
+            hash: multihash::Multihash::wrap(0x12, b"anything")?.try_into()?,
+            ..ManifestRow::default()
+        };
+        let (staged, dest) = (PathBuf::from("staging/run/1"), PathBuf::from("work/sub/a"));
+        storage
+            .write_byte_stream(&staged, ByteStream::from_static(b"remote bytes"))
+            .await?;
+
+        let placement = link_staged_into_place(&storage, &[(staged, dest.clone(), row)]).await?;
+
+        assert_eq!(placement, Placement::Linked);
+        assert_eq!(storage.read_bytes(&dest).await?, b"remote bytes");
 
         Ok(())
     }

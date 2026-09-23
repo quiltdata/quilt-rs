@@ -70,6 +70,16 @@ impl Storage for MockStorage {
         Ok(fs::rename(from_path, to_path).await?)
     }
 
+    async fn hard_link(
+        &self,
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+    ) -> Result<(), std::io::Error> {
+        let from_path = relative_to_temp_dir(&self.temp_dir, &from);
+        let to_path = relative_to_temp_dir(&self.temp_dir, &to);
+        fs::hard_link(from_path, to_path).await
+    }
+
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Res {
         let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
         Ok(fs::create_dir_all(rel_path).await?)
