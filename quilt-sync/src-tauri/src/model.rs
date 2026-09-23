@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use mockall::automock;
@@ -124,6 +124,23 @@ pub trait QuiltModel {
         lineage: &quilt::lineage::PackageLineage,
     ) -> Result<Vec<quilt::flow::HistoryEntry>, Error> {
         Ok(package.revision_history(lineage).await?)
+    }
+
+    /// The logical keys of the manifest `lineage` selects — the same snapshot
+    /// the rest of the page read uses, so a pull landing mid-read cannot pair
+    /// one revision's keys with another's tracked paths.
+    async fn get_installed_package_keys(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<BTreeSet<PathBuf>, Error> {
+        Ok(package
+            .manifest_from_lineage(lineage)
+            .await?
+            .rows
+            .into_iter()
+            .map(|row| row.logical_key)
+            .collect())
     }
 
     async fn get_installed_package_records(
