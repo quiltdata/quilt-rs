@@ -377,6 +377,28 @@ pub struct PackageContextData {
     /// How many revisions this copy holds — the trigger's N. The list itself
     /// is `get_revision_history`, fetched on open.
     pub revision_count: usize,
+    pub keeping: KeepingData,
+}
+
+/// Which files this copy keeps. Mirrors
+/// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KeepingScope {
+    IndividualFiles,
+    EntirePackage,
+}
+
+/// The Keeping section: the standing rule, and what it has not yet fetched.
+/// Mirrors `src-tauri/src/commands/package_page.rs` field for field.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepingData {
+    pub scope: KeepingScope,
+    /// Files in the current revision — the caption's M.
+    pub total: usize,
+    /// The backlog, and exactly what `Download N files` installs.
+    pub remote_only: Vec<String>,
 }
 
 /// The current revision's user-facing facts.
@@ -490,6 +512,17 @@ pub async fn get_revision_history(namespace: String) -> Result<Vec<RevisionHisto
         namespace: String,
     }
     tauri::invoke("get_revision_history", &Args { namespace }).await
+}
+
+/// Install the backlog the page read listed. Keeping's download action.
+pub async fn package_download_backlog(namespace: String, paths: Vec<String>) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        paths: Vec<String>,
+    }
+    tauri::invoke("package_download_backlog", &Args { namespace, paths }).await
 }
 
 pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
@@ -1612,17 +1645,17 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, PackageContextData, PackageItemData, PullOutcome,
-        RevisionHistoryRow, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        CommitViolation, CommitWorkflows, KeepingScope, PackageContextData, PackageItemData,
+        PullOutcome, RevisionHistoryRow, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
 
     /// Anchored identically in the backend's
-    /// `current_revision_context_wire_form_is_verbatim` test.
+    /// `current_revision_context_wire_form_is_verbatim` test, `keeping` included.
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4}"#,
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]}}"#,
         )
         .unwrap();
 
@@ -1633,6 +1666,9 @@ mod tests {
         );
         assert_eq!(context.bucket.as_deref(), Some("quilt-lab-plates"));
         assert_eq!(context.revision_count, 4);
+        assert_eq!(context.keeping.scope, KeepingScope::EntirePackage);
+        assert_eq!(context.keeping.total, 56);
+        assert_eq!(context.keeping.remote_only, ["plate/b.csv", "plate/c.csv"]);
     }
 
     /// Anchored identically in the backend's

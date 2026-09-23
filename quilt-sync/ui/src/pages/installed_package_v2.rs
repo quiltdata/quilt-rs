@@ -17,6 +17,7 @@ use crate::components::appbar::appbar_actions;
 mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
+pub(crate) mod keeping;
 mod revision_history;
 mod role_dialog;
 
@@ -28,7 +29,7 @@ stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss
 
 /// What a command reported, and which package it reported about.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Outcome {
+pub struct Outcome {
     pub namespace: String,
     pub variant: BannerVariant,
     /// The page's own sentence. Never the backend's.
@@ -49,15 +50,17 @@ pub(crate) struct Outcome {
 /// reader has open stays open, and a navigation asked for by a command that
 /// settles after the rebuild still happens.
 ///
-/// `pub(crate)` rather than `pub(super)`: `PageHeader`'s generated props struct
-/// carries it, and a prop type less visible than the props struct is what the
-/// `private_interfaces` lint fires on — and warnings are denied.
+/// Public so the gallery can hand the live context pane an idle one.
 #[derive(Clone, Copy)]
-pub(crate) struct Wiring {
+pub struct Wiring {
     /// One command at a time. Every control on the header reads this, so a
     /// second cannot start on top of the first — two writes to one working
     /// tree is a race the page has no way to arbitrate.
     pub busy: RwSignal<bool>,
+    /// Whether the command holding `busy` is Keeping's download. Here, not in
+    /// the pane: the download writes files, the watcher re-reads, and the
+    /// rebuilt button must keep its spinner.
+    pub downloading: RwSignal<bool>,
     /// What the last command said, and which package it said it about. Keyed,
     /// because a result arriving for a package the page no longer shows is not
     /// this page's news — see `outcome_band`.
@@ -89,9 +92,53 @@ async fn holding<T>(
     answer
 }
 
+/// Run a command, hold the page while it runs, and report only what the band
+/// is for.
+///
+/// Success says nothing here. A command whose success IS worth a sentence —
+/// undo — sets its own outcome, because it is the exception rather than the
+/// rule, and a helper that reported every success would put `Get latest`'s
+/// line on the page behind the toast that already carried its report.
+///
+/// Starting retracts whatever the band said last, in `holding`, so a failure
+/// does not outlive the retry that succeeds.
+///
+/// `on_failure` is the page's own sentence for the command not happening; the
+/// backend's text follows it as the detail, which is the split the pause band
+/// already makes.
+pub(super) fn run(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    namespace: String,
+    on_failure: &'static str,
+    after: Option<Trigger>,
+    task: impl std::future::Future<Output = Result<String, String>> + 'static,
+) {
+    // The controls are disabled while this is true, so this guard only
+    // catches a press already in flight when the signal was written.
+    if busy.get_untracked() {
+        return;
+    }
+    leptos::task::spawn_local(async move {
+        match holding(busy, outcome, task).await {
+            Ok(_) => {
+                if let Some(reload) = after {
+                    reload.notify();
+                }
+            }
+            Err(message) => outcome.set(Some(Outcome {
+                namespace,
+                variant: BannerVariant::Critical,
+                lead: on_failure.to_string(),
+                detail: Some(message),
+            })),
+        }
+    });
+}
+
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
-pub(crate) struct Dialogs {
+pub struct Dialogs {
     /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
     /// one dialog: the state calls for it, or the reader chooses it.
     pub bucket: RwSignal<bool>,
@@ -105,9 +152,11 @@ pub(crate) struct Dialogs {
 }
 
 impl Wiring {
-    fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             busy: RwSignal::new(false),
+            downloading: RwSignal::new(false),
             outcome: RwSignal::new(None),
             reload: Trigger::new(),
             goto: RwSignal::new(None),
@@ -134,6 +183,13 @@ impl Wiring {
     }
 }
 
+/// An idle page: nothing running, nothing said, no dialog open.
+impl Default for Wiring {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
 fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
@@ -148,6 +204,8 @@ fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
                     namespace=namespace
                     fetch=context_pane::fetch_revision_history
                     open_catalog=open_catalog
+                    w=w
+                    commands=keeping::KeepingCommands::app()
                 />
             </div>
         </div>
@@ -509,6 +567,11 @@ mod tests {
                 },
                 bucket: Some("quilt-lab-plates".to_string()),
                 revision_count: 1,
+                keeping: commands::KeepingData {
+                    scope: commands::KeepingScope::IndividualFiles,
+                    total: 1,
+                    remote_only: Vec::new(),
+                },
             },
             sync_paused: None,
         }
@@ -677,12 +740,13 @@ mod tests {
             aside.get_attribute("aria-label").as_deref(),
             Some("About this package")
         );
-        // The header's closed dialogs carry their own paragraphs; only the body's count.
+        // The header's closed dialogs and Keeping's group carry their own paragraphs;
+        // only loose ones count.
         let paragraphs = el.query_selector_all("p").unwrap();
         let loose = (0..paragraphs.length())
             .filter_map(|i| paragraphs.item(i))
             .filter_map(|n| n.dyn_into::<web_sys::Element>().ok())
-            .any(|p| p.closest("dialog").unwrap().is_none());
+            .any(|p| p.closest("dialog, [role=radiogroup]").unwrap().is_none());
         assert!(
             !loose,
             "the loose namespace placeholder is gone; markup was {}",
@@ -709,6 +773,46 @@ mod tests {
         assert!(
             el.query_selector(":popover-open").unwrap().is_none(),
             "no surface is open; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The live pane's Keeping arrives with the body, drawn from the page read:
+    /// the stored scope chosen, the present count, and no download at zero.
+    #[wasm_bindgen_test]
+    fn the_body_carries_keeping() {
+        let el = mount(|| {
+            let w = Wiring::new();
+            view! { <Router>{package_body(page_data(), w)}</Router> }
+        });
+        let group = el
+            .query_selector("[role=radiogroup]")
+            .unwrap()
+            .expect("a radiogroup");
+        let label = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&group.get_attribute("aria-labelledby").unwrap())
+            .expect("the group's label");
+        assert_eq!(label.text_content().unwrap_or_default().trim(), "Keeping");
+        let pick: web_sys::HtmlInputElement = element_saying(&group, "Files I pick")
+            .closest("label")
+            .unwrap()
+            .expect("the option's label")
+            .query_selector("input[type=radio]")
+            .unwrap()
+            .expect("the option's radio")
+            .unchecked_into();
+        assert!(pick.checked(), "the stored scope is chosen");
+        element_saying(&el, "All files are downloaded.");
+        let buttons = el.query_selector_all("button").unwrap();
+        let download = (0..buttons.length())
+            .filter_map(|i| buttons.item(i))
+            .any(|b| b.text_content().unwrap_or_default().contains("Download"));
+        assert!(
+            !download,
+            "nothing outstanding, no download; markup was {}",
             el.inner_html()
         );
     }

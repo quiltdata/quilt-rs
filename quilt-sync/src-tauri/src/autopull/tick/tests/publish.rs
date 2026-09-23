@@ -3,8 +3,6 @@
 
 use super::*;
 
-use crate::experimental_settings::ExperimentalSettings;
-
 /// A pull that advanced to `uri` and moved nothing — the tick only reads the
 /// success of the call, not the report it now carries.
 fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
@@ -108,7 +106,6 @@ fn quiet_status(
 fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInner {
     WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -137,7 +134,6 @@ fn make_inner_with_flags(
             },
             close_to_tray: false,
         })),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -943,7 +939,6 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -1058,7 +1053,6 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -1110,7 +1104,6 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),

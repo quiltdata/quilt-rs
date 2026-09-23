@@ -378,7 +378,9 @@ fn resolve(exit: &str, on_page: bool) -> AnyView {
 const NOTE: &str = "280px holding two blocks: what the page says about the package rather \
     than about its files. \
     \
-    Flip a radio and the caption and the download action answer together. \
+    Flip a radio in a hand-built cell and the caption and the download action \
+    answer together; the live cell's answer only once a stored choice is re-read, \
+    which the gallery never does. \
     Click a trigger: the surface hangs leftwards over the file list, which is \
     the only direction the page has for it. In the list a published revision \
     wears a cloud and ends in an icon that opens the catalog; the unsent one \
@@ -444,7 +446,7 @@ pub fn ContextPaneScene() -> impl IntoView {
             title="The context pane"
             note=NOTE
         >
-            <Cell wide=true label="live — current revision, bucket and history">
+            <Cell wide=true label="live — current revision, bucket, history and keeping">
                 <crate::pages::CurrentRevisionPane
                     data=crate::commands::PackageContextData {
                         revision: crate::commands::CurrentRevisionData {
@@ -453,10 +455,20 @@ pub fn ContextPaneScene() -> impl IntoView {
                         },
                         bucket: Some("quilt-lab-plates".to_string()),
                         revision_count: 4,
+                        keeping: crate::commands::KeepingData {
+                            scope: crate::commands::KeepingScope::EntirePackage,
+                            total: TOTAL,
+                            remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
+                        },
                     }
                     namespace=NAMESPACE
                     fetch=history
                     open_catalog=Callback::new(|_: String| ())
+                    w=crate::pages::Wiring::new()
+                    commands=crate::pages::KeepingCommands {
+                        store: |_, _| Box::pin(async { Ok(()) }),
+                        download: |_, _| Box::pin(async { Ok(()) }),
+                    }
                 />
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">

@@ -242,7 +242,8 @@ struct PackageRevisionsData {
 
 /// The hashes of every revision the registry lists for `namespace` in
 /// `bucket`, page by page. A package the registry does not know (never
-/// pushed) lists nothing.
+/// pushed) lists nothing; one that vanishes after the first page is an
+/// error, since the pages already read are not its whole history.
 pub(super) async fn query_package_revisions(
     http_client: &impl HttpClient,
     registry: &url::Host,
@@ -267,7 +268,13 @@ pub(super) async fn query_package_revisions(
         )
         .await?;
         let Some(package) = data.package else {
-            break;
+            if number == 1 {
+                break;
+            }
+            return Err(RoleError::GraphQl(format!(
+                "package {namespace} vanished from the registry while listing page {number}"
+            ))
+            .into());
         };
         let RevisionPage { total, page } = package.revisions;
         // A page drops pointers that vanished before resolving, so a short or
@@ -471,6 +478,32 @@ mod tests {
         assert_eq!(listed.len(), 150);
         assert_eq!(listed.last().map(String::as_str), Some("hash-249"));
         Ok(())
+    }
+
+    /// A package deleted between pages answers page 2 with `package: null`.
+    /// The 100 hashes already read are not the whole history, so the
+    /// listing is refused rather than returned short.
+    #[test(tokio::test)]
+    async fn query_package_revisions_refuses_a_package_gone_mid_listing() {
+        let client = GraphQlTestHttpClient {
+            package_revisions: Some((0..150).map(|i| Some(format!("hash-{i:03}"))).collect()),
+            package_gone_from_page: Some(2),
+            ..GraphQlTestHttpClient::default()
+        };
+        let result = query_package_revisions(
+            &client,
+            &get_registry_host(),
+            "quilt-bucket",
+            &("team", "dataset").into(),
+            ACCESS_TOKEN,
+        )
+        .await;
+
+        assert!(
+            matches!(&result, Err(Error::Role(RoleError::GraphQl(m))) if m.contains("team/dataset")),
+            "expected GraphQl error, got {result:?}"
+        );
+        assert_eq!(client.package_queries_seen.lock().unwrap().len(), 2);
     }
 
     /// `package: null` is a package never pushed: nothing is listed.

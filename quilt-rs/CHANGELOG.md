@@ -26,7 +26,8 @@
 - `InstalledPackage::current_revision(&lineage)` returns the `flow::Revision` that lineage snapshot selects — hash, when this copy obtained it, and message — or `None` when the lineage has no current hash. It reads only that one manifest, so a damaged older manifest that makes `InstalledPackage::revisions` fail does not break it. The caller passes the lineage it already read, so the revision and anything else taken from that lineage (the bucket, say) cannot come from two different states (<https://github.com/quiltdata/quilt-rs/pull/978>)
 - `InstalledPackage::revision_count` and `flow::count_revisions` count the revisions this copy holds without parsing any manifest. A damaged manifest is still counted, where `revisions` fails on it (<https://github.com/quiltdata/quilt-rs/pull/982>)
 - `InstalledPackage::revision_history(&lineage)` returns `revisions` as `flow::HistoryEntry` values, each with a `published` flag saying whether the registry of the lineage's remote lists that revision. It is one registry query for the whole package, not one per revision. A package with no remote, or a remote with no catalog host, makes no remote call and marks every entry unpublished (<https://github.com/quiltdata/quilt-rs/pull/982>)
-- `Remote::published_revisions` and `Auth::package_revisions` list the revision hashes a registry has for a package in a bucket, from its GraphQL `package.revisions`, reading every page. A package never pushed lists nothing. `Auth` locks and retries it as it does the role calls: one forced token refresh on a 401 or 403, then the error (<https://github.com/quiltdata/quilt-rs/pull/982>)
+- `Remote::published_revisions` and `Auth::package_revisions` list the revision hashes a registry has for a package in a bucket, from its GraphQL `package.revisions`, reading every page. A package never pushed lists nothing; one that vanishes partway through the listing is an error, never a short list. `Auth` locks and retries it as it does the role calls: one forced token refresh on a 401 or 403, then the error (<https://github.com/quiltdata/quilt-rs/pull/982>, <https://github.com/quiltdata/quilt-rs/pull/986>)
+- `InstalledPackage::manifest_from_lineage(&lineage)` is public: the manifest that lineage snapshot selects, so a caller reading a revision's files pairs them with the same lineage it read everything else from (<https://github.com/quiltdata/quilt-rs/pull/986>)
 
 ### Changed
 
@@ -34,6 +35,7 @@
 
 ### Fixed
 
+- `flow::install_paths` and `InstalledPackage::install_paths` refuse, with the new `InstallPathError::LocalFileExists` naming the paths, to install over a file already in the working folder that this copy does not track. They refused only tracked paths, so a user's new, uncommitted file at a requested path was silently replaced by the remote one. The check runs before anything is fetched, and again over every path just before the first file is moved into place, so a file created during the download is not overwritten either and a refusal leaves nothing half-installed (<https://github.com/quiltdata/quilt-rs/pull/986>)
 - `flow::list_revisions` and `InstalledPackage::revisions` skip hidden files in the installed-manifests directory, such as a `.tmp-<uuid>` left by an interrupted write or the OS's `.DS_Store`. They were read as manifests, so one that did not parse failed the whole listing, and one that did was listed as a revision named after the file (<https://github.com/quiltdata/quilt-rs/pull/982>)
 
 ## [v0.39.1] - 2026-09-18

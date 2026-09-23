@@ -21,6 +21,9 @@ pub use installed_package_v2::InstalledPackageV2;
 pub use installed_package_v2::context_pane::{CurrentRevisionPane, RevisionHistoryFetch};
 // The gallery's header scene draws the page's own overflow menu, inert.
 pub use installed_package_v2::{MenuCommand, MenuItem, menu_items};
+// The gallery's live context pane takes the page's wiring; it builds an idle one.
+pub use installed_package_v2::Wiring;
+pub use installed_package_v2::keeping::{BacklogDownload, KeepingCommands, ScopeStore};
 pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
 pub use main_page::MainPage;

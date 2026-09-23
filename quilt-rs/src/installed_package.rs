@@ -196,7 +196,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// Keeping selection and recovery on that same value prevents a concurrent
     /// lineage edit from changing which manifest supplies the message halfway
     /// through a larger read.
-    async fn manifest_from_lineage(&self, lineage: &lineage::PackageLineage) -> Res<Manifest> {
+    pub async fn manifest_from_lineage(&self, lineage: &lineage::PackageLineage) -> Res<Manifest> {
         let Some(hash) = lineage.current_hash() else {
             return Ok(Manifest::default());
         };

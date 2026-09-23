@@ -14,7 +14,6 @@ use crate::autopull::PushSettings;
 use crate::autopull::WindowMode;
 use crate::autopull::reporter::LogReporter;
 use crate::autopull::reporter::test_support::RecordingReporter;
-use crate::experimental_settings::ExperimentalSettings;
 use crate::model::MockQuiltModel;
 use crate::quilt::lineage::SyncScope;
 use crate::quilt::lineage::UpstreamState;
@@ -61,7 +60,6 @@ fn test_aggregator() -> Arc<crate::autopull::status::SyncTrayAggregator> {
 fn make_inner(settings: AutosyncSettings) -> WatcherInner {
     WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -480,7 +478,6 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -508,6 +505,82 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         "a pull that moved nothing posted a toast"
     );
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// A whole-package scope stored under the experiment is honoured with the
+/// experiment off: v2's Keeping promises files added later are downloaded too.
+#[tokio::test]
+async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host: Host = "catalog.dev".parse().unwrap();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    let mut lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+    lineage.sync_scope = SyncScope::EntirePackage;
+
+    let mut model = MockQuiltModel::new();
+    let lineage_for_list = lineage.clone();
+    model
+        .expect_get_installed_packages_list()
+        .returning(move || {
+            Ok(vec![
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into()),
+            ])
+        });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage_for_list.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model
+        .expect_get_installed_package_status()
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                BTreeMap::new(),
+            ))
+        });
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model
+        .expect_package_pull()
+        .withf(|_, _, scope| *scope == SyncScope::EntirePackage)
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            }))
+        });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        reporter: reporter.clone(),
+        aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+    };
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
     Ok(())
 }
 
@@ -574,7 +647,6 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -671,7 +743,6 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -768,7 +839,6 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -858,7 +928,6 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -1002,7 +1071,6 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -1073,7 +1141,6 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
@@ -1222,7 +1289,6 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),

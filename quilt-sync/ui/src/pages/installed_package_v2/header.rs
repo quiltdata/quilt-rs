@@ -67,7 +67,7 @@ use crate::util;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
-use super::{Dialogs, Outcome, Wiring, holding};
+use super::{Dialogs, Outcome, Wiring, holding, run};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
 
@@ -181,50 +181,6 @@ pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuIte
     });
 
     items
-}
-
-/// Run a command, hold the page while it runs, and report only what the band
-/// is for.
-///
-/// Success says nothing here. A command whose success IS worth a sentence —
-/// undo — sets its own outcome, because it is the exception rather than the
-/// rule, and a helper that reported every success would put `Get latest`'s
-/// line on the page behind the toast that already carried its report.
-///
-/// Starting retracts whatever the band said last, in `holding`, so a failure
-/// does not outlive the retry that succeeds.
-///
-/// `on_failure` is the page's own sentence for the command not happening; the
-/// backend's text follows it as the detail, which is the split the pause band
-/// already makes.
-fn run(
-    busy: RwSignal<bool>,
-    outcome: RwSignal<Option<Outcome>>,
-    namespace: String,
-    on_failure: &'static str,
-    after: Option<Trigger>,
-    task: impl std::future::Future<Output = Result<String, String>> + 'static,
-) {
-    // The controls are disabled while this is true, so this guard only
-    // catches a press already in flight when the signal was written.
-    if busy.get_untracked() {
-        return;
-    }
-    leptos::task::spawn_local(async move {
-        match holding(busy, outcome, task).await {
-            Ok(_) => {
-                if let Some(reload) = after {
-                    reload.notify();
-                }
-            }
-            Err(message) => outcome.set(Some(Outcome {
-                namespace,
-                variant: BannerVariant::Critical,
-                lead: on_failure.to_string(),
-                detail: Some(message),
-            })),
-        }
-    });
 }
 
 /// The overflow menu with a handler on each item.

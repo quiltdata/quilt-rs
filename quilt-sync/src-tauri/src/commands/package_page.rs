@@ -5,6 +5,9 @@
 //! spec corpus for why a v2 surface gets its own module rather than a wider v1
 //! one.
 
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -17,7 +20,10 @@ use crate::commands::main_page::{
 };
 use crate::error::Error;
 use crate::model;
+use crate::notify::Notify;
 use crate::quilt;
+use crate::telemetry::MixpanelEvent;
+use crate::telemetry::event::RemotePackageEvent;
 
 /// Everything the v2 package page draws, for one package.
 #[derive(Serialize)]
@@ -54,6 +60,29 @@ pub struct PackageContextData {
     /// How many revisions this copy holds — the trigger's N. A count, not the
     /// list: the list is `get_revision_history`, fetched on open.
     pub revision_count: usize,
+    pub keeping: KeepingData,
+}
+
+/// Which files this copy keeps, as the pane says it. Its own wire enum rather
+/// than `SyncScope`, whose serde form is the lineage file's, not this page's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeepingScope {
+    IndividualFiles,
+    EntirePackage,
+}
+
+/// The Keeping section: the standing rule, and what it has not yet fetched.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepingData {
+    /// The package's stored scope — the one both pull paths apply.
+    pub scope: KeepingScope,
+    /// Files in the current revision — the caption's M.
+    pub total: usize,
+    /// Listed by the current revision and not downloaded here, sorted: the
+    /// backlog, and exactly what `Download N files` installs.
+    pub remote_only: Vec<String>,
 }
 
 /// The current revision's user-facing facts.
@@ -237,11 +266,39 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
     at.timestamp_millis() as f64
 }
 
+/// A listed path is outstanding when this copy neither tracks it nor has a
+/// local change at it — v1's `remote` rows (`package_data.rs:195-206`).
+/// `changes` is `None` when the status could not be read: then only
+/// tracking decides, and the engine still refuses to overwrite a local file.
+fn keeping_data(
+    lineage: &quilt::lineage::PackageLineage,
+    keys: &BTreeSet<PathBuf>,
+    changes: Option<&quilt::lineage::ChangeSet>,
+) -> KeepingData {
+    let scope = match lineage.sync_scope {
+        quilt::lineage::SyncScope::IndividualFiles => KeepingScope::IndividualFiles,
+        quilt::lineage::SyncScope::EntirePackage => KeepingScope::EntirePackage,
+    };
+    let remote_only = keys
+        .iter()
+        .filter(|key| {
+            !lineage.paths.contains_key(*key) && changes.is_none_or(|c| !c.contains_key(*key))
+        })
+        .map(|key| key.display().to_string())
+        .collect();
+    KeepingData {
+        scope,
+        total: keys.len(),
+        remote_only,
+    }
+}
+
 fn package_context_data(
     namespace: &quilt_uri::Namespace,
     lineage: &quilt::lineage::PackageLineage,
     revision: Option<quilt::flow::Revision>,
     revision_count: usize,
+    keeping: KeepingData,
 ) -> Result<PackageContextData, Error> {
     let revision = revision.ok_or_else(|| {
         Error::General(format!(
@@ -260,6 +317,7 @@ fn package_context_data(
             .map(|uri| uri.bucket.clone())
             .filter(|bucket| !bucket.is_empty()),
         revision_count,
+        keeping,
     })
 }
 
@@ -303,13 +361,10 @@ async fn get_package_page_data_from_model(
         ))
     })?;
     let lineage = m.get_installed_package_lineage(&installed).await?;
-    let context = package_context_data(
-        namespace,
-        &lineage,
-        m.get_installed_package_current_revision(&installed, &lineage)
-            .await?,
-        m.get_installed_package_revision_count(&installed).await?,
-    )?;
+    let revision = m
+        .get_installed_package_current_revision(&installed, &lineage)
+        .await?;
+    let revision_count = m.get_installed_package_revision_count(&installed).await?;
 
     let has_local_commit = lineage.commit.is_some();
     let commit_has_parent = lineage
@@ -327,6 +382,8 @@ async fn get_package_page_data_from_model(
         .map(quilt_uri::S3PackageUri::from);
 
     let mut role_switch = None;
+    // `None` unless the status was read: a blocked read counts from tracking.
+    let mut changes: Option<quilt::lineage::ChangeSet> = None;
     let state = if misconfigured_remote(&lineage) {
         // The same predicate both main-page phases apply before resolving, for
         // the same reason: without a catalog there is nowhere to vend
@@ -349,7 +406,7 @@ async fn get_package_page_data_from_model(
             //
             // Below the denial the `Err` side catches: a denial is rank 1.
             Ok(status) => {
-                if let Some(files) = conflict_files(paused) {
+                let state = if let Some(files) = conflict_files(paused) {
                     PackageStateDto::PullConflict { files }
                 } else {
                     resolve_state(
@@ -360,7 +417,9 @@ async fn get_package_page_data_from_model(
                         // package, so it has no light phase to be provisional for.
                         Some(status.changes.len()),
                     )
-                }
+                };
+                changes = Some(status.changes);
+                state
             }
             Err(err) => match blocked_state(&err) {
                 // The one state whose remedy is worth a round trip, and the
@@ -375,6 +434,13 @@ async fn get_package_page_data_from_model(
             },
         }
     };
+
+    let keeping = keeping_data(
+        &lineage,
+        &m.get_installed_package_keys(&installed, &lineage).await?,
+        changes.as_ref(),
+    );
+    let context = package_context_data(namespace, &lineage, revision, revision_count, keeping)?;
 
     Ok(PackagePageData {
         context,
@@ -460,6 +526,55 @@ async fn get_revision_history_from_model(
     Ok(revision_history_rows(&lineage, entries))
 }
 
+/// Install the backlog the page read listed — Keeping's `Download N files`.
+///
+/// Namespace-keyed like the rest of this page, and not v1's
+/// `package_install_paths`: that opens the file browser after every install
+/// (the file, or the package folder), which a backlog catch-up must not do.
+#[tauri::command]
+pub async fn package_download_backlog(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let namespace: quilt_uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+
+    Notify::new(format!("Downloading the backlog of {namespace}"))
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
+        )
+        .map(
+            download_backlog_from_model(&*m, &watcher, &namespace, &paths).await,
+            format!("Downloaded {} files", paths.len()),
+            |err| format!("Failed to download files: {err}"),
+        )
+        .map(|_| ())
+}
+
+async fn download_backlog_from_model(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &quilt_uri::Namespace,
+    paths: &[String],
+) -> Result<(), Error> {
+    // A whole-package catch-up, so it raises the in-flight flag a pull does:
+    // quitting mid-download would leave files in place that the lineage never records.
+    let _applying = watcher.apply_guard(namespace);
+    let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
+    let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    m.package_install_paths(&installed, &paths).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -511,6 +626,15 @@ mod tests {
             .expect_get_installed_package_revision_count()
             .times(1)
             .returning(|_| Ok(4));
+        // `.times(1)`: one manifest read for Keeping per page read, and from
+        // the page's own lineage snapshot.
+        model
+            .expect_get_installed_package_keys()
+            .times(1)
+            .returning(|_, lineage| {
+                assert_eq!(lineage.current_hash(), Some("abcdef"));
+                Ok(keys(&["a.csv", "b.csv", "c.csv"]))
+            });
         // `return_once`, not `returning`: `Error` is not `Clone`. `.times(1)`
         // makes "exactly one status call" an assertion — without it a caller
         // that skipped the call entirely would pass silently.
@@ -565,11 +689,103 @@ mod tests {
             },
             bucket: Some("quilt-lab-plates".to_string()),
             revision_count: 4,
+            keeping: keeping_fixture(),
         };
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4}"#,
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]}}"#,
+        );
+    }
+
+    fn keys(paths: &[&str]) -> BTreeSet<PathBuf> {
+        paths.iter().map(PathBuf::from).collect()
+    }
+
+    fn lineage_tracking(paths: &[&str]) -> quilt::lineage::PackageLineage {
+        let mut lineage = quilt::lineage::PackageLineage::from_remote(
+            make_manifest_uri(NS),
+            "abcdef".to_string(),
+        );
+        for path in paths {
+            lineage
+                .paths
+                .insert(PathBuf::from(path), quilt::lineage::PathState::default());
+        }
+        lineage
+    }
+
+    fn modified(path: &str) -> quilt::lineage::ChangeSet {
+        quilt::lineage::ChangeSet::from([(
+            PathBuf::from(path),
+            quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
+        )])
+    }
+
+    fn keeping_fixture() -> KeepingData {
+        KeepingData {
+            scope: KeepingScope::EntirePackage,
+            total: 56,
+            remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
+        }
+    }
+
+    #[test]
+    fn keeping_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::to_string(&keeping_fixture()).unwrap(),
+            r#"{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]}"#,
+        );
+    }
+
+    #[test]
+    fn the_backlog_is_what_is_listed_but_neither_tracked_nor_changed_here() {
+        let lineage = lineage_tracking(&["a.csv"]);
+        let changes = modified("b.csv");
+
+        let keeping = keeping_data(
+            &lineage,
+            &keys(&["a.csv", "b.csv", "c.csv", "d.csv"]),
+            Some(&changes),
+        );
+
+        assert_eq!(keeping.total, 4);
+        assert_eq!(keeping.remote_only, vec!["c.csv", "d.csv"]);
+    }
+
+    #[test]
+    fn without_a_status_only_tracking_decides() {
+        let lineage = lineage_tracking(&["a.csv"]);
+
+        let keeping = keeping_data(&lineage, &keys(&["a.csv", "b.csv", "c.csv", "d.csv"]), None);
+
+        assert_eq!(keeping.remote_only, vec!["b.csv", "c.csv", "d.csv"]);
+    }
+
+    #[test]
+    fn a_tracked_path_the_revision_no_longer_lists_is_not_counted() {
+        let lineage = lineage_tracking(&["a.csv", "z.csv"]);
+        let listed = keys(&["a.csv", "b.csv"]);
+
+        let keeping = keeping_data(&lineage, &listed, None);
+
+        assert_eq!(keeping.total, listed.len());
+        assert!(!keeping.remote_only.contains(&"z.csv".to_string()));
+    }
+
+    #[test]
+    fn the_scope_is_the_one_the_package_stores() {
+        let listed = keys(&["a.csv"]);
+        let mut lineage = lineage_tracking(&[]);
+        assert_eq!(
+            keeping_data(&lineage, &listed, None).scope,
+            KeepingScope::IndividualFiles
+        );
+
+        lineage.sync_scope = quilt::lineage::SyncScope::EntirePackage;
+        assert_eq!(
+            keeping_data(&lineage, &listed, None).scope,
+            KeepingScope::EntirePackage
         );
     }
 
@@ -581,9 +797,14 @@ mod tests {
             "remote-hash".to_string(),
         );
 
-        let context =
-            package_context_data(&namespace, &lineage, Some(revision("Pending commit")), 1)
-                .unwrap();
+        let context = package_context_data(
+            &namespace,
+            &lineage,
+            Some(revision("Pending commit")),
+            1,
+            keeping_fixture(),
+        )
+        .unwrap();
 
         assert_eq!(
             context,
@@ -594,6 +815,7 @@ mod tests {
                 },
                 bucket: Some("test".to_string()),
                 revision_count: 1,
+                keeping: keeping_fixture(),
             }
         );
     }
@@ -606,6 +828,7 @@ mod tests {
             &quilt::lineage::PackageLineage::default(),
             Some(revision("Local commit")),
             1,
+            keeping_fixture(),
         )
         .unwrap();
 
@@ -619,9 +842,14 @@ mod tests {
         uri.bucket.clear();
         let lineage = quilt::lineage::PackageLineage::from_remote(uri, "remote-hash".to_string());
 
-        let context =
-            package_context_data(&namespace, &lineage, Some(revision("Initial upload")), 1)
-                .unwrap();
+        let context = package_context_data(
+            &namespace,
+            &lineage,
+            Some(revision("Initial upload")),
+            1,
+            keeping_fixture(),
+        )
+        .unwrap();
 
         assert_eq!(context.bucket, None);
     }
@@ -634,6 +862,7 @@ mod tests {
             &quilt::lineage::PackageLineage::default(),
             None,
             1,
+            keeping_fixture(),
         )
         .unwrap_err();
 
@@ -648,6 +877,46 @@ mod tests {
     async fn the_page_read_carries_the_revision_count() {
         let data = page(&RoleCache::default(), Ok(settled()), None).await;
         assert_eq!(data.context.revision_count, 4);
+    }
+
+    #[tokio::test]
+    async fn the_page_read_carries_what_this_copy_keeps() {
+        let keeping = page(&RoleCache::default(), Ok(settled()), None)
+            .await
+            .context
+            .keeping;
+
+        assert_eq!(keeping.scope, KeepingScope::IndividualFiles);
+        assert_eq!(keeping.total, 3);
+        assert_eq!(keeping.remote_only, vec!["a.csv", "b.csv", "c.csv"]);
+    }
+
+    #[tokio::test]
+    async fn a_path_changed_here_is_not_outstanding() {
+        let status =
+            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, modified("b.csv"));
+
+        let keeping = page(&RoleCache::default(), Ok(status), None)
+            .await
+            .context
+            .keeping;
+
+        assert_eq!(keeping.remote_only, vec!["a.csv", "c.csv"]);
+    }
+
+    /// No role expectation: without a host, `RoleCache::get` is never reached.
+    #[tokio::test]
+    async fn a_blocked_read_still_counts_from_tracking_alone() {
+        let page = page(&RoleCache::default(), Err(access_denied_error()), None).await;
+
+        assert_eq!(
+            page.header.state,
+            PackageStateDto::RoleDenied { role: None }
+        );
+        assert_eq!(
+            page.context.keeping.remote_only,
+            vec!["a.csv", "b.csv", "c.csv"]
+        );
     }
 
     fn history_entry(
@@ -785,6 +1054,111 @@ mod tests {
         let err = get_revision_history_from_model(&m, &ns)
             .await
             .expect_err("an absent package has no history to be empty");
+
+        assert!(err.to_string().contains("team/dataset"), "{err}");
+    }
+
+    fn test_watcher() -> Watcher {
+        Watcher::new_for_test(std::sync::Arc::new(crate::autopull::reporter::LogReporter))
+    }
+
+    /// The download writes working files like a pull, so it holds the flag
+    /// that makes quitting ask first, and only while it writes.
+    #[tokio::test]
+    async fn the_download_holds_the_apply_flag_while_it_writes() {
+        let watcher = test_watcher();
+        let aggregator = watcher.inner_for_test().aggregator.clone();
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_install_paths()
+            .times(1)
+            .returning(move |_, _| {
+                assert!(aggregator.apply_in_progress(), "held while installing");
+                Ok(std::collections::BTreeMap::new())
+            });
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        download_backlog_from_model(&m, &watcher, &ns, &["plate/b.csv".into()])
+            .await
+            .expect("the download succeeds");
+
+        assert!(
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "and dropped once it returns"
+        );
+    }
+
+    /// A download mock that asserts it installs `expected` and never opens
+    /// the file browser, as v1's install path does after every install.
+    fn mock_download(expected: &'static [&'static str]) -> crate::model::MockQuiltModel {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_install_paths()
+            .times(1)
+            .returning(move |_, paths| {
+                assert_eq!(
+                    paths,
+                    expected.iter().map(PathBuf::from).collect::<Vec<_>>()
+                );
+                Ok(std::collections::BTreeMap::new())
+            });
+        m.expect_reveal_in_file_browser().times(0);
+        m.expect_open_in_file_browser().times(0);
+        m
+    }
+
+    #[tokio::test]
+    async fn the_download_installs_exactly_the_paths_it_was_given() {
+        let m = mock_download(&["plate/b.csv", "plate/c.csv"]);
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        download_backlog_from_model(
+            &m,
+            &test_watcher(),
+            &ns,
+            &["plate/b.csv".into(), "plate/c.csv".into()],
+        )
+        .await
+        .expect("the listed paths install");
+    }
+
+    #[tokio::test]
+    async fn a_single_file_download_opens_nothing() {
+        let m = mock_download(&["plate/b.csv"]);
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        download_backlog_from_model(&m, &test_watcher(), &ns, &["plate/b.csv".into()])
+            .await
+            .expect("the one path installs");
+    }
+
+    #[tokio::test]
+    async fn a_refused_download_is_an_error() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_install_paths()
+            .returning(|_, _| Err(access_denied_error()));
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let err = download_backlog_from_model(&m, &test_watcher(), &ns, &["plate/b.csv".into()])
+            .await
+            .expect_err("a refusal reaches the caller");
+
+        assert!(err.is_access_denied(), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_package_cannot_download() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package().returning(|_| Ok(None));
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let err = download_backlog_from_model(&m, &test_watcher(), &ns, &["plate/b.csv".into()])
+            .await
+            .expect_err("an absent package has nothing to download into");
 
         assert!(err.to_string().contains("team/dataset"), "{err}");
     }

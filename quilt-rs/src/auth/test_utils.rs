@@ -54,6 +54,9 @@ pub(super) struct GraphQlTestHttpClient {
     /// is a pointer that vanished before it resolved — counted in `total`,
     /// dropped from its page, as the registry's resolver does.
     pub(super) package_revisions: Option<Vec<Option<String>>>,
+    /// The first page that answers `package: null`, standing in for a
+    /// package deleted between pages of one listing.
+    pub(super) package_gone_from_page: Option<u64>,
     /// Every `package` query's variables, in order.
     pub(super) package_queries_seen: StdMutex<Vec<serde_json::Value>>,
     /// How many leading `/graphql` calls answer HTTP 401 before the endpoint
@@ -81,6 +84,7 @@ impl Default for GraphQlTestHttpClient {
             }),
             buckets: vec!["bucket-a", "bucket-b"],
             package_revisions: None,
+            package_gone_from_page: None,
             package_queries_seen: StdMutex::new(Vec::new()),
             graphql_fail_first_n: 0,
             tokens_seen: StdMutex::new(Vec::new()),
@@ -109,7 +113,14 @@ impl GraphQlTestHttpClient {
         let Some(slots) = &self.package_revisions else {
             return serde_json::Value::Null;
         };
-        let number = usize::try_from(variables["number"].as_u64().expect("number")).unwrap();
+        let number = variables["number"].as_u64().expect("number");
+        if self
+            .package_gone_from_page
+            .is_some_and(|gone| number >= gone)
+        {
+            return serde_json::Value::Null;
+        }
+        let number = usize::try_from(number).unwrap();
         let per_page = usize::try_from(variables["perPage"].as_u64().expect("perPage")).unwrap();
         let page = slots
             .iter()

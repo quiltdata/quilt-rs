@@ -14,7 +14,6 @@ use tokio::sync::watch;
 
 use crate::autopull::status::SyncTrayAggregator;
 use crate::commands::RoleCache;
-use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model::Model;
 use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
@@ -117,10 +116,6 @@ pub(crate) struct Clocks {
 /// the maps in place without round-tripping through `Watcher` methods.
 pub(crate) struct WatcherInner {
     pub settings: SharedAutosyncSettings,
-    /// The experiment gate. Read per tick so the standing sync scope applies
-    /// to background pulls too — a scope that only held for hand-pressed
-    /// pulls would miss the case it exists for.
-    pub experimental: SharedExperimentalSettings,
     pub window_mode: SharedWindowMode,
     pub publish_settings: SharedPublishSettings,
     pub paused: RwLock<BTreeMap<Namespace, PausedReason>>,
@@ -189,7 +184,6 @@ impl Watcher {
         settings: SharedAutosyncSettings,
         window_mode: SharedWindowMode,
         publish_settings: SharedPublishSettings,
-        experimental: SharedExperimentalSettings,
         reporter: Arc<dyn StatusReporter>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
@@ -198,7 +192,6 @@ impl Watcher {
             settings,
             window_mode,
             publish_settings,
-            experimental,
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
             login_blocked: RwLock::new(BTreeMap::new()),
@@ -381,9 +374,6 @@ impl Watcher {
         Self {
             inner: Arc::new(WatcherInner {
                 settings: Arc::new(RwLock::new(AutosyncSettings::default())),
-                experimental: Arc::new(RwLock::new(
-                    crate::experimental_settings::ExperimentalSettings::default(),
-                )),
                 window_mode: create_window_mode(),
                 publish_settings: Arc::new(RwLock::new(
                     crate::publish_settings::PublishSettings::default(),
@@ -508,9 +498,6 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
     let (tx, _rx) = tokio::sync::watch::channel(status::SyncTrayStatus::default());
     WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
-        experimental: Arc::new(RwLock::new(
-            crate::experimental_settings::ExperimentalSettings::default(),
-        )),
         window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(
             crate::publish_settings::PublishSettings::default(),

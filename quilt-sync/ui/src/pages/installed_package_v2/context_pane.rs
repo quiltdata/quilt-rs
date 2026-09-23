@@ -1,14 +1,16 @@
 //! The first complete slice of the package context pane.
 //!
-//! One current revision, the bucket it belongs to, and the revisions this copy
-//! holds, loaded when their popover opens. Scope and resolution controls arrive
-//! with the data and actions that can make them truthful.
+//! One current revision, the bucket it belongs to, the revisions this copy
+//! holds, loaded when their popover opens, and what this copy keeps. Resolution
+//! controls arrive with the data and actions that can make them truthful.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use leptos::prelude::*;
 
+use super::Wiring;
+use super::keeping::{KeepingCommands, KeepingSection};
 use super::revision_history::{History, Key, Shown};
 use crate::commands;
 use crate::kit::{
@@ -48,7 +50,11 @@ pub fn CurrentRevisionPane(
     /// Opens a published row's catalog address. The page's reports failure
     /// on the band; the gallery's does nothing.
     open_catalog: Callback<String>,
+    /// The page's command lock and band, which Keeping's commands take.
+    w: Wiring,
+    commands: KeepingCommands,
 ) -> impl IntoView {
+    let keeping = data.keeping;
     let bucket = data.bucket.filter(|bucket| !bucket.is_empty()).map_or_else(
         || "No S3 bucket".to_string(),
         |bucket| format!("s3://{bucket}"),
@@ -139,6 +145,12 @@ pub fn CurrentRevisionPane(
                         </div>
                     </AnchoredOverlay>
                 </PaneSection>
+                <KeepingSection
+                    namespace=namespace.get_value()
+                    data=keeping
+                    w=w
+                    commands=commands
+                />
             </Card>
         </aside>
     }
@@ -209,6 +221,8 @@ pub fn CurrentRevisionPaneSkeleton() -> impl IntoView {
 mod tests {
     use super::*;
     use crate::commands::{CurrentRevisionData, RevisionHistoryRow};
+    use crate::pages::installed_package_v2::Wiring;
+    use crate::pages::installed_package_v2::keeping::KeepingCommands;
     use crate::test_support::{element_saying, mount, sleep_ms};
     use std::cell::Cell;
     use std::future::Future;
@@ -233,6 +247,11 @@ mod tests {
             },
             bucket: bucket.map(ToString::to_string),
             revision_count,
+            keeping: commands::KeepingData {
+                scope: commands::KeepingScope::IndividualFiles,
+                total: 1,
+                remote_only: Vec::new(),
+            },
         }
     }
 
@@ -284,9 +303,29 @@ mod tests {
                     namespace="team/dataset"
                     fetch=fetch
                     open_catalog=open_catalog
+                    w=Wiring::new()
+                    commands=idle_commands()
                 />
             }
         })
+    }
+
+    fn stores_ok(_: String, _: bool) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn downloads_ok(
+        _: String,
+        _: Vec<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn idle_commands() -> KeepingCommands {
+        KeepingCommands {
+            store: stores_ok,
+            download: downloads_ok,
+        }
     }
 
     fn ignore() -> Callback<String> {
@@ -353,12 +392,17 @@ mod tests {
                 .is_some_and(|value| !value.is_empty()),
             "the machine-readable time travels with the relative one"
         );
-        let buttons = el.query_selector_all("button").unwrap();
+        // Keeping draws radios beside it, so the section is found by its heading.
+        let revision = element_saying(&el, "Revision")
+            .closest("section")
+            .unwrap()
+            .expect("the Revision section");
+        let buttons = revision.query_selector_all("button").unwrap();
         assert_eq!(
             buttons.length(),
             1,
-            "the trigger is the slice's one control; markup was {}",
-            el.inner_html()
+            "the trigger is the section's one control; markup was {}",
+            revision.inner_html()
         );
         assert_eq!(
             buttons
@@ -370,9 +414,9 @@ mod tests {
             "Revisions you have (4)"
         );
         assert!(
-            el.query_selector("a, input").unwrap().is_none(),
+            revision.query_selector("a, input").unwrap().is_none(),
             "no link or input while closed; markup was {}",
-            el.inner_html()
+            revision.inner_html()
         );
     }
 
@@ -386,6 +430,8 @@ mod tests {
                         namespace="team/dataset"
                         fetch=never
                         open_catalog=ignore()
+                        w=Wiring::new()
+                        commands=idle_commands()
                     />
                 }
             });
