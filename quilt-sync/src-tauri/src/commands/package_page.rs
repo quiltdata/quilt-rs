@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
+use crate::commands::RoleCache;
 use crate::commands::main_page::PackageStateDto;
 use crate::commands::main_page::{
     conflict_files, misconfigured_remote, resolve_state, unexplained_pause,
@@ -106,6 +107,25 @@ pub struct PackageHeaderData {
     /// is a fourth refusal, but it belongs to execution and not to this gate:
     /// it is transient, and the engine states it rather than hiding the command.
     pub commit_has_parent: bool,
+    /// The remedy a denial offers, and `None` in every other state.
+    ///
+    /// A sibling of [`Self::state`] rather than a field inside `RoleDenied`: the
+    /// state enum is the UI's vocabulary and four surfaces deserialise it, while
+    /// a host and a role list are transport one page reads. `None` on a denial
+    /// means there is nothing to switch to — a single-role reader, a denial with
+    /// no host, or a roles lookup that failed, which are indistinguishable to the
+    /// reader and should be: each one is "the app cannot offer you another role".
+    pub role_switch: Option<RoleSwitch>,
+}
+
+/// The roles a denied reader could switch to, on the host that denied them.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleSwitch {
+    pub host: String,
+    /// Every role the reader holds on `host` except the refused one. Never empty:
+    /// the field is `None` when there is nothing to switch to.
+    pub alternatives: Vec<String>,
 }
 
 /// The state a failed remote read resolves to, when the failure is itself a
@@ -131,14 +151,49 @@ fn blocked_state(err: &Error) -> Option<PackageStateDto> {
         // already has words for. Without this arm the read fails and the page
         // draws nothing at all for a package v1 says `No access` about.
         //
-        // `role: None`: naming the role costs a `RoleCache` round trip per load,
-        // which is the main page's bargain and not obviously this page's. The
-        // kit words an unnamed denial `No access` and offers nothing, which is
-        // what the deferred `denial-action` unit says the first draw should do.
+        // `role: None` is the classification only. Naming the role is the
+        // caller's second step, and a network one: `role_remedy` fills it.
         Some(PackageStateDto::RoleDenied { role: None })
     } else {
         None
     }
+}
+
+/// The remedy a denial offers: the role it was refused under, and the other
+/// roles the reader holds on that host.
+///
+/// Called ONLY once the read has classified a denial — that is the one state
+/// where the roles are the remedy, so every other read pays nothing for them
+/// (`state.md#switch-role-honest`). Through `RoleCache`, which single-flights
+/// per host, as the roster's own denial mark does.
+///
+/// A failure here is not the page's. The denial was classified before this
+/// ran and stands whatever this answers: `(None, None)` leaves the state
+/// saying `No access` with no role named and offers no switch, which is
+/// exactly what a hostless denial already produced.
+async fn role_remedy(
+    m: &impl model::QuiltModel,
+    roles: &RoleCache,
+    err: &Error,
+) -> (Option<String>, Option<RoleSwitch>) {
+    // A denial always arrives by the S3 route, which carries its host parsed.
+    let Some(host) = err.s3_host() else {
+        return (None, None);
+    };
+    let Ok(info) = roles.get(m, host).await else {
+        return (None, None);
+    };
+    let alternatives: Vec<String> = info
+        .available
+        .iter()
+        .filter(|role| **role != info.current)
+        .cloned()
+        .collect();
+    let switch = (!alternatives.is_empty()).then(|| RoleSwitch {
+        host: host.to_string(),
+        alternatives,
+    });
+    (Some(info.current), switch)
 }
 
 /// The deployment a session failure was for, by either route.
@@ -199,6 +254,7 @@ fn package_context_data(
 #[tauri::command]
 pub async fn get_package_page_data(
     m: tauri::State<'_, model::Model>,
+    roles: tauri::State<'_, RoleCache>,
     watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<PackagePageData, String> {
@@ -211,13 +267,14 @@ pub async fn get_package_page_data(
     // says a package stopped syncing.
     let paused = watcher.paused_reason(&namespace).await;
 
-    get_package_page_data_from_model(&*m, &namespace, paused.as_ref())
+    get_package_page_data_from_model(&*m, &roles, &namespace, paused.as_ref())
         .await
         .map_err(|e| e.to_frontend_string())
 }
 
 async fn get_package_page_data_from_model(
     m: &impl model::QuiltModel,
+    roles: &RoleCache,
     namespace: &quilt_uri::Namespace,
     paused: Option<&PausedReason>,
 ) -> Result<PackagePageData, Error> {
@@ -249,6 +306,7 @@ async fn get_package_page_data_from_model(
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
 
+    let mut role_switch = None;
     let state = if misconfigured_remote(&lineage) {
         // The same predicate both main-page phases apply before resolving, for
         // the same reason: without a catalog there is nowhere to vend
@@ -285,6 +343,13 @@ async fn get_package_page_data_from_model(
                 }
             }
             Err(err) => match blocked_state(&err) {
+                // The one state whose remedy is worth a round trip, and the
+                // only place this function goes back to the network.
+                Some(PackageStateDto::RoleDenied { .. }) => {
+                    let (role, switch) = role_remedy(m, roles, &err).await;
+                    role_switch = switch;
+                    PackageStateDto::RoleDenied { role }
+                }
                 Some(state) => state,
                 None => return Err(err),
             },
@@ -308,6 +373,7 @@ async fn get_package_page_data_from_model(
             remote_locked,
             has_local_commit,
             commit_has_parent,
+            role_switch,
         },
     })
 }
@@ -317,10 +383,12 @@ mod tests {
     use std::str::FromStr;
 
     use super::*;
+    use crate::commands::RoleCache;
     use crate::commands::test_support::{
-        access_denied_error, make_installed_package, make_manifest_uri,
+        access_denied_error, access_denied_error_on, make_installed_package, make_manifest_uri,
     };
     use crate::quilt::lineage::UpstreamState;
+    use quilt_rs::RoleInfo;
 
     const NS: &str = "team/dataset";
 
@@ -366,21 +434,23 @@ mod tests {
     }
 
     async fn page(
+        roles: &RoleCache,
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
         paused: Option<&PausedReason>,
     ) -> PackagePageData {
         let m = mock_one_package(status);
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        get_package_page_data_from_model(&m, &ns, paused)
+        get_package_page_data_from_model(&m, roles, &ns, paused)
             .await
             .expect("a blocked read is a state, not an error")
     }
 
     async fn header_state(
+        roles: &RoleCache,
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
         paused: Option<&PausedReason>,
     ) -> PackageStateDto {
-        page(status, paused).await.header.state
+        page(roles, status, paused).await.header.state
     }
 
     fn settled() -> quilt::lineage::InstalledPackageStatus {
@@ -484,7 +554,7 @@ mod tests {
     async fn a_pull_conflict_pause_outranks_the_settled_tree() {
         let paused = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
         assert_eq!(
-            header_state(Ok(settled()), Some(&paused)).await,
+            header_state(&RoleCache::default(), Ok(settled()), Some(&paused)).await,
             PackageStateDto::PullConflict {
                 files: vec!["a.csv".to_string(), "b.csv".to_string()],
             },
@@ -499,7 +569,7 @@ mod tests {
     #[tokio::test]
     async fn the_residue_travels_beside_the_state_rather_than_over_it() {
         let paused = PausedReason::Other("workflow rejected the revision".to_string());
-        let page = page(Ok(settled()), Some(&paused)).await;
+        let page = page(&RoleCache::default(), Ok(settled()), Some(&paused)).await;
 
         assert_eq!(page.header.state, PackageStateDto::Latest);
         assert_eq!(
@@ -514,7 +584,7 @@ mod tests {
     #[tokio::test]
     async fn a_pause_the_header_can_word_does_not_also_fill_the_banner() {
         let paused = PausedReason::PullConflict(vec!["a.csv".to_string()]);
-        let page = page(Ok(settled()), Some(&paused)).await;
+        let page = page(&RoleCache::default(), Ok(settled()), Some(&paused)).await;
 
         assert_eq!(
             page.header.state,
@@ -527,7 +597,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_unpaused_package_has_no_banner() {
-        assert_eq!(page(Ok(settled()), None).await.sync_paused, None);
+        assert_eq!(
+            page(&RoleCache::default(), Ok(settled()), None)
+                .await
+                .sync_paused,
+            None
+        );
     }
 
     /// Rank 1 beats rank 2. The denial is caught on the `Err` side, so it wins
@@ -537,7 +612,12 @@ mod tests {
     async fn a_denial_outranks_a_pause() {
         let paused = PausedReason::PullConflict(vec!["a.csv".to_string()]);
         assert_eq!(
-            header_state(Err(access_denied_error()), Some(&paused)).await,
+            header_state(
+                &RoleCache::default(),
+                Err(access_denied_error()),
+                Some(&paused)
+            )
+            .await,
             PackageStateDto::RoleDenied { role: None },
         );
     }
@@ -551,7 +631,9 @@ mod tests {
     /// alone is true of packages undo would reject.
     #[tokio::test]
     async fn the_payload_carries_every_fact_that_bounds_undo() {
-        let header = page(Ok(settled()), None).await.header;
+        let header = page(&RoleCache::default(), Ok(settled()), None)
+            .await
+            .header;
 
         assert!(
             !header.has_local_commit,
@@ -573,9 +655,126 @@ mod tests {
     #[tokio::test]
     async fn an_unpaused_package_resolves_from_its_status() {
         assert_eq!(
-            header_state(Ok(settled()), None).await,
+            header_state(&RoleCache::default(), Ok(settled()), None).await,
             PackageStateDto::Latest,
         );
+    }
+
+    /// A model whose role query answers `info`. `RoleCache::get` routes through
+    /// `observe_role`, which calls `refresh_roles` then
+    /// `clear_remote_client_cache` — both need an expectation or mockall panics
+    /// on the unmatched one. Same shape as `main_page.rs::mock_with_role`.
+    fn with_role(model: &mut crate::model::MockQuiltModel, info: RoleInfo) {
+        model
+            .expect_refresh_roles()
+            .times(1)
+            .returning(move |_| Ok(info.clone()));
+        model.expect_clear_remote_client_cache().returning(|_| ());
+    }
+
+    /// The whole bargain of `switch-role-honest`: the roles are fetched because
+    /// the read has already classified a denial, so the state names the refused
+    /// role and the payload carries what to switch to.
+    #[tokio::test]
+    async fn a_denial_names_its_role_and_carries_the_alternatives() {
+        let mut m = mock_one_package(Err(access_denied_error_on("demo.quiltdata.com")));
+        with_role(
+            &mut m,
+            RoleInfo {
+                current: "analyst".to_string(),
+                available: vec!["analyst".to_string(), "admin".to_string()],
+            },
+        );
+        let roles = RoleCache::default();
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
+            .await
+            .expect("a denial is a state, not an error")
+            .header;
+
+        assert_eq!(
+            header.state,
+            PackageStateDto::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+        );
+        let switch = header.role_switch.expect("another role is held");
+        assert_eq!(switch.host, "demo.quiltdata.com");
+        assert_eq!(
+            switch.alternatives,
+            vec!["admin".to_string()],
+            "the refused role is not something to switch to"
+        );
+    }
+
+    /// A single-role reader sees the reason and no button —
+    /// `access-marking`'s rule for the roster, applied here.
+    #[tokio::test]
+    async fn a_single_role_reader_is_offered_no_switch() {
+        let mut m = mock_one_package(Err(access_denied_error_on("demo.quiltdata.com")));
+        with_role(
+            &mut m,
+            RoleInfo {
+                current: "analyst".to_string(),
+                available: vec!["analyst".to_string()],
+            },
+        );
+        let roles = RoleCache::default();
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
+            .await
+            .expect("a denial is a state")
+            .header;
+
+        assert_eq!(
+            header.state,
+            PackageStateDto::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+            "the role is still named — the lookup succeeded"
+        );
+        assert!(header.role_switch.is_none());
+    }
+
+    /// The rider. The lookup is a REMEDY read over a denial already classified,
+    /// so its failure is not the page's: the denial stands, naming what it
+    /// already knows, and offers no switch.
+    #[tokio::test]
+    async fn a_failed_roles_lookup_leaves_the_denial_standing() {
+        let mut m = mock_one_package(Err(access_denied_error_on("demo.quiltdata.com")));
+        m.expect_refresh_roles()
+            .times(1)
+            .returning(|_| Err(Error::General("role query unavailable".to_string())));
+        let roles = RoleCache::default();
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        let header = get_package_page_data_from_model(&m, &roles, &ns, None)
+            .await
+            .expect("a failed remedy read is never a page error")
+            .header;
+
+        assert_eq!(
+            header.state,
+            PackageStateDto::RoleDenied { role: None },
+            "the denial stands; it simply cannot be named"
+        );
+        assert!(header.role_switch.is_none());
+    }
+
+    /// Every other state pays nothing. `.times(0)` is the assertion — mockall's
+    /// default range is satisfied at zero calls, so the expectation's presence
+    /// proves nothing on its own.
+    #[tokio::test]
+    async fn a_read_that_did_not_deny_never_asks_for_roles() {
+        let mut m = mock_one_package(Ok(settled()));
+        m.expect_refresh_roles().times(0);
+        let roles = RoleCache::default();
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        let page = get_package_page_data_from_model(&m, &roles, &ns, None)
+            .await
+            .expect("a settled read");
+
+        assert_eq!(page.header.state, PackageStateDto::Latest);
+        assert!(page.header.role_switch.is_none());
     }
 
     fn host() -> quilt_uri::Host {

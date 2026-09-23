@@ -542,6 +542,31 @@ pub async fn package_uninstall(
         )
 }
 
+/// Step the package back to the revision before its newest local commit.
+///
+/// Not `reset_local`, which is this operation's inverse: that one throws local
+/// work away against the *remote's* latest, and this one walks the pending
+/// commit chain back by one. A package with a remote has no chain — pushing
+/// consumes it — so the engine refuses there, which is why the surface
+/// offering this gates on the package having none.
+#[tauri::command]
+pub async fn undo_commit(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+) -> Result<String, String> {
+    let namespace =
+        quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?;
+    let msg_init = format!("Undoing the last revision of {namespace}");
+    let msg_ok = format!("Undid the last revision of {namespace}");
+    let msg_err = |err: &Error| format!("Failed to undo the last revision: {err}");
+
+    Notify::new(msg_init).map(
+        model::package_undo_commit(&*m, &namespace).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
 /// Typed response for the `set_remote` command. `resolution_warning` is
 /// `Some(reason)` when the remote was set but the bucket's default workflow
 /// could not be resolved (best-effort path) — the UI raises a warning notice
@@ -565,6 +590,14 @@ async fn set_remote_command(
     let origin = quilt_uri::Host::from_str(origin)?;
     let warning = model::set_remote(m, &namespace, origin, bucket.to_string(), workflow).await?;
     Ok((namespace, warning))
+}
+
+/// What the reader is told when the remote was not set. Names the bucket
+/// because this is drawn inside the dialog, above the field they are about to
+/// edit — a sentence that named nothing would read as a verdict on what they
+/// just typed.
+fn set_remote_refusal(bucket: &str, err: &Error) -> String {
+    format!("Could not set the remote to {bucket}: {err}")
 }
 
 #[tauri::command]
@@ -599,7 +632,7 @@ pub async fn set_remote(
             })
         }
         Err(err) => {
-            let msg = format!("Failed to set remote: {err}");
+            let msg = set_remote_refusal(&bucket, &err);
             ::tracing::error!("{msg}");
             Err(msg)
         }
@@ -883,6 +916,17 @@ mod tests {
         )))
     }
 
+    /// A refusal drawn in a dialog stands above the fields the reader is about to
+    /// edit, so a generic sentence reads as a claim about the new contents. It
+    /// names the bucket it was refused for.
+    #[test]
+    fn a_set_remote_refusal_names_the_bucket() {
+        assert_eq!(
+            super::set_remote_refusal("my-bucket", &Error::General("no permission".to_string())),
+            "Could not set the remote to my-bucket: General error: no permission"
+        );
+    }
+
     /// One click, one message. The toast names the package and what arrived,
     /// so the page's own line would repeat it — from behind the toast layer,
     /// where its white box reads as a backdrop rather than as a message.
@@ -1144,5 +1188,57 @@ mod tests {
             super::banner_for_outcome(&crate::model::InstallOutcome::Installed, &requested_uri()),
             None
         );
+    }
+
+    /// A package gone between the menu opening and the item being pressed is an
+    /// error to report, not a panic — every other op in this file uses `panic!`
+    /// on the same lookup, and a menu item is the one caller that can outlive
+    /// its package.
+    #[tokio::test]
+    async fn undoing_a_package_that_is_gone_reports_it() {
+        let mut model = crate::model::mocks::create();
+        model.expect_get_installed_package().returning(|_| Ok(None));
+        let ns: quilt_uri::Namespace = "team/dataset".try_into().unwrap();
+
+        let err = crate::model::package_undo_commit(&model, &ns)
+            .await
+            .expect_err("a missing package cannot be undone");
+
+        assert!(
+            err.to_string().contains("team/dataset"),
+            "the refusal names the package: {err}"
+        );
+    }
+
+    /// The command hands the engine's refusal back as the message the dialog
+    /// draws. The dirty-tree refusal names the paths, so nothing here reworks it.
+    #[tokio::test]
+    async fn an_engine_refusal_reaches_the_caller_as_its_own_sentence() {
+        let mut model = crate::model::mocks::create();
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(crate::commands::test_support::make_installed_package(
+                ns.clone(),
+            )))
+        });
+        model
+            .expect_package_undo_commit()
+            .times(1)
+            .return_once(|_| {
+                Err(Error::from(quilt::Error::PackageOp(
+                    quilt::PackageOpError::Undo(
+                        "value.txt would be overwritten, and does not hold this \
+                     revision's committed content. Commit or restore it by \
+                     hand, then undo"
+                            .to_string(),
+                    ),
+                )))
+            });
+        let ns: quilt_uri::Namespace = "team/dataset".try_into().unwrap();
+
+        let err = crate::model::package_undo_commit(&model, &ns)
+            .await
+            .expect_err("a dirty tree refuses");
+
+        assert!(err.to_string().contains("value.txt"), "got: {err}");
     }
 }

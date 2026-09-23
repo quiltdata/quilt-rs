@@ -66,6 +66,14 @@
 //! arrives sealed or carrying the last answer. Together those replace what used to be a
 //! clear-on-open, which only covered the case where the action had already settled.
 //!
+//! # A caller's command can seal it too
+//!
+//! A caller that rebuilds its dialogs over one `open` disposes the in-flight state with
+//! the old instance, and the new one would take a second submit while the first still
+//! runs. So a caller that holds its own in-flight state passes it as `running`, and the
+//! dialog is sealed by either. [`ConfirmDialog`](super::ConfirmDialog) takes it the same
+//! way.
+//!
 //! # No submit makes it read-only
 //!
 //! `submit: None` draws no form and one `Close`. That is not a spare variant: a package
@@ -91,12 +99,17 @@ pub fn FormDialog(
     /// `None` makes this read-only: no form, and `Close` as the only way out.
     #[prop(optional)]
     submit: Option<Submit>,
+    /// True while a command the caller holds is running — including one an earlier
+    /// instance of this dialog submitted before the caller rebuilt it. Seals the dialog
+    /// exactly as its own submit does, and refuses a submit on top of it.
+    #[prop(optional, into)]
+    running: MaybeProp<bool>,
     /// The fields. Wrapped in the `<form>` when there is something to submit.
     children: Children,
 ) -> impl IntoView {
     // The session, the seal, the refusal and the stale-outcome rule — every rule the
     // module doc argues — live in `Submission`, which `ConfirmDialog` shares.
-    let submission = Submission::new(open);
+    let submission = Submission::new(open, running);
     let busy = submission.busy;
     let form_id = super::unique_id("q-form");
     let banner = submission.banner();

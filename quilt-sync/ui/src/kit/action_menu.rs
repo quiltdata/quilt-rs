@@ -39,6 +39,13 @@
 //! [`MenuAction::disabled`] carries the reason rather than a flag. A greyed
 //! command with no explanation is the one people file bugs about, and the
 //! component makes the explanation the only way to grey it.
+//!
+//! # The items can change under an open menu
+//!
+//! `actions` is a signal, and the list is redrawn from it inside the surface
+//! while the open state stays put. A reason can arrive or leave while a reader
+//! is looking — a command elsewhere starts or settles — and a caller that
+//! rebuilt the whole menu to show it would shut the surface on them.
 
 use leptos::prelude::*;
 
@@ -111,7 +118,9 @@ pub fn ActionMenu(
     /// file`, not `More`.
     #[prop(into)]
     aria_label: String,
-    actions: Vec<MenuAction>,
+    /// A plain `Vec` for a fixed list; a signal when the items follow page state.
+    #[prop(into)]
+    actions: Signal<Vec<MenuAction>>,
 ) -> impl IntoView {
     let open = RwSignal::new(false);
     let surface_label = aria_label.clone();
@@ -130,7 +139,7 @@ pub fn ActionMenu(
         .into_any()
     };
 
-    let items = surface(actions, open);
+    let items = move || surface(actions.get(), open);
 
     view! {
         <AnchoredOverlay
@@ -261,4 +270,59 @@ pub(super) fn choices(
         .collect_view();
 
     view! { <div class=style::list>{items}</div> }.into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    const TRIGGER: &str = "button[aria-label='More actions'][aria-expanded]";
+
+    /// A reason arriving under an open menu is drawn on the item, and the menu
+    /// stays open to show it.
+    #[wasm_bindgen_test]
+    async fn the_items_change_under_an_open_menu_without_closing_it() {
+        let refused = RwSignal::new(false);
+        let el = mount(move || {
+            let actions = Signal::derive(move || {
+                let item = MenuAction::new("Rename", Callback::new(|()| ()));
+                vec![if refused.get() {
+                    item.disabled("Something else is running")
+                } else {
+                    item
+                }]
+            });
+            view! { <ActionMenu aria_label="More actions" actions=actions /> }
+        });
+        let trigger = || el.query_selector(TRIGGER).unwrap().expect("the trigger");
+        trigger().unchecked_into::<web_sys::HtmlElement>().click();
+        leptos::task::tick().await;
+        assert_eq!(
+            trigger().get_attribute("aria-expanded").as_deref(),
+            Some("true")
+        );
+
+        refused.set(true);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            trigger().get_attribute("aria-expanded").as_deref(),
+            Some("true"),
+            "still open; markup was {}",
+            el.inner_html()
+        );
+        let item = el
+            .query_selector("[popover] button")
+            .unwrap()
+            .expect("the item");
+        assert!(item.has_attribute("disabled"));
+        assert!(
+            item.text_content()
+                .unwrap_or_default()
+                .contains("Something else is running")
+        );
+    }
 }

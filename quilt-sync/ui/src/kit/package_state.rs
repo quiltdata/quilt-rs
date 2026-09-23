@@ -129,6 +129,14 @@ pub enum PackageAction {
     /// Sign in to the deployment the state names. Never offered for a denial —
     /// signing in again re-vends the same role.
     SignIn,
+    /// Switch to another role on the deployment that refused this package.
+    ///
+    /// The one verb [`action`] never returns: whether a switch can be offered
+    /// depends on the roles the reader holds, and the state carries neither the
+    /// host nor the list. The page payload does, so the page selects this verb
+    /// and this file only words it — which keeps the words in one place without
+    /// pretending the state knows something it does not.
+    SwitchRole,
 }
 
 impl PackageAction {
@@ -142,6 +150,7 @@ impl PackageAction {
             Self::Resolve => "Resolve",
             Self::ChooseS3Bucket => "Choose S3 bucket",
             Self::SignIn => "Sign in",
+            Self::SwitchRole => "Switch role",
         }
     }
 }
@@ -361,6 +370,17 @@ fn action(state: &PackageState) -> Option<PackageAction> {
 mod tests {
     use super::*;
     use wasm_bindgen_test::*;
+
+    /// The one verb `action` never returns. Whether a switch can be offered
+    /// depends on the roles the reader holds, which is payload the state does
+    /// not carry — so the page selects it and the vocabulary only words it.
+    #[test]
+    fn switch_role_is_worded_here_and_chosen_by_the_page() {
+        assert_eq!(PackageAction::SwitchRole.label(), "Switch role");
+        for role in [None, Some("analyst".to_string())] {
+            assert_eq!(action(&PackageState::RoleDenied { role }), None);
+        }
+    }
 
     #[wasm_bindgen_test]
     fn behind_is_quiet_on_a_list_row_and_inviting_on_a_queue_row() {

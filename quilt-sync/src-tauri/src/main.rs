@@ -271,6 +271,7 @@ fn main() {
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,
+            commands::undo_commit,
             commands::reveal_in_file_browser,
             commands::set_remote,
             commands::package_create,

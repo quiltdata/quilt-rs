@@ -5,7 +5,8 @@
 //! growing left side empty rather than drawing provisional content.
 
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
@@ -13,20 +14,131 @@ use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use super::appbar::v2_appbar_actions;
 use super::status_watch::StatusWatch;
 
+mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
+mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
+pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
 
+/// What a command reported, and which package it reported about.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Outcome {
+    pub namespace: String,
+    pub variant: BannerVariant,
+    /// The page's own sentence. Never the backend's.
+    pub lead: String,
+    /// The engine's text, when it says something the lead cannot.
+    pub detail: Option<String>,
+}
+
+/// The page's half of a command: what it blocks while it runs, where it
+/// reports, what to re-read when it is done, where it goes, and which dialog
+/// holds it.
+///
+/// # Owned by the page, because a re-read rebuilds the header
+///
+/// Every re-read — the watcher's news, Refresh, a command's own `reload` —
+/// re-runs the body and builds a new `PageHeader`, disposing everything the old
+/// one owned. So anything that must outlive a re-read lives here: a dialog the
+/// reader has open stays open, and a navigation asked for by a command that
+/// settles after the rebuild still happens.
+///
+/// `pub(crate)` rather than `pub(super)`: `PageHeader`'s generated props struct
+/// carries it, and a prop type less visible than the props struct is what the
+/// `private_interfaces` lint fires on — and warnings are denied.
+#[derive(Clone, Copy)]
+pub(crate) struct Wiring {
+    /// One command at a time. Every control on the header reads this, so a
+    /// second cannot start on top of the first — two writes to one working
+    /// tree is a race the page has no way to arbitrate.
+    pub busy: RwSignal<bool>,
+    /// What the last command said, and which package it said it about. Keyed,
+    /// because a result arriving for a package the page no longer shows is not
+    /// this page's news — see `outcome_band`.
+    pub outcome: RwSignal<Option<Outcome>>,
+    pub reload: Trigger,
+    /// Where the header wants to go. A signal because a `Callback` must be
+    /// `Send + Sync` and `use_navigate`'s closure is neither; [`Wiring::follow`]
+    /// performs it.
+    pub goto: RwSignal<Option<String>>,
+    pub dialogs: Dialogs,
+}
+
+/// Hold `busy` for as long as `task` runs, and retract the band's last
+/// outcome as it starts. Every header command does, the dialogs' included: the
+/// signal is the page's and a dialog's own seal is not, so a dialog rebuilt
+/// mid-submit is drawn sealed by this one.
+async fn holding<T>(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    task: impl std::future::Future<Output = T>,
+) -> T {
+    busy.set(true);
+    // The band says what the last command said, and this one is now the last:
+    // a failure left up would outlive a retry that succeeds, which says nothing.
+    outcome.set(None);
+    let answer = task.await;
+    // `try_`: the signal is the page's, and the page can be gone by now.
+    busy.try_set(false);
+    answer
+}
+
+/// Which of the header's dialogs is open.
+#[derive(Clone, Copy)]
+pub(crate) struct Dialogs {
+    /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
+    /// one dialog: the state calls for it, or the reader chooses it.
+    pub bucket: RwSignal<bool>,
+    /// Opened only by the row's `Switch role`, which exists only when the
+    /// payload names somewhere to switch to.
+    pub role: RwSignal<bool>,
+    /// The two Danger items: the menu picks the command, the dialog accepts
+    /// the consequence.
+    pub undo: RwSignal<bool>,
+    pub remove: RwSignal<bool>,
+}
+
+impl Wiring {
+    fn new() -> Self {
+        Self {
+            busy: RwSignal::new(false),
+            outcome: RwSignal::new(None),
+            reload: Trigger::new(),
+            goto: RwSignal::new(None),
+            dialogs: Dialogs {
+                bucket: RwSignal::new(false),
+                role: RwSignal::new(false),
+                undo: RwSignal::new(false),
+                remove: RwSignal::new(false),
+            },
+        }
+    }
+
+    /// Perform `goto`. Called once, by whoever owns the signals, inside a
+    /// router.
+    fn follow(self) {
+        let goto = self.goto;
+        let navigate = use_navigate();
+        Effect::new(move |_| {
+            if let Some(target) = goto.get() {
+                navigate(&target, NavigateOptions::default());
+                goto.set(None);
+            }
+        });
+    }
+}
+
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
-fn package_body(data: commands::PackagePageData) -> AnyView {
+fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
     view! {
         <div class=style::page>
-            <PageHeader data=data.header />
+            <PageHeader data=data.header w=w />
             <div class=style::shell>
                 <CurrentRevisionPane data=data.context />
             </div>
@@ -76,8 +188,12 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // What the reader has already read and closed. Keyed on the message, so a
     // different pause is news again — see `pause_banner`.
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
-
-    let reload = Trigger::new();
+    // Here and not in the header, which every re-read rebuilds — see `Wiring`.
+    let w = Wiring::new();
+    w.follow();
+    let Wiring {
+        outcome, reload, ..
+    } = w;
     // Whether the one read is out. The main page counts, because it has four;
     // one read needs a flag.
     //
@@ -109,10 +225,14 @@ pub fn InstalledPackageV2() -> impl IntoView {
             // skeleton here would reserve a band for news that usually is not
             // there, and the page would settle by collapsing it.
             banner=view! {
+                {outcome_band(outcome, Signal::derive(namespace))}
                 <Suspense fallback=|| ()>
                     {move || Suspend::new(async move {
                         match data.await {
                             Ok(d) => pause_banner(d.sync_paused.clone(), dismissed),
+                            // A failed read still says nothing about a command that ran
+                            // before it; the outcome band above is outside this Suspense
+                            // for exactly that reason.
                             Err(_) => ().into_any(),
                         }
                     })}
@@ -124,7 +244,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => package_body(d),
+                        Ok(d) => package_body(d, w),
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
@@ -136,6 +256,49 @@ pub fn InstalledPackageV2() -> impl IntoView {
             </Suspense>
         </PageLayout>
     }
+}
+
+/// What the last command said — the remainder channel.
+///
+/// # It carries only what no other surface says
+///
+/// A navigation reports by arriving, a dialog holds its own refusal, and a
+/// pull posts its report to the notification stack. What is left for this band
+/// is a non-dialog command's failure, an undo that succeeded (the state label
+/// can read the same before and after, so the re-read is not a report), and a
+/// remote set whose workflow could not be resolved.
+///
+/// # Keyed to the package, and dropped whole when it does not match
+///
+/// One route serves every package, so a command's result can arrive after the
+/// reader has moved to another one. It is discarded rather than drawn: a
+/// reader cannot tell a stale outcome from a fresh one by its text. Same rule
+/// the form dialog applies to a stale session.
+///
+/// # The lead is the page's and the detail is the engine's
+///
+/// The split the pause band already makes. The vocabulary is UI-owned, so the
+/// sentence saying what did not happen is written here; the engine's own
+/// refusal text is the part nothing else knows, and follows as the detail.
+fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<String>) -> AnyView {
+    let mine = move || outcome.get().filter(|o| o.namespace == showing.get());
+    view! {
+        <Show when=move || mine().is_some() fallback=|| ()>
+            {
+                let said = mine().expect("checked by the guard above");
+                view! {
+                    <Banner
+                        variant=said.variant
+                        on_dismiss=move |_| outcome.set(None)
+                    >
+                        {said.lead}
+                        {said.detail.map(|detail| view! { " " {detail} })}
+                    </Banner>
+                }
+            }
+        </Show>
+    }
+    .into_any()
 }
 
 /// The band that says autosync has stopped, and why.
@@ -281,6 +444,7 @@ mod tests {
     use crate::test_support::{element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// Put the browser on an address before the router reads one. Same origin,
@@ -303,6 +467,7 @@ mod tests {
                 remote_locked: false,
                 has_local_commit: false,
                 commit_has_parent: false,
+                role_switch: None,
             },
             context: commands::PackageContextData {
                 revision: commands::CurrentRevisionData {
@@ -315,12 +480,161 @@ mod tests {
         }
     }
 
+    fn said(namespace: &str, variant: BannerVariant, lead: &str, detail: Option<&str>) -> Outcome {
+        Outcome {
+            namespace: namespace.to_string(),
+            variant,
+            lead: lead.to_string(),
+            detail: detail.map(ToString::to_string),
+        }
+    }
+
+    /// The band is the surface's sentence first and the engine's text after it —
+    /// the same split the pause band makes. A band that only repeated the
+    /// backend would be the vocabulary leaving the UI; one that dropped it would
+    /// lose the only part naming what went wrong.
+    #[wasm_bindgen_test]
+    fn the_outcome_band_leads_with_the_page_s_sentence() {
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Critical,
+            "Could not get the latest revision.",
+            Some("Failed to pull package: connection reset"),
+        )));
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(text.contains("Could not get the latest revision."));
+        assert!(
+            text.contains("connection reset"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The keying. A result arriving for a package the page no longer shows is
+    /// dropped WHOLE — not greyed, not queued. A reader cannot tell a stale
+    /// outcome from a fresh one by its text, which is the defect quilt-rs#974's
+    /// review found.
+    #[wasm_bindgen_test]
+    fn an_outcome_for_another_package_is_dropped_whole() {
+        let outcome = RwSignal::new(Some(said(
+            "team/other",
+            BannerVariant::Success,
+            "The last revision was undone.",
+            None,
+        )));
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+
+        assert_eq!(el.text_content().unwrap_or_default().trim(), "");
+    }
+
+    /// Both bands at once. A pause is a standing condition and an outcome is
+    /// what just happened; a package can be both, and neither replaces the other.
+    #[wasm_bindgen_test]
+    fn an_outcome_and_a_pause_stack_rather_than_replacing_each_other() {
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Success,
+            "The last revision was undone.",
+            None,
+        )));
+        let dismissed = RwSignal::new(None);
+        let el = mount(move || {
+            view! {
+                {outcome_band(outcome, Signal::derive(|| "team/dataset".to_string()))}
+                {pause_banner(Some("workflow rejected the revision".to_string()), dismissed)}
+            }
+        });
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(text.contains("The last revision was undone."));
+        assert!(text.contains("Autosync has stopped for this package"));
+    }
+
+    /// A success waits for a pause in the reader's work; a failure cuts across
+    /// it. That is `BannerVariant`'s own rule and the band must not quietly
+    /// invert it.
+    #[wasm_bindgen_test]
+    fn a_failure_interrupts_and_a_success_does_not() {
+        for (variant, role) in [
+            (BannerVariant::Critical, "alert"),
+            (BannerVariant::Success, "status"),
+        ] {
+            let outcome = RwSignal::new(Some(said("team/dataset", variant, "Something.", None)));
+            let el =
+                mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+            let band = el.query_selector("[role]").unwrap().expect("a band");
+            assert_eq!(band.get_attribute("role").as_deref(), Some(role));
+        }
+    }
+
+    /// A second outcome for the same package replaces the first while the band is
+    /// up — `Show`'s guard stays true across it, so only the children's own read
+    /// of `outcome` redraws it.
+    #[wasm_bindgen_test]
+    async fn a_newer_outcome_replaces_the_one_on_screen() {
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Critical,
+            "Could not open this package's folder.",
+            None,
+        )));
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+        outcome.set(Some(said(
+            "team/dataset",
+            BannerVariant::Success,
+            "Undid the last revision.",
+            None,
+        )));
+        leptos::task::tick().await;
+
+        let band = el.query_selector("[role]").unwrap().expect("a band");
+        assert_eq!(band.get_attribute("role").as_deref(), Some("status"));
+        let text = band.text_content().unwrap_or_default();
+        assert!(text.contains("Undid the last revision."), "got: {text}");
+        assert!(
+            !text.contains("folder"),
+            "the first outcome is gone: {text}"
+        );
+    }
+
+    /// A command that starts retracts the band's last outcome, so a failure
+    /// cannot outlive the retry that succeeds — success says nothing, and would
+    /// otherwise leave the failure up. Read from inside the command, because
+    /// under the runner every real one fails and would set its own.
+    #[wasm_bindgen_test]
+    async fn a_command_that_starts_retracts_the_last_outcome() {
+        let busy = RwSignal::new(false);
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Critical,
+            "Could not open this package's folder.",
+            None,
+        )));
+
+        let during = holding(busy, outcome, async move {
+            (busy.get_untracked(), outcome.get_untracked())
+        })
+        .await;
+
+        assert_eq!(during, (true, None), "held, and the band cleared");
+        assert!(!busy.get_untracked(), "released once it settles");
+    }
+
     /// A successful payload swaps the header and pane together. The old loose
     /// paragraph was only scaffolding; package identity now belongs to the
     /// header while the pane is a named complementary landmark.
     #[wasm_bindgen_test]
     fn a_successful_payload_draws_the_real_body_without_the_placeholder() {
-        let el = mount(|| package_body(page_data()));
+        // Inside a `Router`, where the page always is.
+        let el = mount(|| {
+            let w = Wiring::new();
+            view! { <Router>{package_body(page_data(), w)}</Router> }
+        });
         let aside = el
             .query_selector("aside")
             .unwrap()
@@ -329,9 +643,56 @@ mod tests {
             aside.get_attribute("aria-label").as_deref(),
             Some("About this package")
         );
+        // The header's closed dialogs carry their own paragraphs; only the body's count.
+        let paragraphs = el.query_selector_all("p").unwrap();
+        let loose = (0..paragraphs.length())
+            .filter_map(|i| paragraphs.item(i))
+            .filter_map(|n| n.dyn_into::<web_sys::Element>().ok())
+            .any(|p| p.closest("dialog").unwrap().is_none());
         assert!(
-            el.query_selector("p").unwrap().is_none(),
+            !loose,
             "the loose namespace placeholder is gone; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A re-read rebuilds the body, and with it the header. A dialog the reader
+    /// has open is the page's, so it survives — the watcher reporting news
+    /// mid-form must not shut the form.
+    #[wasm_bindgen_test]
+    async fn an_open_dialog_stays_open_when_the_body_is_re_read() {
+        let w = Wiring::new();
+        let reads = RwSignal::new(0_u32);
+        let el = mount(move || {
+            view! {
+                <Router>
+                    {move || {
+                        reads.track();
+                        package_body(page_data(), w)
+                    }}
+                </Router>
+            }
+        });
+        w.dialogs.remove.set(true);
+        leptos::task::tick().await;
+        let opened = || {
+            el.query_selector("dialog[open]")
+                .unwrap()
+                .and_then(|d| d.text_content())
+                .unwrap_or_default()
+        };
+        assert!(
+            opened().contains("Remove this package"),
+            "open before the re-read; markup was {}",
+            el.inner_html()
+        );
+
+        reads.update(|n| *n += 1);
+        leptos::task::tick().await;
+
+        assert!(
+            opened().contains("Remove this package"),
+            "and still open after it; markup was {}",
             el.inner_html()
         );
     }

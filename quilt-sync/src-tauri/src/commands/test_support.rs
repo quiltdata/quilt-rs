@@ -11,6 +11,15 @@ pub(crate) fn access_denied_error() -> Error {
     )))
 }
 
+/// The same denial, carrying the deployment it was refused on. The hostless
+/// one above is the case where no roles lookup is possible at all.
+pub(crate) fn access_denied_error_on(host: &str) -> Error {
+    Error::Quilt(quilt::Error::S3(quilt::S3Error {
+        host: Some(host.parse().expect("a host")),
+        kind: quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
+    }))
+}
+
 /// A working tree with one uncommitted addition — the shape that makes the
 /// difference between a row (or page) offering Commit/Publish and hiding it.
 pub(crate) fn one_local_change() -> quilt::lineage::ChangeSet {
