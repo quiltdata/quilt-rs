@@ -509,6 +509,11 @@ mod tests {
                 },
                 bucket: Some("quilt-lab-plates".to_string()),
                 revision_count: 1,
+                keeping: commands::KeepingData {
+                    scope: commands::KeepingScope::IndividualFiles,
+                    total: 1,
+                    remote_only: Vec::new(),
+                },
             },
             sync_paused: None,
         }

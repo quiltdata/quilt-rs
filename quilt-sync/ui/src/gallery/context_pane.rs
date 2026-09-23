@@ -453,6 +453,11 @@ pub fn ContextPaneScene() -> impl IntoView {
                         },
                         bucket: Some("quilt-lab-plates".to_string()),
                         revision_count: 4,
+                        keeping: crate::commands::KeepingData {
+                            scope: crate::commands::KeepingScope::EntirePackage,
+                            total: TOTAL,
+                            remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
+                        },
                     }
                     namespace=NAMESPACE
                     fetch=history
