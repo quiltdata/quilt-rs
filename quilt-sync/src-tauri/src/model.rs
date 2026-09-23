@@ -180,12 +180,10 @@ pub trait QuiltModel {
         Ok(package.install_paths(paths).await?)
     }
 
-    /// `scope` is resolved by the caller through
-    /// [`resolve_sync_scope`](crate::experimental_settings::resolve_sync_scope)
-    /// — the package's stored choice, honoured only while the experiment is on.
-    /// It is a parameter rather than something read in here so the two paths
-    /// that pull (a user's button, the autopull tick) resolve it the same way
-    /// and a mocked model can drive either.
+    /// `scope` is the package's stored choice, which both callers (a user's
+    /// button, the autopull tick) read from the lineage and pass. It is a
+    /// parameter rather than something read in here so a mocked model can
+    /// drive either path.
     async fn package_pull(
         &self,
         package: &quilt::InstalledPackage,
@@ -195,8 +193,8 @@ pub trait QuiltModel {
         Ok(package.pull(host_config, scope).await?)
     }
 
-    /// Persist a package's standing [`SyncScope`]. Storage only — what a pull
-    /// actually does with it still goes through `resolve_sync_scope`.
+    /// Persist a package's standing [`SyncScope`]. Storage only — the next
+    /// pull, by hand or by the tick, applies it.
     async fn package_set_sync_scope(
         &self,
         package: &quilt::InstalledPackage,

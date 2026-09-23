@@ -14,8 +14,6 @@ use quilt_uri::{Host, S3PackageUri};
 use crate::Error;
 use crate::autopull::Watcher;
 use crate::autopull::pull_toast;
-use crate::experimental_settings::ExperimentalSettings;
-use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::notify::Notify;
@@ -382,10 +380,9 @@ pub async fn package_commit_and_push(
 async fn package_pull_command(
     m: &model::Model,
     namespace: &str,
-    experimental: &ExperimentalSettings,
 ) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    let report = model::package_pull(m, &namespace, None, experimental).await?;
+    let report = model::package_pull(m, &namespace, None).await?;
     Ok((namespace, report))
 }
 
@@ -423,7 +420,6 @@ pub async fn package_pull(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
     watcher: tauri::State<'_, Watcher>,
-    experimental: tauri::State<'_, SharedExperimentalSettings>,
     toasts: tauri::State<'_, ToastCenter>,
     namespace: String,
     uri: Option<S3PackageUri>,
@@ -431,7 +427,6 @@ pub async fn package_pull(
     let msg_init = format!("Pulling package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    let experimental = experimental.read().await.clone();
     // A hand-pressed pull writes working files exactly as the tick's does, so
     // it raises the same in-flight flag — otherwise quitting during one would
     // interrupt it without asking.
@@ -439,7 +434,7 @@ pub async fn package_pull(
         let _applying = watcher.apply_guard(
             &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
         );
-        package_pull_command(&m, &namespace, &experimental).await
+        package_pull_command(&m, &namespace).await
     };
     let mut reported = false;
     if let Ok((ns, report)) = &result {

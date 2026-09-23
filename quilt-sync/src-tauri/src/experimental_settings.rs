@@ -6,8 +6,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
-use quilt_rs::lineage::SyncScope;
-
 use crate::error::Error;
 
 const FILE_NAME: &str = "experimental_settings.json";
@@ -26,15 +24,15 @@ const FILE_NAME: &str = "experimental_settings.json";
 /// it back off.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExperimentalSettings {
-    /// Whether the package screen offers a per-package
+    /// Whether v1's package screen offers a per-package
     /// [sync scope](quilt_rs::lineage::SyncScope) — the choice between
     /// downloading the files you pick and keeping the whole package.
     ///
-    /// A **gate on the control**, not on the behaviour: turning this on
-    /// downloads nothing by itself, and turning it off leaves the per-package
-    /// choices written where they are, so re-enabling resumes them. Clearing
-    /// them would destroy a choice the user made in order to undo a setting
-    /// that only ever hid a control.
+    /// A **gate on v1's control** and nothing else: every pull honours the
+    /// package's stored scope whatever this says, and the v2 package page
+    /// offers the choice without it. Turning it off leaves the per-package
+    /// choices written where they are; clearing them would destroy a choice
+    /// the user made in order to undo a setting that only ever hid a control.
     #[serde(default)]
     pub entire_package_sync: bool,
 
@@ -89,23 +87,6 @@ impl ExperimentalSettings {
     }
 }
 
-/// The scope to ask the engine for: a package's standing choice, honoured only
-/// while the experiment is on.
-///
-/// quilt-rs takes the scope as an argument and never reads it, so combining the
-/// two inputs is this app's job — and it is exactly one rule, in one place, used
-/// by both paths that pull. Keeping it a named function rather than an `&&` at
-/// each call site is what makes "the tick honours it too" checkable instead of
-/// a thing to remember.
-#[must_use]
-pub fn resolve_sync_scope(stored: SyncScope, settings: &ExperimentalSettings) -> SyncScope {
-    if settings.entire_package_sync {
-        stored
-    } else {
-        SyncScope::IndividualFiles
-    }
-}
-
 pub type SharedExperimentalSettings = Arc<RwLock<ExperimentalSettings>>;
 
 pub async fn init(data_dir: &Path) -> Result<SharedExperimentalSettings, Error> {
@@ -155,13 +136,6 @@ mod tests {
                 .entire_package_sync
         );
         Ok(())
-    }
-
-    fn gate(on: bool) -> ExperimentalSettings {
-        ExperimentalSettings {
-            entire_package_sync: on,
-            ..Default::default()
-        }
     }
 
     #[test]
@@ -225,36 +199,5 @@ mod tests {
 
         let reloaded = ExperimentalSettings::load(dir.path()).await.unwrap();
         assert!(reloaded.main_page_v2);
-    }
-
-    /// The gate is a veto, not a switch: it can only ever narrow what a package
-    /// asked for. Both cells of the interesting row asserted, so this cannot
-    /// pass by the gate being ignored.
-    #[test]
-    fn the_gate_can_only_narrow_the_stored_scope() {
-        assert_eq!(
-            resolve_sync_scope(SyncScope::EntirePackage, &gate(true)),
-            SyncScope::EntirePackage,
-            "on: the package's own choice is honoured"
-        );
-        assert_eq!(
-            resolve_sync_scope(SyncScope::EntirePackage, &gate(false)),
-            SyncScope::IndividualFiles,
-            "off: the stored choice is ignored, not obeyed"
-        );
-    }
-
-    /// And it never widens: a package that never opted in is sparse-checkout
-    /// under either gate position, so turning the experiment on changes nothing
-    /// on its own.
-    #[test]
-    fn the_gate_never_widens_a_package_that_did_not_ask() {
-        for on in [true, false] {
-            assert_eq!(
-                resolve_sync_scope(SyncScope::IndividualFiles, &gate(on)),
-                SyncScope::IndividualFiles,
-                "gate on={on}"
-            );
-        }
     }
 }

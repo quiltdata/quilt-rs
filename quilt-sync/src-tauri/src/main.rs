@@ -160,7 +160,6 @@ fn main() {
                 autosync_settings.clone(),
                 window_mode.clone(),
                 publish_settings.clone(),
-                experimental_settings.clone(),
                 reporter.clone(),
             );
             fswatcher::spawn(
