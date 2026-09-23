@@ -24,7 +24,7 @@
 ### Changed
 
 - **New main page** is now **New design preview** (Settings → Experimental, still off by default): one switch for the redesigned QuiltSync rather than one per page, so each part of the new design arrives under the switch you already turned on. If you had **New main page** on, it stays on and nothing is lost. The first launch after updating may open on a light window even with a dark desktop; from the next launch on it matches your desktop again (<https://github.com/quiltdata/quilt-rs/pull/980>, <https://github.com/quiltdata/quilt-rs/pull/983>)
-- **New design preview** (Settings → Experimental, off by default) now brings the new top bar to every screen that has one — Settings, sign-in, a package, commit, merge and the rest — not only to the new main page. Only the top bar changes: the row under it, with where you are and the page's own buttons, stays as it was, and so does the page itself, in light and dark alike. **Refresh** does what it always did on those screens, except the one a `quilt+s3://` link opens on while it installs, where it is unavailable (<https://github.com/quiltdata/quilt-rs/pull/984>, <https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **New design preview** (Settings → Experimental, off by default) now brings the new top bar to every screen that has one — Settings, sign-in, a package, commit, merge and the rest — not only to the new main page. Only the top bar changes: the row under it, with where you are and the page's own buttons, stays as it was, and so does the page itself, in light and dark alike. **Refresh** does what it always did on those screens, except the one a `quilt+s3://` link opens on while it installs, where it is unavailable (<https://github.com/quiltdata/quilt-rs/pull/984>, <https://github.com/quiltdata/quilt-rs/pull/988>)
 - The new main page (Settings → Experimental → **New design preview**) is polished further. The current page is unchanged by all of it:
   - **Refresh** now spins whenever the page is reloading, including a reload the background sync started, and cannot be pressed again until that finishes. It used to spin only after you pressed it, so the page could be reloading under a button that said nothing was happening (<https://github.com/quiltdata/quilt-rs/pull/970>)
   - **Recent files** grouped by package now orders owners as owners: `acme/plate` comes before `acme-labs/plate`. Sorted as plain text, the `-` put `acme-labs` first (<https://github.com/quiltdata/quilt-rs/pull/964>)
@@ -35,8 +35,8 @@
 
 ### Fixed
 
-- **Refresh** on the screen a `quilt+s3://` link opens on, while it installs, no longer opens the link's file a second time: there is nothing on that screen to refresh, so the button is unavailable. Going **Back** from the package that screen takes you to, or from Settings if you leave it that way, no longer returns to it and opens the file again either (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
-- A screen that fails to load shows one top bar, not two. Settings and the screen a `quilt+s3://` link opens on drew the error page's own bar under theirs (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **Refresh** on the screen a `quilt+s3://` link opens on, while it installs, no longer opens the link's file a second time: there is nothing on that screen to refresh, so the button is unavailable. Going **Back** from the package that screen takes you to, or from Settings if you leave it that way, no longer returns to it and opens the file again either (<https://github.com/quiltdata/quilt-rs/pull/988>)
+- A screen that fails to load shows one top bar, not two. Settings and the screen a `quilt+s3://` link opens on drew the error page's own bar under theirs (<https://github.com/quiltdata/quilt-rs/pull/988>)
 
 ### quilt-rs
 
