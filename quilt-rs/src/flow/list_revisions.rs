@@ -39,6 +39,15 @@ pub struct Revision {
     pub message: Option<String>,
 }
 
+/// One revision this copy holds, and whether the package's remote holds it too.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub revision: Revision,
+    /// Its manifest object exists at the lineage's remote. Checked, never
+    /// inferred from the pending commit chain — see `published-grounding`.
+    pub published: bool,
+}
+
 /// List the revisions of `namespace` this copy has, newest `obtained` first.
 ///
 /// Hash breaks a genuine mtime tie so the order is stable across calls.

@@ -125,6 +125,41 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         flow::count_revisions(&self.paths, &self.storage, &self.namespace).await
     }
 
+    /// [`Self::revisions`], each marked by whether `lineage`'s remote holds its
+    /// manifest. No remote, no remote call: every entry is unpublished.
+    pub async fn revision_history(
+        &self,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Vec<flow::HistoryEntry>> {
+        let revisions = self.revisions().await?;
+        let Some(remote_uri) = lineage.remote_uri.as_ref() else {
+            return Ok(revisions
+                .into_iter()
+                .map(|revision| flow::HistoryEntry {
+                    revision,
+                    published: false,
+                })
+                .collect());
+        };
+        let mut entries = Vec::with_capacity(revisions.len());
+        // Sequential: quilt-rs has no `futures` dependency to run them together.
+        for revision in revisions {
+            let manifest = ManifestUri {
+                hash: revision.hash.clone(),
+                ..remote_uri.clone()
+            };
+            let published = self
+                .remote
+                .exists(remote_uri.origin.as_ref(), &manifest.into())
+                .await?;
+            entries.push(flow::HistoryEntry {
+                revision,
+                published,
+            });
+        }
+        Ok(entries)
+    }
+
     /// The revision selected by one lineage snapshot.
     ///
     /// Unlike [`Self::revisions`], this reads only the manifest selected by

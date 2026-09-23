@@ -480,7 +480,7 @@ fn rejected_credential() -> Error {
     })
 }
 
-struct LoggedOutRemote;
+pub(super) struct LoggedOutRemote;
 
 impl crate::io::remote::Remote for LoggedOutRemote {
     fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -531,7 +531,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
 /// A remote that refuses every read with `AccessDenied`, simulating a role
 /// that cannot reach the bucket. Distinct from [`LoggedOutRemote`]: the
 /// credentials are valid, the request arrived, and it was refused.
-struct DeniedRemote;
+pub(super) struct DeniedRemote;
 
 impl crate::io::remote::Remote for DeniedRemote {
     fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {

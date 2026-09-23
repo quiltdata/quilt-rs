@@ -35,6 +35,7 @@ pub use install_package::install_package;
 pub(crate) use install_paths::Protect;
 pub use install_paths::install_paths;
 pub(crate) use install_paths::install_paths_over;
+pub use list_revisions::HistoryEntry;
 pub use list_revisions::Revision;
 pub use list_revisions::count_revisions;
 pub use list_revisions::list_revisions;
