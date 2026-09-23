@@ -433,6 +433,8 @@ pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
         PackageAction::GetLatest | PackageAction::ChooseS3Bucket | PackageAction::SignIn => {
             super::package_page_href(namespace)
         }
+        // Unreachable from `action`; mapped so this match cannot go stale.
+        PackageAction::SwitchRole => crate::routes::package_page_href(namespace),
     }
 }
 
@@ -1326,6 +1328,13 @@ mod tests {
         assert_eq!(
             action_href(PackageAction::SignIn, &ns("org/pkg")),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified"
+        );
+        // Never produced by `action`, and mapped anyway so the vocabulary can gain
+        // a verb without this match going stale: the switch is offered on the
+        // package's own page.
+        assert_eq!(
+            action_href(PackageAction::SwitchRole, &ns("org/pkg")),
+            crate::routes::package_page_href(&ns("org/pkg")),
         );
         // The fifth label ruling 5 names: a cause's `[Sign in]`, which
         // `cause_trailing` builds from `sign_in_href` directly rather than

@@ -16,6 +16,7 @@ use super::status_watch::StatusWatch;
 mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
+mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use header::{PageHeader, PageHeaderSkeleton};

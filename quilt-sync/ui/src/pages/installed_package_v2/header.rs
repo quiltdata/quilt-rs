@@ -60,6 +60,7 @@ use crate::kit::render;
 use crate::util;
 
 use super::bucket_form::BucketDialog;
+use super::role_dialog::RoleDialog;
 use super::{Outcome, Wiring};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
@@ -274,8 +275,8 @@ fn menu(
 ///
 /// Both shapes live here because they are one slot: the publishing states get a
 /// split button whose caret holds `Create new revision`, and the rest get their
-/// verb plainly. `Latest` and a denial get neither, and the row keeps its height
-/// either way.
+/// verb plainly. `Latest` and a denial with no other role held get neither, and
+/// the row keeps its height either way.
 fn primary_action(
     data: &commands::PackageHeaderData,
     action: Option<PackageAction>,
@@ -283,7 +284,16 @@ fn primary_action(
     goto: RwSignal<Option<String>>,
     publish_choice: RwSignal<usize>,
     bucket_open: RwSignal<bool>,
+    role_open: RwSignal<bool>,
 ) -> AnyView {
+    // The state offers no action for a denial — `kit::render` cannot know
+    // whether another role is held — so the payload decides, and the verb still
+    // comes from the vocabulary.
+    let action = data
+        .role_switch
+        .as_ref()
+        .map(|_| PackageAction::SwitchRole)
+        .or(action);
     let Wiring {
         busy,
         outcome,
@@ -343,6 +353,7 @@ fn primary_action(
         Some(PackageAction::Resolve) => goto.set(Some(resolve_to.clone())),
         Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
         Some(PackageAction::ChooseS3Bucket) => bucket_open.set(true),
+        Some(PackageAction::SwitchRole) => role_open.set(true),
         // `Publish` returned above.
         Some(PackageAction::Publish) | None => (),
     };
@@ -382,6 +393,12 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
     // The row's `Choose S3 bucket` and the menu's `Change bucket` open this one
     // dialog: the state calls for it, or the reader chooses it.
     let bucket_open = RwSignal::new(false);
+    // Opened only by the row's `Switch role`, which exists only when the
+    // payload names somewhere to switch to.
+    let role_open = RwSignal::new(false);
+    let role_dialog = data.role_switch.clone().map(|switch| {
+        view! { <RoleDialog open=role_open switch=switch w=w /> }
+    });
 
     // Every navigation this header makes goes through one signal, because a
     // `Callback` must be `Send + Sync` and `use_navigate`'s closure is neither.
@@ -421,7 +438,7 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                 <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
 
                 <div class=style::actions>
-                    {primary_action(&data, action, w, goto, publish_choice, bucket_open)}
+                    {primary_action(&data, action, w, goto, publish_choice, bucket_open, role_open)}
                     <Button disabled=Signal::derive(move || busy.get()) on_click=on_open_folder>
                         "Open folder"
                     </Button>
@@ -437,6 +454,7 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                 </div>
             </div>
             <BucketDialog open=bucket_open data=data.clone() w=w />
+            {role_dialog}
         </div>
     }
 }
@@ -893,6 +911,56 @@ mod tests {
                 dialog.inner_html()
             );
         }
+    }
+
+    /// A single-role reader sees the reason and no button — the payload says so
+    /// by carrying no remedy, and the header must not invent one.
+    #[wasm_bindgen_test]
+    fn a_denial_with_no_alternatives_offers_no_button() {
+        let el = mount_header(data(kit::PackageState::RoleDenied {
+            role: Some("analyst".to_string()),
+        }));
+        element_saying(&el, "No access");
+        assert!(
+            el.query_selector("[data-primary-action]")
+                .unwrap()
+                .is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// And the same denial with another role held offers the remedy.
+    #[wasm_bindgen_test]
+    async fn a_denial_with_an_alternative_offers_switch_role() {
+        let mut d = data(kit::PackageState::RoleDenied {
+            role: Some("analyst".to_string()),
+        });
+        d.role_switch = Some(commands::RoleSwitch {
+            host: "demo.quiltdata.com".to_string(),
+            alternatives: vec!["admin".to_string()],
+        });
+        let el = mount_header(d);
+
+        button(&el, "Switch role").click();
+        // The dialog opens from an effect, on the next tick.
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .expect("the role dialog");
+        assert!(
+            dialog.text_content().unwrap_or_default().contains("admin"),
+            "the alternatives are the options; markup was {}",
+            dialog.inner_html()
+        );
+        assert!(
+            !dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("analyst"),
+            "and the refused role is not one of them"
+        );
     }
 
     /// Undo's three refusals, told apart because the reader can act on the
