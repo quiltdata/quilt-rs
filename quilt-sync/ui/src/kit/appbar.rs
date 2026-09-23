@@ -9,11 +9,16 @@ use leptos::prelude::*;
 stylance::import_crate_style!(style, "src/kit/appbar.module.scss");
 
 #[component]
-pub fn Appbar(#[prop(default = None)] actions: Option<AnyView>) -> impl IntoView {
+pub fn Appbar(
+    #[prop(default = None)] actions: Option<AnyView>,
+    /// The logo navigates in place of the current history entry.
+    #[prop(optional)]
+    replace: bool,
+) -> impl IntoView {
     view! {
         <header class=style::appbar>
             <div class=style::bar>
-                <a class=style::logo href="/">
+                <a class=style::logo href="/" prop:replace=replace>
                     // The only logo asset with an alpha channel (qhq-8mgw.22).
                     <img src="/assets/img/quilt.png" alt="QuiltSync home" />
                 </a>

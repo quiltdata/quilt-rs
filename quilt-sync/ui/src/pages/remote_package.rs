@@ -43,13 +43,20 @@ pub fn RemotePackage() -> impl IntoView {
                 Some(commands::RemoteBanner::LocalOnly) => format!("{base}&localOnly=1"),
                 None => base,
             };
-            navigate(&path, NavigateOptions::default());
+            // Replace, so Back from the package page cannot land here and re-run it.
+            navigate(
+                &path,
+                NavigateOptions {
+                    replace: true,
+                    ..NavigateOptions::default()
+                },
+            );
             Ok::<_, String>(result)
         }
     });
 
     view! {
-        // Mounting runs the deep link, so a window reload would run it again.
+        // Mounting runs the deep link, so nothing here may reload the window.
         <Layout breadcrumbs=vec![] notification=notification transit=true>
             <Suspense fallback=move || {
                 view! { <Spinner /> }
@@ -58,7 +65,7 @@ pub fn RemotePackage() -> impl IntoView {
                     match data.await {
                         Ok(_) => view! { <Spinner /> }.into_any(),
                         Err(e) => {
-                            crate::error_handler::handle_or_display(&e, notification)
+                            crate::error_handler::handle_or_display_in_shell(&e, notification)
                         }
                     }
                 })}
@@ -73,12 +80,13 @@ mod tests {
     use crate::test_support::{mount, sleep_ms};
     use crate::theme;
     use leptos_router::components::Router;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// With no Tauri host the read rejects, so this also covers the error
-    /// page's nested `Layout`.
+    /// page drawn inside the relay's shell.
     #[wasm_bindgen_test]
-    async fn the_preview_does_not_hand_the_relay_its_bar() {
+    async fn the_relay_draws_the_preview_bar_once_with_refresh_disabled() {
         theme::set_v2(true);
         let el = mount(|| {
             view! {
@@ -95,15 +103,21 @@ mod tests {
             "the failure path must have drawn; markup was {}",
             el.inner_html()
         );
-
-        assert!(
-            el.query_selector("header").unwrap().is_none(),
-            "a Refresh here reloads the window and re-runs the deep link; markup was {}",
+        assert_eq!(
+            el.query_selector_all("header").unwrap().length(),
+            1,
+            "one redesigned bar, and no second shell; markup was {}",
             el.inner_html()
         );
+        let refresh = el
+            .query_selector("header button")
+            .unwrap()
+            .expect("the bar draws Refresh")
+            .dyn_into::<web_sys::HtmlButtonElement>()
+            .unwrap();
         assert!(
-            el.query_selector(".qui-appbar").unwrap().is_some(),
-            "the relay keeps the bar it draws today; markup was {}",
+            refresh.disabled(),
+            "a Refresh here reloads the window and re-runs the deep link; markup was {}",
             el.inner_html()
         );
     }
