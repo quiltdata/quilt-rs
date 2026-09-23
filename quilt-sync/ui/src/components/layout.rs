@@ -56,7 +56,6 @@ pub fn Layout(
     transit: bool,
     children: Children,
 ) -> impl IntoView {
-    provide_context(InsideLayout);
     let appbar = if theme::is_v2() {
         let actions = if transit {
             transit_appbar_actions()
@@ -151,14 +150,6 @@ pub fn Layout(
             </div>
         </div>
     }
-}
-
-#[derive(Clone, Copy)]
-struct InsideLayout;
-
-/// Whether the caller is already drawn inside a [`Layout`].
-pub fn inside_layout() -> bool {
-    use_context::<InsideLayout>().is_some()
 }
 
 fn reload_window() {

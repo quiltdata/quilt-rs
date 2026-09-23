@@ -65,7 +65,7 @@ pub fn RemotePackage() -> impl IntoView {
                     match data.await {
                         Ok(_) => view! { <Spinner /> }.into_any(),
                         Err(e) => {
-                            crate::error_handler::handle_or_display(&e, notification)
+                            crate::error_handler::handle_or_display_in_shell(&e, notification)
                         }
                     }
                 })}

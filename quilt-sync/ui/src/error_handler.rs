@@ -4,7 +4,6 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::components::buttons;
-use crate::components::layout;
 use crate::components::{Layout, Notification};
 
 /// Handle a command error that left the surface with nothing to render.
@@ -17,7 +16,24 @@ use crate::components::{Layout, Notification};
 /// caller here has already failed to load. A surface with a local fallback
 /// handles the state there and never arrives. Kinds a sign-in cannot fix —
 /// `registry_url_missing` — are left unmatched on purpose.
+///
+/// The error page brings its own `Layout`: for a caller that failed before
+/// drawing one. A caller already inside its `Layout` uses
+/// [`handle_or_display_in_shell`].
 pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification>>) -> AnyView {
+    handle(error, notification, false)
+}
+
+/// [`handle_or_display`] for a caller that already drew its `Layout`, so the
+/// error page does not draw a second one.
+pub fn handle_or_display_in_shell(
+    error: &str,
+    notification: RwSignal<Option<Notification>>,
+) -> AnyView {
+    handle(error, notification, true)
+}
+
+fn handle(error: &str, notification: RwSignal<Option<Notification>>, in_shell: bool) -> AnyView {
     if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(error) {
         match parsed.kind.as_str() {
             "session_absent" => {
@@ -33,7 +49,7 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
                         );
                         ().into_any()
                     }
-                    None => render_page_error(&parsed.message, notification),
+                    None => render_page_error(&parsed.message, notification, in_shell),
                 }
             }
             "setup_required" => {
@@ -41,14 +57,18 @@ pub fn handle_or_display(error: &str, notification: RwSignal<Option<Notification
                 navigate("/setup", NavigateOptions::default());
                 ().into_any()
             }
-            _ => render_page_error(&parsed.message, notification),
+            _ => render_page_error(&parsed.message, notification, in_shell),
         }
     } else {
-        render_page_error(error, notification)
+        render_page_error(error, notification, in_shell)
     }
 }
 
-fn render_page_error(message: &str, notification: RwSignal<Option<Notification>>) -> AnyView {
+fn render_page_error(
+    message: &str,
+    notification: RwSignal<Option<Notification>>,
+    in_shell: bool,
+) -> AnyView {
     let message = message.to_string();
     let on_reload = move |_| {
         let _ = web_sys::window().and_then(|w| w.location().reload().ok());
@@ -69,8 +89,7 @@ fn render_page_error(message: &str, notification: RwSignal<Option<Notification>>
             </div>
         </div>
     };
-    // A caller that failed inside its own shell already drew the appbar.
-    if layout::inside_layout() {
+    if in_shell {
         body.into_any()
     } else {
         view! { <Layout breadcrumbs=vec![] notification=notification>{body}</Layout> }.into_any()
@@ -125,11 +144,42 @@ mod tests {
             view! {
                 <Router>
                     <Layout breadcrumbs=vec![] notification=notification>
-                        {handle_or_display("boom", notification)}
+                        {handle_or_display_in_shell("boom", notification)}
                     </Layout>
                 </Router>
             }
         });
+        assert!(
+            el.text_content().unwrap_or_default().contains("boom"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert_eq!(appbars(&el), 1, "markup was {}", el.inner_html());
+    }
+
+    /// Merge, Commit and both package pages draw a `Layout` as their loading
+    /// fallback and the error page beside it, not inside it.
+    #[wasm_bindgen_test]
+    async fn a_page_whose_fallback_is_a_shell_still_gets_one_on_failure() {
+        let el = mount(|| {
+            let notification = RwSignal::new(None);
+            let data = LocalResource::new(|| async { Err::<(), _>("boom".to_string()) });
+            view! {
+                <Router>
+                    <Suspense fallback=move || {
+                        view! { <Layout breadcrumbs=vec![] notification=notification>"…"</Layout> }
+                    }>
+                        {move || Suspend::new(async move {
+                            match data.await {
+                                Ok(()) => ().into_any(),
+                                Err(e) => handle_or_display(&e, notification),
+                            }
+                        })}
+                    </Suspense>
+                </Router>
+            }
+        });
+        crate::test_support::sleep_ms(50).await;
         assert!(
             el.text_content().unwrap_or_default().contains("boom"),
             "markup was {}",
