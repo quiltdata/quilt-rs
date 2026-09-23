@@ -89,7 +89,6 @@ fn SettingsContent(
             <ExperimentalSection
                 entire_package_sync=data.experimental.entire_package_sync
                 main_page_v2=data.experimental.main_page_v2
-                package_page_v2=data.experimental.package_page_v2
                 notification=notification
                 refetch=refetch
             />

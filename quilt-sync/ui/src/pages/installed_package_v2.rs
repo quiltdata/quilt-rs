@@ -1,4 +1,4 @@
-//! The v2 package page. Behind `ExperimentalSettings.package_page_v2`.
+//! The v2 package page. Behind `main.rs`'s `UNFINISHED_PACKAGE_PAGE`.
 //!
 //! The header and the first context-pane slice are drawn from one authoritative
 //! read. The file pane has not landed yet, so the shell deliberately leaves its
@@ -201,7 +201,11 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
     .into_any()
 }
 
-/// What `/installed-package` renders for a reader with *New package page* on.
+/// What `/installed-package` renders when the in-code flag is on.
+///
+/// No reader reaches it: `main.rs`'s `UNFINISHED_PACKAGE_PAGE` is a constant in
+/// the source, flipped by whoever is working on this screen and committed off,
+/// so no setting and no build offers it.
 #[component]
 pub fn InstalledPackageV2() -> impl IntoView {
     let query = use_query_map();
