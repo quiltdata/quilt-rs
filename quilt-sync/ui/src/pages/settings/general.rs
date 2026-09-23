@@ -90,7 +90,8 @@ fn ReleaseNotesPopup(
                         view! {
                             <div class="release-notes-entry">
                                 <h3>{entry.version}</h3>
-                                <p>{entry.date}</p>
+                                // An unreleased `-dev` section has no date.
+                                {(!entry.date.is_empty()).then(|| view! { <p>{entry.date}</p> })}
                                 <pre>{entry.body}</pre>
                             </div>
                         }

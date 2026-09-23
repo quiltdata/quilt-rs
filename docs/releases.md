@@ -30,8 +30,27 @@ Path-dep version specifiers are kept in sync manually:
   don't touch them.
 
 Each released crate owns a `CHANGELOG.md`; see the header comment in
-each one for the conventions (alpha pre-release pattern, autolink
-format, cross-crate subsections).
+each one for the conventions (`-dev` versions between releases,
+autolink format, cross-crate subsections).
+
+Between releases, a crate with unreleased changes carries `X.Y.Z-dev` in
+its `Cargo.toml`, and its `CHANGELOG.md` opens with a matching `##
+[vX.Y.Z-dev]` heading and no date. The first PR to change a crate after
+its release opens the cycle: it sets the next patch `-dev` version and
+adds the heading with its entry. Crates with no changes keep their
+stable version. Cargo's version requirements skip pre-releases, so when
+`quilt-uri` or `quilt-rs` goes `-dev`, the downstream `version =`
+specifiers for it must move to the same `-dev` version. That specifier
+change alone does not open a cycle for the downstream crate; the release
+cascade bumps it. A PR that needs a bigger bump than the cycle started
+with (a feature in a patch cycle) renames the version in both places.
+The unreleased section describes the change since the last release, not
+a history of PRs: a PR that makes an unreleased entry stale rewrites it
+in place and appends its PR link. Work no user can reach yet, not even
+through Settings → Experimental, gets a single "Under the hood" line
+rather than an Added or Changed entry; it earns a real entry once it
+becomes reachable, even behind an Experimental switch. Released sections
+are never edited.
 
 ## Release workflows
 
@@ -47,9 +66,10 @@ or schedule.
 Every release in this repo is created with `--draft` and
 `--latest=false`. `make_latest=false` is **sticky** — promoting a
 draft via `gh release edit <tag> --draft=false` does not flip it back.
-No workflow ever sets `make_latest=true`; the only release marked as
-"latest" is the QuiltSync one, and it gets that flag manually during
-the review-and-publish step (see [Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
+Crate releases never become "latest". The only release marked as
+"latest" is the QuiltSync one: the gated `promote` job sets it with
+`gh release edit --latest` when it publishes the draft (see
+[Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
 
 ## Crates.io publishing — `release-crate.yaml`
 
@@ -206,14 +226,19 @@ and `HUBDB_COLUMN_MAP`.
 
 For any release:
 
-- Bump `version` in the relevant `Cargo.toml` and update path-dep
-  specifiers. The released crates are dependent on each other and
+- Drop `-dev` from `version` in the relevant `Cargo.toml` and update
+  path-dep specifiers. The released crates are dependent on each other and
   must be released as a cascade: `quilt-uri` → `quilt-rs` → `quilt-cli`.
   Bumping an upstream crate requires bumping every downstream crate
   that depends on it (and updating that downstream `Cargo.toml`'s
   `version =` specifier for the path dep).
-- Replace the latest `*-alphaN` block in the matching `CHANGELOG.md`
-  with a real version + today's date.
+- Drop `-dev` from the top heading in the matching `CHANGELOG.md`
+  too, and add today's date to it.
+- In the section being released, point every cross-crate line
+  (`### quilt-rs`, `### quilt-uri`) at the upstream's released version
+  and tag: `Updated [from v0.39.1 to v0.40.0](…/compare/quilt-rs/v0.39.1...quilt-rs/v0.40.0)`.
+  While the cycle runs, those lines name the upstream `-dev` version and
+  compare against `main`.
 - Run the workflow (`workflow_dispatch`).
 - Review the draft (for `quilt-cli`, download the archives and confirm
   `quilt --version`; for QuiltSync, install one of the bundles), then

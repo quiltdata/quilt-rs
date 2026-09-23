@@ -3,11 +3,39 @@
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
      Put quilt-uri updates under `### quilt-uri` section.
-     Use alpha pre-release versions (e.g. v0.27.2-alpha1) instead of [Unreleased]
-     to keep changelog in sync with Cargo.toml version.
+     Between releases a cross-crate line names the upstream -dev version and
+     compares against main; the release PR points it at the released tag.
+     Head unreleased changes with the Cargo.toml version: `-dev`, no date
+     (e.g. [v0.39.2-dev]), not [Unreleased]. If the cycle needs a bigger bump,
+     rename both. The first PR to change the crate after a release opens the
+     next patch `-dev` version and heading; the release PR drops `-dev` and
+     adds the date.
+     Describe the change since the last release, not each PR: when a PR makes
+     an unreleased entry stale, rewrite it in place and append the PR link.
+     Work no user can reach yet gets one "Under the hood" line, not a feature
+     entry; it earns a real entry once reachable, even behind a switch.
+     Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
+
+## [v0.40.0-dev]
+
+### Added
+
+- `InstalledPackage::current_revision(&lineage)` returns the `flow::Revision` that lineage snapshot selects — hash, when this copy obtained it, and message — or `None` when the lineage has no current hash. It reads only that one manifest, so a damaged older manifest that makes `InstalledPackage::revisions` fail does not break it. The caller passes the lineage it already read, so the revision and anything else taken from that lineage (the bucket, say) cannot come from two different states (<https://github.com/quiltdata/quilt-rs/pull/978>)
+- `InstalledPackage::revision_count` and `flow::count_revisions` count the revisions this copy holds without parsing any manifest. A damaged manifest is still counted, where `revisions` fails on it (<https://github.com/quiltdata/quilt-rs/pull/982>)
+- `InstalledPackage::revision_history(&lineage)` returns `revisions` as `flow::HistoryEntry` values, each with a `published` flag saying whether the registry of the lineage's remote lists that revision. It is one registry query for the whole package, not one per revision. A package with no remote, or a remote with no catalog host, makes no remote call and marks every entry unpublished (<https://github.com/quiltdata/quilt-rs/pull/982>)
+- `Remote::published_revisions` and `Auth::package_revisions` list the revision hashes a registry has for a package in a bucket, from its GraphQL `package.revisions`, reading every page. A package never pushed lists nothing. `Auth` locks and retries it as it does the role calls: one forced token refresh on a 401 or 403, then the error (<https://github.com/quiltdata/quilt-rs/pull/982>)
+- `InstalledPackage::manifest_from_lineage(&lineage)` is public: the manifest that lineage snapshot selects, so a caller reading a revision's files pairs them with the same lineage it read everything else from (<https://github.com/quiltdata/quilt-rs/pull/986>)
+
+### Changed
+
+- **Breaking:** `Remote` has a new required method, `published_revisions`, with no default. An implementation of `Remote` outside this crate stops compiling until it adds one; `RemoteS3` and `MockRemote` have it (<https://github.com/quiltdata/quilt-rs/pull/982>)
+
+### Fixed
+
+- `flow::list_revisions` and `InstalledPackage::revisions` skip hidden files in the installed-manifests directory, such as a `.tmp-<uuid>` left by an interrupted write or the OS's `.DS_Store`. They were read as manifests, so one that did not parse failed the whole listing, and one that did was listed as a revision named after the file (<https://github.com/quiltdata/quilt-rs/pull/982>)
 
 ## [v0.39.1] - 2026-09-18
 
