@@ -321,6 +321,19 @@ pub trait QuiltModel {
         Ok(package.reset_to_latest().await?)
     }
 
+    /// Undo the package's newest local commit.
+    ///
+    /// The engine refuses four ways: no pending commit, no parent to step back
+    /// to, a remote of any kind, and a working tree holding uncommitted edits.
+    /// The surface gates on the first three from the page payload; the fourth is
+    /// transient and comes back as a message.
+    async fn package_undo_commit(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<quilt::lineage::CommitState, Error> {
+        Ok(package.undo_commit().await?)
+    }
+
     /// Set the package's remote, returning `Some(reason)` when the bucket's
     /// default workflow could not be resolved on the best-effort path (the
     /// remote is still set; the caller surfaces the reason), else `None`.

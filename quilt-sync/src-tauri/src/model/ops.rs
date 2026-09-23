@@ -182,6 +182,24 @@ pub async fn package_revision_reset_local(
     Ok(())
 }
 
+pub async fn package_undo_commit(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> Result<(), Error> {
+    // `ok_or_else`, not the `panic!` its neighbours use: a package can be gone
+    // by the time a menu item is pressed.
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| {
+            Error::from(quilt::InstallPackageError::NotInstalled(
+                namespace.to_owned(),
+            ))
+        })?;
+    model.package_undo_commit(&installed_package).await?;
+    Ok(())
+}
+
 pub async fn package_push(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,

@@ -410,6 +410,20 @@ pub struct PackageHeaderData {
     /// remote, because a push consumes the commit chain. The words for each
     /// refusal live here, not on the wire.
     pub commit_has_parent: bool,
+    pub role_switch: Option<RoleSwitch>,
+}
+
+/// The remedy a denial offers. UI-side mirror of
+/// `quilt_sync::commands::package_page::RoleSwitch`; the serde attributes MUST
+/// match so the payload crosses the Tauri boundary unchanged.
+///
+/// A sibling of `state` rather than a field of `PackageState::RoleDenied`: the
+/// kit's state enum is the vocabulary, and a host and a role list are transport.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleSwitch {
+    pub host: String,
+    pub alternatives: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1287,6 +1301,20 @@ pub async fn certify_latest(
         uri: Option<S3PackageUri>,
     }
     tauri::invoke("certify_latest", &Args { namespace, uri }).await
+}
+
+/// Step the package back one revision along its pending commit chain.
+///
+/// Refuses on a package with any remote, on a first revision, and on a dirty
+/// tree — the first two are gated by the caller from the page payload, the
+/// third comes back as the message the confirm dialog draws.
+pub async fn undo_commit(namespace: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("undo_commit", &Args { namespace }).await
 }
 
 pub async fn reset_local(namespace: String, uri: Option<S3PackageUri>) -> Result<String, String> {
