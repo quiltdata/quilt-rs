@@ -363,6 +363,7 @@ mod tests {
     use crate::test_support::{element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// Put the browser on an address before the router reads one. Same origin,
@@ -511,8 +512,14 @@ mod tests {
             aside.get_attribute("aria-label").as_deref(),
             Some("About this package")
         );
+        // The header's closed dialogs carry their own paragraphs; only the body's count.
+        let paragraphs = el.query_selector_all("p").unwrap();
+        let loose = (0..paragraphs.length())
+            .filter_map(|i| paragraphs.item(i))
+            .filter_map(|n| n.dyn_into::<web_sys::Element>().ok())
+            .any(|p| p.closest("dialog").unwrap().is_none());
         assert!(
-            el.query_selector("p").unwrap().is_none(),
+            !loose,
             "the loose namespace placeholder is gone; markup was {}",
             el.inner_html()
         );
