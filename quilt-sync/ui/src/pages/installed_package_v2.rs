@@ -11,8 +11,8 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 
-use super::appbar::v2_appbar_actions;
 use super::status_watch::StatusWatch;
+use crate::components::appbar::appbar_actions;
 
 mod bucket_form;
 pub(crate) mod context_pane;
@@ -272,7 +272,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
                 </Suspense>
             }
                 .into_any()
-            actions=v2_appbar_actions(reload, in_flight.into())
+            actions=appbar_actions(move || reload.notify(), in_flight.into())
         >
             <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {

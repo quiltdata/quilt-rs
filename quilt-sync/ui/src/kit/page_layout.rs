@@ -1,4 +1,8 @@
-//! The page frame: an appbar and a width-capped column for the regions.
+//! The page frame: the [`Appbar`], and a width-capped column for the regions.
+//!
+//! The bar is its own unit rather than part of this — see [`Appbar`] for why —
+//! so what the frame adds is the **surface**: `data-v2-page`, the page's ground,
+//! ink and type. That is the part a v1 page must never be wrapped in.
 //!
 //! # What it owns, and why that matters
 //!
@@ -38,6 +42,8 @@
 
 use leptos::prelude::*;
 
+use crate::kit::Appbar;
+
 stylance::import_crate_style!(style, "src/kit/page_layout.module.scss");
 
 #[component]
@@ -47,9 +53,7 @@ pub fn PageLayout(
     /// nothing and heading navigation has no top.
     #[prop(into)]
     heading: String,
-    /// Appbar controls, pushed to the right — on the main page, Refresh and Settings
-    /// as labelled `Button`s. A slot rather than named props, because the appbar has
-    /// no opinion about which page needs which controls.
+    /// Appbar controls, handed straight to the [`Appbar`]'s slot.
     #[prop(optional)]
     actions: Option<AnyView>,
     /// A `Banner`, when there is one. In the flow directly under the appbar, so it
@@ -67,25 +71,7 @@ pub fn PageLayout(
         // reader still visits v1's pages.
         <div class=style::root data-v2-page>
             <h1 data-sr-only>{heading}</h1>
-            // `header` and `main` rather than divs: they are the two landmarks a
-            // screen reader offers to skip between, and they cost nothing.
-            <header class=style::appbar>
-                <div class=style::bar>
-                    <a class=style::logo href="/">
-                        // v1's own asset, on a bar that is now v1's own colour. It is
-                        // the only logo in the repo with an alpha channel, which is the
-                        // whole of qhq-8mgw.22: `quilt-mark.png` was PNG colour-type 2
-                        // with no alpha at all, so it carried an opaque square that was
-                        // merely INVISIBLE while the bar was white, and showed its
-                        // corners the moment dark theme landed.
-                        //
-                        // Alt text, not `aria-hidden`: it is the only content of a link,
-                        // so hiding it would leave the link unnamed.
-                        <img src="/assets/img/quilt.png" alt="QuiltSync home" />
-                    </a>
-                    {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}
-                </div>
-            </header>
+            <Appbar actions=actions />
             {banner
                 .map(|banner| {
                     view! { <div class=style::notice>{banner}</div> }
@@ -102,33 +88,6 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    /// qhq-8mgw.22. The appbar's ground is the brand colour in both themes, so
-    /// its mark has to be the one asset in the repo that can sit on a coloured
-    /// ground — `quilt.png`, which is PNG colour-type 6 and half transparent.
-    ///
-    /// `quilt-mark.png`, which this replaced, was colour-type 2: no alpha at
-    /// all, so it carried an opaque square. That was invisible for as long as
-    /// the square's white happened to match the bar, and no test could see the
-    /// difference — which is how it survived until dark theme made the corners
-    /// show. Pinning the filename is what a test CAN hold: the asset's own
-    /// format is checked where assets are, not here.
-    #[wasm_bindgen_test]
-    fn the_appbar_mark_is_the_asset_with_an_alpha_channel() {
-        let el = mount(|| view! { <PageLayout heading="Page">"body"</PageLayout> });
-        let img = el
-            .query_selector("header img")
-            .unwrap()
-            .expect("the appbar draws a mark");
-        let src = img.get_attribute("src").expect("the mark has a src");
-        assert!(
-            src.ends_with("/quilt.png"),
-            "the bar is brand-coloured, so the mark must be the RGBA asset: {src}"
-        );
-        assert!(
-            !img.get_attribute("alt").unwrap_or_default().is_empty(),
-            "the mark is the only content of a link, so it has to name it"
-        );
-    }
     /// The stylesheet hangs the dark `color-scheme` on this attribute, so a page
     /// that lost it would put v1's ink on a dark canvas again.
     #[wasm_bindgen_test]

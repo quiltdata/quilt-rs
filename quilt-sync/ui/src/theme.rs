@@ -93,6 +93,20 @@ pub fn set_v2(on: bool) {
     remember_v2(on);
 }
 
+/// Whether the root carries [`V2_CLASS`] — the generation `/` last resolved.
+///
+/// For the v1 shell, which draws the redesigned appbar when this is on. Read
+/// rather than fetched: `/` is the one place the preview is resolved, and a
+/// second fetch per page would put a frame of the wrong bar in front of every v1
+/// route. Not reactive either — a route reads it when it draws, so a reader who
+/// ticks the preview in Settings sees the bar change on the next route drawn
+/// after `/`, which is where they go to see the new home anyway.
+pub fn is_v2() -> bool {
+    document()
+        .document_element()
+        .is_some_and(|root| root.class_list().contains(V2_CLASS))
+}
+
 /// Where the generation is kept for the *next* launch, read by `index.html`'s
 /// inline script before the first paint.
 ///

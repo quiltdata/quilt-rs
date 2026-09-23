@@ -49,7 +49,9 @@ pub fn RemotePackage() -> impl IntoView {
     });
 
     view! {
-        <Layout breadcrumbs=vec![] notification=notification>
+        // `transit`: this mount is the deep link's operation, so the preview's
+        // bar — with a Refresh that reloads the window — must not reach it.
+        <Layout breadcrumbs=vec![] notification=notification transit=true>
             <Suspense fallback=move || {
                 view! { <Spinner /> }
             }>
@@ -63,5 +65,41 @@ pub fn RemotePackage() -> impl IntoView {
                 })}
             </Suspense>
         </Layout>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use crate::theme;
+    use leptos_router::components::Router;
+    use wasm_bindgen_test::*;
+
+    /// The relay renders inside the same v1 `Layout` every route the preview
+    /// reaches does, so it is held out by name rather than by shape. Mounted
+    /// with no Tauri host, so the deep link's own read rejects and runs nothing.
+    #[wasm_bindgen_test]
+    fn the_preview_does_not_hand_the_relay_its_bar() {
+        theme::set_v2(true);
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <RemotePackage />
+                </Router>
+            }
+        });
+        theme::set_v2(false);
+
+        assert!(
+            el.query_selector("header").unwrap().is_none(),
+            "a Refresh here reloads the window and re-runs the deep link; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            el.query_selector(".qui-appbar").unwrap().is_some(),
+            "the relay keeps the bar it draws today; markup was {}",
+            el.inner_html()
+        );
     }
 }
