@@ -783,7 +783,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
 
     /// The hashes of every revision the registry lists for `namespace` in
     /// `bucket` — one timestamped pointer each. Empty when the registry has
-    /// no such package.
+    /// no such package; an error if it vanishes after the first page.
     ///
     /// Locks and retries as [`Auth::readable_buckets`] does: it is the same
     /// registry GraphQL endpoint, refused the same ways.

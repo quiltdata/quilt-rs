@@ -181,8 +181,9 @@ pub trait Remote {
 
     /// The hashes of every revision `host`'s registry lists for `namespace`
     /// in `bucket` — each one a timestamped pointer under
-    /// `.quilt/named_packages/`. Empty for a package never pushed. One ask
-    /// for the whole package, not one per revision.
+    /// `.quilt/named_packages/`. Empty for a package never pushed; an error
+    /// if the package vanishes partway through the listing, never a short
+    /// list. One ask for the whole package, not one per revision.
     fn published_revisions(
         &self,
         host: &Host,
