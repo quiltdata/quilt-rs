@@ -28,7 +28,7 @@ stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss
 
 /// What a command reported, and which package it reported about.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Outcome {
+pub struct Outcome {
     pub namespace: String,
     pub variant: BannerVariant,
     /// The page's own sentence. Never the backend's.
@@ -49,15 +49,17 @@ pub(crate) struct Outcome {
 /// reader has open stays open, and a navigation asked for by a command that
 /// settles after the rebuild still happens.
 ///
-/// `pub(crate)` rather than `pub(super)`: `PageHeader`'s generated props struct
-/// carries it, and a prop type less visible than the props struct is what the
-/// `private_interfaces` lint fires on — and warnings are denied.
+/// Public so the gallery can hand the live context pane an idle one.
 #[derive(Clone, Copy)]
-pub(crate) struct Wiring {
+pub struct Wiring {
     /// One command at a time. Every control on the header reads this, so a
     /// second cannot start on top of the first — two writes to one working
     /// tree is a race the page has no way to arbitrate.
     pub busy: RwSignal<bool>,
+    /// Whether the command holding `busy` is Keeping's download. Here, not in
+    /// the pane: the download writes files, the watcher re-reads, and the
+    /// rebuilt button must keep its spinner.
+    pub downloading: RwSignal<bool>,
     /// What the last command said, and which package it said it about. Keyed,
     /// because a result arriving for a package the page no longer shows is not
     /// this page's news — see `outcome_band`.
@@ -89,9 +91,53 @@ async fn holding<T>(
     answer
 }
 
+/// Run a command, hold the page while it runs, and report only what the band
+/// is for.
+///
+/// Success says nothing here. A command whose success IS worth a sentence —
+/// undo — sets its own outcome, because it is the exception rather than the
+/// rule, and a helper that reported every success would put `Get latest`'s
+/// line on the page behind the toast that already carried its report.
+///
+/// Starting retracts whatever the band said last, in `holding`, so a failure
+/// does not outlive the retry that succeeds.
+///
+/// `on_failure` is the page's own sentence for the command not happening; the
+/// backend's text follows it as the detail, which is the split the pause band
+/// already makes.
+pub(super) fn run(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    namespace: String,
+    on_failure: &'static str,
+    after: Option<Trigger>,
+    task: impl std::future::Future<Output = Result<String, String>> + 'static,
+) {
+    // The controls are disabled while this is true, so this guard only
+    // catches a press already in flight when the signal was written.
+    if busy.get_untracked() {
+        return;
+    }
+    leptos::task::spawn_local(async move {
+        match holding(busy, outcome, task).await {
+            Ok(_) => {
+                if let Some(reload) = after {
+                    reload.notify();
+                }
+            }
+            Err(message) => outcome.set(Some(Outcome {
+                namespace,
+                variant: BannerVariant::Critical,
+                lead: on_failure.to_string(),
+                detail: Some(message),
+            })),
+        }
+    });
+}
+
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
-pub(crate) struct Dialogs {
+pub struct Dialogs {
     /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
     /// one dialog: the state calls for it, or the reader chooses it.
     pub bucket: RwSignal<bool>,
@@ -105,9 +151,11 @@ pub(crate) struct Dialogs {
 }
 
 impl Wiring {
-    fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             busy: RwSignal::new(false),
+            downloading: RwSignal::new(false),
             outcome: RwSignal::new(None),
             reload: Trigger::new(),
             goto: RwSignal::new(None),
@@ -131,6 +179,13 @@ impl Wiring {
                 goto.set(None);
             }
         });
+    }
+}
+
+/// An idle page: nothing running, nothing said, no dialog open.
+impl Default for Wiring {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
