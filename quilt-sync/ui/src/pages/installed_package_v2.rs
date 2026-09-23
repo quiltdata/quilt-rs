@@ -19,6 +19,7 @@ mod header;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
+pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");

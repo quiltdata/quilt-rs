@@ -10,12 +10,14 @@
 //! place to see that is here.
 //!
 //! **`pages::installed_package_v2::header::PageHeader` is built now, and this is
-//! still a parallel drawing of it.** Two differences keep it that way for the
-//! moment: the page's header takes a payload where this takes a bare state, and
-//! this has an `action_open` the page has no use for until resolve mode exists —
-//! the whole-page scene's one cell that needs it. Worth collapsing once resolve
-//! mode lands, because a scene that hand-draws a region it could render is a
-//! scene that stops being true the first time somebody edits the region.
+//! still a parallel drawing of its row.** Its menu is not drawn: it is the page's
+//! own, from `pages::menu_items` over a fixture payload, with the handlers
+//! dropped. One difference keeps the row a drawing for the moment: the page's
+//! header takes a payload where this takes a bare state — and with it this has an
+//! `action_open` the page has no use for until resolve mode exists, the
+//! whole-page scene's one cell that needs it. Worth collapsing once resolve mode
+//! lands, because a scene that hand-draws a region it could render is a scene
+//! that stops being true the first time somebody edits the region.
 //!
 //! # The words are not chosen here
 //!
@@ -50,8 +52,8 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
+use crate::commands;
 use crate::kit::ActionMenu;
-use crate::kit::ActionTone;
 use crate::kit::BackLink;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
@@ -63,6 +65,7 @@ use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
+use crate::pages::{MenuItem, menu_items};
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -144,54 +147,44 @@ fn states() -> Vec<(&'static str, PackageState)> {
     ]
 }
 
-/// The package-level commands. Fixed across states on purpose: the header's
-/// menu is where everything that is *not* the one primary action lives, so it
-/// does not change shape as the state does.
+/// The payload this scene draws its menu from: a remoted package with a
+/// catalog, one commit and a parent behind it — the ordinary case, and the
+/// only one with a catalog to link to, so the menu shows its full width.
+/// Every command is live except `Undo last revision`, which the engine
+/// refuses on any remote; the item stays and states that, which is the
+/// gating this scene exists to show. The states above it vary the ROW; the
+/// menu is fixed across them by design, which is what this fixture asserts by
+/// being one.
 ///
-/// `Create new revision` is here in **every** state, and also behind the caret
-/// of the `Publish` split button in the states that publish. The duplication is
-/// deliberate. The menu is its stable home — one place to learn, available even
-/// when the package has nothing to publish and so nothing to hang a caret on.
-/// The caret is proximity: at the moment somebody is about to publish, the other
-/// way to do it should be next to their cursor rather than a menu away.
-fn menu() -> Vec<MenuAction> {
-    vec![
-        MenuAction {
-            label: "Create new revision".to_string(),
-            tone: ActionTone::Default,
-            disabled: None,
-            on_select: Callback::new(|()| ()),
-            separated: false,
-        },
-        MenuAction {
-            label: "Open in catalog".to_string(),
-            tone: ActionTone::Default,
-            disabled: None,
-            on_select: Callback::new(|()| ()),
-            separated: false,
-        },
-        MenuAction {
-            label: "Change bucket".to_string(),
-            tone: ActionTone::Default,
-            disabled: None,
-            on_select: Callback::new(|()| ()),
-            separated: false,
-        },
-        MenuAction {
-            label: "Undo last revision".to_string(),
-            tone: ActionTone::Danger,
-            disabled: None,
-            on_select: Callback::new(|()| ()),
-            separated: true,
-        },
-        MenuAction {
-            label: "Remove".to_string(),
-            tone: ActionTone::Danger,
-            disabled: None,
-            on_select: Callback::new(|()| ()),
-            separated: false,
-        },
-    ]
+/// `Create new revision` is in the menu in **every** state, and also behind the
+/// caret of the `Publish` split button in the states that publish. The
+/// duplication is deliberate. The menu is its stable home — one place to learn,
+/// available even when the package has nothing to publish and so nothing to hang
+/// a caret on. The caret is proximity: at the moment somebody is about to
+/// publish, the other way to do it should be next to their cursor rather than a
+/// menu away.
+fn scene_payload() -> commands::PackageHeaderData {
+    let namespace: quilt_uri::Namespace = NAMESPACE.try_into().expect("a namespace");
+    commands::PackageHeaderData {
+        uri: Some(quilt_sync_ui::util::package_uri(
+            "quilt-example",
+            &namespace,
+            Some("open.quiltdata.com"),
+        )),
+        namespace,
+        state: PackageState::Latest,
+        remote_locked: false,
+        has_local_commit: true,
+        commit_has_parent: true,
+        role_switch: None,
+    }
+}
+
+/// The page's menu, with its handlers dropped. The scene has no Tauri
+/// runtime and nothing to run against; what it is for is the arrangement,
+/// which is the part `menu_items` decides.
+fn scene_menu() -> Vec<MenuItem> {
+    menu_items(&scene_payload(), false)
 }
 
 /// The header at one state.
@@ -216,7 +209,7 @@ fn menu() -> Vec<MenuAction> {
 ///
 /// The command is in the menu in every state **and** behind the caret in the
 /// publishing ones. Duplication on purpose: the menu is the stable home, the
-/// caret is proximity at the moment it is wanted. See [`menu`].
+/// caret is proximity at the moment it is wanted. See [`scene_payload`].
 ///
 /// # One gap, because there is nothing left to group
 ///
@@ -284,7 +277,16 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bo
                     <Button on_click=|_| ()>"Open folder"</Button>
                     <ActionMenu
                         aria_label="More actions for this package"
-                        actions=menu()
+                        actions=scene_menu()
+                            .into_iter()
+                            .map(|item| MenuAction {
+                                label: item.label,
+                                tone: item.tone,
+                                disabled: item.disabled,
+                                on_select: Callback::new(|()| ()),
+                                separated: item.separated,
+                            })
+                            .collect()
                     />
                 </div>
             </div>
@@ -331,7 +333,10 @@ pub fn PackageHeaderScene() -> impl IntoView {
                   hand and the third because only it names a host. Read down the action \
                   column: every control answers what this package needs, so it is the \
                   state's own action and nothing else, while `Create new revision` sits in \
-                  the overflow menu in all sixteen. Measured: the widest row is 609px — \
+                  the overflow menu in all sixteen. That menu is the page's own, drawn from \
+                  one fixture payload with the handlers dropped: `Open in catalog` is there \
+                  because the fixture has a catalog, and the same remote is why `Undo last \
+                  revision` is greyed — a remoted package cannot be undone. Measured: the widest row is 609px — \
                   `Signed out of demo.quiltdata.com`, which took the title from `Revision \
                   not published` at 568 — against the 992 the page has at 1024, and every \
                   row is 32px tall, so the page does not jump between states. Then read the \
@@ -347,5 +352,55 @@ pub fn PackageHeaderScene() -> impl IntoView {
                 })
                 .collect_view()}
         </Scene>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scene renders the page's menu rather than a drawing of it. Pinned,
+    /// because the copy this replaced went stale the moment the page's menu
+    /// gained gating — and a stale scene is worse than no scene: it is a design
+    /// record that lies.
+    ///
+    /// The shape pinned is a REMOTED package's, which is the ordinary one and the
+    /// only one with a catalog to link to. That costs undo — the engine refuses on
+    /// any remote — so exactly one item is refused, it is `Undo last revision`, and
+    /// it carries the payload's own reason. Asserted as the whole refusal list
+    /// rather than item by item: a fixture that quietly started disabling something
+    /// else would otherwise pass.
+    #[test]
+    fn the_scene_draws_the_page_s_own_menu() {
+        let items = scene_menu();
+        let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Create new revision",
+                "Open in catalog",
+                "Change bucket",
+                "Undo last revision",
+                "Remove",
+            ],
+        );
+
+        let refused: Vec<(&str, &str)> = items
+            .iter()
+            .filter_map(|item| {
+                item.disabled
+                    .as_deref()
+                    .map(|reason| (item.label.as_str(), reason))
+            })
+            .collect();
+        assert_eq!(
+            refused,
+            vec![(
+                "Undo last revision",
+                "This package has a remote, so undo is only available before the first push",
+            )],
+            "undo is the one refusal and it states the payload's reason; \
+             everything else is live: {items:?}"
+        );
     }
 }

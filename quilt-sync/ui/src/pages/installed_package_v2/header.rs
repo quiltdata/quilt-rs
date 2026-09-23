@@ -74,10 +74,10 @@ const BUSY: &str = "Something else is running";
 /// Which overflow command an item is, so the page can attach a handler to a list
 /// the gallery renders inert.
 ///
-/// `pub(crate)` here and widened to `pub` in Task 8, when the gallery — a separate
-/// binary crate that reaches this one as `quilt_sync_ui::…` — becomes a caller.
+/// `pub` because the gallery is a separate binary crate and reaches this one as
+/// `quilt_sync_ui::pages::…`; the module stays private behind that re-export.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum MenuCommand {
+pub enum MenuCommand {
     NewRevision,
     /// Carries the catalog URL, because whether the item exists at all is the
     /// same question as whether one can be built.
@@ -91,7 +91,7 @@ pub(crate) enum MenuCommand {
 /// One overflow command, as the payload decides it: its words, its tone, whether
 /// it sits below a rule, and the reason it cannot run.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct MenuItem {
+pub struct MenuItem {
     pub command: MenuCommand,
     pub label: String,
     pub tone: ActionTone,
@@ -120,7 +120,7 @@ fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
 /// the one primary action lives, so it does not change shape as the state does.
 /// What varies is what a command can be offered *for* — a catalog link needs a
 /// catalog, and an undo needs something to undo.
-pub(crate) fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuItem> {
+pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuItem> {
     let refused = || busy.then(|| BUSY.to_string());
     let mut items = vec![MenuItem {
         command: MenuCommand::NewRevision,
