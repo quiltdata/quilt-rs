@@ -81,58 +81,10 @@ async fn commit_staged(
 /// at a destination is a file this copy does not track, the user's own, and it
 /// must survive.
 ///
-/// Each file is hard-linked into place. A link fails, atomically, if anything
-/// is at its destination, so nothing is ever replaced; on that clash the links
-/// made so far are removed and the call refuses. A filesystem without hard
-/// links (FAT, exFAT, some network mounts) fails the first link, and then
-/// [`rename_where_absent`] places the files instead.
+/// Every destination is checked before the first rename, so a refusal places
+/// nothing. The rename replaces what it finds, so a file created during the
+/// renames themselves, a window of milliseconds, is not caught.
 async fn place_where_absent(
-    storage: &(impl Storage + Sync),
-    staged: &[(PathBuf, PathBuf, ManifestRow)],
-    lineage: &mut PackageLineage,
-) -> Res {
-    for (placed, (staged_path, working_dest, row)) in staged.iter().enumerate() {
-        if let Some(parent) = working_dest.parent() {
-            storage.create_dir_all(parent).await?;
-        }
-        let Err(err) = storage.hard_link(staged_path, working_dest).await else {
-            continue;
-        };
-        let clash = err.kind() == std::io::ErrorKind::AlreadyExists;
-        // Any other first failure means no links here; the kind varies by platform.
-        if placed == 0 && !clash {
-            debug!("Hard links are unavailable here ({err}); renaming instead");
-            return rename_where_absent(storage, staged, lineage).await;
-        }
-        // Every staged copy is still there, so taking back a link loses nothing.
-        for (_, placed_dest, _) in &staged[..placed] {
-            let _ = storage.remove_file(placed_dest).await;
-        }
-        if clash {
-            debug!("❌ A local file appeared at {}", working_dest.display());
-            return Err(Error::InstallPath(InstallPathError::LocalFileExists(vec![
-                row.logical_key.clone(),
-            ])));
-        }
-        return Err(err.into());
-    }
-    for (_, working_dest, row) in staged {
-        lineage.paths.insert(
-            row.logical_key.clone(),
-            PathState {
-                timestamp: storage.modified_timestamp(working_dest).await?,
-                hash: row.hash.clone().into(),
-            },
-        );
-        debug!("✔️ Linked in {}", working_dest.display());
-    }
-    Ok(())
-}
-
-/// [`place_where_absent`] where hard links are unavailable: every destination
-/// is checked before the first rename, so a refusal places nothing. A file
-/// created during the renames themselves is not caught; a rename replaces it.
-async fn rename_where_absent(
     storage: &(impl Storage + Sync),
     staged: &[(PathBuf, PathBuf, ManifestRow)],
     lineage: &mut PackageLineage,
@@ -1043,53 +995,11 @@ mod tests {
         Ok(())
     }
 
-    /// A file created after the up-front check, while earlier files are being
-    /// placed: the link refuses it, and the file already placed is taken back,
-    /// so a retry does not meet an untracked file of ours.
+    /// A file created after the download, before placing: every path is
+    /// checked before the first rename, so nothing is placed and it survives.
     #[test(tokio::test)]
-    async fn a_file_that_appears_during_placement_is_kept_and_nothing_is_placed() -> Res {
-        let users_file = PathBuf::from("work/sub/b");
-        let storage = MockStorage::default().with_file_appearing(&users_file);
-        let staged = two_staged(&storage).await?;
-        let mut lineage = PackageLineage::default();
-
-        let result =
-            swap_staged_into_place(&storage, &staged, &Protect::Absent, &mut lineage).await;
-
-        assert!(matches!(
-            result,
-            Err(Error::InstallPath(InstallPathError::LocalFileExists(ref p))) if p == &vec![PathBuf::from("sub/b")]
-        ));
-        assert_eq!(storage.read_bytes(&users_file).await?, b"users new file");
-        assert!(
-            !storage.exists("work/a").await,
-            "the first file is taken back"
-        );
-        assert!(lineage.paths.is_empty());
-
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn without_hard_links_every_file_is_renamed_into_place() -> Res {
-        let storage = MockStorage::without_hard_links();
-        let staged = two_staged(&storage).await?;
-        let mut lineage = PackageLineage::default();
-
-        swap_staged_into_place(&storage, &staged, &Protect::Absent, &mut lineage).await?;
-
-        assert_eq!(storage.read_bytes("work/a").await?, b"remote bytes");
-        assert_eq!(storage.read_bytes("work/sub/b").await?, b"remote bytes");
-        assert_eq!(lineage.paths.len(), 2);
-
-        Ok(())
-    }
-
-    /// Without links, the check before the first rename is the guard: it
-    /// refuses before anything is placed.
-    #[test(tokio::test)]
-    async fn without_hard_links_a_local_file_refuses_before_any_rename() -> Res {
-        let storage = MockStorage::without_hard_links();
+    async fn a_local_file_that_appeared_after_the_download_refuses_before_any_rename() -> Res {
+        let storage = MockStorage::default();
         let staged = two_staged(&storage).await?;
         let users_file = users_file_at_second(&storage).await?;
         let mut lineage = PackageLineage::default();

@@ -90,14 +90,6 @@ impl Storage for LocalStorage {
         Ok(DateTime::<Utc>::from(modified))
     }
 
-    async fn hard_link(
-        &self,
-        from: impl AsRef<Path>,
-        to: impl AsRef<Path>,
-    ) -> Result<(), std::io::Error> {
-        fs::hard_link(from, to).await
-    }
-
     async fn open_file(&self, path: impl AsRef<Path>) -> Res<fs::File> {
         let path = path.as_ref();
         fs::File::open(path).await.map_err(|e| {
@@ -188,24 +180,6 @@ mod tests {
             timestamp.to_string(),
             "2024-01-15 11:31:00.615186989 UTC".to_string()
         );
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn hard_link_refuses_an_existing_destination_and_keeps_both_files() -> Res {
-        let temp_dir = tempdir()?;
-        let (from, to) = (temp_dir.path().join("from"), temp_dir.path().join("to"));
-        fs::write(&from, b"remote bytes").await?;
-        fs::write(&to, b"users new file").await?;
-
-        let result = LocalStorage::default().hard_link(&from, &to).await;
-
-        assert_eq!(
-            result.map_err(|e| e.kind()),
-            Err(std::io::ErrorKind::AlreadyExists)
-        );
-        assert_eq!(fs::read(&from).await?, b"remote bytes");
-        assert_eq!(fs::read(&to).await?, b"users new file");
         Ok(())
     }
 
