@@ -4,10 +4,6 @@
 //! Pure, so the keying is proven by host tests. An answer lands only on the
 //! session and namespace that asked for it; closing, retrying or another
 //! package's answer arriving late cannot paint stale rows.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "drawn by the context pane in the next commit")
-)]
 
 use crate::commands;
 

@@ -137,11 +137,17 @@ impl Wiring {
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
 fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
+    let namespace = data.header.namespace.to_string();
     view! {
         <div class=style::page>
             <PageHeader data=data.header w=w />
             <div class=style::shell>
-                <CurrentRevisionPane data=data.context />
+                <CurrentRevisionPane
+                    data=data.context
+                    namespace=namespace
+                    fetch=context_pane::fetch_revision_history
+                    open_catalog=Callback::new(|_: String| ())
+                />
             </div>
         </div>
     }

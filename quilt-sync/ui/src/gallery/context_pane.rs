@@ -427,6 +427,9 @@ pub fn ContextPaneScene() -> impl IntoView {
                         bucket: Some("quilt-lab-plates".to_string()),
                         revision_count: 4,
                     }
+                    namespace=NAMESPACE
+                    fetch=|_| Box::pin(std::future::pending())
+                    open_catalog=Callback::new(|_: String| ())
                 />
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">
