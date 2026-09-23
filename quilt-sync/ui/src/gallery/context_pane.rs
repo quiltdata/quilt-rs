@@ -425,6 +425,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                             obtained_at: ago(2.0 * HOUR),
                         },
                         bucket: Some("quilt-lab-plates".to_string()),
+                        revision_count: 4,
                     }
                 />
             </Cell>

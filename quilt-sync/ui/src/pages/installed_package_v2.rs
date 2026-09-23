@@ -475,6 +475,7 @@ mod tests {
                     obtained_at: 1_758_500_000_000.0,
                 },
                 bucket: Some("quilt-lab-plates".to_string()),
+                revision_count: 1,
             },
             sync_paused: None,
         }

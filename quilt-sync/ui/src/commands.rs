@@ -376,6 +376,9 @@ pub struct PackagePageData {
 pub struct PackageContextData {
     pub revision: CurrentRevisionData,
     pub bucket: Option<String>,
+    /// How many revisions this copy holds — the trigger's N. The list itself
+    /// is `get_revision_history`, fetched on open.
+    pub revision_count: usize,
 }
 
 /// The current revision's user-facing facts.
@@ -384,6 +387,19 @@ pub struct PackageContextData {
 pub struct CurrentRevisionData {
     pub message: Option<String>,
     pub obtained_at: f64,
+}
+
+/// One row of `Revisions you have`. Mirrors
+/// `src-tauri/src/commands/package_page.rs` field for field.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionHistoryRow {
+    pub message: Option<String>,
+    pub obtained_at: f64,
+    pub published: bool,
+    /// The catalog page for exactly this revision; `None` when unpublished or
+    /// when the remote has no catalog host.
+    pub catalog_url: Option<String>,
 }
 
 /// The header region: identity, one resolved condition, and what the overflow
@@ -465,6 +481,17 @@ pub async fn get_package_page_data(namespace: String) -> Result<PackagePageData,
         namespace: String,
     }
     tauri::invoke("get_package_page_data", &Args { namespace }).await
+}
+
+/// The revisions this copy holds, newest obtained first. Called when the
+/// context pane's popover opens, never on page load.
+pub async fn get_revision_history(namespace: String) -> Result<Vec<RevisionHistoryRow>, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+    }
+    tauri::invoke("get_revision_history", &Args { namespace }).await
 }
 
 pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
@@ -1591,7 +1618,7 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, PackageContextData, PackageItemData, PullOutcome,
-        RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        RevisionHistoryRow, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
 
@@ -1600,7 +1627,7 @@ mod tests {
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates"}"#,
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4}"#,
         )
         .unwrap();
 
@@ -1610,6 +1637,38 @@ mod tests {
             "the timestamp crosses unchanged"
         );
         assert_eq!(context.bucket.as_deref(), Some("quilt-lab-plates"));
+        assert_eq!(context.revision_count, 4);
+    }
+
+    /// Anchored identically in the backend's
+    /// `revision_history_wire_form_is_verbatim` test.
+    #[test]
+    fn revision_history_wire_form_is_verbatim() {
+        let rows = serde_json::from_str::<Vec<RevisionHistoryRow>>(
+            r#"[{"message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash"},{"message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null}]"#,
+        )
+        .unwrap();
+
+        let [published, unpublished] = rows.as_slice() else {
+            panic!("two rows, got {rows:?}");
+        };
+        assert_eq!(published.message.as_deref(), Some("Sent"));
+        assert!(
+            (published.obtained_at - 1_758_500_000_000.0).abs() < f64::EPSILON,
+            "the timestamp crosses unchanged"
+        );
+        assert!(published.published);
+        assert_eq!(
+            published.catalog_url.as_deref(),
+            Some("https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash")
+        );
+        assert_eq!(unpublished.message, None);
+        assert!(
+            (unpublished.obtained_at - 1_758_400_000_000.0).abs() < f64::EPSILON,
+            "the timestamp crosses unchanged"
+        );
+        assert!(!unpublished.published);
+        assert_eq!(unpublished.catalog_url, None);
     }
 
     /// The mirror struct must deserialize the exact JSON the backend

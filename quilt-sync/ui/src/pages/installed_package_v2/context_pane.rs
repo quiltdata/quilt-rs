@@ -62,13 +62,18 @@ mod tests {
     use crate::test_support::{element_saying, mount};
     use wasm_bindgen_test::*;
 
-    fn data(message: Option<&str>, bucket: Option<&str>) -> commands::PackageContextData {
+    fn data(
+        message: Option<&str>,
+        bucket: Option<&str>,
+        revision_count: usize,
+    ) -> commands::PackageContextData {
         commands::PackageContextData {
             revision: CurrentRevisionData {
                 message: message.map(ToString::to_string),
                 obtained_at: 1_758_500_000_000.0,
             },
             bucket: bucket.map(ToString::to_string),
+            revision_count,
         }
     }
 
@@ -76,7 +81,7 @@ mod tests {
     fn the_pane_names_and_renders_the_current_revision() {
         let el = mount(|| {
             view! {
-                <CurrentRevisionPane data=data(Some("Initial upload"), Some("quilt-lab-plates")) />
+                <CurrentRevisionPane data=data(Some("Initial upload"), Some("quilt-lab-plates"), 4) />
             }
         });
 
@@ -112,7 +117,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn absent_facts_have_honest_words() {
         for message in [None, Some("")] {
-            let el = mount(move || view! { <CurrentRevisionPane data=data(message, None) /> });
+            let el = mount(move || view! { <CurrentRevisionPane data=data(message, None, 1) /> });
             element_saying(&el, "No message");
             element_saying(&el, "No S3 bucket");
         }
