@@ -543,28 +543,28 @@ pub async fn package_download_backlog(
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    // A whole-package catch-up, so it raises the in-flight flag a pull does:
-    // quitting mid-download would leave files in place that the lineage never records.
-    let result = {
-        let _applying = watcher.apply_guard(&namespace);
-        download_backlog_from_model(&*m, &namespace, &paths).await
-    };
     Notify::new(format!("Downloading the backlog of {namespace}"))
         .on_success(
             &tracing,
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
         )
-        .map(result, format!("Downloaded {} files", paths.len()), |err| {
-            format!("Failed to download files: {err}")
-        })
+        .map(
+            download_backlog_from_model(&*m, &watcher, &namespace, &paths).await,
+            format!("Downloaded {} files", paths.len()),
+            |err| format!("Failed to download files: {err}"),
+        )
         .map(|_| ())
 }
 
 async fn download_backlog_from_model(
     m: &impl model::QuiltModel,
+    watcher: &Watcher,
     namespace: &quilt_uri::Namespace,
     paths: &[String],
 ) -> Result<(), Error> {
+    // A whole-package catch-up, so it raises the in-flight flag a pull does:
+    // quitting mid-download would leave files in place that the lineage never records.
+    let _applying = watcher.apply_guard(namespace);
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
             namespace.to_owned(),
@@ -1058,6 +1058,37 @@ mod tests {
         assert!(err.to_string().contains("team/dataset"), "{err}");
     }
 
+    fn test_watcher() -> Watcher {
+        Watcher::new_for_test(std::sync::Arc::new(crate::autopull::reporter::LogReporter))
+    }
+
+    /// The download writes working files like a pull, so it holds the flag
+    /// that makes quitting ask first, and only while it writes.
+    #[tokio::test]
+    async fn the_download_holds_the_apply_flag_while_it_writes() {
+        let watcher = test_watcher();
+        let aggregator = watcher.inner_for_test().aggregator.clone();
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_install_paths()
+            .times(1)
+            .returning(move |_, _| {
+                assert!(aggregator.apply_in_progress(), "held while installing");
+                Ok(std::collections::BTreeMap::new())
+            });
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        download_backlog_from_model(&m, &watcher, &ns, &["plate/b.csv".into()])
+            .await
+            .expect("the download succeeds");
+
+        assert!(
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "and dropped once it returns"
+        );
+    }
+
     /// A download mock that asserts it installs `expected` and never opens
     /// the file browser, as v1's install path does after every install.
     fn mock_download(expected: &'static [&'static str]) -> crate::model::MockQuiltModel {
@@ -1083,9 +1114,14 @@ mod tests {
         let m = mock_download(&["plate/b.csv", "plate/c.csv"]);
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
-        download_backlog_from_model(&m, &ns, &["plate/b.csv".into(), "plate/c.csv".into()])
-            .await
-            .expect("the listed paths install");
+        download_backlog_from_model(
+            &m,
+            &test_watcher(),
+            &ns,
+            &["plate/b.csv".into(), "plate/c.csv".into()],
+        )
+        .await
+        .expect("the listed paths install");
     }
 
     #[tokio::test]
@@ -1093,7 +1129,7 @@ mod tests {
         let m = mock_download(&["plate/b.csv"]);
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
-        download_backlog_from_model(&m, &ns, &["plate/b.csv".into()])
+        download_backlog_from_model(&m, &test_watcher(), &ns, &["plate/b.csv".into()])
             .await
             .expect("the one path installs");
     }
@@ -1107,7 +1143,7 @@ mod tests {
             .returning(|_, _| Err(access_denied_error()));
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
-        let err = download_backlog_from_model(&m, &ns, &["plate/b.csv".into()])
+        let err = download_backlog_from_model(&m, &test_watcher(), &ns, &["plate/b.csv".into()])
             .await
             .expect_err("a refusal reaches the caller");
 
@@ -1120,7 +1156,7 @@ mod tests {
         m.expect_get_installed_package().returning(|_| Ok(None));
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
-        let err = download_backlog_from_model(&m, &ns, &["plate/b.csv".into()])
+        let err = download_backlog_from_model(&m, &test_watcher(), &ns, &["plate/b.csv".into()])
             .await
             .expect_err("an absent package has nothing to download into");
 

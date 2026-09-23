@@ -1,4 +1,6 @@
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use aws_sdk_s3::primitives::ByteStream;
 use chrono::DateTime;
@@ -14,6 +16,10 @@ use super::Storage;
 /// A mock implementation of the `Storage` trait.
 pub(crate) struct MockStorage {
     pub(crate) temp_dir: TempDir,
+    /// `false` stands in for a filesystem without hard links (FAT, exFAT).
+    hard_links: bool,
+    /// A user's file written here right after the first file is placed.
+    appearing: Mutex<Option<PathBuf>>,
 }
 
 impl Clone for MockStorage {
@@ -21,6 +27,8 @@ impl Clone for MockStorage {
         MockStorage {
             temp_dir: TempDir::new_in(self.temp_dir.path())
                 .expect("Failed to create temporary directory inside another temporary directory"),
+            hard_links: self.hard_links,
+            appearing: Mutex::new(None),
         }
     }
 }
@@ -29,11 +37,42 @@ impl Default for MockStorage {
     fn default() -> Self {
         MockStorage {
             temp_dir: TempDir::new().expect("Failed to create temporary directory"),
+            hard_links: true,
+            appearing: Mutex::new(None),
         }
     }
 }
 
-impl MockStorage {}
+impl MockStorage {
+    #[cfg(test)]
+    /// A storage whose every hard link fails as an exFAT volume's does.
+    pub(crate) fn without_hard_links() -> Self {
+        MockStorage {
+            hard_links: false,
+            ..MockStorage::default()
+        }
+    }
+
+    #[cfg(test)]
+    /// Writes a user's file at `path` as soon as the first file is placed, by
+    /// link or by rename: a file created while an install is placing files.
+    pub(crate) fn with_file_appearing(self, path: impl Into<PathBuf>) -> Self {
+        *self.appearing.lock().expect("mock lock") = Some(path.into());
+        self
+    }
+
+    async fn after_placing(&self) -> std::io::Result<()> {
+        let appearing = self.appearing.lock().expect("mock lock").take();
+        if let Some(path) = appearing {
+            let path = relative_to_temp_dir(&self.temp_dir, path);
+            if let Some(parent) = path.as_ref().parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            fs::write(path, b"users new file").await?;
+        }
+        Ok(())
+    }
+}
 
 pub fn relative_to_temp_dir(
     temp_dir: &impl AsRef<Path>,
@@ -67,7 +106,8 @@ impl Storage for MockStorage {
         let from_path = relative_to_temp_dir(&self.temp_dir, &from);
         let to_path = relative_to_temp_dir(&self.temp_dir, &to);
         create_parent(&to_path).await?;
-        Ok(fs::rename(from_path, to_path).await?)
+        fs::rename(from_path, to_path).await?;
+        Ok(self.after_placing().await?)
     }
 
     async fn hard_link(
@@ -75,9 +115,13 @@ impl Storage for MockStorage {
         from: impl AsRef<Path>,
         to: impl AsRef<Path>,
     ) -> Result<(), std::io::Error> {
+        if !self.hard_links {
+            return Err(std::io::ErrorKind::Unsupported.into());
+        }
         let from_path = relative_to_temp_dir(&self.temp_dir, &from);
         let to_path = relative_to_temp_dir(&self.temp_dir, &to);
-        fs::hard_link(from_path, to_path).await
+        fs::hard_link(from_path, to_path).await?;
+        self.after_placing().await
     }
 
     async fn create_dir_all(&self, path: impl AsRef<Path>) -> Res {
