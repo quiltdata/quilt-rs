@@ -86,20 +86,15 @@ enum Placement {
     LinksUnsupported,
 }
 
-/// Whether a failed first link means the filesystem cannot hard-link at all,
-/// rather than that this one link failed.
+/// Whether a failed first link means links are unavailable here, so the call
+/// falls back to the preflight and a rename.
 ///
-/// `Unsupported` is ENOTSUP/EOPNOTSUPP/ENOSYS (exFAT and SMB on macOS, FUSE),
-/// `PermissionDenied` is EPERM from Linux FAT, and `CrossesDevices` is EXDEV.
-/// A genuine EACCES lands here too, and the rename it falls back to fails the
-/// same way, so nothing is written either.
+/// Anything but `AlreadyExists`: which kind a filesystem without hard links
+/// reports varies (ENOTSUP on exFAT and SMB, EPERM on Linux FAT, EXDEV, and on
+/// Windows FAT a code Rust leaves uncategorized), and the fallback is the
+/// behaviour before links were used, so a real failure fails there instead.
 fn links_unsupported(err: &std::io::Error) -> bool {
-    matches!(
-        err.kind(),
-        std::io::ErrorKind::Unsupported
-            | std::io::ErrorKind::PermissionDenied
-            | std::io::ErrorKind::CrossesDevices
-    )
+    err.kind() != std::io::ErrorKind::AlreadyExists
 }
 
 /// Links every staged file at its destination, refusing any destination that
