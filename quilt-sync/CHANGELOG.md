@@ -21,6 +21,10 @@
 
 ## [v0.22.4-dev]
 
+### Fixed
+
+- Downloading a package's files no longer replaces a file of your own that is already at the same place in the package folder. If you had created a file there and not yet committed it, the download wrote the remote file over it and your file was lost; now the download stops with "A local file is already at …" naming it, and your file is left as it was (<https://github.com/quiltdata/quilt-rs/pull/986>)
+
 ### Changed
 
 - **Sync entire package** (Settings → Experimental) now only shows the choice on the package screen. A package already set to keep its whole contents keeps doing so, in background updates too, whether or not the experiment is on (<https://github.com/quiltdata/quilt-rs/pull/986>)

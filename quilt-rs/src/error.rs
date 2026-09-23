@@ -146,6 +146,12 @@ pub enum InstallPathError {
     #[error("Some paths are already installed")]
     AlreadyInstalled,
 
+    #[error(
+        "A local file is already at {}",
+        .0.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+    )]
+    LocalFileExists(Vec<PathBuf>),
+
     #[error("Failed to uninstall path: {}", .0.display())]
     Uninstall(PathBuf),
 }
