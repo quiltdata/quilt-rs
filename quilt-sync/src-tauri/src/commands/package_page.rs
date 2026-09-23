@@ -535,6 +535,7 @@ async fn get_revision_history_from_model(
 pub async fn package_download_backlog(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
     paths: Vec<String>,
 ) -> Result<(), String> {
@@ -542,16 +543,20 @@ pub async fn package_download_backlog(
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
+    // A whole-package catch-up, so it raises the in-flight flag a pull does:
+    // quitting mid-download would leave files in place that the lineage never records.
+    let result = {
+        let _applying = watcher.apply_guard(&namespace);
+        download_backlog_from_model(&*m, &namespace, &paths).await
+    };
     Notify::new(format!("Downloading the backlog of {namespace}"))
         .on_success(
             &tracing,
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
         )
-        .map(
-            download_backlog_from_model(&*m, &namespace, &paths).await,
-            format!("Downloaded {} files", paths.len()),
-            |err| format!("Failed to download files: {err}"),
-        )
+        .map(result, format!("Downloaded {} files", paths.len()), |err| {
+            format!("Failed to download files: {err}")
+        })
         .map(|_| ())
 }
 

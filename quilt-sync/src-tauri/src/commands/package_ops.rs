@@ -128,9 +128,10 @@ pub async fn reset_local(
     // Reset re-installs every tracked path, so it is the most destructive
     // write to interrupt — and it reaches the working tree through the same
     // primitive a pull does. The boundary is deliberate: this and pull are the
-    // two writes that can leave the tree between revisions. Installing
-    // individual paths only adds files, and a commit writes `.quilt` rather
-    // than the working tree.
+    // two writes that can leave the tree between revisions, joined by the v2
+    // page's backlog download, which catches a whole package up. Installing
+    // picked paths only adds files, and a commit writes `.quilt` rather than
+    // the working tree.
     let result = {
         let _applying = watcher.apply_guard(
             &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
