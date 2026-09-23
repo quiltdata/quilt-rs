@@ -653,8 +653,8 @@ development build draws a third, **Unfinished package page** — the constructio
 gate over the rebuilt package screen. It is absent rather than disabled for a
 reader, because a disabled row still tells them the unfinished page exists, and
 `main.rs` refuses a stored value in a release build too, so hiding it leaves no
-live flag behind. Turning it on also turns on **New design preview**, because the
-rebuilt screen is drawn in that design.
+live flag behind. Turning it on also switches the rest of the app to the new
+design, without touching the reader's stored **New design preview** answer.
 
 ---
 

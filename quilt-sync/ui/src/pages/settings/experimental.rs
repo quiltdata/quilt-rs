@@ -90,7 +90,8 @@ pub(super) fn ExperimentalSection(
                             <ExperimentalToggle
                                 label="Unfinished package page"
                                 description="The rebuilt package screen, still a placeholder. \
-                                             Also turns on New design preview."
+                                             The rest of the app switches to the new design \
+                                             too."
                                 enabled=package_page_v2
                                 flag=Flag::PackagePageV2
                                 notification=notification
