@@ -49,7 +49,7 @@ extensions = [".module.scss"]
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.78"
-web-sys = { version = "0.3.105", features = ["DomTokenList", "Element", "Event", "EventInit", "HtmlButtonElement", "HtmlInputElement", "KeyboardEvent", "KeyboardEventInit", "Node", "NodeList"] }
+web-sys = { version = "0.3.105", features = ["DomTokenList", "Element", "Event", "EventInit", "HtmlButtonElement", "HtmlInputElement", "HtmlSelectElement", "InputEvent", "KeyboardEvent", "KeyboardEventInit", "Node", "NodeList"] }
 
 [lints]
 workspace = true

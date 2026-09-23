@@ -592,6 +592,14 @@ async fn set_remote_command(
     Ok((namespace, warning))
 }
 
+/// What the reader is told when the remote was not set. Names the bucket
+/// because this is drawn inside the dialog, above the field they are about to
+/// edit — a sentence that named nothing would read as a verdict on what they
+/// just typed.
+fn set_remote_refusal(bucket: &str, err: &Error) -> String {
+    format!("Could not set the remote to {bucket}: {err}")
+}
+
 #[tauri::command]
 pub async fn set_remote(
     m: tauri::State<'_, model::Model>,
@@ -624,7 +632,7 @@ pub async fn set_remote(
             })
         }
         Err(err) => {
-            let msg = format!("Failed to set remote: {err}");
+            let msg = set_remote_refusal(&bucket, &err);
             ::tracing::error!("{msg}");
             Err(msg)
         }
@@ -906,6 +914,17 @@ mod tests {
         Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
             quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
         )))
+    }
+
+    /// A refusal drawn in a dialog stands above the fields the reader is about to
+    /// edit, so a generic sentence reads as a claim about the new contents. It
+    /// names the bucket it was refused for.
+    #[test]
+    fn a_set_remote_refusal_names_the_bucket() {
+        assert_eq!(
+            super::set_remote_refusal("my-bucket", &Error::General("no permission".to_string())),
+            "Could not set the remote to my-bucket: General error: no permission"
+        );
     }
 
     /// One click, one message. The toast names the package and what arrived,

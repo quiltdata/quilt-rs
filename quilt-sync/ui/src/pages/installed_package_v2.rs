@@ -13,6 +13,7 @@ use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use super::appbar::v2_appbar_actions;
 use super::status_watch::StatusWatch;
 
+mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
 

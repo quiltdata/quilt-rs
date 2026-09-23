@@ -59,6 +59,7 @@ use crate::kit::StateLabel;
 use crate::kit::render;
 use crate::util;
 
+use super::bucket_form::BucketDialog;
 use super::{Outcome, Wiring};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
@@ -157,7 +158,7 @@ pub(crate) fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<
         .to_string(),
         tone: ActionTone::Default,
         separated: false,
-        disabled: Some(NOT_YET.to_string()),
+        disabled: refused(),
     });
 
     items.push(MenuItem {
@@ -228,6 +229,7 @@ fn menu(
     data: &commands::PackageHeaderData,
     w: Wiring,
     goto: RwSignal<Option<String>>,
+    bucket_open: RwSignal<bool>,
 ) -> Vec<MenuAction> {
     let Wiring { busy, outcome, .. } = w;
     let ns = data.namespace.to_string();
@@ -252,11 +254,10 @@ fn menu(
                         async move { commands::open_in_web_browser(url).await },
                     );
                 }),
-                // Their dialogs land in tasks 5, 6 and 7; until then the item
-                // is disabled and nothing can reach this.
-                MenuCommand::Remote | MenuCommand::Undo | MenuCommand::Remove => {
-                    Callback::new(|()| ())
-                }
+                MenuCommand::Remote => Callback::new(move |()| bucket_open.set(true)),
+                // Their dialogs land in tasks 6 and 7; until then the item is
+                // disabled and nothing can reach this.
+                MenuCommand::Undo | MenuCommand::Remove => Callback::new(|()| ()),
             };
             MenuAction {
                 label: item.label,
@@ -281,6 +282,7 @@ fn primary_action(
     w: Wiring,
     goto: RwSignal<Option<String>>,
     publish_choice: RwSignal<usize>,
+    bucket_open: RwSignal<bool>,
 ) -> AnyView {
     let Wiring {
         busy,
@@ -301,9 +303,6 @@ fn primary_action(
         }
         _ => None,
     };
-    // The bucket form is not on this page yet, so its primary stays disabled.
-    let not_yet = matches!(action, Some(PackageAction::ChooseS3Bucket));
-
     if matches!(action, Some(PackageAction::Publish)) {
         return view! {
             <span class=style::action_slot data-primary-action>
@@ -343,8 +342,9 @@ fn primary_action(
         }
         Some(PackageAction::Resolve) => goto.set(Some(resolve_to.clone())),
         Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
-        // `Publish` returned above; the bucket form is not on this page yet.
-        Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
+        Some(PackageAction::ChooseS3Bucket) => bucket_open.set(true),
+        // `Publish` returned above.
+        Some(PackageAction::Publish) | None => (),
     };
 
     action.map_or_else(
@@ -354,7 +354,7 @@ fn primary_action(
                 <span class=style::action_slot data-primary-action>
                     <Button
                         variant=ButtonVariant::Primary
-                        disabled=Signal::derive(move || busy.get() || not_yet)
+                        disabled=Signal::derive(move || busy.get())
                         on_click=on_primary
                     >
                         {action.label()}
@@ -379,6 +379,9 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
     let action = rendered.action;
     let namespace = data.namespace.to_string();
     let publish_choice = RwSignal::new(0_usize);
+    // The row's `Choose S3 bucket` and the menu's `Change bucket` open this one
+    // dialog: the state calls for it, or the reader chooses it.
+    let bucket_open = RwSignal::new(false);
 
     // Every navigation this header makes goes through one signal, because a
     // `Callback` must be `Send + Sync` and `use_navigate`'s closure is neither.
@@ -418,7 +421,7 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                 <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
 
                 <div class=style::actions>
-                    {primary_action(&data, action, w, goto, publish_choice)}
+                    {primary_action(&data, action, w, goto, publish_choice, bucket_open)}
                     <Button disabled=Signal::derive(move || busy.get()) on_click=on_open_folder>
                         "Open folder"
                     </Button>
@@ -428,11 +431,12 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                     {move || view! {
                         <ActionMenu
                             aria_label="More actions for this package"
-                            actions=menu(&payload.read_value(), w, goto)
+                            actions=menu(&payload.read_value(), w, goto, bucket_open)
                         />
                     }}
                 </div>
             </div>
+            <BucketDialog open=bucket_open data=data.clone() w=w />
         </div>
     }
 }
@@ -569,12 +573,18 @@ mod tests {
     /// merely not shown, which is why the existing
     /// `create_new_revision_is_in_the_menu_in_every_state` finds them without
     /// opening anything. So this sweep covers the row AND the menu.
+    ///
+    /// A dialog's footer is left out too: it is in the document while closed,
+    /// and its buttons answer the dialog, not the page.
     fn labelled(el: &web_sys::Element) -> Vec<(String, bool)> {
         let all = el.query_selector_all("button").unwrap();
         let mut out = Vec::new();
         for i in 0..all.length() {
             let b: web_sys::Element = all.item(i).unwrap().unchecked_into();
-            if b.closest(SPLIT_CHOICES).unwrap().is_some() || b.matches(TRIGGER).unwrap() {
+            if b.closest(SPLIT_CHOICES).unwrap().is_some()
+                || b.matches(TRIGGER).unwrap()
+                || b.closest("dialog").unwrap().is_some()
+            {
                 continue;
             }
             out.push((
@@ -841,6 +851,47 @@ mod tests {
                 }
             }
             assert!(found, "markup was {}", el.inner_html());
+        }
+    }
+
+    /// Both entries open the same form — the row offers it because the state
+    /// calls for it, the menu because the reader may choose it.
+    #[wasm_bindgen_test]
+    async fn choose_s3_bucket_and_change_bucket_open_the_same_dialog() {
+        for state in [kit::PackageState::NoRemote, kit::PackageState::Latest] {
+            let from_row = matches!(state, kit::PackageState::NoRemote);
+            let el = mount_header(data(state));
+            assert!(
+                el.query_selector("dialog[open]").unwrap().is_none(),
+                "closed until asked"
+            );
+
+            if from_row {
+                button(&el, "Choose S3 bucket").click();
+            } else {
+                el.query_selector(TRIGGER)
+                    .unwrap()
+                    .expect("the overflow trigger")
+                    .unchecked_into::<web_sys::HtmlElement>()
+                    .click();
+                leptos::task::tick().await;
+                button(&el, "Change bucket").click();
+            }
+            // The dialog opens from an effect, on the next tick.
+            leptos::task::tick().await;
+
+            let dialog = el
+                .query_selector("dialog[open]")
+                .unwrap()
+                .unwrap_or_else(|| panic!("the dialog opened; markup was {}", el.inner_html()));
+            assert!(
+                dialog
+                    .text_content()
+                    .unwrap_or_default()
+                    .contains("Change bucket"),
+                "markup was {}",
+                dialog.inner_html()
+            );
         }
     }
 
