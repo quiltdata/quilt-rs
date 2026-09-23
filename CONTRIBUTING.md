@@ -188,7 +188,7 @@ change needs a bigger bump than the cycle has (a feature in a patch
 cycle), rename the version in both files. When `quilt-uri` or
 `quilt-rs` goes `-dev`, move the downstream `version =` specifiers for
 it to the same `-dev` version: Cargo's version requirements skip
-pre-releases.
+pre-releases. That alone does not open a cycle for the downstream crate.
 
 The unreleased section describes the change since the last release, not
 a history of PRs. If your PR makes an earlier unreleased entry stale —

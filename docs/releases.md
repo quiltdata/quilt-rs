@@ -33,23 +33,24 @@ Each released crate owns a `CHANGELOG.md`; see the header comment in
 each one for the conventions (`-dev` versions between releases,
 autolink format, cross-crate subsections).
 
-Between releases, a crate with unreleased changes carries `X.Y.Z-dev`
-in its `Cargo.toml`, and its `CHANGELOG.md` opens with a matching
-`## [vX.Y.Z-dev]` heading and no date. The first PR to change a crate
-after its release opens the cycle: it sets the next patch `-dev`
-version and adds the heading with its entry. Crates with no changes
-keep their stable version. Cargo's version requirements skip
-pre-releases, so when `quilt-uri` or `quilt-rs` goes `-dev`, the
-downstream `version =` specifiers for it must move to the same `-dev`
-version. A PR that needs a bigger bump than the cycle
-started with (a feature in a patch cycle) renames the version in both
-places. The unreleased section describes the change since the last
-release, not a history of PRs: a PR that makes an unreleased entry
-stale rewrites it in place and appends its PR link. Work no user can
-reach yet, not even through Settings → Experimental, gets a single
-"Under the hood" line rather than an Added or Changed entry; it earns a
-real entry once it becomes reachable, even behind an Experimental
-switch. Released sections are never edited.
+Between releases, a crate with unreleased changes carries `X.Y.Z-dev` in
+its `Cargo.toml`, and its `CHANGELOG.md` opens with a matching `##
+[vX.Y.Z-dev]` heading and no date. The first PR to change a crate after
+its release opens the cycle: it sets the next patch `-dev` version and
+adds the heading with its entry. Crates with no changes keep their
+stable version. Cargo's version requirements skip pre-releases, so when
+`quilt-uri` or `quilt-rs` goes `-dev`, the downstream `version =`
+specifiers for it must move to the same `-dev` version. That specifier
+change alone does not open a cycle for the downstream crate; the release
+cascade bumps it. A PR that needs a bigger bump than the cycle started
+with (a feature in a patch cycle) renames the version in both places.
+The unreleased section describes the change since the last release, not
+a history of PRs: a PR that makes an unreleased entry stale rewrites it
+in place and appends its PR link. Work no user can reach yet, not even
+through Settings → Experimental, gets a single "Under the hood" line
+rather than an Added or Changed entry; it earns a real entry once it
+becomes reachable, even behind an Experimental switch. Released sections
+are never edited.
 
 ## Release workflows
 
