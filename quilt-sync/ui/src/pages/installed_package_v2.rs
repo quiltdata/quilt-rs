@@ -5,7 +5,8 @@
 //! growing left side empty rather than drawing provisional content.
 
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
@@ -36,16 +37,81 @@ pub(crate) struct Outcome {
 }
 
 /// The page's half of a command: what it blocks while it runs, where it
-/// reports, and what to re-read when it is done.
+/// reports, what to re-read when it is done, where it goes, and which dialog
+/// holds it.
+///
+/// # Owned by the page, because a re-read rebuilds the header
+///
+/// Every re-read — the watcher's news, Refresh, a command's own `reload` —
+/// re-runs the body and builds a new `PageHeader`, disposing everything the old
+/// one owned. So anything that must outlive a re-read lives here: a dialog the
+/// reader has open stays open, and a navigation asked for by a command that
+/// settles after the rebuild still happens.
 ///
 /// `pub(crate)` rather than `pub(super)`: `PageHeader`'s generated props struct
 /// carries it, and a prop type less visible than the props struct is what the
 /// `private_interfaces` lint fires on — and warnings are denied.
 #[derive(Clone, Copy)]
 pub(crate) struct Wiring {
+    /// One command at a time. Every control on the header reads this, so a
+    /// second cannot start on top of the first — two writes to one working
+    /// tree is a race the page has no way to arbitrate.
     pub busy: RwSignal<bool>,
+    /// What the last command said, and which package it said it about. Keyed,
+    /// because a result arriving for a package the page no longer shows is not
+    /// this page's news — see `outcome_band`.
     pub outcome: RwSignal<Option<Outcome>>,
     pub reload: Trigger,
+    /// Where the header wants to go. A signal because a `Callback` must be
+    /// `Send + Sync` and `use_navigate`'s closure is neither; [`Wiring::follow`]
+    /// performs it.
+    pub goto: RwSignal<Option<String>>,
+    pub dialogs: Dialogs,
+}
+
+/// Which of the header's dialogs is open.
+#[derive(Clone, Copy)]
+pub(crate) struct Dialogs {
+    /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
+    /// one dialog: the state calls for it, or the reader chooses it.
+    pub bucket: RwSignal<bool>,
+    /// Opened only by the row's `Switch role`, which exists only when the
+    /// payload names somewhere to switch to.
+    pub role: RwSignal<bool>,
+    /// The two Danger items: the menu picks the command, the dialog accepts
+    /// the consequence.
+    pub undo: RwSignal<bool>,
+    pub remove: RwSignal<bool>,
+}
+
+impl Wiring {
+    fn new() -> Self {
+        Self {
+            busy: RwSignal::new(false),
+            outcome: RwSignal::new(None),
+            reload: Trigger::new(),
+            goto: RwSignal::new(None),
+            dialogs: Dialogs {
+                bucket: RwSignal::new(false),
+                role: RwSignal::new(false),
+                undo: RwSignal::new(false),
+                remove: RwSignal::new(false),
+            },
+        }
+    }
+
+    /// Perform `goto`. Called once, by whoever owns the signals, inside a
+    /// router.
+    fn follow(self) {
+        let goto = self.goto;
+        let navigate = use_navigate();
+        Effect::new(move |_| {
+            if let Some(target) = goto.get() {
+                navigate(&target, NavigateOptions::default());
+                goto.set(None);
+            }
+        });
+    }
 }
 
 /// Render one successful page payload. Kept pure so its atomic shape can be
@@ -103,16 +169,12 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // What the reader has already read and closed. Keyed on the message, so a
     // different pause is news again — see `pause_banner`.
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
-    // One command at a time. Every control on the header reads this, so a second
-    // cannot start on top of the first — two writes to one working tree is a race
-    // the page has no way to arbitrate.
-    let busy = RwSignal::new(false);
-    // What the last command said, and which package it said it about. Keyed,
-    // because a result arriving for a package the page no longer shows is not
-    // this page's news — see `outcome_band`.
-    let outcome: RwSignal<Option<Outcome>> = RwSignal::new(None);
-
-    let reload = Trigger::new();
+    // Here and not in the header, which every re-read rebuilds — see `Wiring`.
+    let w = Wiring::new();
+    w.follow();
+    let Wiring {
+        outcome, reload, ..
+    } = w;
     // Whether the one read is out. The main page counts, because it has four;
     // one read needs a flag.
     //
@@ -163,7 +225,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => package_body(d, Wiring { busy, outcome, reload }),
+                        Ok(d) => package_body(d, w),
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
@@ -495,13 +557,9 @@ mod tests {
     /// header while the pane is a named complementary landmark.
     #[wasm_bindgen_test]
     fn a_successful_payload_draws_the_real_body_without_the_placeholder() {
-        // Inside a `Router`, because the header asks for a navigator.
+        // Inside a `Router`, where the page always is.
         let el = mount(|| {
-            let w = Wiring {
-                busy: RwSignal::new(false),
-                outcome: RwSignal::new(None),
-                reload: Trigger::new(),
-            };
+            let w = Wiring::new();
             view! { <Router>{package_body(page_data(), w)}</Router> }
         });
         let aside = el
@@ -521,6 +579,47 @@ mod tests {
         assert!(
             !loose,
             "the loose namespace placeholder is gone; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A re-read rebuilds the body, and with it the header. A dialog the reader
+    /// has open is the page's, so it survives — the watcher reporting news
+    /// mid-form must not shut the form.
+    #[wasm_bindgen_test]
+    async fn an_open_dialog_stays_open_when_the_body_is_re_read() {
+        let w = Wiring::new();
+        let reads = RwSignal::new(0_u32);
+        let el = mount(move || {
+            view! {
+                <Router>
+                    {move || {
+                        reads.track();
+                        package_body(page_data(), w)
+                    }}
+                </Router>
+            }
+        });
+        w.dialogs.remove.set(true);
+        leptos::task::tick().await;
+        let opened = || {
+            el.query_selector("dialog[open]")
+                .unwrap()
+                .and_then(|d| d.text_content())
+                .unwrap_or_default()
+        };
+        assert!(
+            opened().contains("Remove this package"),
+            "open before the re-read; markup was {}",
+            el.inner_html()
+        );
+
+        reads.update(|n| *n += 1);
+        leptos::task::tick().await;
+
+        assert!(
+            opened().contains("Remove this package"),
+            "and still open after it; markup was {}",
             el.inner_html()
         );
     }

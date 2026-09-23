@@ -278,6 +278,38 @@ mod tests {
         );
     }
 
+    /// The dialog unmounted mid-run — its caller rebuilt it over the same `open` —
+    /// takes its session with it. The settling action must not read the disposed
+    /// session, and its success still closes the caller's flag.
+    #[wasm_bindgen_test]
+    async fn a_success_after_the_dialog_unmounted_still_closes_the_caller_s_flag() {
+        let open = RwSignal::new(true);
+        let shown = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <Show when=move || shown.get()>
+                    <ConfirmDialog
+                        open=open
+                        title="Remove package"
+                        consequence=SENTENCE
+                        confirm=Submit::new("Remove", || async {
+                            sleep_ms(50).await;
+                            Ok(())
+                        })
+                    />
+                </Show>
+            }
+        });
+        button(&el, "Remove").click();
+        settle().await;
+        shown.set(false);
+        leptos::task::tick().await;
+
+        sleep_ms(80).await;
+        leptos::task::tick().await;
+        assert!(!open.get_untracked(), "closed by the settled success");
+    }
+
     /// Focus is asked for Cancel and for nothing else. The attribute is asserted rather
     /// than `document.activeElement`: no test in this crate reads focus, and headless
     /// Firefox under the runner gives no guarantee that a window without OS focus runs the

@@ -110,6 +110,7 @@ pub(super) fn BucketDialog(
         busy: _,
         outcome,
         reload,
+        ..
     } = w;
     let locked = data.remote_locked;
     let ns = data.namespace.to_string();
@@ -424,11 +425,7 @@ mod tests {
 
     fn mount_dialog(data: commands::PackageHeaderData) -> web_sys::Element {
         mount(move || {
-            let w = Wiring {
-                busy: RwSignal::new(false),
-                outcome: RwSignal::new(None),
-                reload: Trigger::new(),
-            };
+            let w = Wiring::new();
             view! { <BucketDialog open=RwSignal::new(true) data=data w=w /> }
         })
     }

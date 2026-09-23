@@ -40,8 +40,6 @@
 //! dialog-borne command draws its refusal inside the dialog, which stays open.
 
 use leptos::prelude::*;
-use leptos_router::NavigateOptions;
-use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::kit;
@@ -64,7 +62,7 @@ use crate::util;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
-use super::{Outcome, Wiring};
+use super::{Dialogs, Outcome, Wiring};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
 
@@ -298,6 +296,7 @@ fn primary_action(
         busy,
         outcome,
         reload,
+        ..
     } = w;
     let ns = data.namespace.clone();
     let uri = data.uri.clone();
@@ -446,36 +445,29 @@ fn danger_dialogs(
     reason = "a component's props are owned; the body reads it from there"
 )]
 pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView {
-    let Wiring { busy, outcome, .. } = w;
+    // The dialogs' flags and `goto` are the page's, not this header's: a
+    // re-read rebuilds the header, and must not shut a dialog or drop a
+    // navigation on the way — see `Wiring`.
+    let Wiring {
+        busy,
+        outcome,
+        goto,
+        dialogs,
+        ..
+    } = w;
+    let Dialogs {
+        bucket: bucket_open,
+        role: role_open,
+        undo: undo_open,
+        remove: remove_open,
+    } = dialogs;
     let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);
     let action = rendered.action;
     let namespace = data.namespace.to_string();
     let publish_choice = RwSignal::new(0_usize);
-    // The row's `Choose S3 bucket` and the menu's `Change bucket` open this one
-    // dialog: the state calls for it, or the reader chooses it.
-    let bucket_open = RwSignal::new(false);
-    // Opened only by the row's `Switch role`, which exists only when the
-    // payload names somewhere to switch to.
-    let role_open = RwSignal::new(false);
     let role_dialog = data.role_switch.clone().map(|switch| {
         view! { <RoleDialog open=role_open switch=switch w=w /> }
-    });
-    // The two Danger items: the menu picks the command, the dialog accepts the
-    // consequence.
-    let undo_open = RwSignal::new(false);
-    let remove_open = RwSignal::new(false);
-
-    // Every navigation this header makes goes through one signal, because a
-    // `Callback` must be `Send + Sync` and `use_navigate`'s closure is neither.
-    // One effect performs them, which also keeps the router call in one place.
-    let goto: RwSignal<Option<String>> = RwSignal::new(None);
-    let navigate = use_navigate();
-    Effect::new(move |_| {
-        if let Some(target) = goto.get() {
-            navigate(&target, NavigateOptions::default());
-            goto.set(None);
-        }
     });
 
     let ns_folder = data.namespace.to_string();
@@ -576,17 +568,10 @@ mod tests {
         }
     }
 
-    /// Mount a header the way the page does — inside a `Router`, because it asks
-    /// for a navigator and `use_navigate` panics without one.
+    /// Mount a header the way the page does — inside a `Router`. Navigation is
+    /// the page's (`Wiring::follow`), so only `mount_routed` performs it.
     fn mount_header(data: commands::PackageHeaderData) -> web_sys::Element {
-        mount_with(
-            data,
-            Wiring {
-                busy: RwSignal::new(false),
-                outcome: RwSignal::new(None),
-                reload: Trigger::new(),
-            },
-        )
+        mount_with(data, Wiring::new())
     }
 
     fn mount_with(data: commands::PackageHeaderData, w: Wiring) -> web_sys::Element {
@@ -615,17 +600,16 @@ mod tests {
         go_to("/installed-package?namespace=team%2Fdataset");
         mount(move || {
             let data = data.clone();
-            let w = Wiring {
-                busy: RwSignal::new(false),
-                outcome: RwSignal::new(None),
-                reload: Trigger::new(),
-            };
+            let w = Wiring::new();
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
                         <Route
                             path=path!("/installed-package")
-                            view=move || view! { <PageHeader data=data.clone() w=w /> }
+                            view=move || {
+                                w.follow();
+                                view! { <PageHeader data=data.clone() w=w /> }
+                            }
                         />
                         <Route path=path!("/commit") view=|| view! { "the commit page" } />
                         <Route path=path!("/merge") view=|| view! { "the merge page" } />
@@ -805,8 +789,7 @@ mod tests {
             data(kit::PackageState::Behind),
             Wiring {
                 busy,
-                outcome: RwSignal::new(None),
-                reload: Trigger::new(),
+                ..Wiring::new()
             },
         );
 
@@ -843,8 +826,7 @@ mod tests {
             data(kit::PackageState::Behind),
             Wiring {
                 busy: RwSignal::new(true),
-                outcome: RwSignal::new(None),
-                reload: Trigger::new(),
+                ..Wiring::new()
             },
         );
         let trigger = el
@@ -863,8 +845,7 @@ mod tests {
             data(kit::PackageState::Behind),
             Wiring {
                 busy,
-                outcome: RwSignal::new(None),
-                reload: Trigger::new(),
+                ..Wiring::new()
             },
         );
         open_menu(&el);
@@ -901,7 +882,7 @@ mod tests {
             Wiring {
                 busy: RwSignal::new(false),
                 outcome,
-                reload: Trigger::new(),
+                ..Wiring::new()
             },
         );
 
@@ -936,7 +917,7 @@ mod tests {
             Wiring {
                 busy,
                 outcome,
-                reload: Trigger::new(),
+                ..Wiring::new()
             },
         );
 
@@ -1247,7 +1228,7 @@ mod tests {
             Wiring {
                 busy: RwSignal::new(false),
                 outcome,
-                reload: Trigger::new(),
+                ..Wiring::new()
             },
         );
         open_menu(&el);

@@ -33,6 +33,7 @@ pub(super) fn RoleDialog(
         busy: _,
         outcome: _,
         reload,
+        ..
     } = w;
     let commands::RoleSwitch { host, alternatives } = switch;
     let chosen = RwSignal::new(alternatives.first().cloned().unwrap_or_default());

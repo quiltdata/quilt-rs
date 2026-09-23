@@ -112,10 +112,20 @@ impl Submission {
         let action = Rc::clone(action);
         leptos::task::spawn_local(async move {
             let outcome = action().await;
+            // The dialog was unmounted while this ran, and its session, seal and banner
+            // went with it. `open` is the caller's and may have outlived them — a page
+            // that rebuilds its dialogs over one flag — so a success still closes it; a
+            // refusal has nowhere left to be drawn.
+            let Some(current) = self.session.try_get_untracked() else {
+                if outcome.is_ok() {
+                    self.open.try_set(false);
+                }
+                return;
+            };
             // Closed and reopened while this ran, so it answers a question nobody is
             // asking any more. Touching anything here would be this outcome editing
             // somebody else's dialog.
-            if self.session.get_untracked() != mine {
+            if current != mine {
                 return;
             }
             self.submitting.set(false);
