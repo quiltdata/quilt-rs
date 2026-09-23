@@ -9,8 +9,8 @@ For testing, development workflows, and other general information, see the main
 
 ### Creating New Releases
 
-1. **Update the changelog**: Add new section to [CHANGELOG.md](CHANGELOG.md) following
-   <https://keepachangelog.com> format with PR links
+1. **Update the changelog**: In [CHANGELOG.md](CHANGELOG.md), drop `-dev` from the
+   top heading and add today's date; see [docs/releases.md](../docs/releases.md)
 2. **Bump version**: Update version in workspace root `Cargo.toml` (shared across
    all crates)
 3. **Create release**:

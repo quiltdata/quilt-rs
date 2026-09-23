@@ -2,8 +2,14 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
-     Use alpha pre-release versions (e.g. v0.1.1-alpha1) instead of [Unreleased]
-     to keep changelog in sync with Cargo.toml version.
+     Head unreleased changes with the Cargo.toml version: `-dev`, no date
+     (e.g. [v0.4.2-dev]), not [Unreleased]. If the cycle needs a bigger bump,
+     rename both. The first PR to change the crate after a release opens the
+     next patch `-dev` version and heading; the release PR drops `-dev` and
+     adds the date.
+     Describe the change since the last release, not each PR: when a PR makes
+     an unreleased entry stale, rewrite it in place and append the PR link.
+     Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog

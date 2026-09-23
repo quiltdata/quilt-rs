@@ -166,10 +166,21 @@ Each project has different release approaches:
   the corresponding GitHub Release for `cargo binstall` discovery
 - **QuiltSync (`quilt-sync`)**: Uses workspace version for Tauri app releases
 
-### Pre-release Versioning
+### Unreleased Versions
 
-For unreleased changes, use pre-release tags
-in both `Cargo.toml` and `CHANGELOG.md` (e.g., `0.24.0-alpha.1`).
+Between releases, a crate with unreleased changes carries a `-dev`
+version with no number in `Cargo.toml` (e.g., `0.39.2-dev`), and its
+`CHANGELOG.md` opens with a matching `## [v0.39.2-dev]` heading and no
+date, not `[Unreleased]`. The release PR drops `-dev` and adds the date.
+If your change needs a bigger bump than the cycle has (a feature in a
+patch cycle), rename the version in both files.
+
+The unreleased section describes the change since the last release, not
+a history of PRs. If your PR makes an earlier unreleased entry stale —
+supersedes, extends, or reverts it — rewrite that entry in place and
+append your PR link to it rather than adding a new one. Released
+sections are never edited. See [docs/releases.md](docs/releases.md) for
+the release steps.
 
 See project-specific contributing guides for detailed release procedures.
 

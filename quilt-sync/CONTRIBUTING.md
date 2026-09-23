@@ -44,9 +44,10 @@
 
 ### Creating new releases
 
-1. **Update the changelog**: Add new section to [CHANGELOG.md](CHANGELOG.md) following
-   <https://keepachangelog.com> format with PR links
-2. **Bump version**: Update version in `src-tauri/Cargo.toml`
+1. **Update the changelog**: In [CHANGELOG.md](CHANGELOG.md), drop `-dev` from the
+   top heading and add today's date
+2. **Bump version**: Drop `-dev` from the version in `src-tauri/Cargo.toml`
+   (see [docs/releases.md](../docs/releases.md))
 3. **Create release via GitHub Actions**:
    * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-sync.yaml>
    * Click "Run workflow" button
