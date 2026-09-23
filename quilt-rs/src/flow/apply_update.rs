@@ -306,15 +306,18 @@ mod tests {
         PathBuf::from("/wd")
     }
 
-    fn row_at(key: &str, seed: &[u8], object: &str) -> ManifestRow {
+    /// A row whose hash is `body`'s own: an install verifies what it fetches
+    /// against the row, so the object put at `object` must be `body`.
+    fn row_at(key: &str, body: &[u8], object: &str) -> ManifestRow {
+        use sha2::Digest;
         ManifestRow {
             logical_key: PathBuf::from(key),
             physical_key: format!("s3://b/{object}"),
-            hash: multihash::Multihash::<256>::wrap(0x12, seed)
+            hash: multihash::Multihash::<256>::wrap(0x12, &sha2::Sha256::digest(body))
                 .unwrap()
                 .try_into()
                 .unwrap(),
-            size: seed.len() as u64,
+            size: body.len() as u64,
             meta: None,
         }
     }
@@ -510,7 +513,11 @@ mod tests {
             ..PackageLineage::default()
         };
         let latest_manifest = Manifest {
-            rows: vec![row_at("edited.txt", b"new-edited", "objects/new-edited")],
+            rows: vec![row_at(
+                "edited.txt",
+                b"the remote's new content",
+                "objects/new-edited",
+            )],
             ..Manifest::default()
         };
         let new_hash = "deadbeef";

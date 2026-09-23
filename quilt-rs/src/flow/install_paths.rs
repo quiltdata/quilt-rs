@@ -28,15 +28,40 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+/// Fetches a row's object into the store, refusing bytes that are not the row's.
+///
+/// The store is content-addressed by the row's hash and trusted on every later
+/// read, so what lands there must be verified first: a `physical_key` without a
+/// `versionId` names whatever the object is *now*, and once a later revision has
+/// replaced it the remote returns that revision's bytes. Filed unverified they
+/// read as a local modification nobody made (`qhq-a4za`), and a retry would take
+/// them from the store as a cache hit. So the fetch lands in this apply's staging
+/// directory and moves into the store only once it hashes to the row.
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     host: Option<&Host>,
     object_dest: &PathBuf,
-    uri: &S3Uri,
+    row: &ManifestRow,
+    run_staging: &Path,
 ) -> Res {
-    let stream = remote.get_object_stream(host, uri).await?;
-    storage.write_byte_stream(object_dest, stream.body).await
+    let uri: S3Uri = row.physical_key.parse()?;
+    let stream = remote.get_object_stream(host, &uri).await?;
+    let fetched = run_staging.join(uuid::Uuid::new_v4().to_string());
+    storage.write_byte_stream(&fetched, stream.body).await?;
+    if refresh_hash(storage, &fetched, row.clone())
+        .await?
+        .is_some()
+    {
+        debug!(
+            "❌ Fetched bytes for {} do not match its row",
+            row.logical_key.display()
+        );
+        return Err(Error::InstallPath(InstallPathError::ContentMismatch(
+            row.logical_key.clone(),
+        )));
+    }
+    storage.rename(&fetched, object_dest).await
 }
 
 /// Copies an object out of the store into this apply's staging directory,
@@ -399,7 +424,8 @@ pub(crate) async fn install_paths_over(
                     remote,
                     remote_uri.origin.as_ref(),
                     &object_dest,
-                    &row.physical_key.parse()?,
+                    row,
+                    &run_staging,
                 )
                 .await?;
                 debug!("✔️ Cached object: {}", object_dest.display());
@@ -478,6 +504,13 @@ mod tests {
     use crate::lineage::Home;
     use crate::paths;
     use quilt_uri::ManifestUri;
+
+    /// The SHA-256 multihash of `body`. A fetched object is verified against
+    /// its row, so a row the test downloads must name its body's real hash.
+    fn sha256_of(body: &[u8]) -> multihash::Multihash<256> {
+        use sha2::Digest;
+        multihash::Multihash::wrap(0x12, &sha2::Sha256::digest(body)).unwrap()
+    }
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
@@ -577,8 +610,8 @@ mod tests {
             .put_object(None, &remote_object_uri, Vec::new())
             .await?;
 
-        // Create the manifest with a single remote row with a random hash
-        let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x12, b"anything")?;
+        // Create the manifest with a single remote row naming that object's hash
+        let hash = sha256_of(b"");
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
@@ -640,7 +673,7 @@ mod tests {
         let row_2 = ManifestRow {
             logical_key: PathBuf::from("b/b"),
             physical_key: "s3://bucket/foo/bar".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"two")?.try_into()?,
+            hash: sha256_of(b"two").try_into()?,
             ..ManifestRow::default()
         };
         let row_3 = ManifestRow {
@@ -652,7 +685,7 @@ mod tests {
         let row_4 = ManifestRow {
             logical_key: PathBuf::from("d/d/d/d"),
             physical_key: "s3://bucket/foo/baz".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"four")?.try_into()?,
+            hash: sha256_of(b"four").try_into()?,
             ..ManifestRow::default()
         };
         let mut manifest = Manifest::default();
@@ -677,11 +710,11 @@ mod tests {
         let remote = MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.physical_key)?;
         remote
-            .put_object(None, &remote_object_uri_2, Vec::new())
+            .put_object(None, &remote_object_uri_2, b"two".to_vec())
             .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.physical_key)?;
         remote
-            .put_object(None, &remote_object_uri_4, Vec::new())
+            .put_object(None, &remote_object_uri_4, b"four".to_vec())
             .await?;
 
         let entries_paths = vec![
@@ -781,7 +814,8 @@ mod tests {
         for i in 0..2048 {
             let path = PathBuf::from(format!("path_{i}.txt"));
             let place = format!("s3://bucket/path_{i}.txt");
-            let hash = multihash::Multihash::wrap(0x12, format!("hash_{i}").as_bytes())?;
+            let body = format!("body_{i}").into_bytes();
+            let hash = sha256_of(&body);
 
             let row = ManifestRow {
                 logical_key: path.clone(),
@@ -795,7 +829,7 @@ mod tests {
 
             // Simulate remote objects
             let remote_uri = S3Uri::from_str(&place)?;
-            remote.put_object(None, &remote_uri, Vec::new()).await?;
+            remote.put_object(None, &remote_uri, body).await?;
         }
 
         // Create references for the function call
