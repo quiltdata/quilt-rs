@@ -16,7 +16,6 @@ use fswatcher::FsWatcherSection;
 use general::GeneralSection;
 use publish::PublishSection;
 
-use crate::build_profile::BuildProfile;
 use crate::commands::{self, SettingsData};
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Notification, Spinner};
@@ -90,8 +89,6 @@ fn SettingsContent(
             <ExperimentalSection
                 entire_package_sync=data.experimental.entire_package_sync
                 main_page_v2=data.experimental.main_page_v2
-                package_page_v2=data.experimental.package_page_v2
-                profile=BuildProfile::resolve()
                 notification=notification
                 refetch=refetch
             />

@@ -3,7 +3,6 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use super::event_target_checked;
-use crate::build_profile::BuildProfile;
 use crate::commands;
 use crate::components::Notification;
 
@@ -18,16 +17,18 @@ use crate::components::Notification;
 enum Flag {
     EntirePackageSync,
     MainPageV2,
-    PackagePageV2,
 }
 
 impl Flag {
-    fn only(self, value: bool) -> (Option<bool>, Option<bool>, Option<bool>) {
+    /// The two slots a row can own, in the command's order. The third the command
+    /// takes, `package_page_v2`, has no row: the rebuilt package screen is
+    /// switched by `main.rs`'s `UNFINISHED_PACKAGE_PAGE`, so nothing here writes
+    /// it and every save leaves it as it is.
+    fn only(self, value: bool) -> (Option<bool>, Option<bool>) {
         let value = Some(value);
         match self {
-            Self::EntirePackageSync => (value, None, None),
-            Self::MainPageV2 => (None, value, None),
-            Self::PackagePageV2 => (None, None, value),
+            Self::EntirePackageSync => (value, None),
+            Self::MainPageV2 => (None, value),
         }
     }
 }
@@ -39,19 +40,16 @@ impl Flag {
 /// behind it written, so nothing a reader chose is destroyed by undoing a
 /// setting.
 ///
-/// The rows are independent of each other. The construction gate is drawn only
-/// under a development profile — absent rather than disabled, because a disabled
-/// row still tells a reader the unfinished page exists. Hiding it is safe only
-/// because `main.rs`'s `package_page_v2` refuses a stored value in a release
-/// build too, so the row's absence leaves no live flag behind it.
+/// Every row here is a reader's to find, so work with nothing to show them yet
+/// gets no row at all. The rebuilt package screen is the case today: it is
+/// switched by an in-code flag (`main.rs`'s `UNFINISHED_PACKAGE_PAGE`), which a
+/// developer flips in the source and no build carries on. A row — even a
+/// disabled one — would tell a reader the unfinished page exists and invite the
+/// question.
 #[component]
 pub(super) fn ExperimentalSection(
     entire_package_sync: bool,
     main_page_v2: bool,
-    package_page_v2: bool,
-    /// Which build this is. A parameter rather than a `cfg!` here, so a test can
-    /// draw the section as a release build draws it — see `build_profile.rs`.
-    profile: BuildProfile,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
 ) -> impl IntoView {
@@ -68,12 +66,9 @@ pub(super) fn ExperimentalSection(
                     notification=notification
                     refetch=refetch
                 />
-                // Both design rows below carry `navigate_to="/"`. `/` is the route
-                // that asks which design generation is on, and saving the flag
-                // alone changed nothing on screen — which looked like it needed an
-                // app restart. The construction gate needs it for the same reason:
-                // it implies the generation, so it changes what `/` renders too
-                // (`main.rs`'s `effective_design`).
+                // `navigate_to="/"`: `/` is the route that asks which design
+                // generation is on, and saving the flag alone changed nothing on
+                // screen — which looked like it needed an app restart.
                 <ExperimentalToggle
                     label="New design preview"
                     description="The redesigned QuiltSync, wherever it is ready."
@@ -83,23 +78,6 @@ pub(super) fn ExperimentalSection(
                     refetch=refetch
                     navigate_to="/"
                 />
-                {profile
-                    .allows_construction_gates()
-                    .then(|| {
-                        view! {
-                            <ExperimentalToggle
-                                label="Unfinished package page"
-                                description="The rebuilt package screen, still a placeholder. \
-                                             The rest of the app switches to the new design \
-                                             too."
-                                enabled=package_page_v2
-                                flag=Flag::PackagePageV2
-                                notification=notification
-                                refetch=refetch
-                                navigate_to="/"
-                            />
-                        }
-                    })}
             </dl>
         </section>
     }
@@ -107,10 +85,8 @@ pub(super) fn ExperimentalSection(
 
 /// One opt-in: its own `dt`/`dd` pair in the section's list.
 ///
-/// The pair is wrapped, because a row is a thing a test has to be able to reach
-/// from any part of it — `data-settings-row` is that handle, and the wrapper is
-/// `display: contents` in `pages/settings.css` so the `dt` and `dd` stay items of
-/// the section's grid.
+/// A bare pair, with nothing around it: the section's list is a two-column grid,
+/// and a wrapper would take the row out of it.
 ///
 /// `navigate_to` is for a flag whose effect is not on this screen, so saving it
 /// otherwise looks like nothing happened. A row without one saves in place.
@@ -139,11 +115,12 @@ fn ExperimentalToggle(
         enabled.set(new_enabled);
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
-            let (entire_package_sync, main_page_v2, package_page_v2) = flag.only(new_enabled);
+            let (entire_package_sync, main_page_v2) = flag.only(new_enabled);
             match commands::update_experimental_settings(
                 entire_package_sync,
                 main_page_v2,
-                package_page_v2,
+                // No row owns the rebuilt package screen — see `Flag::only`.
+                None,
             )
             .await
             {
@@ -168,20 +145,18 @@ fn ExperimentalToggle(
     };
 
     view! {
-        <div data-settings-row>
-            <dt>{label}</dt>
-            <dd>
-                <label class="checkbox-option">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || enabled.get()
-                        prop:disabled=move || saving.get()
-                        on:change=on_toggle
-                    />
-                    <span class="value default">{description}</span>
-                </label>
-            </dd>
-        </div>
+        <dt>{label}</dt>
+        <dd>
+            <label class="checkbox-option">
+                <input
+                    type="checkbox"
+                    prop:checked=move || enabled.get()
+                    prop:disabled=move || saving.get()
+                    on:change=on_toggle
+                />
+                <span class="value default">{description}</span>
+            </label>
+        </dd>
     }
 }
 
@@ -191,20 +166,18 @@ mod tests {
     use crate::test_support::{element_saying, mount};
     use wasm_bindgen_test::*;
 
-    /// The section as a given build draws it, over the two stored answers.
+    /// The section over its stored answers.
     ///
     /// Inside a `Router` because every row asks for `use_navigate`. The
     /// notification signal and the trigger are the section's own required
     /// wiring; no assertion here reads either.
-    fn mount_section(profile: BuildProfile, preview: bool, construction: bool) -> web_sys::Element {
+    fn mount_section(preview: bool) -> web_sys::Element {
         mount(move || {
             view! {
                 <leptos_router::components::Router>
                     <ExperimentalSection
                         entire_package_sync=false
                         main_page_v2=preview
-                        package_page_v2=construction
-                        profile=profile
                         notification=RwSignal::new(None)
                         refetch=Trigger::new()
                     />
@@ -217,45 +190,16 @@ mod tests {
     /// for the page that introduced it.
     #[wasm_bindgen_test]
     fn the_reader_row_is_named_for_the_design_not_the_page() {
-        let root = mount_section(BuildProfile::Release, false, false);
+        let root = mount_section(false);
         element_saying(&root, "New design preview");
+        let words = root.text_content().unwrap_or_default();
         assert!(
-            !root
-                .text_content()
-                .unwrap_or_default()
-                .contains("New main page"),
+            !words.contains("New main page"),
             "the old page-named label is gone"
         );
-    }
-
-    /// Absent, not disabled. A disabled row still tells a reader the unfinished
-    /// page exists and invites the question; the construction gate is not theirs
-    /// to know about.
-    #[wasm_bindgen_test]
-    fn a_release_build_does_not_draw_the_construction_row() {
-        let root = mount_section(BuildProfile::Release, false, true);
         assert!(
-            !root
-                .text_content()
-                .unwrap_or_default()
-                .contains("Unfinished package page"),
-            "a release build draws no construction gate, even with the value stored"
+            !words.contains("Unfinished package page"),
+            "and the rebuilt package screen is not offered at all"
         );
-    }
-
-    /// And a development build draws it free of the other row: the dependency
-    /// that disabled it encoded the nesting this change inverts.
-    #[wasm_bindgen_test]
-    fn a_development_build_draws_it_independent_of_the_preview() {
-        let root = mount_section(BuildProfile::Development, false, false);
-        let row = element_saying(&root, "Unfinished package page");
-        let input = row
-            .closest("[data-settings-row]")
-            .unwrap()
-            .expect("the row wraps its control")
-            .query_selector("input")
-            .unwrap()
-            .expect("the row carries a checkbox");
-        assert!(!input.has_attribute("disabled"), "with the preview off");
     }
 }
