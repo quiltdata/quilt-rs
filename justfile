@@ -1,19 +1,25 @@
 # Simple justfile for quilt-rs workspace
 
 # Start QuiltSync development server
-start:
+start: ui-stubs
     cd quilt-sync && cargo tauri dev
 
+# Trunk refuses to start until the generated files in its watch-ignore list exist,
+# so a fresh checkout fails before the pre-build hooks that write them ever run.
+# Empty stubs get it past that check; the hooks then overwrite them.
+[private]
+ui-stubs:
+    cd quilt-sync/ui && mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/_modules.scss assets/css/kit/_normalize.scss
+
 # Open the component gallery (the kit's design record, never the app) in a browser.
-# Needs the frontend toolchain, see CONTRIBUTING.md. Trunk refuses to start until the
-# generated files in its watch-ignore list exist; the pre-build hooks then overwrite them.
+# Needs the frontend toolchain, see CONTRIBUTING.md.
 #
 # `--dist` is load-bearing. Trunk writes whatever target it is given to
 # `<dist>/index.html`, and `just start` points Tauri at `ui/dist`, so sharing one
 # directory means whichever of the two rebuilt last owns the page both of them serve.
 # With its own directory the gallery and the app run side by side.
-gallery port="8787":
-    cd quilt-sync/ui && mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/_modules.scss assets/css/kit/_normalize.scss && trunk serve gallery.html --dist dist-gallery --port {{port}} --open
+gallery port="8787": ui-stubs
+    cd quilt-sync/ui && trunk serve gallery.html --dist dist-gallery --port {{port}} --open
 
 # Run test coverage for all packages
 coverage:
