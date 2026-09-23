@@ -27,10 +27,16 @@ pub(super) fn RoleDialog(
     switch: commands::RoleSwitch,
     w: Wiring,
 ) -> impl IntoView {
-    // No `outcome`: a refusal is the dialog's banner, and nothing goes to the
-    // band. `busy` is held for the command and seals the dialog, because a
-    // re-read rebuilds this dialog and its own seal goes with the old one.
-    let Wiring { busy, reload, .. } = w;
+    // A refusal is the dialog's banner, and nothing goes to the band; starting
+    // the command only retracts what the band said last. `busy` is held for the
+    // command and seals the dialog, because a re-read rebuilds this dialog and
+    // its own seal goes with the old one.
+    let Wiring {
+        busy,
+        outcome,
+        reload,
+        ..
+    } = w;
     let commands::RoleSwitch { host, alternatives } = switch;
     let chosen = RwSignal::new(alternatives.first().cloned().unwrap_or_default());
 
@@ -51,7 +57,7 @@ pub(super) fn RoleDialog(
         let host = host.clone();
         async move {
             let role = chosen.get_untracked();
-            holding(busy, commands::switch_role(host, role.clone()))
+            holding(busy, outcome, commands::switch_role(host, role.clone()))
                 .await
                 .map_err(|err| format!("Could not switch to {role}: {err}"))?;
             reload.notify();

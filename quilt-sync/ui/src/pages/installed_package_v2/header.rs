@@ -42,6 +42,7 @@
 //! on the page's band. `Get latest` keeps what pull already does — its report
 //! reaches the notification stack — and its failure goes to the band. A
 //! dialog-borne command draws its refusal inside the dialog, which stays open.
+//! Every command, as it starts, retracts what the band said about the last one.
 
 use leptos::prelude::*;
 
@@ -190,6 +191,9 @@ pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuIte
 /// rule, and a helper that reported every success would put `Get latest`'s
 /// line on the page behind the toast that already carried its report.
 ///
+/// Starting retracts whatever the band said last, in `holding`, so a failure
+/// does not outlive the retry that succeeds.
+///
 /// `on_failure` is the page's own sentence for the command not happening; the
 /// backend's text follows it as the detail, which is the split the pause band
 /// already makes.
@@ -207,7 +211,7 @@ fn run(
         return;
     }
     leptos::task::spawn_local(async move {
-        match holding(busy, task).await {
+        match holding(busy, outcome, task).await {
             Ok(_) => {
                 if let Some(reload) = after {
                     reload.notify();
@@ -403,7 +407,7 @@ fn danger_dialogs(
             confirm=Submit::new("Undo", move || {
                 let ns = ns_undo.clone();
                 async move {
-                    holding(busy, commands::undo_commit(ns.clone())).await?;
+                    holding(busy, outcome, commands::undo_commit(ns.clone())).await?;
                     // The one success the band reports. The state label can read the
                     // same before and after an undo, so the re-read is not a report.
                     outcome.set(Some(Outcome {
@@ -427,7 +431,7 @@ fn danger_dialogs(
                 let ns = ns_remove.clone();
                 let uri = uri_remove.clone();
                 async move {
-                    holding(busy, commands::package_uninstall(ns, uri)).await?;
+                    holding(busy, outcome, commands::package_uninstall(ns, uri)).await?;
                     // Home, not a refetch: the package this page is about is gone, so
                     // re-reading it would ask for something that no longer exists.
                     // Remove's success is arriving on the package list.

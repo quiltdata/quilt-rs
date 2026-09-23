@@ -260,8 +260,12 @@ pub(super) fn BucketDialog(
                             .map(|option| option.intent)
                     })
                     .unwrap_or(WorkflowIntent::BucketDefault);
-                let response =
-                    holding(busy, commands::set_remote(ns.clone(), host, name, workflow)).await?;
+                let response = holding(
+                    busy,
+                    outcome,
+                    commands::set_remote(ns.clone(), host, name, workflow),
+                )
+                .await?;
                 // The remote is set either way. A workflow that could not be
                 // resolved is the one partial success the band carries: the
                 // package will publish ungoverned, and the reader should learn

@@ -69,11 +69,19 @@ pub(crate) struct Wiring {
     pub dialogs: Dialogs,
 }
 
-/// Hold `busy` for as long as `task` runs. Every header command does, the
-/// dialogs' included: the signal is the page's and a dialog's own seal is not,
-/// so a dialog rebuilt mid-submit is drawn sealed by this one.
-async fn holding<T>(busy: RwSignal<bool>, task: impl std::future::Future<Output = T>) -> T {
+/// Hold `busy` for as long as `task` runs, and retract the band's last
+/// outcome as it starts. Every header command does, the dialogs' included: the
+/// signal is the page's and a dialog's own seal is not, so a dialog rebuilt
+/// mid-submit is drawn sealed by this one.
+async fn holding<T>(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    task: impl std::future::Future<Output = T>,
+) -> T {
     busy.set(true);
+    // The band says what the last command said, and this one is now the last:
+    // a failure left up would outlive a retry that succeeds, which says nothing.
+    outcome.set(None);
     let answer = task.await;
     // `try_`: the signal is the page's, and the page can be gone by now.
     busy.try_set(false);
@@ -592,6 +600,29 @@ mod tests {
             !text.contains("folder"),
             "the first outcome is gone: {text}"
         );
+    }
+
+    /// A command that starts retracts the band's last outcome, so a failure
+    /// cannot outlive the retry that succeeds — success says nothing, and would
+    /// otherwise leave the failure up. Read from inside the command, because
+    /// under the runner every real one fails and would set its own.
+    #[wasm_bindgen_test]
+    async fn a_command_that_starts_retracts_the_last_outcome() {
+        let busy = RwSignal::new(false);
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Critical,
+            "Could not open this package's folder.",
+            None,
+        )));
+
+        let during = holding(busy, outcome, async move {
+            (busy.get_untracked(), outcome.get_untracked())
+        })
+        .await;
+
+        assert_eq!(during, (true, None), "held, and the band cleared");
+        assert!(!busy.get_untracked(), "released once it settles");
     }
 
     /// A successful payload swaps the header and pane together. The old loose
