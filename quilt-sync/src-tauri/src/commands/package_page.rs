@@ -20,7 +20,10 @@ use crate::commands::main_page::{
 };
 use crate::error::Error;
 use crate::model;
+use crate::notify::Notify;
 use crate::quilt;
+use crate::telemetry::MixpanelEvent;
+use crate::telemetry::event::RemotePackageEvent;
 
 /// Everything the v2 package page draws, for one package.
 #[derive(Serialize)]
@@ -523,6 +526,50 @@ async fn get_revision_history_from_model(
     Ok(revision_history_rows(&lineage, entries))
 }
 
+/// Install the backlog the page read listed — Keeping's `Download N files`.
+///
+/// Namespace-keyed like the rest of this page, and not v1's
+/// `package_install_paths`: that opens the file browser after every install
+/// (the file, or the package folder), which a backlog catch-up must not do.
+#[tauri::command]
+pub async fn package_download_backlog(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let namespace: quilt_uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+
+    Notify::new(format!("Downloading the backlog of {namespace}"))
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
+        )
+        .map(
+            download_backlog_from_model(&*m, &namespace, &paths).await,
+            format!("Downloaded {} files", paths.len()),
+            |err| format!("Failed to download files: {err}"),
+        )
+        .map(|_| ())
+}
+
+async fn download_backlog_from_model(
+    m: &impl model::QuiltModel,
+    namespace: &quilt_uri::Namespace,
+    paths: &[String],
+) -> Result<(), Error> {
+    let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
+    let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    m.package_install_paths(&installed, &paths).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -1002,6 +1049,75 @@ mod tests {
         let err = get_revision_history_from_model(&m, &ns)
             .await
             .expect_err("an absent package has no history to be empty");
+
+        assert!(err.to_string().contains("team/dataset"), "{err}");
+    }
+
+    /// A download mock that asserts it installs `expected` and never opens
+    /// the file browser, as v1's install path does after every install.
+    fn mock_download(expected: &'static [&'static str]) -> crate::model::MockQuiltModel {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_install_paths()
+            .times(1)
+            .returning(move |_, paths| {
+                assert_eq!(
+                    paths,
+                    expected.iter().map(PathBuf::from).collect::<Vec<_>>()
+                );
+                Ok(std::collections::BTreeMap::new())
+            });
+        m.expect_reveal_in_file_browser().times(0);
+        m.expect_open_in_file_browser().times(0);
+        m
+    }
+
+    #[tokio::test]
+    async fn the_download_installs_exactly_the_paths_it_was_given() {
+        let m = mock_download(&["plate/b.csv", "plate/c.csv"]);
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        download_backlog_from_model(&m, &ns, &["plate/b.csv".into(), "plate/c.csv".into()])
+            .await
+            .expect("the listed paths install");
+    }
+
+    #[tokio::test]
+    async fn a_single_file_download_opens_nothing() {
+        let m = mock_download(&["plate/b.csv"]);
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        download_backlog_from_model(&m, &ns, &["plate/b.csv".into()])
+            .await
+            .expect("the one path installs");
+    }
+
+    #[tokio::test]
+    async fn a_refused_download_is_an_error() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_install_paths()
+            .returning(|_, _| Err(access_denied_error()));
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let err = download_backlog_from_model(&m, &ns, &["plate/b.csv".into()])
+            .await
+            .expect_err("a refusal reaches the caller");
+
+        assert!(err.is_access_denied(), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_package_cannot_download() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package().returning(|_| Ok(None));
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let err = download_backlog_from_model(&m, &ns, &["plate/b.csv".into()])
+            .await
+            .expect_err("an absent package has nothing to download into");
 
         assert!(err.to_string().contains("team/dataset"), "{err}");
     }
