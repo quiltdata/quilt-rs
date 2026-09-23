@@ -1,9 +1,5 @@
 //! The page frame: the [`Appbar`], and a width-capped column for the regions.
 //!
-//! The bar is its own unit rather than part of this — see [`Appbar`] for why —
-//! so what the frame adds is the **surface**: `data-v2-page`, the page's ground,
-//! ink and type. That is the part a v1 page must never be wrapped in.
-//!
 //! # What it owns, and why that matters
 //!
 //! **The space between regions.** The state strip, the queue and the list region set
@@ -53,9 +49,7 @@ pub fn PageLayout(
     /// nothing and heading navigation has no top.
     #[prop(into)]
     heading: String,
-    /// Appbar controls, handed straight to the [`Appbar`]'s slot.
-    #[prop(optional)]
-    actions: Option<AnyView>,
+    #[prop(optional)] actions: Option<AnyView>,
     /// A `Banner`, when there is one. In the flow directly under the appbar, so it
     /// pushes the page down rather than floating over it — the design bans anchored
     /// positioning, and a bar cannot be missed by someone looking at the bottom of a long

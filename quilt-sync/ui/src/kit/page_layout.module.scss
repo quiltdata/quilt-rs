@@ -1,6 +1,5 @@
 /*
- * Page frame: the v2 surface, and the column under the appbar. The bar's own
- * rules are in `appbar.module.scss`, because v1 pages draw it too.
+ * Page frame: the v2 surface, and the column under the appbar.
  */
 
 /* The frame owns the window height, and the list inside it takes the leftover and
@@ -37,15 +36,8 @@
   line-height: var(--q-line-body);
 }
 
-/* The page container, declared once for everything under the appbar that has to
- * line up with it.
- *
- * The banner and the column share it, and the appbar's contents read the same
- * two tokens by default (`appbar.module.scss`) — that shared pair is what keeps
- * the logo over the regions. Two rules repeating the same declarations is how
- * that alignment drifts, so these two share one.
- *
- * Only the inline padding is here — each row's own vertical rhythm is its own. */
+/* The page container. `appbar.module.scss` defaults to the same two tokens, which
+ * keeps the logo over the regions. */
 .notice,
 .main {
   /* `width: 100%` is load-bearing, not belt-and-braces. `.notice` and `.main` are

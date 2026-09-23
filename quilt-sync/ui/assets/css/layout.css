@@ -36,12 +36,8 @@ body {
   z-index: var(--q-ui-z-index-appbar);
 }
 
-/* The redesigned appbar, in v1's slot (`components/layout.rs`).
- *
- * The bar brings its own ground, ink and type; what it takes from here is the
- * slot's geometry. The height is v1's 64px, because `.layout-toolbar` sticks at
- * `top: 64px` and the locked-page overlay starts there too. The container and
- * gutter are v1's, so the logo lines up with the breadcrumbs under it. */
+/* The kit appbar in v1's slot: 64px, because `.layout-toolbar` sticks at
+ * `top: 64px`, and v1's container, to line up with the breadcrumbs. */
 .layout-appbar-v2 {
   --q-appbar-min-height: var(--q-ui-size-8);
   --q-appbar-container: var(--q-ui-container-size);

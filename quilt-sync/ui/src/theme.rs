@@ -93,15 +93,10 @@ pub fn set_v2(on: bool) {
     remember_v2(on);
 }
 
-/// Whether the root carries [`V2_CLASS`] — the generation `/` last resolved.
+/// Whether the root carries [`V2_CLASS`].
 ///
-/// For the v1 shell, which draws the redesigned appbar when this is on. Read
-/// rather than fetched: `/` is the one place the preview is resolved, and a
-/// second fetch per page would put a frame of the wrong bar in front of every v1
-/// route. Not reactive either, and nothing needs it to be. A fresh document
-/// gets the marker from `index.html`, which restores the answer `/` last
-/// recorded. Saving the preview in Settings navigates straight to `/`, which
-/// records it again before any other route is drawn.
+/// Never stale when a route reads it: `index.html` restores it before first
+/// paint, and saving the preview in Settings navigates to `/`, which sets it.
 pub fn is_v2() -> bool {
     document()
         .document_element()

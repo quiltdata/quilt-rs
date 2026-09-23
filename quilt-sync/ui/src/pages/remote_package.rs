@@ -49,8 +49,7 @@ pub fn RemotePackage() -> impl IntoView {
     });
 
     view! {
-        // `transit`: this mount is the deep link's operation, so the preview's
-        // bar — with a Refresh that reloads the window — must not reach it.
+        // Mounting runs the deep link, so a window reload would run it again.
         <Layout breadcrumbs=vec![] notification=notification transit=true>
             <Suspense fallback=move || {
                 view! { <Spinner /> }
@@ -76,11 +75,8 @@ mod tests {
     use leptos_router::components::Router;
     use wasm_bindgen_test::*;
 
-    /// The relay renders inside the same v1 `Layout` every route the preview
-    /// reaches does, so it is held out by name rather than by shape. Mounted
-    /// with no Tauri host, so the deep link's own read rejects and runs nothing
-    /// — and that rejection is the failure path, whose shared error page draws
-    /// a `Layout` of its own. Awaited, so the assertion sees that one too.
+    /// With no Tauri host the read rejects, so this also covers the error
+    /// page's nested `Layout`.
     #[wasm_bindgen_test]
     async fn the_preview_does_not_hand_the_relay_its_bar() {
         theme::set_v2(true);

@@ -1,53 +1,23 @@
-/*
- * The appbar. Full-bleed, with its contents capped: the ground has to reach both
- * window edges or it reads as a box rather than as the top of the window, while
- * what sits on it must line up with whatever is below.
- */
-
-/* The one surface in the kit that is not a step on the page's ladder.
+/* Brand ground in both themes, same as v1's bar.
  *
- * Every other raised surface is LIGHTER than the page; this one is the brand
- * ground in both themes, which is a deliberate exception and not an oversight —
- * the appbar is chrome, not content, and v1's bar has been this colour all
- * along. That is also why it can sit above a v1 page in dark theme looking like
- * nothing changed. It settles the logo too: `quilt.png` is white ink, so it
- * needs a dark ground rather than a fourth brand asset (qhq-8mgw.22).
+ * States its own ink and type: outside the v2 frame it would inherit v1's
+ * `body` (Roboto, unthemed black).
  *
- * No bottom rule. It separated a white bar from a near-white page; against the
- * brand ground the colour change is the separation, and a grey line over it
- * reads as a seam.
- *
- * `--q-appbar-min-height` is how a host that is not the v2 frame gives the bar a
- * taller slot: v1's shell sets its own 64px, which its toolbar's sticky offset
- * assumes. The contents centre in whatever height it gets. */
+ * Hosts other than the v2 frame may set `--q-appbar-min-height`,
+ * `--q-appbar-container` and `--q-appbar-gutter`; see `layout.css`. */
 .appbar {
   display: flex;
   align-items: center;
   min-height: var(--q-appbar-min-height, 0);
   background: var(--q-bgColor-brand);
-  /* Stated, not inherited. In the frame the root sets the page's ink and would
-   * draw the bar's contents dark-on-navy (qhq-8mgw.56); outside it the bar would
-   * inherit v1's `body`, which is a black no theme switches. */
   color: var(--q-fgColor-onBrand);
-  /* Its own type for the same reason: v1's `layout.css` sets `body`'s face to
-   * Roboto after this bundle loads, and on a v1 page there is no frame to
-   * override it. */
   font-family: var(--q-font-sans);
   font-size: var(--q-text-body);
   line-height: var(--q-line-body);
-  /* Its own height, never a share of the leftover. */
   flex: none;
 }
 
-/* The bar's contents, width-capped like the column under them.
- *
- * The cap and gutter default to the v2 frame's, which the frame's `.notice` and
- * `.main` read from the same two tokens — that shared pair is what keeps the
- * logo over the regions. A v1 host overrides both with its own container, so the
- * logo lines up with v1's breadcrumbs instead.
- *
- * `width: 100%` because this is a flex item of `.appbar`, where it would
- * otherwise shrink to its content and never reach the cap. */
+/* Defaults match the frame's `.notice` and `.main`, so the logo lines up with the regions. */
 .bar {
   display: flex;
   align-items: center;
@@ -57,25 +27,17 @@
   margin-inline: auto;
   padding-inline: var(--q-appbar-gutter, var(--q-space-4));
   padding-block: var(--q-space-2);
-  /* The 32px framed IconButtons plus the padding above and below them. */
   min-height: calc(var(--q-control-height) + 2 * var(--q-space-2));
-  /* The brand ground defeats both themes' rings (1.9 and 2.3:1); the bar's ink is 11.9:1. */
+  /* Both themes' rings are under 3:1 on the brand ground. */
   --q-focus-outlineColor: var(--q-fgColor-onBrand);
 }
-
-/* Not `position: sticky`. It would be defensible — the refresh control is useful from
- * anywhere in a long list — but a sticky bar costs vertical space permanently in
- * exchange for two buttons, and the main page is already spending its height on a
- * queue. v1's shell makes its slot sticky, as it always has; that is the host's call. */
 
 .logo {
   display: flex;
   align-items: center;
-  /* An anchor, so the underline has to be switched off explicitly. */
   text-decoration: none;
 }
 
-/* 22px in a 48px bar; the 230x48 wordmark draws ~105px wide, width: auto keeps its aspect. */
 .logo img {
   height: 22px;
   width: auto;
@@ -88,14 +50,7 @@
   gap: var(--q-space-2);
 }
 
-/* The bar's own chrome, on the brand ground.
- *
- * A `Button`'s frame is a raised white pill — right on a page-coloured surface,
- * and two white blobs on this one. So the frame comes off and the label takes
- * the bar's ink, which is what v1 does for the same two buttons and the same
- * reason (`.link` in `assets/css/components/button.css`).
- * Scoped to the bar rather than pushed into the kit: the component is correct
- * everywhere else it is used, and it is the GROUND that is unusual here. */
+/* Unframed on the brand ground, like v1's link buttons. */
 .actions button {
   background: transparent;
   border-color: transparent;
