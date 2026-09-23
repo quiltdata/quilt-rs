@@ -552,6 +552,37 @@ mod tests {
         }
     }
 
+    /// A second outcome for the same package replaces the first while the band is
+    /// up — `Show`'s guard stays true across it, so only the children's own read
+    /// of `outcome` redraws it.
+    #[wasm_bindgen_test]
+    async fn a_newer_outcome_replaces_the_one_on_screen() {
+        let outcome = RwSignal::new(Some(said(
+            "team/dataset",
+            BannerVariant::Critical,
+            "Could not open this package's folder.",
+            None,
+        )));
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+        outcome.set(Some(said(
+            "team/dataset",
+            BannerVariant::Success,
+            "Undid the last revision.",
+            None,
+        )));
+        leptos::task::tick().await;
+
+        let band = el.query_selector("[role]").unwrap().expect("a band");
+        assert_eq!(band.get_attribute("role").as_deref(), Some("status"));
+        let text = band.text_content().unwrap_or_default();
+        assert!(text.contains("Undid the last revision."), "got: {text}");
+        assert!(
+            !text.contains("folder"),
+            "the first outcome is gone: {text}"
+        );
+    }
+
     /// A successful payload swaps the header and pane together. The old loose
     /// paragraph was only scaffolding; package identity now belongs to the
     /// header while the pane is a named complementary landmark.
