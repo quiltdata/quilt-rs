@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use super::appbar::appbar_actions;
+use super::appbar::{appbar_actions, transit_appbar_actions};
 use super::buttons;
 use crate::kit::Appbar;
 use crate::theme;
@@ -49,21 +49,22 @@ pub fn Layout(
     /// When `true`, the layout shows a disabled overlay (progress indicator).
     #[prop(optional)]
     ui_locked: Option<RwSignal<bool>>,
-    /// Keeps v1's bar under the preview. For a screen whose mount is its
-    /// operation, where Refresh's window reload would repeat it. Inherited by
-    /// nested `Layout`s, such as the error page's.
+    /// Draws Refresh disabled, and makes the bar's exits replace this history
+    /// entry. For a screen whose mount is its operation, where Refresh's window
+    /// reload, or Back onto it, would repeat it.
     #[prop(optional)]
     transit: bool,
     children: Children,
 ) -> impl IntoView {
-    let transit = transit || use_context::<TransitScreen>().is_some();
-    if transit {
-        provide_context(TransitScreen);
-    }
-    let appbar = if !transit && theme::is_v2() {
+    let appbar = if theme::is_v2() {
+        let actions = if transit {
+            transit_appbar_actions()
+        } else {
+            appbar_actions(reload_window, false.into())
+        };
         view! {
             <div class="layout-appbar layout-appbar-v2">
-                <Appbar actions=Some(appbar_actions(reload_window, false.into())) />
+                <Appbar actions=Some(actions) replace=transit />
             </div>
         }
         .into_any()
@@ -71,12 +72,12 @@ pub fn Layout(
         view! {
             <div class="qui-appbar layout-appbar">
                 <div class="container">
-                    <a class="qui-logo" href="/">
+                    <a class="qui-logo" href="/" prop:replace=transit>
                         <img class="img" src="/assets/img/quilt.png" />
                     </a>
                     <div class="nav">
-                        <buttons::Refresh on_click=move |_| reload_window() />
-                        <buttons::Settings />
+                        <buttons::Refresh on_click=move |_| reload_window() disabled=transit />
+                        <buttons::Settings replace=transit />
                     </div>
                 </div>
             </div>
@@ -151,9 +152,6 @@ pub fn Layout(
     }
 }
 
-#[derive(Clone, Copy)]
-struct TransitScreen;
-
 fn reload_window() {
     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
 }
@@ -216,6 +214,7 @@ mod tests {
     use super::*;
     use crate::test_support::mount;
     use leptos_router::components::Router;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// Synchronous, so no other test sees the marker it sets.
@@ -314,28 +313,89 @@ mod tests {
         assert_eq!(labels, ["Refresh", "Settings"]);
     }
 
-    #[wasm_bindgen_test]
-    fn a_layout_inside_a_transit_screen_is_transit_too() {
-        theme::set_v2(true);
-        let el = mount(|| {
-            view! {
-                <Router>
-                    <Layout breadcrumbs=vec![] notification=RwSignal::new(None) transit=true>
-                        <Layout breadcrumbs=vec![] notification=RwSignal::new(None)>
-                            "error page"
-                        </Layout>
-                    </Layout>
-                </Router>
-            }
-        });
-        theme::set_v2(false);
-        assert!(!draws_redesigned_bar(&el), "markup was {}", el.inner_html());
+    fn refresh_is_disabled(el: &web_sys::Element) -> bool {
+        let buttons = el.query_selector_all("button").unwrap();
+        let refresh = (0..buttons.length())
+            .filter_map(|i| buttons.item(i))
+            .find(|b| b.text_content().unwrap_or_default().trim() == "Refresh")
+            .expect("a Refresh is drawn");
+        refresh
+            .dyn_into::<web_sys::HtmlButtonElement>()
+            .unwrap()
+            .disabled()
     }
 
     #[wasm_bindgen_test]
-    fn a_transit_screen_keeps_v1s_bar_under_the_preview() {
+    fn a_transit_screen_draws_the_preview_bar_with_refresh_disabled() {
         let el = settings_like(true, true);
+        assert!(draws_redesigned_bar(&el), "markup was {}", el.inner_html());
+        assert!(refresh_is_disabled(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_transit_screen_draws_v1s_bar_with_refresh_disabled() {
+        let el = settings_like(false, true);
         assert!(draws_v1_bar(&el), "markup was {}", el.inner_html());
-        assert!(!draws_redesigned_bar(&el), "markup was {}", el.inner_html());
+        assert!(refresh_is_disabled(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    fn refresh_is_live_on_other_routes() {
+        assert!(!refresh_is_disabled(&settings_like(true, false)));
+        assert!(!refresh_is_disabled(&settings_like(false, false)));
+    }
+
+    /// The router reads `replace` off the anchor it intercepts.
+    fn links_replace(el: &web_sys::Element) -> Vec<bool> {
+        let links = el.query_selector_all(".layout-appbar a").unwrap();
+        (0..links.length())
+            .filter_map(|i| links.item(i))
+            .map(|a| {
+                js_sys::Reflect::get(&a, &"replace".into())
+                    .ok()
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .collect()
+    }
+
+    #[wasm_bindgen_test]
+    fn the_v1_bar_on_a_transit_screen_leaves_without_a_history_entry() {
+        assert_eq!(links_replace(&settings_like(false, true)), [true, true]);
+        assert_eq!(links_replace(&settings_like(false, false)), [false, false]);
+    }
+
+    #[wasm_bindgen_test]
+    fn the_preview_bar_logo_on_a_transit_screen_leaves_without_a_history_entry() {
+        assert_eq!(links_replace(&settings_like(true, true)), [true]);
+        assert_eq!(links_replace(&settings_like(true, false)), [false]);
+    }
+
+    fn history_length() -> u32 {
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .length()
+            .unwrap()
+    }
+
+    fn settings_button(el: &web_sys::Element) -> web_sys::HtmlElement {
+        let buttons = el.query_selector_all("header button").unwrap();
+        (0..buttons.length())
+            .filter_map(|i| buttons.item(i))
+            .find(|b| b.text_content().unwrap_or_default().trim() == "Settings")
+            .expect("the bar draws Settings")
+            .dyn_into()
+            .unwrap()
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_preview_bar_settings_on_a_transit_screen_replaces_the_entry() {
+        let el = settings_like(true, true);
+        let before = history_length();
+        settings_button(&el).click();
+        crate::test_support::sleep_ms(50).await;
+        assert_eq!(history_length(), before);
     }
 }

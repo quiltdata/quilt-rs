@@ -54,7 +54,7 @@ pub fn Settings() -> impl IntoView {
                             view! { <SettingsContent data=d notification=notification refetch=refetch /> }.into_any()
                         }
                         Err(e) => {
-                            crate::error_handler::handle_or_display(&e, notification)
+                            crate::error_handler::handle_or_display_in_shell(&e, notification)
                         }
                     }
                 })}
