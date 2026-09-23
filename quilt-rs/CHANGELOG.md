@@ -35,7 +35,7 @@
 
 ### Fixed
 
-- `flow::install_paths` and `InstalledPackage::install_paths` refuse, with the new `InstallPathError::LocalFileExists` naming the paths, to install over a file already in the working folder that this copy does not track. They refused only tracked paths, so a user's new, uncommitted file at a requested path was silently replaced by the remote one. The check runs before anything is fetched, and again immediately before each file is moved into place, so a file created during the download is not overwritten either (<https://github.com/quiltdata/quilt-rs/pull/986>)
+- `flow::install_paths` and `InstalledPackage::install_paths` refuse, with the new `InstallPathError::LocalFileExists` naming the paths, to install over a file already in the working folder that this copy does not track. They refused only tracked paths, so a user's new, uncommitted file at a requested path was silently replaced by the remote one. The check runs before anything is fetched, and again over every path just before the first file is moved into place, so a file created during the download is not overwritten either and a refusal leaves nothing half-installed (<https://github.com/quiltdata/quilt-rs/pull/986>)
 - `flow::list_revisions` and `InstalledPackage::revisions` skip hidden files in the installed-manifests directory, such as a `.tmp-<uuid>` left by an interrupted write or the OS's `.DS_Store`. They were read as manifests, so one that did not parse failed the whole listing, and one that did was listed as a revision named after the file (<https://github.com/quiltdata/quilt-rs/pull/982>)
 
 ## [v0.39.1] - 2026-09-18

@@ -87,6 +87,11 @@ async fn commit_staged(
 /// gap would otherwise be overwritten in silence. Checked immediately before
 /// each rename, the exposure is back to the two syscalls between them.
 ///
+/// [`Protect::Absent`] checks every destination in one pass before the first
+/// rename instead, so a refusal lands nothing: a row renamed before a later one
+/// was refused would be left untracked, and a retry would refuse it in turn.
+/// The exposure is the local rename loop rather than the fetch.
+///
 /// Fail-safe in the same direction as the conflict rule: a file that cannot be
 /// read is treated as changed, so the worst case is a retryable refusal rather
 /// than lost work.
@@ -96,6 +101,20 @@ async fn swap_staged_into_place(
     protect: &Protect<'_>,
     lineage: &mut PackageLineage,
 ) -> Res {
+    if let Protect::Absent = protect {
+        let mut appeared = Vec::new();
+        for (_, working_dest, row) in staged {
+            if storage.exists(working_dest).await {
+                appeared.push(row.logical_key.clone());
+            }
+        }
+        if !appeared.is_empty() {
+            debug!("❌ Local files appeared while the paths were being staged");
+            return Err(Error::InstallPath(InstallPathError::LocalFileExists(
+                appeared,
+            )));
+        }
+    }
     for (staged_path, working_dest, row) in staged {
         if let Protect::BaseContent(expected) = protect
             && let Some(base_row) = expected.get(&row.logical_key)
@@ -113,17 +132,6 @@ async fn swap_staged_into_place(
                     row.logical_key.clone(),
                 ])));
             }
-        }
-        if let Protect::Absent = protect
-            && storage.exists(working_dest).await
-        {
-            debug!(
-                "❌ {} appeared while the paths were being staged",
-                row.logical_key.display()
-            );
-            return Err(Error::InstallPath(InstallPathError::LocalFileExists(vec![
-                row.logical_key.clone(),
-            ])));
         }
         let last_modified = commit_staged(storage, staged_path, working_dest).await?;
         lineage.paths.insert(
@@ -910,6 +918,56 @@ mod tests {
         ));
         assert_eq!(storage.read_bytes(&working_dest).await?, b"users new file");
         assert!(!lineage.paths.contains_key(&logical_key));
+
+        Ok(())
+    }
+
+    /// A refusal lands nothing: a row renamed before a later one is refused
+    /// would sit untracked, and a retry would then refuse it as a local file.
+    #[test(tokio::test)]
+    async fn a_refusal_under_protect_absent_renames_none_of_the_rows() -> Res {
+        let storage = MockStorage::default();
+        let row = |key: &str| -> Res<ManifestRow> {
+            Ok(ManifestRow {
+                logical_key: PathBuf::from(key),
+                hash: multihash::Multihash::wrap(0x12, b"anything")?.try_into()?,
+                ..ManifestRow::default()
+            })
+        };
+        let (first_staged, first_dest) = (PathBuf::from("staging/run/1"), PathBuf::from("work/a"));
+        let (second_staged, second_dest) =
+            (PathBuf::from("staging/run/2"), PathBuf::from("work/b"));
+        for staged in [&first_staged, &second_staged] {
+            storage
+                .write_byte_stream(staged, ByteStream::from_static(b"remote bytes"))
+                .await?;
+        }
+        storage
+            .write_byte_stream(&second_dest, ByteStream::from_static(b"users new file"))
+            .await?;
+        let mut lineage = PackageLineage::default();
+
+        let result = swap_staged_into_place(
+            &storage,
+            &[
+                (first_staged, first_dest.clone(), row("a")?),
+                (second_staged, second_dest.clone(), row("b")?),
+            ],
+            &Protect::Absent,
+            &mut lineage,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(Error::InstallPath(InstallPathError::LocalFileExists(ref p))) if p == &vec![PathBuf::from("b")]
+        ));
+        assert!(
+            !storage.exists(&first_dest).await,
+            "the first row stays staged"
+        );
+        assert_eq!(storage.read_bytes(&second_dest).await?, b"users new file");
+        assert!(lineage.paths.is_empty());
 
         Ok(())
     }
