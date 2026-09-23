@@ -277,16 +277,18 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bo
                     <Button on_click=|_| ()>"Open folder"</Button>
                     <ActionMenu
                         aria_label="More actions for this package"
-                        actions=scene_menu()
-                            .into_iter()
-                            .map(|item| MenuAction {
-                                label: item.label,
-                                tone: item.tone,
-                                disabled: item.disabled,
-                                on_select: Callback::new(|()| ()),
-                                separated: item.separated,
-                            })
-                            .collect()
+                        actions={
+                            scene_menu()
+                                .into_iter()
+                                .map(|item| MenuAction {
+                                    label: item.label,
+                                    tone: item.tone,
+                                    disabled: item.disabled,
+                                    on_select: Callback::new(|()| ()),
+                                    separated: item.separated,
+                                })
+                                .collect::<Vec<_>>()
+                        }
                     />
                 </div>
             </div>

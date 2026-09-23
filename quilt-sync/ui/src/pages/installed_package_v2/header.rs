@@ -508,13 +508,13 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                     <Button disabled=Signal::derive(move || busy.get()) on_click=on_open_folder>
                         "Open folder"
                     </Button>
-                    // Rebuilt inside the closure, so the items follow `busy` rather
-                    // than whatever it was when the header mounted. The menu closes
-                    // on select, so a rebuild can only land on a closed menu.
-                    {move || view! {
-                        <ActionMenu
-                            aria_label="More actions for this package"
-                            actions=menu(
+                    // A derived signal, so the items follow `busy` while the menu
+                    // stays open: the trigger is live during a run, see
+                    // `the_menu_stays_open_when_a_command_settles`.
+                    <ActionMenu
+                        aria_label="More actions for this package"
+                        actions=Signal::derive(move || {
+                            menu(
                                 &payload.read_value(),
                                 w,
                                 goto,
@@ -522,8 +522,8 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                                 undo_open,
                                 remove_open,
                             )
-                        />
-                    }}
+                        })
+                    />
                 </div>
             </div>
             <BucketDialog open=bucket_open data=data.clone() w=w />
@@ -852,6 +852,41 @@ mod tests {
             .unwrap()
             .expect("the overflow trigger");
         assert!(!trigger.has_attribute("disabled"));
+    }
+
+    /// The menu can be opened while a command runs, to read why its items are
+    /// refused; the command settling must not shut it on the reader.
+    #[wasm_bindgen_test]
+    async fn the_menu_stays_open_when_a_command_settles() {
+        let busy = RwSignal::new(true);
+        let el = mount_with(
+            data(kit::PackageState::Behind),
+            Wiring {
+                busy,
+                outcome: RwSignal::new(None),
+                reload: Trigger::new(),
+            },
+        );
+        open_menu(&el);
+        leptos::task::tick().await;
+
+        busy.set(false);
+        leptos::task::tick().await;
+
+        let trigger = el
+            .query_selector(TRIGGER)
+            .unwrap()
+            .expect("the overflow trigger");
+        assert_eq!(
+            trigger.get_attribute("aria-expanded").as_deref(),
+            Some("true"),
+            "still open; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !menu_item(&el, "Remove").disabled(),
+            "and the items followed"
+        );
     }
 
     /// There is no Tauri bridge under the runner, so `invoke` answers `Err` —
