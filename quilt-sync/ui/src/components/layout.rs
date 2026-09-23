@@ -72,10 +72,18 @@ pub fn Layout(
     /// application. The v1 bar it already draws has the same reload, which is a
     /// known defect and not this flag's to fix: all this does is keep the
     /// preview from carrying it forward.
+    ///
+    /// Inherited: a `Layout` drawn inside a transit one is transit too. The
+    /// relay's failure path draws the shared error page, which brings a
+    /// `Layout` of its own, and that one must not hand out the bar either.
     #[prop(optional)]
     transit: bool,
     children: Children,
 ) -> impl IntoView {
+    let transit = transit || use_context::<TransitScreen>().is_some();
+    if transit {
+        provide_context(TransitScreen);
+    }
     let appbar = if !transit && theme::is_v2() {
         view! {
             <div class="layout-appbar layout-appbar-v2">
@@ -166,6 +174,10 @@ pub fn Layout(
         </div>
     }
 }
+
+/// Marks everything under a transit [`Layout`], so a nested one inherits it.
+#[derive(Clone, Copy)]
+struct TransitScreen;
 
 /// v1's Refresh, in either bar: reload the whole window, which re-mounts the
 /// route and so re-reads whatever it shows.
@@ -335,6 +347,26 @@ mod tests {
             })
             .collect();
         assert_eq!(labels, ["Refresh", "Settings"]);
+    }
+
+    /// A page nested in a transit one — the shared error page is — is transit
+    /// too, or the relay's failure path hands out the bar the relay withholds.
+    #[wasm_bindgen_test]
+    fn a_layout_inside_a_transit_screen_is_transit_too() {
+        theme::set_v2(true);
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Layout breadcrumbs=vec![] notification=RwSignal::new(None) transit=true>
+                        <Layout breadcrumbs=vec![] notification=RwSignal::new(None)>
+                            "error page"
+                        </Layout>
+                    </Layout>
+                </Router>
+            }
+        });
+        theme::set_v2(false);
+        assert!(!draws_redesigned_bar(&el), "markup was {}", el.inner_html());
     }
 
     /// The deep-link relay. Its mount is its operation, so the preview must not

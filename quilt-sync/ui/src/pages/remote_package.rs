@@ -71,16 +71,18 @@ pub fn RemotePackage() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use crate::test_support::{mount, sleep_ms};
     use crate::theme;
     use leptos_router::components::Router;
     use wasm_bindgen_test::*;
 
     /// The relay renders inside the same v1 `Layout` every route the preview
     /// reaches does, so it is held out by name rather than by shape. Mounted
-    /// with no Tauri host, so the deep link's own read rejects and runs nothing.
+    /// with no Tauri host, so the deep link's own read rejects and runs nothing
+    /// — and that rejection is the failure path, whose shared error page draws
+    /// a `Layout` of its own. Awaited, so the assertion sees that one too.
     #[wasm_bindgen_test]
-    fn the_preview_does_not_hand_the_relay_its_bar() {
+    async fn the_preview_does_not_hand_the_relay_its_bar() {
         theme::set_v2(true);
         let el = mount(|| {
             view! {
@@ -89,7 +91,14 @@ mod tests {
                 </Router>
             }
         });
+        sleep_ms(100).await;
         theme::set_v2(false);
+
+        assert!(
+            el.text_content().unwrap_or_default().contains("Error"),
+            "the failure path must have drawn; markup was {}",
+            el.inner_html()
+        );
 
         assert!(
             el.query_selector("header").unwrap().is_none(),
