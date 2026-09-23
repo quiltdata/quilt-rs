@@ -50,11 +50,15 @@ pub fn IconLink(
     #[prop(optional)] warning: bool,
     #[prop(optional)] large: bool,
     #[prop(optional)] link: bool,
+    /// Navigate in place of the current history entry.
+    #[prop(optional)]
+    replace: bool,
     children: Children,
 ) -> impl IntoView {
     view! {
         <a
             class="qui-button"
+            prop:replace=replace
             class:primary=move || primary.get().unwrap_or(false)
             class:warning=warning
             class:small=small

@@ -24,10 +24,11 @@ pub fn refresh_button(refresh: impl Fn() + 'static, busy: Signal<bool>) -> AnyVi
 }
 
 pub fn appbar_actions(refresh: impl Fn() + 'static, busy: Signal<bool>) -> AnyView {
-    with_settings(refresh_button(refresh, busy))
+    with_settings(refresh_button(refresh, busy), false)
 }
 
-/// For a screen whose mount is its operation, where a reload would repeat it.
+/// For a screen whose mount is its operation, where a reload would repeat it,
+/// and so would Back onto it: Settings replaces the screen's history entry.
 pub fn transit_appbar_actions() -> AnyView {
     with_settings(
         view! {
@@ -36,16 +37,25 @@ pub fn transit_appbar_actions() -> AnyView {
             </Button>
         }
         .into_any(),
+        true,
     )
 }
 
-fn with_settings(refresh: AnyView) -> AnyView {
+fn with_settings(refresh: AnyView, replace: bool) -> AnyView {
     let navigate = use_navigate();
     view! {
         {refresh}
         <Button
             leading_visual=icons::gear()
-            on_click=move |_| navigate("/settings", NavigateOptions::default())
+            on_click=move |_| {
+                navigate(
+                    "/settings",
+                    NavigateOptions {
+                        replace,
+                        ..NavigateOptions::default()
+                    },
+                );
+            }
         >
             "Settings"
         </Button>
