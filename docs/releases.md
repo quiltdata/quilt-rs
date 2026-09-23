@@ -234,6 +234,11 @@ For any release:
   `version =` specifier for the path dep).
 - Drop `-dev` from the top heading in the matching `CHANGELOG.md`
   too, and add today's date to it.
+- In the section being released, point every cross-crate line
+  (`### quilt-rs`, `### quilt-uri`) at the upstream's released version
+  and tag: `Updated [from v0.39.1 to v0.40.0](…/compare/quilt-rs/v0.39.1...quilt-rs/v0.40.0)`.
+  While the cycle runs, those lines name the upstream `-dev` version and
+  compare against `main`.
 - Run the workflow (`workflow_dispatch`).
 - Review the draft (for `quilt-cli`, download the archives and confirm
   `quilt --version`; for QuiltSync, install one of the bundles), then

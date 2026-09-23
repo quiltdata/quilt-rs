@@ -3,6 +3,8 @@
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
      Put quilt-uri updates under `### quilt-uri` section.
+     Between releases a cross-crate line names the upstream -dev version and
+     compares against main; the release PR points it at the released tag.
      Head unreleased changes with the Cargo.toml version: `-dev`, no date
      (e.g. [v0.39.2-dev]), not [Unreleased]. If the cycle needs a bigger bump,
      rename both. The first PR to change the crate after a release opens the
