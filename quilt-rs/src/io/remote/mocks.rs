@@ -17,7 +17,9 @@ use crate::io::storage::mocks::MockStorage;
 use crate::object_hash::ObjectHash;
 use crate::object_hash::Sha256ChunkedHash;
 use quilt_uri::Host;
+use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
+use quilt_uri::paths::tag_key;
 
 use crate::Res;
 
@@ -51,7 +53,7 @@ impl MockRemote {
 
 #[allow(
     clippy::unused_async_trait_impl,
-    reason = "six of this impl's methods do await; only `host_config` and `verify_bucket` do not. Rewriting just those two would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
+    reason = "seven of this impl's methods do await; only `host_config` and `verify_bucket` do not. Rewriting just those two would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
 )]
 impl Remote for MockRemote {
     async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
@@ -138,6 +140,33 @@ impl Remote for MockRemote {
 
     async fn verify_bucket(&self, _bucket: &str) -> Res {
         Ok(())
+    }
+
+    /// What the registry would list: the hash in each timestamped pointer
+    /// `put_object` stored under `.quilt/named_packages/<namespace>/`, so a
+    /// test seeds publication the way a push makes it. `latest` is a moving
+    /// alias, not a revision.
+    async fn published_revisions(
+        &self,
+        _host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<String>> {
+        let dir = format!("s3://{bucket}/{}", tag_key(namespace, ""));
+        log::debug!("Mocking {dir} revision listing");
+        if !self.storage.exists(&dir).await {
+            return Ok(Vec::new());
+        }
+        let mut entries = self.storage.read_dir(&dir).await?;
+        let mut hashes = Vec::new();
+        while let Some(entry) = entries.next_entry().await? {
+            if entry.file_name() == "latest" {
+                continue;
+            }
+            let pointer = tokio::fs::read_to_string(entry.path()).await?;
+            hashes.push(pointer.trim().to_string());
+        }
+        Ok(hashes)
     }
 }
 

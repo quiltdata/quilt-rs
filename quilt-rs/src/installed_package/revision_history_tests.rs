@@ -11,6 +11,7 @@ use crate::lineage::Home;
 use crate::lineage::PackageLineageIo;
 use crate::local_domain::LocalDomain;
 use crate::paths::DomainPaths;
+use crate::paths::tag_key;
 
 /// The trigger's count reads the directory and parses nothing: a damaged
 /// historical manifest is still a revision this copy holds, and must not
@@ -81,7 +82,15 @@ const REMOTE: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/history",
     "hash": "published-rev",
-    "catalog": "test.quilt.dev"
+    "origin": "test.quilt.dev"
+}"#;
+
+/// `ManifestUri` spells the catalog host `origin`; leaving it out is the
+/// bucket-only remote a no-catalog push records.
+const REMOTE_WITHOUT_CATALOG: &str = r#"{
+    "bucket": "bucket",
+    "namespace": "test/history",
+    "hash": "published-rev"
 }"#;
 
 /// An installed `test/history` whose lineage has `remote_json` as its remote,
@@ -146,13 +155,23 @@ fn messages_published(entries: &[flow::HistoryEntry]) -> Vec<(Option<&str>, bool
         .collect()
 }
 
+/// Published is the registry listing the revision, not its manifest object
+/// existing: `orphan-rev`'s manifest is in the bucket with no pointer to it.
 #[test(tokio::test)]
-async fn only_the_manifests_the_remote_holds_are_published() -> Res {
+async fn only_the_revisions_the_registry_lists_are_published() -> Res {
     let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "history").into();
     remote
         .put_object(
             None,
-            &"s3://bucket/.quilt/packages/published-rev".parse()?,
+            &format!("s3://bucket/{}", tag_key(&namespace, "1758500000")).parse()?,
+            b"published-rev".to_vec(),
+        )
+        .await?;
+    remote
+        .put_object(
+            None,
+            &"s3://bucket/.quilt/packages/orphan-rev".parse()?,
             b"{}".to_vec(),
         )
         .await?;
@@ -161,6 +180,12 @@ async fn only_the_manifests_the_remote_holds_are_published() -> Res {
         &package,
         "published-rev",
         r#"{"version":"v0","message":"Sent"}"#,
+    )
+    .await?;
+    install_manifest(
+        &package,
+        "orphan-rev",
+        r#"{"version":"v0","message":"Uploaded, never tagged"}"#,
     )
     .await?;
     install_manifest(
@@ -178,12 +203,16 @@ async fn only_the_manifests_the_remote_holds_are_published() -> Res {
     marks.sort_unstable();
     assert_eq!(
         marks,
-        vec![(Some("Kept here"), false), (Some("Sent"), true)]
+        vec![
+            (Some("Kept here"), false),
+            (Some("Sent"), true),
+            (Some("Uploaded, never tagged"), false),
+        ]
     );
     Ok(())
 }
 
-/// `LoggedOutRemote` fails every call, so any existence check would fail
+/// `LoggedOutRemote` fails every call, so asking the registry would fail
 /// the history.
 #[test(tokio::test)]
 async fn a_local_only_package_asks_the_remote_nothing() -> Res {
@@ -205,9 +234,32 @@ async fn a_local_only_package_asks_the_remote_nothing() -> Res {
     Ok(())
 }
 
-/// The refusal the popover draws: one refused check refuses the whole list.
+/// A remote with no catalog host has no registry to ask, so nothing is
+/// published and nothing is asked — `LoggedOutRemote` would fail the ask.
 #[test(tokio::test)]
-async fn a_refused_existence_check_fails_the_history() -> Res {
+async fn a_remote_without_a_catalog_host_asks_nothing() -> Res {
+    let (package, _dirs) = package_over(LoggedOutRemote, REMOTE_WITHOUT_CATALOG).await?;
+    install_manifest(
+        &package,
+        "published-rev",
+        r#"{"version":"v0","message":"Sent"}"#,
+    )
+    .await?;
+
+    let lineage = package.lineage().await?;
+    assert_eq!(
+        lineage.remote_uri.as_ref().map(|uri| uri.origin.is_none()),
+        Some(true)
+    );
+    let history = package.revision_history(&lineage).await?;
+
+    assert_eq!(messages_published(&history), vec![(Some("Sent"), false)]);
+    Ok(())
+}
+
+/// The refusal the popover draws: a refused listing refuses the whole list.
+#[test(tokio::test)]
+async fn a_refused_listing_fails_the_history() -> Res {
     let (package, _dirs) = package_over(DeniedRemote, REMOTE).await?;
     install_manifest(
         &package,
@@ -220,7 +272,7 @@ async fn a_refused_existence_check_fails_the_history() -> Res {
     let err = package
         .revision_history(&lineage)
         .await
-        .expect_err("a denied existence check refuses the history");
+        .expect_err("a denied listing refuses the history");
 
     assert!(err.is_access_denied(), "{err:?}");
     Ok(())

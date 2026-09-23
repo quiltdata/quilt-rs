@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use tracing::log;
@@ -125,39 +126,37 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         flow::count_revisions(&self.paths, &self.storage, &self.namespace).await
     }
 
-    /// [`Self::revisions`], each marked by whether `lineage`'s remote holds its
-    /// manifest. No remote, no remote call: every entry is unpublished.
+    /// [`Self::revisions`], each marked by whether the registry of
+    /// `lineage`'s remote lists it — a timestamped pointer to it exists.
+    /// One listing for the whole package, never inferred from `CommitState`.
+    /// No remote, or a remote with no catalog host (so no registry to ask):
+    /// no remote call, and every entry is unpublished.
     pub async fn revision_history(
         &self,
         lineage: &lineage::PackageLineage,
     ) -> Res<Vec<flow::HistoryEntry>> {
         let revisions = self.revisions().await?;
-        let Some(remote_uri) = lineage.remote_uri.as_ref() else {
-            return Ok(revisions
-                .into_iter()
-                .map(|revision| flow::HistoryEntry {
-                    revision,
-                    published: false,
-                })
-                .collect());
-        };
-        let mut entries = Vec::with_capacity(revisions.len());
-        // Sequential: quilt-rs has no `futures` dependency to run them together.
-        for revision in revisions {
-            let manifest = ManifestUri {
-                hash: revision.hash.clone(),
-                ..remote_uri.clone()
-            };
-            let published = self
+        let published: HashSet<String> = match lineage.remote_uri.as_ref() {
+            Some(ManifestUri {
+                origin: Some(host),
+                bucket,
+                namespace,
+                ..
+            }) => self
                 .remote
-                .exists(remote_uri.origin.as_ref(), &manifest.into())
-                .await?;
-            entries.push(flow::HistoryEntry {
+                .published_revisions(host, bucket, namespace)
+                .await?
+                .into_iter()
+                .collect(),
+            _ => HashSet::new(),
+        };
+        Ok(revisions
+            .into_iter()
+            .map(|revision| flow::HistoryEntry {
+                published: published.contains(&revision.hash),
                 revision,
-                published,
-            });
-        }
-        Ok(entries)
+            })
+            .collect())
     }
 
     /// The revision selected by one lineage snapshot.

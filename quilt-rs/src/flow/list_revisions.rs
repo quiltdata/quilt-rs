@@ -39,12 +39,13 @@ pub struct Revision {
     pub message: Option<String>,
 }
 
-/// One revision this copy holds, and whether the package's remote holds it too.
+/// One revision this copy holds, and whether the package's registry lists it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HistoryEntry {
     pub revision: Revision,
-    /// Its manifest object exists at the lineage's remote. Checked, never
-    /// inferred from the pending commit chain — see `published-grounding`.
+    /// The registry of the lineage's remote lists it: a timestamped pointer
+    /// to it exists. Asked, never inferred from the pending commit chain —
+    /// see `published-grounding`.
     pub published: bool,
 }
 

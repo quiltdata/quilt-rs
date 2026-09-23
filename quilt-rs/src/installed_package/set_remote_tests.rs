@@ -136,57 +136,63 @@ async fn test_set_remote_empty_bucket_error() -> Res {
     Ok(())
 }
 
+/// Remote that rejects any `verify_bucket` call — models the case
+/// where the user typed a bucket that doesn't resolve on S3.
+struct BadBucketRemote;
+
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "every method here panics on call. That cannot be written as `fn -> impl Future`: `!` is not a `Future`, and wrapping the panic in `std::future::ready` makes the call unreachable (`unreachable_code`). `async fn` is the only form that satisfies the trait and still panics on an unexpected call."
+)]
+impl Remote for BadBucketRemote {
+    async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn get_object_stream(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> Res<crate::io::remote::RemoteObjectStream> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn put_object(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+    ) -> Res {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn upload_file(
+        &self,
+        _host_config: &crate::io::remote::HostConfig,
+        _source_path: impl AsRef<std::path::Path>,
+        _dest_uri: &S3Uri,
+        _size: u64,
+    ) -> Res<(S3Uri, ObjectHash)> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
+        Ok(crate::io::remote::HostConfig::default())
+    }
+    async fn verify_bucket(&self, bucket: &str) -> Res {
+        Err(crate::error::RemoteCatalogError::BucketUnreachable(bucket.to_string()).into())
+    }
+    async fn published_revisions(
+        &self,
+        _host: &Host,
+        _bucket: &str,
+        _namespace: &Namespace,
+    ) -> Res<Vec<String>> {
+        unreachable!("test only exercises verify_bucket")
+    }
+}
+
 #[test(tokio::test)]
 async fn test_set_remote_rejects_unreachable_bucket() -> Res {
-    use crate::error::RemoteCatalogError;
-
-    /// Remote that rejects any `verify_bucket` call — models the case
-    /// where the user typed a bucket that doesn't resolve on S3.
-    struct BadBucketRemote;
-
-    #[allow(
-        clippy::unused_async_trait_impl,
-        reason = "every method here panics on call. That cannot be written as `fn -> impl Future`: `!` is not a `Future`, and wrapping the panic in `std::future::ready` makes the call unreachable (`unreachable_code`). `async fn` is the only form that satisfies the trait and still panics on an unexpected call."
-    )]
-    impl Remote for BadBucketRemote {
-        async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn get_object_stream(
-            &self,
-            _host: Option<&Host>,
-            _s3_uri: &S3Uri,
-        ) -> Res<crate::io::remote::RemoteObjectStream> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn put_object(
-            &self,
-            _host: Option<&Host>,
-            _s3_uri: &S3Uri,
-            _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
-        ) -> Res {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn upload_file(
-            &self,
-            _host_config: &crate::io::remote::HostConfig,
-            _source_path: impl AsRef<std::path::Path>,
-            _dest_uri: &S3Uri,
-            _size: u64,
-        ) -> Res<(S3Uri, ObjectHash)> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
-            Ok(crate::io::remote::HostConfig::default())
-        }
-        async fn verify_bucket(&self, bucket: &str) -> Res {
-            Err(RemoteCatalogError::BucketUnreachable(bucket.to_string()).into())
-        }
-    }
-
     let (home, _temp_dir1) = Home::from_temp_dir()?;
     let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
 

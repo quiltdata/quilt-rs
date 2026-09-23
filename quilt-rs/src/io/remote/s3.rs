@@ -44,6 +44,7 @@ use crate::io::storage::auth::OAuthClient;
 use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 use quilt_uri::Host;
+use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
 use crate::io::remote::RemoteObjectStream;
@@ -679,6 +680,17 @@ impl Remote for RemoteS3 {
     async fn verify_bucket(&self, bucket: &str) -> Res {
         self.get_region_for_bucket(bucket).await?;
         Ok(())
+    }
+
+    async fn published_revisions(
+        &self,
+        host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<String>> {
+        self.auth
+            .package_revisions(&self.http, host, bucket, namespace)
+            .await
     }
 
     fn clear_client_cache(&self, host: Option<&Host>) {
@@ -1435,6 +1447,9 @@ mod tests {
         let _: RoleInfo = remote.refresh_roles(host).await?;
         let _: RoleInfo = remote.switch_role(host, "ReadOnly").await?;
         let _: Vec<String> = remote.readable_buckets(host).await?;
+        let _: Vec<String> = remote
+            .published_revisions(host, "bucket", &("team", "dataset").into())
+            .await?;
         Ok(())
     }
 

@@ -19,6 +19,7 @@ use crate::Res;
 use crate::error::LoginError;
 use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
+use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
 pub mod client;
@@ -177,6 +178,17 @@ pub trait Remote {
     /// HEAD-bucket endpoint returns the region for any existing bucket
     /// regardless of permissions.
     fn verify_bucket(&self, bucket: &str) -> impl Future<Output = Res> + Send;
+
+    /// The hashes of every revision `host`'s registry lists for `namespace`
+    /// in `bucket` — each one a timestamped pointer under
+    /// `.quilt/named_packages/`. Empty for a package never pushed. One ask
+    /// for the whole package, not one per revision.
+    fn published_revisions(
+        &self,
+        host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> + Send;
 
     /// Drop any cached clients (and their in-memory credentials) for the
     /// given `host`, or for all hosts when `None`. Lets callers invalidate

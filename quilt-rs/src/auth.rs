@@ -27,6 +27,7 @@ use crate::io::storage::auth::OAuthClient;
 use crate::io::storage::auth::Tokens;
 use crate::paths::DomainPaths;
 use quilt_uri::Host;
+use quilt_uri::Namespace;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -49,6 +50,7 @@ pub use registry::RemoteTokens;
 use graphql::mutate_switch_role;
 use graphql::query_buckets;
 use graphql::query_me;
+use graphql::query_package_revisions;
 use oauth::exchange_oauth_code;
 use oauth::refresh_oauth_tokens;
 use oauth::register_client;
@@ -80,8 +82,9 @@ mod tests;
 /// that may authenticate against many distinct hosts.
 type RefreshLocks = Arc<StdMutex<HashMap<Host, Weak<AsyncMutex<()>>>>>;
 
-/// Endpoint label for the role-surface retry logs. All three role calls
-/// share one registry endpoint, so they share one name.
+/// Endpoint label for the registry GraphQL retry logs. The three role calls
+/// and the revision listing share one registry endpoint, so they share one
+/// name.
 const ROLE_ENDPOINT: &str = "registry GraphQL endpoint";
 
 /// Per-host record of the active role observed *this session*. Purely
@@ -770,6 +773,46 @@ impl<S: Storage + Send + Sync> Auth<S> {
                 let retry_token = self.role_retry_token(http_client, host, first_err).await?;
                 classify_retry_outcome(
                     query_buckets(http_client, &registry, &retry_token).await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )
+            }
+        }
+    }
+
+    /// The hashes of every revision the registry lists for `namespace` in
+    /// `bucket` — one timestamped pointer each. Empty when the registry has
+    /// no such package.
+    ///
+    /// Locks and retries as [`Auth::readable_buckets`] does: it is the same
+    /// registry GraphQL endpoint, refused the same ways.
+    pub async fn package_revisions<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<String>> {
+        let lock = self.refresh_lock_for(host);
+        let _guard = lock.lock().await;
+
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        match query_package_revisions(http_client, &registry, bucket, namespace, &access_token)
+            .await
+        {
+            Ok(hashes) => Ok(hashes),
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    query_package_revisions(
+                        http_client,
+                        &registry,
+                        bucket,
+                        namespace,
+                        &retry_token,
+                    )
+                    .await,
                     is_role_auth_error,
                     ROLE_ENDPOINT,
                     host,
