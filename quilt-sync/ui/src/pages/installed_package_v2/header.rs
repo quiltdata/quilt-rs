@@ -22,29 +22,32 @@
 //! which is the one place the vocabulary lives. A header that hand-wrote its own
 //! strings would keep agreeing with itself after the vocabulary moved.
 //!
-//! # Read-only, and disabled rather than inert
+//! # Disabled rather than inert, and the reason is the reader's
 //!
-//! This unit draws the header; the commands land with the regions and dialogs
-//! that own them. So every command is **disabled and says why** rather than
-//! enabled and doing nothing — a control that accepts a click and answers with
-//! silence is worse than one that shows it is not available.
+//! A control that accepts a click and answers with silence is worse than one
+//! that shows it is unavailable, so anything that cannot run is disabled and
+//! states why. While a command is running that reason is the same for all of
+//! them — one working tree, one command — and it is read reactively, so the
+//! menu follows the page rather than whatever was true when it was built.
 //!
-//! Two things stay live. The trail, because it is a link and the only way back.
-//! And the `[⋯]` trigger, because the arrangement is what this unit is for and a
-//! menu that will not open cannot be read.
+//! # Where each command reports
 //!
-//! The one real reason a command could carry — `Undo last revision`'s "Nothing
-//! has been committed yet" — is replaced by the uniform one while this holds.
-//! It would be the lesser truth: the item is unavailable whether or not there
-//! is a commit to undo.
+//! Four channels and one rule, by what the command does. Navigating reports by
+//! arriving. A self-evident effect says nothing and reports only its failure,
+//! on the page's band. `Get latest` keeps what pull already does — its report
+//! reaches the notification stack — and its failure goes to the band. A
+//! dialog-borne command draws its refusal inside the dialog, which stays open.
 
 use leptos::prelude::*;
+use leptos_router::NavigateOptions;
+use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::kit;
 use crate::kit::ActionMenu;
 use crate::kit::ActionTone;
 use crate::kit::BackLink;
+use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::MenuAction;
@@ -56,73 +59,311 @@ use crate::kit::StateLabel;
 use crate::kit::render;
 use crate::util;
 
+use super::{Outcome, Wiring};
+
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
 
-/// Why every command is unavailable, as the item's `title` and its accessible
-/// description. One string, because there is one reason — see the module doc.
+/// Why a command whose surface has not landed on this page is unavailable.
 const NOT_YET: &str = "Not available on this page yet";
 
-/// The package-level commands. Fixed across states on purpose: the menu is where
-/// everything that is *not* the one primary action lives, so it does not change
-/// shape as the state does. What varies is what a command can be offered *for* —
-/// a catalog link needs a catalog, and an undo needs something to undo.
-fn menu(data: &commands::PackageHeaderData) -> Vec<MenuAction> {
-    let mut actions = vec![MenuAction {
+/// While another command is running. One working tree, one command: two at
+/// once is a race the page has no way to arbitrate.
+const BUSY: &str = "Something else is running";
+
+/// Which overflow command an item is, so the page can attach a handler to a list
+/// the gallery renders inert.
+///
+/// `pub(crate)` here and widened to `pub` in Task 8, when the gallery — a separate
+/// binary crate that reaches this one as `quilt_sync_ui::…` — becomes a caller.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MenuCommand {
+    NewRevision,
+    /// Carries the catalog URL, because whether the item exists at all is the
+    /// same question as whether one can be built.
+    OpenInCatalog(String),
+    /// Change bucket, or Show remote once the package has been pushed.
+    Remote,
+    Undo,
+    Remove,
+}
+
+/// One overflow command, as the payload decides it: its words, its tone, whether
+/// it sits below a rule, and the reason it cannot run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MenuItem {
+    pub command: MenuCommand,
+    pub label: String,
+    pub tone: ActionTone,
+    pub separated: bool,
+    pub disabled: Option<String>,
+}
+
+/// Why undo is unavailable, when it is. `None` means it is available.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "applied to the menu with the undo command itself")
+)]
+fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
+    // Order is the engine's: no commit, then the remote guard it applies
+    // before it looks at the chain, then the chain's floor.
+    if !data.has_local_commit {
+        Some("Nothing has been committed yet")
+    } else if data.uri.is_some() {
+        Some("This package has a remote, so undo is only available before the first push")
+    } else if !data.commit_has_parent {
+        Some("This is the package's first revision, so there is nothing behind it")
+    } else {
+        None
+    }
+}
+
+/// The overflow menu, as a function of the payload and one page fact.
+///
+/// Fixed across states on purpose: the menu is where everything that is *not*
+/// the one primary action lives, so it does not change shape as the state does.
+/// What varies is what a command can be offered *for* — a catalog link needs a
+/// catalog, and an undo needs something to undo.
+pub(crate) fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuItem> {
+    let refused = || busy.then(|| BUSY.to_string());
+    let mut items = vec![MenuItem {
+        command: MenuCommand::NewRevision,
         label: "Create new revision".to_string(),
         tone: ActionTone::Default,
-        disabled: Some(NOT_YET.to_string()),
-        on_select: Callback::new(|()| ()),
         separated: false,
+        disabled: refused(),
     }];
 
     // Dropped rather than disabled: a package with no catalog has no catalog
     // page, so there is no reason to state and nothing the reader could do.
-    if data.uri.as_ref().and_then(util::catalog_url).is_some() {
-        actions.push(MenuAction {
+    if let Some(url) = data.uri.as_ref().and_then(util::catalog_url) {
+        items.push(MenuItem {
+            command: MenuCommand::OpenInCatalog(url),
             label: "Open in catalog".to_string(),
             tone: ActionTone::Default,
-            disabled: Some(NOT_YET.to_string()),
-            on_select: Callback::new(|()| ()),
             separated: false,
+            disabled: refused(),
         });
     }
 
-    // A pushed package is pinned to its push history, so the bucket can be shown
-    // and not changed. Same command, honest label — v1's toolbar makes the same
-    // swap.
-    actions.push(MenuAction {
+    // A pushed package is pinned to its push history, so the bucket can be
+    // shown and not changed. Same command, honest label.
+    items.push(MenuItem {
+        command: MenuCommand::Remote,
         label: if data.remote_locked {
-            "Show remote".to_string()
+            "Show remote"
         } else {
-            "Change bucket".to_string()
-        },
+            "Change bucket"
+        }
+        .to_string(),
         tone: ActionTone::Default,
-        disabled: Some(NOT_YET.to_string()),
-        on_select: Callback::new(|()| ()),
         separated: false,
+        disabled: Some(NOT_YET.to_string()),
     });
 
-    actions.push(MenuAction {
+    items.push(MenuItem {
+        command: MenuCommand::Undo,
         label: "Undo last revision".to_string(),
         tone: ActionTone::Danger,
-        // Its own reason — "Nothing has been committed yet", gated on
-        // `has_local_commit` — comes back when the command does. While the page
-        // is read-only that reason would be the lesser truth, since the item is
-        // unavailable either way.
-        disabled: Some(NOT_YET.to_string()),
-        on_select: Callback::new(|()| ()),
         separated: true,
+        disabled: Some(NOT_YET.to_string()),
     });
 
-    actions.push(MenuAction {
+    items.push(MenuItem {
+        command: MenuCommand::Remove,
         label: "Remove".to_string(),
         tone: ActionTone::Danger,
-        disabled: Some(NOT_YET.to_string()),
-        on_select: Callback::new(|()| ()),
         separated: false,
+        disabled: Some(NOT_YET.to_string()),
     });
 
-    actions
+    items
+}
+
+/// Run a command, hold the page while it runs, and report only what the band
+/// is for.
+///
+/// Success says nothing here. A command whose success IS worth a sentence —
+/// undo — sets its own outcome, because it is the exception rather than the
+/// rule, and a helper that reported every success would put `Get latest`'s
+/// line on the page behind the toast that already carried its report.
+///
+/// `on_failure` is the page's own sentence for the command not happening; the
+/// backend's text follows it as the detail, which is the split the pause band
+/// already makes.
+fn run(
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    namespace: String,
+    on_failure: &'static str,
+    after: Option<Trigger>,
+    task: impl std::future::Future<Output = Result<String, String>> + 'static,
+) {
+    // The controls are disabled while this is true, so this guard only
+    // catches a press already in flight when the signal was written.
+    if busy.get_untracked() {
+        return;
+    }
+    busy.set(true);
+    leptos::task::spawn_local(async move {
+        let answer = task.await;
+        busy.set(false);
+        match answer {
+            Ok(_) => {
+                if let Some(reload) = after {
+                    reload.notify();
+                }
+            }
+            Err(message) => outcome.set(Some(Outcome {
+                namespace,
+                variant: BannerVariant::Critical,
+                lead: on_failure.to_string(),
+                detail: Some(message),
+            })),
+        }
+    });
+}
+
+/// The overflow menu with a handler on each item.
+fn menu(
+    data: &commands::PackageHeaderData,
+    w: Wiring,
+    goto: RwSignal<Option<String>>,
+) -> Vec<MenuAction> {
+    let Wiring { busy, outcome, .. } = w;
+    let ns = data.namespace.to_string();
+    let commit_to = crate::routes::commit_href(&data.namespace);
+    menu_items(data, busy.get())
+        .into_iter()
+        .map(|item| {
+            let ns = ns.clone();
+            let commit_to = commit_to.clone();
+            let on_select = match item.command {
+                MenuCommand::NewRevision => {
+                    Callback::new(move |()| goto.set(Some(commit_to.clone())))
+                }
+                MenuCommand::OpenInCatalog(url) => Callback::new(move |()| {
+                    let url = url.clone();
+                    run(
+                        busy,
+                        outcome,
+                        ns.clone(),
+                        "Could not open this package in the catalog.",
+                        None,
+                        async move { commands::open_in_web_browser(url).await },
+                    );
+                }),
+                // Their dialogs land in tasks 5, 6 and 7; until then the item
+                // is disabled and nothing can reach this.
+                MenuCommand::Remote | MenuCommand::Undo | MenuCommand::Remove => {
+                    Callback::new(|()| ())
+                }
+            };
+            MenuAction {
+                label: item.label,
+                tone: item.tone,
+                disabled: item.disabled,
+                on_select,
+                separated: item.separated,
+            }
+        })
+        .collect()
+}
+
+/// The state's own action, as the row draws it.
+///
+/// Both shapes live here because they are one slot: the publishing states get a
+/// split button whose caret holds `Create new revision`, and the rest get their
+/// verb plainly. `Latest` and a denial get neither, and the row keeps its height
+/// either way.
+fn primary_action(
+    data: &commands::PackageHeaderData,
+    action: Option<PackageAction>,
+    w: Wiring,
+    goto: RwSignal<Option<String>>,
+    publish_choice: RwSignal<usize>,
+) -> AnyView {
+    let Wiring {
+        busy,
+        outcome,
+        reload,
+    } = w;
+    let ns = data.namespace.clone();
+    let uri = data.uri.clone();
+    let resolve_to = crate::routes::merge_href(&ns);
+    let publish_to = crate::routes::commit_href(&ns);
+    let revision_to = publish_to.clone();
+    // The deployment to sign in to, when the state names one. `None` for a bare
+    // bucket on ambient credentials, which is why the kit offers no action there.
+    let sign_in_to = match &data.state {
+        kit::PackageState::NoSession { host: Some(host) }
+        | kit::PackageState::SignInExpired { host: Some(host) } => {
+            Some(crate::routes::sign_in_href(host))
+        }
+        _ => None,
+    };
+    // The bucket form is not on this page yet, so its primary stays disabled.
+    let not_yet = matches!(action, Some(PackageAction::ChooseS3Bucket));
+
+    if matches!(action, Some(PackageAction::Publish)) {
+        return view! {
+            <span class=style::action_slot data-primary-action>
+                <SplitButton
+                    disabled=Signal::derive(move || busy.get())
+                    options=vec![
+                        SplitOption::new(
+                            "Publish",
+                            Callback::new(move |()| goto.set(Some(publish_to.clone()))),
+                        ),
+                        SplitOption::new(
+                            "Create new revision",
+                            Callback::new(move |()| goto.set(Some(revision_to.clone()))),
+                        ),
+                    ]
+                    selected=publish_choice
+                    menu_label="Change what this button does"
+                    variant=ButtonVariant::Primary
+                />
+            </span>
+        }
+        .into_any();
+    }
+
+    let on_primary = move |_| match action {
+        Some(PackageAction::GetLatest) => {
+            let ns = ns.to_string();
+            let uri = uri.clone();
+            run(
+                busy,
+                outcome,
+                ns.clone(),
+                "Could not get the latest revision.",
+                Some(reload),
+                async move { commands::package_pull(ns, uri).await },
+            );
+        }
+        Some(PackageAction::Resolve) => goto.set(Some(resolve_to.clone())),
+        Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
+        // `Publish` returned above; the bucket form is not on this page yet.
+        Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
+    };
+
+    action.map_or_else(
+        || ().into_any(),
+        |action| {
+            view! {
+                <span class=style::action_slot data-primary-action>
+                    <Button
+                        variant=ButtonVariant::Primary
+                        disabled=Signal::derive(move || busy.get() || not_yet)
+                        on_click=on_primary
+                    >
+                        {action.label()}
+                    </Button>
+                </span>
+            }
+            .into_any()
+        },
+    )
 }
 
 /// The header, for one package.
@@ -131,15 +372,40 @@ fn menu(data: &commands::PackageHeaderData) -> Vec<MenuAction> {
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads it from there"
 )]
-pub fn PageHeader(data: commands::PackageHeaderData) -> impl IntoView {
+pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView {
+    let Wiring { busy, outcome, .. } = w;
+    let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);
     let action = rendered.action;
-    // The states that publish get a split button whose caret holds `Create new
-    // revision`; the states with another verb get that verb plainly.
-    let publishes = matches!(action, Some(PackageAction::Publish));
     let namespace = data.namespace.to_string();
     let publish_choice = RwSignal::new(0_usize);
-    let actions = menu(&data);
+
+    // Every navigation this header makes goes through one signal, because a
+    // `Callback` must be `Send + Sync` and `use_navigate`'s closure is neither.
+    // One effect performs them, which also keeps the router call in one place.
+    let goto: RwSignal<Option<String>> = RwSignal::new(None);
+    let navigate = use_navigate();
+    Effect::new(move |_| {
+        if let Some(target) = goto.get() {
+            navigate(&target, NavigateOptions::default());
+            goto.set(None);
+        }
+    });
+
+    let ns_folder = data.namespace.to_string();
+    let uri_folder = data.uri.clone();
+    let on_open_folder = move |_| {
+        let ns = ns_folder.clone();
+        let uri = uri_folder.clone();
+        run(
+            busy,
+            outcome,
+            ns.clone(),
+            "Could not open this package's folder.",
+            None,
+            async move { commands::open_in_file_browser(ns, uri).await },
+        );
+    };
 
     view! {
         <div class=style::root>
@@ -152,46 +418,19 @@ pub fn PageHeader(data: commands::PackageHeaderData) -> impl IntoView {
                 <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
 
                 <div class=style::actions>
-                    {publishes
-                        .then(|| {
-                            view! {
-                                <span class=style::action_slot data-primary-action>
-                                    <SplitButton
-                                        disabled=true
-                                        options=vec![
-                                            SplitOption::new("Publish", Callback::new(|()| ())),
-                                            SplitOption::new(
-                                                "Create new revision",
-                                                Callback::new(|()| ()),
-                                            ),
-                                        ]
-                                        selected=publish_choice
-                                        menu_label="Change what this button does"
-                                        variant=ButtonVariant::Primary
-                                    />
-                                </span>
-                            }
-                        })}
-                    {action
-                        .filter(|a| !matches!(a, PackageAction::Publish))
-                        .map(|action| {
-                            view! {
-                                <span class=style::action_slot data-primary-action>
-                                    <Button
-                                        variant=ButtonVariant::Primary
-                                        disabled=true
-                                        on_click=|_| ()
-                                    >
-                                        {action.label()}
-                                    </Button>
-                                </span>
-                            }
-                        })}
-                    <Button disabled=true on_click=|_| ()>"Open folder"</Button>
-                    <ActionMenu
-                        aria_label="More actions for this package"
-                        actions=actions
-                    />
+                    {primary_action(&data, action, w, goto, publish_choice)}
+                    <Button disabled=Signal::derive(move || busy.get()) on_click=on_open_folder>
+                        "Open folder"
+                    </Button>
+                    // Rebuilt inside the closure, so the items follow `busy` rather
+                    // than whatever it was when the header mounted. The menu closes
+                    // on select, so a rebuild can only land on a closed menu.
+                    {move || view! {
+                        <ActionMenu
+                            aria_label="More actions for this package"
+                            actions=menu(&payload.read_value(), w, goto)
+                        />
+                    }}
                 </div>
             </div>
         </div>
@@ -219,7 +458,10 @@ pub fn PageHeaderSkeleton() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{element_saying, mount};
+    use crate::kit::BannerVariant;
+    use crate::test_support::{element_saying, mount, sleep_ms};
+    use leptos_router::components::{Route, Router, Routes};
+    use leptos_router::path;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -238,6 +480,111 @@ mod tests {
         }
     }
 
+    /// Mount a header the way the page does — inside a `Router`, because it asks
+    /// for a navigator and `use_navigate` panics without one.
+    fn mount_header(data: commands::PackageHeaderData) -> web_sys::Element {
+        mount_with(
+            data,
+            Wiring {
+                busy: RwSignal::new(false),
+                outcome: RwSignal::new(None),
+                reload: Trigger::new(),
+            },
+        )
+    }
+
+    fn mount_with(data: commands::PackageHeaderData, w: Wiring) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <Router>
+                    <PageHeader data=data.clone() w=w />
+                </Router>
+            }
+        })
+    }
+
+    /// Put the browser on an address before the router reads one.
+    fn go_to(address: &str) {
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(address))
+            .unwrap();
+    }
+
+    /// A header mounted on a real route table, so a navigation lands somewhere
+    /// this test can read.
+    fn mount_routed(data: commands::PackageHeaderData) -> web_sys::Element {
+        go_to("/installed-package?namespace=team%2Fdataset");
+        mount(move || {
+            let data = data.clone();
+            let w = Wiring {
+                busy: RwSignal::new(false),
+                outcome: RwSignal::new(None),
+                reload: Trigger::new(),
+            };
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/installed-package")
+                            view=move || view! { <PageHeader data=data.clone() w=w /> }
+                        />
+                        <Route path=path!("/commit") view=|| view! { "the commit page" } />
+                        <Route path=path!("/merge") view=|| view! { "the merge page" } />
+                    </Routes>
+                </Router>
+            }
+        })
+    }
+
+    /// The command holding these words. Not `element_saying`: a split button's
+    /// choice list repeats the face's label after it in document order, and a
+    /// click there sets the default rather than running it.
+    fn button(el: &web_sys::Element, label: &str) -> web_sys::HtmlButtonElement {
+        let all = el.query_selector_all("button").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .find(|b| {
+                b.closest(SPLIT_CHOICES).unwrap().is_none()
+                    && b.text_content().unwrap_or_default().trim() == label
+            })
+            .unwrap_or_else(|| panic!("no command says {label:?}; markup was {}", el.inner_html()))
+            .unchecked_into()
+    }
+
+    /// The overflow trigger, which is not a command: the arrangement is what the
+    /// menu is for, and a menu that will not open cannot be read.
+    const TRIGGER: &str = "[aria-label='More actions for this package']";
+
+    /// Every command on screen, by what it says and whether it is refused. A
+    /// disabled item draws its reason inside the same button, so the label is a
+    /// prefix of the text. The split button's own choice list is excluded — those
+    /// set which verb the face shows and explicitly do not run it — and so is the
+    /// overflow trigger.
+    ///
+    /// The menu's items are in the document whether or not it is open —
+    /// `AnchoredOverlay` uses the Popover API, so the surface is rendered and
+    /// merely not shown, which is why the existing
+    /// `create_new_revision_is_in_the_menu_in_every_state` finds them without
+    /// opening anything. So this sweep covers the row AND the menu.
+    fn labelled(el: &web_sys::Element) -> Vec<(String, bool)> {
+        let all = el.query_selector_all("button").unwrap();
+        let mut out = Vec::new();
+        for i in 0..all.length() {
+            let b: web_sys::Element = all.item(i).unwrap().unchecked_into();
+            if b.closest(SPLIT_CHOICES).unwrap().is_some() || b.matches(TRIGGER).unwrap() {
+                continue;
+            }
+            out.push((
+                b.text_content().unwrap_or_default().trim().to_string(),
+                b.has_attribute("disabled"),
+            ));
+        }
+        out
+    }
+
     /// The trail names its destination rather than saying "Back", because it is
     /// an up-link to the parent route and not history.
     ///
@@ -246,7 +593,7 @@ mod tests {
     /// and the part that would be wrong if this became a history control.
     #[wasm_bindgen_test]
     fn the_trail_names_where_it_goes() {
-        let el = mount(|| view! { <PageHeader data=data(kit::PackageState::Latest) /> });
+        let el = mount_header(data(kit::PackageState::Latest));
         let link = el
             .query_selector("a[href='/']")
             .unwrap()
@@ -256,7 +603,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn the_header_names_the_package_and_its_state() {
-        let el = mount(|| view! { <PageHeader data=data(kit::PackageState::Behind) /> });
+        let el = mount_header(data(kit::PackageState::Behind));
         element_saying(&el, "team/dataset");
         // The one word this site does not borrow from the list, which says
         // "Not the latest".
@@ -267,7 +614,7 @@ mod tests {
     /// every state's row is one height, so the page does not jump between them.
     #[wasm_bindgen_test]
     fn the_settled_state_offers_no_action() {
-        let el = mount(|| view! { <PageHeader data=data(kit::PackageState::Latest) /> });
+        let el = mount_header(data(kit::PackageState::Latest));
         element_saying(&el, "Latest");
         assert!(
             el.query_selector("[data-primary-action]")
@@ -278,45 +625,195 @@ mod tests {
         );
     }
 
-    /// Read-only by design, stated here so it cannot lapse by accident. A
-    /// control that takes a click and answers with silence is worse than one
-    /// that shows it is unavailable, so every command is disabled and says why.
-    ///
-    /// The overflow trigger is the one button that stays live — the arrangement
-    /// is what this unit is for, and a menu that will not open cannot be read.
-    /// The trail is an `<a>`, so it is not in this sweep at all.
-    ///
-    /// Both a plain primary and a split one, because they are different controls
-    /// and the split has two halves to leave enabled.
+    /// A command that navigates reports by arriving, and nothing is said —
+    /// `channel-per-command`'s first rule. Publishing lands on the commit page,
+    /// which is also where `Create new revision` goes: they are one job done two
+    /// ways.
     #[wasm_bindgen_test]
-    fn every_command_is_disabled_while_the_header_is_read_only() {
-        // `Behind` draws a plain primary, `PendingCommit` draws the split one.
-        for state in [kit::PackageState::Behind, kit::PackageState::PendingCommit] {
-            let el = mount(move || view! { <PageHeader data=data(state.clone()) /> });
-            let buttons = el.query_selector_all("button").unwrap();
-            let mut live = Vec::new();
-            for i in 0..buttons.length() {
-                let b: web_sys::Element = buttons.item(i).unwrap().unchecked_into();
-                // The split button's own choice list is not a command: the kit's
-                // `choices` sets which verb the face shows and explicitly does
-                // not run it, so leaving those enabled publishes nothing. Its
-                // caret is disabled with the face, so they are unreachable too.
-                if b.closest(SPLIT_CHOICES).unwrap().is_some() {
-                    continue;
-                }
-                if !b.has_attribute("disabled") {
-                    live.push(b.get_attribute("aria-label").unwrap_or_else(|| {
-                        b.text_content().unwrap_or_default().trim().to_string()
-                    }));
-                }
-            }
-            assert_eq!(
-                live,
-                vec!["More actions for this package".to_string()],
-                "markup was {}",
-                el.inner_html()
-            );
-        }
+    async fn publish_arrives_on_the_commit_page() {
+        let el = mount_routed(data(kit::PackageState::PendingCommit));
+        sleep_ms(50).await;
+
+        button(&el, "Publish").click();
+        sleep_ms(50).await;
+
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("the commit page"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The same rule for the other route. `Diverged` is the one state that
+    /// offers it.
+    #[wasm_bindgen_test]
+    async fn resolve_arrives_on_the_merge_page() {
+        let el = mount_routed(data(kit::PackageState::Diverged));
+        sleep_ms(50).await;
+
+        button(&el, "Resolve").click();
+        sleep_ms(50).await;
+
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("the merge page"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Sign in goes to the deployment the state names, and is offered only where
+    /// the state carries one — a bare bucket on ambient AWS credentials has no
+    /// deployment to sign in to, which is why `kit::render` gives it no action.
+    #[wasm_bindgen_test]
+    fn sign_in_is_offered_only_where_the_state_names_a_host() {
+        let with_host = mount_header(data(kit::PackageState::NoSession {
+            host: Some("demo.quiltdata.com".to_string()),
+        }));
+        assert!(
+            labelled(&with_host)
+                .iter()
+                .any(|(text, _)| text.starts_with("Sign in")),
+            "markup was {}",
+            with_host.inner_html()
+        );
+
+        let without = mount_header(data(kit::PackageState::NoSession { host: None }));
+        assert!(
+            without
+                .query_selector("[data-primary-action]")
+                .unwrap()
+                .is_none(),
+            "no deployment, no button; markup was {}",
+            without.inner_html()
+        );
+    }
+
+    /// The reactive half of `one-in-flight`, and the defect quilt-rs#974's review
+    /// caught: the menu items were built once on open and never updated. Asserted
+    /// by flipping the signal AFTER the mount, which a `busy.get()` read at build
+    /// time cannot survive.
+    #[wasm_bindgen_test]
+    async fn every_command_disables_with_a_reason_while_one_runs() {
+        let busy = RwSignal::new(false);
+        let el = mount_with(
+            data(kit::PackageState::Behind),
+            Wiring {
+                busy,
+                outcome: RwSignal::new(None),
+                reload: Trigger::new(),
+            },
+        );
+
+        assert!(
+            labelled(&el)
+                .iter()
+                .any(|(text, off)| text.starts_with("Get latest") && !off),
+            "live before anything runs; markup was {}",
+            el.inner_html()
+        );
+
+        busy.set(true);
+        // Render effects run on the next tick, not inside `set`.
+        leptos::task::tick().await;
+
+        let after = labelled(&el);
+        assert!(
+            after.iter().all(|(_, off)| *off),
+            "every command is refused while one runs: {after:?}"
+        );
+        assert!(
+            after
+                .iter()
+                .any(|(text, _)| text.contains("Something else is running")),
+            "and says why: {after:?}"
+        );
+    }
+
+    /// The trigger stays live while a command runs, so the reasons can be read.
+    /// It is not a command — the arrangement is what the menu is for.
+    #[wasm_bindgen_test]
+    fn the_overflow_trigger_stays_live_while_a_command_runs() {
+        let el = mount_with(
+            data(kit::PackageState::Behind),
+            Wiring {
+                busy: RwSignal::new(true),
+                outcome: RwSignal::new(None),
+                reload: Trigger::new(),
+            },
+        );
+        let trigger = el
+            .query_selector(TRIGGER)
+            .unwrap()
+            .expect("the overflow trigger");
+        assert!(!trigger.has_attribute("disabled"));
+    }
+
+    /// There is no Tauri bridge under the runner, so `invoke` answers `Err` —
+    /// which makes this the failure arm, and the failure arm is the one the band
+    /// exists for. The lead is the page's sentence; the bridge's own text follows
+    /// as the detail.
+    #[wasm_bindgen_test]
+    async fn a_failed_open_folder_reports_on_the_band_and_names_the_package() {
+        let outcome: RwSignal<Option<Outcome>> = RwSignal::new(None);
+        let el = mount_with(
+            data(kit::PackageState::Latest),
+            Wiring {
+                busy: RwSignal::new(false),
+                outcome,
+                reload: Trigger::new(),
+            },
+        );
+
+        button(&el, "Open folder").click();
+        sleep_ms(50).await;
+
+        let said = outcome
+            .get_untracked()
+            .expect("the failure reached the band");
+        assert_eq!(
+            said.namespace, "team/dataset",
+            "keyed to the package it was for"
+        );
+        assert_eq!(said.variant, BannerVariant::Critical);
+        assert_eq!(said.lead, "Could not open this package's folder.");
+        assert!(
+            said.detail.is_some(),
+            "and the bridge's own words follow it"
+        );
+    }
+
+    /// Get latest's failure is the band's; its success is the notification
+    /// stack's, through pull's own report. And the in-flight signal comes back
+    /// down when the command settles, or the page would stay sealed after one
+    /// failure.
+    #[wasm_bindgen_test]
+    async fn get_latest_reports_its_failure_on_the_band() {
+        let outcome: RwSignal<Option<Outcome>> = RwSignal::new(None);
+        let busy = RwSignal::new(false);
+        let el = mount_with(
+            data(kit::PackageState::Behind),
+            Wiring {
+                busy,
+                outcome,
+                reload: Trigger::new(),
+            },
+        );
+
+        button(&el, "Get latest").click();
+        sleep_ms(50).await;
+
+        let said = outcome
+            .get_untracked()
+            .expect("the failure reached the band");
+        assert_eq!(said.lead, "Could not get the latest revision.");
+        assert!(
+            !busy.get_untracked(),
+            "the signal comes back down when it settles"
+        );
     }
 
     /// The design's rule: the row is state-driven, the menu is not. This command
@@ -328,7 +825,7 @@ mod tests {
             kit::PackageState::Behind,
             kit::PackageState::NoSession { host: None },
         ] {
-            let el = mount(move || view! { <PageHeader data=data(state.clone()) /> });
+            let el = mount_header(data(state));
             // Not `element_saying`: a disabled item draws its reason inside the
             // same button, so the button's text is the label followed by it.
             let items = el.query_selector_all("button").unwrap();
@@ -345,5 +842,66 @@ mod tests {
             }
             assert!(found, "markup was {}", el.inner_html());
         }
+    }
+
+    /// Undo's three refusals, told apart because the reader can act on the
+    /// difference — commit something, or accept that a pushed package has no
+    /// chain left. A single reason would make the first look like the third.
+    /// The fourth refusal, a dirty tree, is deliberately absent: it is transient,
+    /// and the engine states it when the command runs.
+    #[test]
+    fn undo_names_which_of_the_three_standing_facts_blocks_it() {
+        let uri: quilt_uri::S3PackageUri = "quilt+s3://team-bucket#package=team/dataset"
+            .parse()
+            .expect("a uri");
+        let cases = [
+            (false, false, None, Some("Nothing has been committed yet")),
+            (
+                true,
+                true,
+                Some(uri),
+                Some("This package has a remote, so undo is only available before the first push"),
+            ),
+            (
+                true,
+                false,
+                None,
+                Some("This is the package's first revision, so there is nothing behind it"),
+            ),
+            (true, true, None, None),
+        ];
+        for (has_commit, has_parent, uri, expected) in cases {
+            let mut d = data(kit::PackageState::Latest);
+            d.has_local_commit = has_commit;
+            d.commit_has_parent = has_parent;
+            d.uri = uri;
+            assert_eq!(undo_blocked(&d), expected);
+        }
+    }
+
+    /// A package with no catalog has no catalog page, so the item is dropped
+    /// rather than disabled: there is no reason to state and nothing the reader
+    /// could do about it.
+    #[test]
+    fn open_in_catalog_is_absent_without_a_catalog_rather_than_disabled() {
+        let plain = data(kit::PackageState::Latest);
+        assert!(
+            !menu_items(&plain, false)
+                .iter()
+                .any(|item| matches!(item.command, MenuCommand::OpenInCatalog(_))),
+            "no catalog host, no item"
+        );
+
+        let mut with_catalog = data(kit::PackageState::Latest);
+        with_catalog.uri = Some(
+            "quilt+s3://team-bucket#package=team/dataset&catalog=open.quiltdata.com"
+                .parse()
+                .expect("a uri with a catalog"),
+        );
+        assert!(
+            menu_items(&with_catalog, false)
+                .iter()
+                .any(|item| matches!(item.command, MenuCommand::OpenInCatalog(_))),
+        );
     }
 }

@@ -39,10 +39,6 @@ pub(crate) struct Outcome {
 /// carries it, and a prop type less visible than the props struct is what the
 /// `private_interfaces` lint fires on — and warnings are denied.
 #[derive(Clone, Copy)]
-#[expect(
-    dead_code,
-    reason = "no command reads it until the header takes it as a prop"
-)]
 pub(crate) struct Wiring {
     pub busy: RwSignal<bool>,
     pub outcome: RwSignal<Option<Outcome>>,
@@ -51,10 +47,10 @@ pub(crate) struct Wiring {
 
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
-fn package_body(data: commands::PackagePageData) -> AnyView {
+fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
     view! {
         <div class=style::page>
-            <PageHeader data=data.header />
+            <PageHeader data=data.header w=w />
             <div class=style::shell>
                 <CurrentRevisionPane data=data.context />
             </div>
@@ -107,10 +103,6 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // One command at a time. Every control on the header reads this, so a second
     // cannot start on top of the first — two writes to one working tree is a race
     // the page has no way to arbitrate.
-    #[expect(
-        unused_variables,
-        reason = "no command reads it until the header takes it as a prop"
-    )]
     let busy = RwSignal::new(false);
     // What the last command said, and which package it said it about. Keyed,
     // because a result arriving for a package the page no longer shows is not
@@ -168,7 +160,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => package_body(d),
+                        Ok(d) => package_body(d, Wiring { busy, outcome, reload }),
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
@@ -499,7 +491,15 @@ mod tests {
     /// header while the pane is a named complementary landmark.
     #[wasm_bindgen_test]
     fn a_successful_payload_draws_the_real_body_without_the_placeholder() {
-        let el = mount(|| package_body(page_data()));
+        // Inside a `Router`, because the header asks for a navigator.
+        let el = mount(|| {
+            let w = Wiring {
+                busy: RwSignal::new(false),
+                outcome: RwSignal::new(None),
+                reload: Trigger::new(),
+            };
+            view! { <Router>{package_body(page_data(), w)}</Router> }
+        });
         let aside = el
             .query_selector("aside")
             .unwrap()
