@@ -10,19 +10,14 @@
      adds the date.
      Describe the change since the last release, not each PR: when a PR makes
      an unreleased entry stale, rewrite it in place and append the PR link.
+     Work no user can reach yet gets one "Under the hood" line, not a feature
+     entry; it earns a real entry once reachable, even behind a switch.
      Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
 ## [v0.22.4-dev]
-
-### Added
-
-- A rebuilt package screen, drawn in the new design and following your desktop's light or dark setting, is in the app but switched on nowhere in this release. No setting and no build offers it. It is turned on in the source by whoever is working on it, so the package screen is unchanged for everyone. It is unfinished: the header and the context pane are drawn, and the file list has not been added yet (<https://github.com/quiltdata/quilt-rs/pull/966>, <https://github.com/quiltdata/quilt-rs/pull/980>, <https://github.com/quiltdata/quilt-rs/pull/983>). So far it has:
-  - A header with the package's name, the one state it is in, the one action that state calls for, **Open folder**, and the rest of the package's commands behind `⋯`. **Refresh** and **Settings** sit on its toolbar, as on the new main page. The page follows the background sync by itself; the button covers the one change that comes with no notice, an autosync pause being lifted. When autosync has stopped for a reason the state cannot carry (a workflow that rejected your revision, say), a red band above the page says so and repeats what the engine reported, while the header goes on saying what the package itself needs. Two conditions the app used to report the same way read differently here: being signed out of a package's deployment, and a sign-in that lapsed underneath you (<https://github.com/quiltdata/quilt-rs/pull/970>, <https://github.com/quiltdata/quilt-rs/pull/973>)
-  - Every command in the header works. Publish, **Create new revision** and **Resolve** take you to the page that does the job; **Sign in** goes to the deployment the package names. **Get latest** pulls and reports what arrived where every pull reports it. **Open folder** and **Open in catalog** open, and say something only if they cannot. **Change bucket** is the set-remote form, on this page at last, with **Show remote** in its place once the package has been pushed and its bucket is fixed. **Undo last revision** and **Remove** ask first, in a new confirmation, and say exactly what each one costs; undo also tells you which of its three conditions is in the way when it cannot run. A package refused by your active role offers **Switch role** when you hold another one on that deployment. While a command is running the others are unavailable (the ones behind `⋯` say so), and a result never lands on a package you have moved on from (<https://github.com/quiltdata/quilt-rs/pull/981>)
-  - A read-only context pane showing which revision this computer has, when it got it, and the package's S3 bucket. A package that lives only on this computer says it has no S3 bucket. **Revisions you have (N)** opens the revisions this computer holds, newest first. Each says whether it is published, and a published one opens its catalog page when the package has one. The list loads only when you open it, and says so if it cannot, with a way to try again (<https://github.com/quiltdata/quilt-rs/pull/978>, <https://github.com/quiltdata/quilt-rs/pull/982>)
 
 ### Changed
 
@@ -32,7 +27,12 @@
   - **Recent files** grouped by package now orders owners as owners: `acme/plate` comes before `acme-labs/plate`. Sorted as plain text, the `-` put `acme-labs` first (<https://github.com/quiltdata/quilt-rs/pull/964>)
 - When setting a package's S3 bucket fails, the message now names the bucket that was refused: "Could not set the remote to my-bucket: …" instead of "Failed to set remote: …" (<https://github.com/quiltdata/quilt-rs/pull/981>)
 - Under the hood, the app's interface now carries a package's namespace as the validated address type rather than as plain text, the same change v0.22.3 made on the way from the backend (<https://github.com/quiltdata/quilt-rs/pull/964>)
+- Under the hood, a rebuilt package screen in the new design is in the app but switched on nowhere: no setting or build offers it, only a constant in the source. So far it has a header whose commands all work and a context pane that lists the revisions this computer holds and which of them are published; the file list is not built yet (<https://github.com/quiltdata/quilt-rs/pull/966>, <https://github.com/quiltdata/quilt-rs/pull/970>, <https://github.com/quiltdata/quilt-rs/pull/973>, <https://github.com/quiltdata/quilt-rs/pull/978>, <https://github.com/quiltdata/quilt-rs/pull/980>, <https://github.com/quiltdata/quilt-rs/pull/981>, <https://github.com/quiltdata/quilt-rs/pull/982>, <https://github.com/quiltdata/quilt-rs/pull/983>)
 - Under the hood, the component gallery holds the installed-package page's file pane and the whole page as scenes, plus a form dialog and a confirmation dialog, each with tests of its own; the interface's DOM tests share one mount helper, and new ones pin the toggle row's and segmented control's behavior; and the design guide spells out when a state reads as needing attention and when as a failure (<https://github.com/quiltdata/quilt-rs/pull/961>, <https://github.com/quiltdata/quilt-rs/pull/962>, <https://github.com/quiltdata/quilt-rs/pull/963>, <https://github.com/quiltdata/quilt-rs/pull/965>, <https://github.com/quiltdata/quilt-rs/pull/972>, <https://github.com/quiltdata/quilt-rs/pull/977>, <https://github.com/quiltdata/quilt-rs/pull/979>)
+
+### quilt-rs
+
+- Updated [from v0.39.1 to v0.40.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.1...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.3] - 2026-09-18
 

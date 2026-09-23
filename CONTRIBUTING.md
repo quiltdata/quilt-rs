@@ -5,18 +5,19 @@ This repository contains multiple projects in a unified workspace:
 - **[quilt-rs](quilt-rs/)** - Rust library for accessing Quilt data packages
   (built on [aws-sdk-rust](https://github.com/awslabs/aws-sdk-rust) and
   [Tokio](https://tokio.rs/))
+- **[quilt-uri](quilt-uri/)** - Parser and types for Quilt+ URIs
 - **[quilt-cli](quilt-cli/)** - Command-line interface for Quilt data packages
   (built with [clap](https://github.com/clap-rs/clap))
 - **[quilt-sync](quilt-sync/)** - Cross-platform desktop GUI application built
-  with [Tauri](https://tauri.app/) and vanilla JavaScript (no frontend framework)
-  (QuiltSync)
+  with [Tauri](https://tauri.app/) and a [Leptos](https://leptos.dev/) frontend
+  compiled to WebAssembly (QuiltSync)
 
 ## Project-Specific Contributing Guides
 
 For detailed contributing information, see the project-specific guides:
 
-- **[quilt-rs Contributing Guide](quilt-rs/CONTRIBUTING.md)** - Rust library and
-  CLI development
+- **[quilt-rs Contributing Guide](quilt-rs/CONTRIBUTING.md)** - Releasing the
+  crates.io crates (`quilt-uri`, `quilt-rs`, `quilt-cli`)
 - **[QuiltSync Contributing Guide](quilt-sync/CONTRIBUTING.md)** - Desktop
   application development
 
@@ -55,18 +56,19 @@ for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
-All cargo commands work on the entire workspace by default. Use the `-p` flag to
-target specific packages:
+A bare cargo command covers the workspace's default members (`quilt-rs`,
+`quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
+`--workspace` for every member, as `just test` does, or `-p` for one:
 
 ```bash
 # Testing
-cargo test                          # All workspace packages
+cargo test --workspace              # All workspace packages
 cargo test -p quilt-rs              # Specific package only
 
 # Building, formatting, linting follow the same pattern
-cargo build [-p package-name]
-cargo fmt [--check] [-p package-name]
-cargo clippy [-- --deny warnings] [-p package-name]
+cargo build [--workspace | -p package-name]
+cargo fmt --all [--check]           # or -p package-name
+cargo clippy [--workspace | -p package-name]
 ```
 
 ### Tests that need AWS
@@ -152,37 +154,53 @@ if you have not.
 
 Each project has different release approaches:
 
-- **quilt-rs**: Library published to crates.io via GitHub Actions
-- **quilt-cli**: Published to crates.io and as prebuilt binaries on GitHub
-  Releases for macOS (x86_64, aarch64) and Linux (x86_64-gnu);
-  install via `cargo binstall quilt-cli` or `cargo install quilt-cli`
-- **QuiltSync**: Desktop app releases with cross-platform builds via GitHub Actions
+- **quilt-uri**, **quilt-rs**: Libraries published to crates.io, plus a
+  GitHub Release, by `release-crate.yaml`
+- **quilt-cli**: Published to crates.io by `release-crate.yaml`, which also
+  attaches prebuilt binaries for macOS (x86_64, aarch64) and Linux
+  (x86_64-gnu) to its GitHub Release; install via `cargo binstall quilt-cli`
+  or `cargo install quilt-cli`
+- **QuiltSync**: Cross-platform installers on a GitHub Release by
+  `release-quilt-sync.yaml`, mirrored to HubSpot (where the auto-updater
+  looks) by `upload-to-hubspot.yaml`
+
+All three workflows are run manually, and every release waits as a draft for
+a maintainer's approval.
 
 ### Version Management
 
-- **Library (`quilt-rs`)**: Versioned and published to crates.io
-- **CLI (`quilt-cli`)**: Versioned and published to crates.io; each release
-  also attaches prebuilt binary archives (`quilt-cli-<target>.tar.gz`) to
-  the corresponding GitHub Release for `cargo binstall` discovery
-- **QuiltSync (`quilt-sync`)**: Uses workspace version for Tauri app releases
+Every released crate has its own version in its own `Cargo.toml` and its own
+`CHANGELOG.md`; there is no shared workspace version. QuiltSync's version is
+in `quilt-sync/src-tauri/Cargo.toml`; `quilt-sync-ui` is not released.
+`quilt-rs` and `quilt-cli` name the upstream crates' versions in their
+path-dependency `version =` specifiers, so the crates are released as a
+cascade, `quilt-uri` → `quilt-rs` → `quilt-cli`.
 
 ### Unreleased Versions
 
 Between releases, a crate with unreleased changes carries a `-dev`
-version with no number in `Cargo.toml` (e.g., `0.39.2-dev`), and its
-`CHANGELOG.md` opens with a matching `## [v0.39.2-dev]` heading and no
-date, not `[Unreleased]`. The release PR drops `-dev` and adds the date.
-If your change needs a bigger bump than the cycle has (a feature in a
-patch cycle), rename the version in both files.
+version in `Cargo.toml` (e.g., `0.39.2-dev`), and its `CHANGELOG.md`
+opens with a matching `## [v0.39.2-dev]` heading and no date, not
+`[Unreleased]`. The first PR to change a crate after its release opens
+the cycle: it sets the next patch `-dev` version and adds the heading
+with its entry. The release PR drops `-dev` and adds the date. If your
+change needs a bigger bump than the cycle has (a feature in a patch
+cycle), rename the version in both files. When `quilt-uri` or
+`quilt-rs` goes `-dev`, move the downstream `version =` specifiers for
+it to the same `-dev` version: Cargo's version requirements skip
+pre-releases.
 
 The unreleased section describes the change since the last release, not
 a history of PRs. If your PR makes an earlier unreleased entry stale —
 supersedes, extends, or reverts it — rewrite that entry in place and
 append your PR link to it rather than adding a new one. Released
-sections are never edited. See [docs/releases.md](docs/releases.md) for
-the release steps.
+sections are never edited. Work no user can reach yet, not even through
+Settings → Experimental, gets a single "Under the hood" line rather than
+an Added or Changed entry; it earns a real entry once it becomes
+reachable, even behind an Experimental switch.
 
-See project-specific contributing guides for detailed release procedures.
+See [docs/releases.md](docs/releases.md) for the release steps, and the
+project-specific contributing guides for what differs per crate.
 
 ## File Integrity Verification
 

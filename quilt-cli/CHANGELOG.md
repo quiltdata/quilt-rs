@@ -10,6 +10,8 @@
      adds the date.
      Describe the change since the last release, not each PR: when a PR makes
      an unreleased entry stale, rewrite it in place and append the PR link.
+     Work no user can reach yet gets one "Under the hood" line, not a feature
+     entry; it earns a real entry once reachable, even behind a switch.
      Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->

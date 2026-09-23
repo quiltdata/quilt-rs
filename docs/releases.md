@@ -45,8 +45,11 @@ version. A PR that needs a bigger bump than the cycle
 started with (a feature in a patch cycle) renames the version in both
 places. The unreleased section describes the change since the last
 release, not a history of PRs: a PR that makes an unreleased entry
-stale rewrites it in place and appends its PR link. Released sections
-are never edited.
+stale rewrites it in place and appends its PR link. Work no user can
+reach yet, not even through Settings → Experimental, gets a single
+"Under the hood" line rather than an Added or Changed entry; it earns a
+real entry once it becomes reachable, even behind an Experimental
+switch. Released sections are never edited.
 
 ## Release workflows
 
@@ -62,9 +65,10 @@ or schedule.
 Every release in this repo is created with `--draft` and
 `--latest=false`. `make_latest=false` is **sticky** — promoting a
 draft via `gh release edit <tag> --draft=false` does not flip it back.
-No workflow ever sets `make_latest=true`; the only release marked as
-"latest" is the QuiltSync one, and it gets that flag manually during
-the review-and-publish step (see [Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
+Crate releases never become "latest". The only release marked as
+"latest" is the QuiltSync one: the gated `promote` job sets it with
+`gh release edit --latest` when it publishes the draft (see
+[Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
 
 ## Crates.io publishing — `release-crate.yaml`
 
