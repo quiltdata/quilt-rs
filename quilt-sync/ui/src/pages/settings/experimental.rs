@@ -61,9 +61,8 @@ pub(super) fn ExperimentalSection(
             <dl class="settings-list">
                 <ExperimentalToggle
                     label="Enable entire-package sync"
-                    description="Adds a per-package choice — sync the entire package, including \
-                                 files added later, instead of picking files. Off until you \
-                                 choose it on a package."
+                    description="Adds a per-package option to sync everything in a package, \
+                                 instead of picking files."
                     enabled=entire_package_sync
                     flag=Flag::EntirePackageSync
                     notification=notification
@@ -77,8 +76,8 @@ pub(super) fn ExperimentalSection(
                 // (`main.rs`'s `effective_design`).
                 <ExperimentalToggle
                     label="New design preview"
-                    description="The redesigned QuiltSync, switched on wherever it is ready. \
-                                 Switch back at any time — nothing is lost."
+                    description="The redesigned QuiltSync, wherever it is ready. Switch back \
+                                 at any time."
                     enabled=main_page_v2
                     flag=Flag::MainPageV2
                     notification=notification
@@ -91,10 +90,9 @@ pub(super) fn ExperimentalSection(
                         view! {
                             <ExperimentalToggle
                                 label="Unfinished package page"
-                                description="Development builds only. The package screen, being \
-                                             rebuilt — today a placeholder, not the screen you \
-                                             know. Turning it on also turns on the design preview \
-                                             it is drawn inside."
+                                description="Development builds only. The rebuilt package \
+                                             screen, still a placeholder. Turns on the design \
+                                             preview too."
                                 enabled=package_page_v2
                                 flag=Flag::PackagePageV2
                                 notification=notification

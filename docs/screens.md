@@ -626,15 +626,12 @@ Application settings and diagnostics.
 |  Experimental                                           |
 |  ------------                                           |
 |  Enable entire-package sync    [ ]                      |
-|  hint: adds a per-package choice — sync the entire      |
-|        package, including files added later, instead    |
-|        of picking files. Off until you choose it on a   |
-|        package.                                         |
+|  hint: adds a per-package option to sync everything in  |
+|        a package, instead of picking files.             |
 |                                                         |
 |  New design preview            [ ]                      |
-|  hint: the redesigned QuiltSync, switched on wherever   |
-|        it is ready. Switch back at any time — nothing   |
-|        is lost.                                         |
+|  hint: the redesigned QuiltSync, wherever it is ready.  |
+|        Switch back at any time.                         |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
