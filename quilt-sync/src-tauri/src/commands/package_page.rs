@@ -51,6 +51,9 @@ pub struct PackageContextData {
     /// Raw bucket name. Presentation (`s3://` or the absent-state copy) stays
     /// in the UI rather than crossing the command boundary.
     pub bucket: Option<String>,
+    /// How many revisions this copy holds — the trigger's N. A count, not the
+    /// list: the list is `get_revision_history`, fetched on open.
+    pub revision_count: usize,
 }
 
 /// The current revision's user-facing facts.
@@ -224,6 +227,7 @@ fn package_context_data(
     namespace: &quilt_uri::Namespace,
     lineage: &quilt::lineage::PackageLineage,
     revision: Option<quilt::flow::Revision>,
+    revision_count: usize,
 ) -> Result<PackageContextData, Error> {
     let revision = revision.ok_or_else(|| {
         Error::General(format!(
@@ -241,6 +245,7 @@ fn package_context_data(
             .as_ref()
             .map(|uri| uri.bucket.clone())
             .filter(|bucket| !bucket.is_empty()),
+        revision_count,
     })
 }
 
@@ -289,6 +294,7 @@ async fn get_package_page_data_from_model(
         &lineage,
         m.get_installed_package_current_revision(&installed, &lineage)
             .await?,
+        m.get_installed_package_revision_count(&installed).await?,
     )?;
 
     let has_local_commit = lineage.commit.is_some();
@@ -423,6 +429,11 @@ mod tests {
                     message: Some("Initial upload".to_string()),
                 }))
             });
+        // `.times(1)`: one count per page read, never a history parse.
+        model
+            .expect_get_installed_package_revision_count()
+            .times(1)
+            .returning(|_| Ok(4));
         // `return_once`, not `returning`: `Error` is not `Clone`. `.times(1)`
         // makes "exactly one status call" an assertion — without it a caller
         // that skipped the call entirely would pass silently.
@@ -476,11 +487,12 @@ mod tests {
                 obtained_at: 1_758_500_000_000.0,
             },
             bucket: Some("quilt-lab-plates".to_string()),
+            revision_count: 4,
         };
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates"}"#,
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4}"#,
         );
     }
 
@@ -493,7 +505,8 @@ mod tests {
         );
 
         let context =
-            package_context_data(&namespace, &lineage, Some(revision("Pending commit"))).unwrap();
+            package_context_data(&namespace, &lineage, Some(revision("Pending commit")), 1)
+                .unwrap();
 
         assert_eq!(
             context,
@@ -503,6 +516,7 @@ mod tests {
                     obtained_at: 1_758_500_000_000.0,
                 },
                 bucket: Some("test".to_string()),
+                revision_count: 1,
             }
         );
     }
@@ -514,6 +528,7 @@ mod tests {
             &namespace,
             &quilt::lineage::PackageLineage::default(),
             Some(revision("Local commit")),
+            1,
         )
         .unwrap();
 
@@ -528,7 +543,8 @@ mod tests {
         let lineage = quilt::lineage::PackageLineage::from_remote(uri, "remote-hash".to_string());
 
         let context =
-            package_context_data(&namespace, &lineage, Some(revision("Initial upload"))).unwrap();
+            package_context_data(&namespace, &lineage, Some(revision("Initial upload")), 1)
+                .unwrap();
 
         assert_eq!(context.bucket, None);
     }
@@ -536,14 +552,25 @@ mod tests {
     #[test]
     fn an_installed_package_without_a_current_revision_is_a_read_failure() {
         let namespace: quilt_uri::Namespace = NS.try_into().unwrap();
-        let err =
-            package_context_data(&namespace, &quilt::lineage::PackageLineage::default(), None)
-                .unwrap_err();
+        let err = package_context_data(
+            &namespace,
+            &quilt::lineage::PackageLineage::default(),
+            None,
+            1,
+        )
+        .unwrap_err();
 
         assert_eq!(
             err.to_string(),
             "General error: Installed package team/dataset has no current revision"
         );
+    }
+
+    /// The trigger's N arrives with the rest of the page, not with the list.
+    #[tokio::test]
+    async fn the_page_read_carries_the_revision_count() {
+        let data = page(&RoleCache::default(), Ok(settled()), None).await;
+        assert_eq!(data.context.revision_count, 4);
     }
 
     /// A pause outranks what the tree says, because it is WHY the tree is not
