@@ -104,9 +104,10 @@ pub async fn count_revisions(
     Ok(count)
 }
 
-/// Every file in the manifests directory is a revision; anything else is not.
+/// Every file in the manifests directory is a revision, except a hidden one: a
+/// write's stranded `.tmp-<uuid>` (`io/storage/local.rs`) or the OS's own.
 async fn is_revision(entry: &tokio::fs::DirEntry) -> Res<bool> {
-    Ok(entry.file_type().await?.is_file())
+    Ok(!entry.file_name().to_string_lossy().starts_with('.') && entry.file_type().await?.is_file())
 }
 
 #[cfg(test)]

@@ -50,6 +50,33 @@ async fn the_count_is_the_manifest_files_and_parses_none_of_them() -> Res {
     Ok(())
 }
 
+/// A write's temp file (`LocalStorage` writes `.tmp-<uuid>` beside its
+/// target, and a crash can strand one) is not a revision: counting it would
+/// make N disagree with the list, and parsing it would refuse every opening.
+#[test(tokio::test)]
+async fn a_stranded_temp_file_is_not_a_revision() -> Res {
+    let temp_dir = TempDir::new()?;
+    let domain = LocalDomain::new(temp_dir.path());
+    domain.set_home(temp_dir.path()).await?;
+
+    let namespace: Namespace = ("demo", "sales").into();
+    let package = domain
+        .create_package(namespace.clone(), None, Some("initial import".to_string()))
+        .await?;
+
+    let manifests = package.paths.installed_manifests_dir(&namespace);
+    for stray in [".tmp-3f2a9c1e-0000-4000-8000-000000000000", ".DS_Store"] {
+        package
+            .storage
+            .write_byte_stream(manifests.join(stray), b"half a manifest".to_vec().into())
+            .await?;
+    }
+
+    assert_eq!(package.revision_count().await?, 1);
+    assert_eq!(package.revisions().await?.len(), 1);
+    Ok(())
+}
+
 const REMOTE: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/history",
