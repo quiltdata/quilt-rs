@@ -68,13 +68,12 @@ pub fn follow_os() {
 /// everything.
 pub const V2_CLASS: &str = "qui-v2";
 
-/// Record which design generation is effective, for the chrome that sits outside
-/// every page and therefore cannot ask.
+/// Record which design generation the reader is in, for the chrome that sits
+/// outside every page and therefore cannot ask.
 ///
-/// The effective generation, not the stored answer: `main.rs`'s `effective_design`
-/// is an OR over the reader's preference and the development construction gate, so
-/// a developer running that gate alone is in v2 with the preference off. A marker
-/// that recorded the preference would leave the toast layer v1 under v2 pages.
+/// The reader's preview preference and nothing else — `main.rs`'s
+/// `design_preview` is the one question the design is switched by, and `/` asks
+/// it on every visit, so this is set before any other route can be reached.
 ///
 /// v1's stylesheets read only their own `--q-ui-*` tokens, which no theme
 /// switches, so v1 stays light whatever the OS says. Anything shared between
@@ -97,8 +96,9 @@ pub fn set_v2(on: bool) {
 /// Where the generation is kept for the *next* launch, read by `index.html`'s
 /// inline script before the first paint.
 ///
-/// Named for what it holds rather than for the setting it used to copy. The old
-/// name is not migrated: a reader who had it set opens once in the other palette
+/// Named for the switch it copies, *New design preview*, rather than for the page
+/// that switch used to be named after. The old name, `quiltsync.main-page-v2`, is
+/// not migrated: a reader who had it set opens once in the other palette
 /// and is written the new one, which is the same one-launch cost the marker
 /// already carries below — not worth a migration for the colour of an empty
 /// window.
@@ -109,8 +109,7 @@ const DESIGN_KEY: &str = "quiltsync.design-preview";
 /// Last session's answer, never this one's: `/` resolves the real generation
 /// every time and [`set_v2`] corrects the marker either way. All this decides is
 /// which palette the empty launch window wears, and being one launch behind costs
-/// a reader who has just switched — or a developer who has just moved the
-/// construction gate — exactly one boot in the old palette.
+/// a reader who has just switched exactly one boot in the old palette.
 ///
 /// Every failure is ignored. A webview with no storage, a quota, a private mode
 /// — each leaves the next launch opening light, which is the fallback anyway.

@@ -648,14 +648,6 @@ Application settings and diagnostics.
 +---------------------------------------------------------+
 ```
 
-Two Experimental rows, as drawn above, is what a release build shows. A
-development build draws a third, **Unfinished package page** — the construction
-gate over the rebuilt package screen. It is absent rather than disabled for a
-reader, because a disabled row still tells them the unfinished page exists, and
-`main.rs` refuses a stored value in a release build too, so hiding it leaves no
-live flag behind. Turning it on also switches the rest of the app to the new
-design, without touching the reader's stored **New design preview** answer.
-
 ---
 
 ### Error

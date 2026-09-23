@@ -226,12 +226,10 @@ Routes are defined in `main.rs` using leptos\_router:
 Query parameters are read via `use_query_map()`. Navigation uses
 `use_navigate()` for client-side transitions.
 
-`/` is not a redirect. `Home` resolves the effective design generation — the
-reader's **New design preview** opt-in (Settings → Experimental), or, in a
-development build, the **Unfinished package page** construction gate, which
-implies it — and renders `MainPage` or `InstalledPackagesList` in place; a
-settings read that fails falls back to the latter. One route, so every way
-home — the logo, a breadcrumb, a Cancel — lands on the page the reader chose
+`/` is not a redirect. `Home` reads the reader's **New design preview** opt-in
+(Settings → Experimental) and renders `MainPage` or `InstalledPackagesList` in
+place; a settings read that fails falls back to the latter. One route, so every
+way home — the logo, a breadcrumb, a Cancel — lands on the page the reader chose
 rather than on whichever page the link was written against. `/main` and
 `/installed-packages-list` stay addressable for looking at one specific page
 while both exist.

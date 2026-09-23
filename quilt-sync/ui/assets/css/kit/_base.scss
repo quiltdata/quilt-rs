@@ -26,9 +26,9 @@ body {
 
 /* The frame `/` shows while it resolves the design generation has no page to
  * paint its ground, and only a reader carrying `theme::set_v2`'s root marker
- * wants one. That marker records the generation in effect — the reader's own
- * preview, or the construction gate a development build implies it from — and
- * `body` itself must stay bare regardless, since a v2 reader visits v1's pages
+ * wants one. That marker records the generation the reader has opted into — their
+ * *New design preview* answer, and nothing else — and `body` itself must stay
+ * bare regardless, since a v2 reader visits v1's pages
  * too. An attribute, like `[data-sr-only]`: it marks a role, on an element
  * outside any module. */
 :root.qui-v2 [data-home-frame] {
