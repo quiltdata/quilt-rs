@@ -1036,6 +1036,41 @@ mod tests {
         );
     }
 
+    /// A refused switch names the role it was refused, the way a refused
+    /// remote names its bucket. There is no bridge under the runner, so the
+    /// refusal is what runs.
+    #[wasm_bindgen_test]
+    async fn a_refused_switch_names_the_role() {
+        let mut d = data(kit::PackageState::RoleDenied {
+            role: Some("analyst".to_string()),
+        });
+        d.role_switch = Some(commands::RoleSwitch {
+            host: "demo.quiltdata.com".to_string(),
+            alternatives: vec!["admin".to_string()],
+        });
+        let el = mount_header(d);
+
+        button(&el, "Switch role").click();
+        leptos::task::tick().await;
+        button(&el, "Switch").click();
+        sleep_ms(50).await;
+
+        let alert = el
+            .query_selector("dialog[open] [role=alert]")
+            .unwrap()
+            .unwrap_or_else(|| {
+                panic!("the refusal, in the dialog; markup was {}", el.inner_html())
+            });
+        assert!(
+            alert
+                .text_content()
+                .unwrap_or_default()
+                .contains("Could not switch to admin: "),
+            "markup was {}",
+            alert.inner_html()
+        );
+    }
+
     /// The overflow menu's surface. The trigger shares its name, so the popover
     /// attribute is what tells the list from the button that opens it.
     const SURFACE: &str = "[popover][aria-label='More actions for this package']";

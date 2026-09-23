@@ -53,7 +53,10 @@ pub(super) fn RoleDialog(
     let submit = Submit::new("Switch", move || {
         let host = host.clone();
         async move {
-            commands::switch_role(host, chosen.get_untracked()).await?;
+            let role = chosen.get_untracked();
+            commands::switch_role(host, role.clone())
+                .await
+                .map_err(|err| format!("Could not switch to {role}: {err}"))?;
             reload.notify();
             Ok(())
         }
