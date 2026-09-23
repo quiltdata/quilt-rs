@@ -378,7 +378,9 @@ fn resolve(exit: &str, on_page: bool) -> AnyView {
 const NOTE: &str = "280px holding two blocks: what the page says about the package rather \
     than about its files. \
     \
-    Flip a radio and the caption and the download action answer together. \
+    Flip a radio in a hand-built cell and the caption and the download action \
+    answer together; the live cell's answer only once a stored choice is re-read, \
+    which the gallery never does. \
     Click a trigger: the surface hangs leftwards over the file list, which is \
     the only direction the page has for it. In the list a published revision \
     wears a cloud and ends in an icon that opens the catalog; the unsent one \

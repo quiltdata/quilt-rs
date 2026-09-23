@@ -69,29 +69,34 @@ pub(super) fn KeepingSection(
         remote_only,
     } = data;
     let outstanding = remote_only.len();
-    let stored = choice_value(scope).to_string();
+    // What the backend holds: the payload's scope until a store succeeds, since
+    // the group is live again before that store's re-read lands.
+    let stored = StoredValue::new(choice_value(scope).to_string());
     // Written only by the radio and the rollbacks below: any other write stores a scope.
-    let selected = RwSignal::new(stored.clone());
+    let selected = RwSignal::new(stored.get_value());
 
     {
         let namespace = namespace.clone();
         Effect::new(move |_| {
             let want = selected.get();
+            let prior = stored.get_value();
             // The first run, and every rollback, land here.
-            if want == stored {
+            if want == prior {
                 return;
             }
             // `run` would drop this press silently; don't leave it drawn as chosen.
             if w.busy.get_untracked() {
-                selected.set(stored.clone());
+                selected.set(prior);
                 return;
             }
-            let (ns, stored) = (namespace.clone(), stored.clone());
+            let ns = namespace.clone();
             let task = async move {
                 let answer = (commands.store)(ns, want == "all").await;
-                if answer.is_err() {
-                    // `try_`: a section rebuilt by a re-read already draws the stored scope.
-                    selected.try_set(stored);
+                // `try_`: a section rebuilt by a re-read already draws the stored scope.
+                if answer.is_ok() {
+                    stored.try_set_value(want);
+                } else {
+                    selected.try_set(prior);
                 }
                 answer.map(|()| String::new())
             };
@@ -493,6 +498,34 @@ mod tests {
         // The caption is the payload's, so it waits for the re-read.
         element_saying(&el, "54 of 56 downloaded.");
         assert!(downloaded().is_empty(), "storing a scope moves no bytes");
+    }
+
+    /// The group is live again before the re-read lands, so a press back to
+    /// the prior choice is a change from what is now stored, not a no-op.
+    #[wasm_bindgen_test]
+    async fn changing_back_before_the_re_read_stores_again() {
+        clear();
+        let w = Wiring::new();
+        let el = pressable(
+            a_backlog_in(IndividualFiles),
+            w,
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+
+        element_saying(&el, "The whole package").click();
+        settle().await;
+        element_saying(&el, "Files I pick").click();
+        settle().await;
+
+        assert_eq!(
+            stored(),
+            vec![
+                ("team/dataset".to_string(), true),
+                ("team/dataset".to_string(), false),
+            ]
+        );
+        assert_eq!(RELOADS.get(), 2, "each stored scope re-reads");
     }
 
     #[wasm_bindgen_test]
