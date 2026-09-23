@@ -444,7 +444,7 @@ pub fn ContextPaneScene() -> impl IntoView {
             title="The context pane"
             note=NOTE
         >
-            <Cell wide=true label="live — current revision, bucket and history">
+            <Cell wide=true label="live — current revision, bucket, history and keeping">
                 <crate::pages::CurrentRevisionPane
                     data=crate::commands::PackageContextData {
                         revision: crate::commands::CurrentRevisionData {

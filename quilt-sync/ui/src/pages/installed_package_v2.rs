@@ -777,6 +777,46 @@ mod tests {
         );
     }
 
+    /// The live pane's Keeping arrives with the body, drawn from the page read:
+    /// the stored scope chosen, the present count, and no download at zero.
+    #[wasm_bindgen_test]
+    fn the_body_carries_keeping() {
+        let el = mount(|| {
+            let w = Wiring::new();
+            view! { <Router>{package_body(page_data(), w)}</Router> }
+        });
+        let group = el
+            .query_selector("[role=radiogroup]")
+            .unwrap()
+            .expect("a radiogroup");
+        let label = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&group.get_attribute("aria-labelledby").unwrap())
+            .expect("the group's label");
+        assert_eq!(label.text_content().unwrap_or_default().trim(), "Keeping");
+        let pick: web_sys::HtmlInputElement = element_saying(&group, "Files I pick")
+            .closest("label")
+            .unwrap()
+            .expect("the option's label")
+            .query_selector("input[type=radio]")
+            .unwrap()
+            .expect("the option's radio")
+            .unchecked_into();
+        assert!(pick.checked(), "the stored scope is chosen");
+        element_saying(&el, "All files are downloaded.");
+        let buttons = el.query_selector_all("button").unwrap();
+        let download = (0..buttons.length())
+            .filter_map(|i| buttons.item(i))
+            .any(|b| b.text_content().unwrap_or_default().contains("Download"));
+        assert!(
+            !download,
+            "nothing outstanding, no download; markup was {}",
+            el.inner_html()
+        );
+    }
+
     /// A re-read rebuilds the body, and with it the header. A dialog the reader
     /// has open is the page's, so it survives — the watcher reporting news
     /// mid-form must not shut the form.
