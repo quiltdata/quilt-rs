@@ -1,4 +1,3 @@
-mod appbar;
 mod commit;
 mod error;
 mod installed_package;

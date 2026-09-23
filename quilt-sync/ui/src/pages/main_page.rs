@@ -32,7 +32,6 @@ use leptos::prelude::*;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
-use super::appbar::v2_appbar_actions;
 use super::status_watch::StatusWatch;
 use crate::commands;
 use crate::commands::MainPageAccountsData;
@@ -40,6 +39,7 @@ use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
+use crate::components::appbar::appbar_actions;
 use crate::routes::package_page_href;
 use crate::util;
 use grouping::ListRowData;
@@ -1291,7 +1291,7 @@ pub fn MainPage() -> impl IntoView {
     view! {
         <PageLayout
             heading="QuiltSync"
-            actions=v2_appbar_actions(reload, Signal::derive(move || outstanding.get() > 0))
+            actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
         >
             <PackageStatusListener reload=reload />
             <MainPageRegions
@@ -4180,7 +4180,9 @@ mod tests {
     async fn refresh_reports_a_read_nobody_pressed_for() {
         let reload = Trigger::new();
         let busy = RwSignal::new(false);
-        let el = mount(move || super::super::appbar::refresh_button(reload, busy.into()));
+        let el = mount(move || {
+            crate::components::appbar::refresh_button(move || reload.notify(), busy.into())
+        });
 
         let button: web_sys::HtmlElement = el
             .query_selector("button")
@@ -4230,7 +4232,10 @@ mod tests {
                 reload.track();
                 reads.update(|n| *n += 1);
             });
-            super::super::appbar::refresh_button(reload, Signal::derive(|| false))
+            crate::components::appbar::refresh_button(
+                move || reload.notify(),
+                Signal::derive(|| false),
+            )
         });
         leptos::task::tick().await;
         let before = reads.get_untracked();

@@ -1,7 +1,5 @@
 /*
- * Page frame. The appbar is full-bleed and its contents are not — the rule under it
- * has to reach both window edges or it reads as a box rather than as the top of the
- * page, while what sits on it must line up with the regions below.
+ * Page frame: the v2 surface, and the column under the appbar.
  */
 
 /* The frame owns the window height, and the list inside it takes the leftover and
@@ -38,37 +36,8 @@
   line-height: var(--q-line-body);
 }
 
-/* The one surface in the kit that is not a step on the page's ladder.
- *
- * Every other raised surface is LIGHTER than the page; this one is the brand
- * ground in both themes, which is a deliberate exception and not an oversight —
- * the appbar is chrome, not content, and v1's bar has been this colour all
- * along. It also settles the logo: `quilt.png` is white ink, so it needs a dark
- * ground rather than a fourth brand asset (qhq-8mgw.22).
- *
- * No bottom rule. It separated a white bar from a near-white page; against the
- * brand ground the colour change is the separation, and a grey line over it
- * reads as a seam. */
-.appbar {
-  background: var(--q-bgColor-brand);
-  /* Stated, not inherited: `.root` sets the page's ink, and without this the
-   * bar's contents would draw dark-on-navy — the same mistake, one level up,
-   * that qhq-8mgw.56 found in `.root` itself. */
-  color: var(--q-fgColor-onBrand);
-  /* Its own height, never a share of the leftover. */
-  flex: none;
-}
-
-/* The page container, declared once for everything that has to line up with it.
- *
- * The appbar is full-bleed and its CONTENTS are not: the rule under it has to
- * reach both window edges or it reads as a box rather than as the top of the
- * page, while the logo and the actions sitting on it must line up with the
- * regions below. Same for a banner. Three rules repeating the same three
- * declarations is how that alignment drifts, so they share one.
- *
- * Only the inline padding is here — each row's own vertical rhythm is its own. */
-.bar,
+/* The page container. `appbar.module.scss` defaults to the same two tokens, which
+ * keeps the logo over the regions. */
 .notice,
 .main {
   /* `width: 100%` is load-bearing, not belt-and-braces. `.notice` and `.main` are
@@ -81,65 +50,6 @@
   max-width: var(--q-container);
   margin-inline: auto;
   padding-inline: var(--q-space-4);
-}
-
-/* Not `position: sticky`. It would be defensible — the refresh control is useful from
- * anywhere in a long list — but a sticky bar costs vertical space permanently in
- * exchange for two buttons, and this page is already spending its height on a queue.
- * Worth reconsidering once the real page is scrolled with 43 rows in it. */
-.bar {
-  display: flex;
-  align-items: center;
-  gap: var(--q-space-3);
-  padding-block: var(--q-space-2);
-  /* The 32px framed IconButtons plus the padding above and below them. */
-  min-height: calc(var(--q-control-height) + 2 * var(--q-space-2));
-  /* The brand ground defeats both themes' rings (1.9 and 2.3:1); the bar's ink is 11.9:1. */
-  --q-focus-outlineColor: var(--q-fgColor-onBrand);
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  /* An anchor, so the underline has to be switched off explicitly. */
-  text-decoration: none;
-}
-
-/* 22px in a 48px bar; the 230x48 wordmark draws ~105px wide, width: auto keeps its aspect. */
-.logo img {
-  height: 22px;
-  width: auto;
-}
-
-.actions {
-  margin-left: auto;
-  display: flex;
-  flex: none;
-  gap: var(--q-space-2);
-}
-
-/* The bar's own chrome, on the brand ground.
- *
- * A `Button`'s frame is a raised white pill — right on a page-coloured surface,
- * and two white blobs on this one. So the frame comes off and the label takes
- * the bar's ink, which is what v1 does for the same two buttons and the same
- * reason (`.link` in `assets/css/components/button.css`).
- * Scoped to the bar rather than pushed into the kit: the component is correct
- * everywhere else it is used, and it is the GROUND that is unusual here. */
-.actions button {
-  background: transparent;
-  border-color: transparent;
-  color: inherit;
-}
-
-.actions button:hover:not(:disabled) {
-  background: var(--q-overlay-onBrand-hover);
-  border-color: transparent;
-  color: inherit;
-}
-
-.actions button:active:not(:disabled) {
-  background: var(--q-overlay-onBrand-active);
 }
 
 /* The banner's own row: width-capped like the appbar's contents and the page column,
