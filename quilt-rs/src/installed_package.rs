@@ -117,6 +117,14 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         flow::list_revisions(&self.paths, &self.storage, &self.namespace).await
     }
 
+    /// How many revisions this copy has, without parsing any of them.
+    ///
+    /// Equal to `self.revisions().await?.len()` when every manifest parses; a
+    /// damaged one is still counted, where [`Self::revisions`] fails on it.
+    pub async fn revision_count(&self) -> Res<usize> {
+        flow::count_revisions(&self.paths, &self.storage, &self.namespace).await
+    }
+
     /// The revision selected by one lineage snapshot.
     ///
     /// Unlike [`Self::revisions`], this reads only the manifest selected by
@@ -1009,6 +1017,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
 #[cfg(test)]
 mod current_revision_tests;
+#[cfg(test)]
+mod revision_history_tests;
 #[cfg(test)]
 mod set_remote_tests;
 #[cfg(test)]

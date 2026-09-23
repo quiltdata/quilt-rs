@@ -52,7 +52,7 @@ pub async fn list_revisions(
     let mut revisions = Vec::new();
 
     while let Some(entry) = entries.next_entry().await? {
-        if !entry.file_type().await?.is_file() {
+        if !is_revision(&entry).await? {
             continue;
         }
 
@@ -74,6 +74,30 @@ pub async fn list_revisions(
     });
 
     Ok(revisions)
+}
+
+/// How many revisions of `namespace` this copy has — the length
+/// `list_revisions` would return, without parsing any manifest.
+pub async fn count_revisions(
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    namespace: &Namespace,
+) -> Res<usize> {
+    let mut entries = storage
+        .read_dir(paths.installed_manifests_dir(namespace))
+        .await?;
+    let mut count = 0;
+    while let Some(entry) = entries.next_entry().await? {
+        if is_revision(&entry).await? {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Every file in the manifests directory is a revision; anything else is not.
+async fn is_revision(entry: &tokio::fs::DirEntry) -> Res<bool> {
+    Ok(entry.file_type().await?.is_file())
 }
 
 #[cfg(test)]
