@@ -186,9 +186,6 @@ mod tests {
             experimental: ExperimentalSettingsData {
                 entire_package_sync: false,
                 main_page_v2,
-                // Still stored and still round-tripped by the backend; no
-                // screen writes it and nothing here reads it.
-                package_page_v2: false,
             },
         }
     }

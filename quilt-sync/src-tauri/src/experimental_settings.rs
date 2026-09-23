@@ -15,8 +15,11 @@ const FILE_NAME: &str = "experimental_settings.json";
 /// Opt-ins for behaviour that is not finished being designed.
 ///
 /// Persisted as `experimental_settings.json` in `app_local_data_dir` — its own
-/// file rather than a key on an existing one, so retiring an experiment deletes
-/// a file instead of leaving a dead key behind in settings people keep.
+/// file rather than a key on an existing one, so no experiment leaves a key
+/// behind in settings people keep.
+///
+/// Retiring an experiment needs no migration: unknown fields are ignored on
+/// load, and the next save rewrites the file without the retired key.
 ///
 /// Everything here defaults to **off**. An experiment is shown to someone who
 /// went looking for it, not shipped quietly to everyone with a switch to turn
@@ -43,16 +46,6 @@ pub struct ExperimentalSettings {
     /// discards nothing.
     #[serde(default)]
     pub main_page_v2: bool,
-
-    /// Whether `/installed-package` opens the v2 package page instead of the v1
-    /// one.
-    ///
-    /// Separate from [`Self::main_page_v2`] because the two pages are not
-    /// equally finished — one flag would hand an unfinished package page to
-    /// everyone reading the v2 main page. The two merge into one switch when
-    /// the package page is done; until then they are independent.
-    #[serde(default)]
-    pub package_page_v2: bool,
 }
 
 impl ExperimentalSettings {
@@ -65,20 +58,12 @@ impl ExperimentalSettings {
     /// A caller that knows about one experiment must not reset another it has
     /// never heard of — which is what a whole-struct write does the moment a
     /// second flag exists.
-    pub fn patch(
-        &mut self,
-        entire_package_sync: Option<bool>,
-        main_page_v2: Option<bool>,
-        package_page_v2: Option<bool>,
-    ) {
+    pub fn patch(&mut self, entire_package_sync: Option<bool>, main_page_v2: Option<bool>) {
         if let Some(value) = entire_package_sync {
             self.entire_package_sync = value;
         }
         if let Some(value) = main_page_v2 {
             self.main_page_v2 = value;
-        }
-        if let Some(value) = package_page_v2 {
-            self.package_page_v2 = value;
         }
     }
 
@@ -184,37 +169,47 @@ mod tests {
         let mut s = ExperimentalSettings {
             entire_package_sync: true,
             main_page_v2: false,
-            package_page_v2: true,
         };
 
         // A caller that only knows about the main-page experiment.
-        s.patch(None, Some(true), None);
+        s.patch(None, Some(true));
 
         assert!(s.main_page_v2, "the flag it sent should be applied");
         assert!(
             s.entire_package_sync,
             "a flag the caller never mentioned must not be reset"
         );
-        assert!(
-            s.package_page_v2,
-            "nor may a flag added after the caller was written"
-        );
     }
 
-    /// The two page flags are independent, which is the whole point of there
-    /// being two: they switch pages whose readiness is not the same, and they
-    /// merge into one only when the v2 package page is finished.
-    #[test]
-    fn the_two_page_flags_do_not_move_together() {
-        let mut s = ExperimentalSettings::default();
+    /// A retired experiment leaves its key in files written before it went.
+    /// Such a file must still load with every live flag intact, and the next
+    /// save must drop the key — which is why retiring one is not a migration.
+    #[tokio::test]
+    async fn a_retired_flag_is_ignored_and_dropped_on_save() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        tokio::fs::write(
+            &path,
+            br#"{"entire_package_sync":true,"main_page_v2":true,"package_page_v2":true}"#,
+        )
+        .await?;
 
-        s.patch(None, None, Some(true));
-
-        assert!(s.package_page_v2);
-        assert!(
-            !s.main_page_v2,
-            "switching the package page must not switch the main page"
+        let loaded = ExperimentalSettings::load(dir.path()).await?;
+        assert_eq!(
+            loaded,
+            ExperimentalSettings {
+                entire_package_sync: true,
+                main_page_v2: true,
+            }
         );
+
+        loaded.save(dir.path()).await?;
+        let written = tokio::fs::read_to_string(&path).await?;
+        assert!(
+            !written.contains("package_page_v2"),
+            "the retired key is gone after a save: {written}"
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -225,26 +220,11 @@ mod tests {
         assert!(!loaded.main_page_v2, "experiments default to off");
 
         let mut s = loaded;
-        s.patch(None, Some(true), None);
+        s.patch(None, Some(true));
         s.save(dir.path()).await.unwrap();
 
         let reloaded = ExperimentalSettings::load(dir.path()).await.unwrap();
         assert!(reloaded.main_page_v2);
-    }
-
-    #[tokio::test]
-    async fn package_page_v2_defaults_off_and_survives_a_round_trip() {
-        let dir = TempDir::new().unwrap();
-
-        let loaded = ExperimentalSettings::load(dir.path()).await.unwrap();
-        assert!(!loaded.package_page_v2, "experiments default to off");
-
-        let mut s = loaded;
-        s.patch(None, None, Some(true));
-        s.save(dir.path()).await.unwrap();
-
-        let reloaded = ExperimentalSettings::load(dir.path()).await.unwrap();
-        assert!(reloaded.package_page_v2);
     }
 
     /// The gate is a veto, not a switch: it can only ever narrow what a package

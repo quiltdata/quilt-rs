@@ -20,10 +20,7 @@ enum Flag {
 }
 
 impl Flag {
-    /// The two slots a row can own, in the command's order. The third the command
-    /// takes, `package_page_v2`, has no row: the rebuilt package screen is
-    /// switched by `main.rs`'s `UNFINISHED_PACKAGE_PAGE`, so nothing here writes
-    /// it and every save leaves it as it is.
+    /// The slots a row can own, in the command's order.
     fn only(self, value: bool) -> (Option<bool>, Option<bool>) {
         let value = Some(value);
         match self {
@@ -116,14 +113,7 @@ fn ExperimentalToggle(
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
             let (entire_package_sync, main_page_v2) = flag.only(new_enabled);
-            match commands::update_experimental_settings(
-                entire_package_sync,
-                main_page_v2,
-                // No row owns the rebuilt package screen — see `Flag::only`.
-                None,
-            )
-            .await
-            {
+            match commands::update_experimental_settings(entire_package_sync, main_page_v2).await {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Experimental settings saved".into(),
