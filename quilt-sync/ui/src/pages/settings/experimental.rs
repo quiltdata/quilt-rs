@@ -76,8 +76,7 @@ pub(super) fn ExperimentalSection(
                 // (`main.rs`'s `effective_design`).
                 <ExperimentalToggle
                     label="New design preview"
-                    description="The redesigned QuiltSync, wherever it is ready. Switch back \
-                                 at any time."
+                    description="The redesigned QuiltSync, wherever it is ready."
                     enabled=main_page_v2
                     flag=Flag::MainPageV2
                     notification=notification
@@ -90,9 +89,8 @@ pub(super) fn ExperimentalSection(
                         view! {
                             <ExperimentalToggle
                                 label="Unfinished package page"
-                                description="Development builds only. The rebuilt package \
-                                             screen, still a placeholder. Turns on the design \
-                                             preview too."
+                                description="The rebuilt package screen, still a placeholder. \
+                                             Also turns on New design preview."
                                 enabled=package_page_v2
                                 flag=Flag::PackagePageV2
                                 notification=notification

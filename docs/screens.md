@@ -631,7 +631,6 @@ Application settings and diagnostics.
 |                                                         |
 |  New design preview            [ ]                      |
 |  hint: the redesigned QuiltSync, wherever it is ready.  |
-|        Switch back at any time.                         |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
@@ -654,8 +653,8 @@ development build draws a third, **Unfinished package page** — the constructio
 gate over the rebuilt package screen. It is absent rather than disabled for a
 reader, because a disabled row still tells them the unfinished page exists, and
 `main.rs` refuses a stored value in a release build too, so hiding it leaves no
-live flag behind. Turning it on also turns on the design preview it is drawn
-inside.
+live flag behind. Turning it on also turns on **New design preview**, because the
+rebuilt screen is drawn in that design.
 
 ---
 
