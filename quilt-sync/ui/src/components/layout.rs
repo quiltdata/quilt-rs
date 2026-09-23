@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 
-use super::appbar::appbar_actions;
+use super::appbar::{appbar_actions, transit_appbar_actions};
 use super::buttons;
 use crate::kit::Appbar;
 use crate::theme;
@@ -49,21 +49,22 @@ pub fn Layout(
     /// When `true`, the layout shows a disabled overlay (progress indicator).
     #[prop(optional)]
     ui_locked: Option<RwSignal<bool>>,
-    /// Keeps v1's bar under the preview. For a screen whose mount is its
-    /// operation, where Refresh's window reload would repeat it. Inherited by
-    /// nested `Layout`s, such as the error page's.
+    /// Draws Refresh disabled. For a screen whose mount is its operation, where
+    /// Refresh's window reload would repeat it.
     #[prop(optional)]
     transit: bool,
     children: Children,
 ) -> impl IntoView {
-    let transit = transit || use_context::<TransitScreen>().is_some();
-    if transit {
-        provide_context(TransitScreen);
-    }
-    let appbar = if !transit && theme::is_v2() {
+    provide_context(InsideLayout);
+    let appbar = if theme::is_v2() {
+        let actions = if transit {
+            transit_appbar_actions()
+        } else {
+            appbar_actions(reload_window, false.into())
+        };
         view! {
             <div class="layout-appbar layout-appbar-v2">
-                <Appbar actions=Some(appbar_actions(reload_window, false.into())) />
+                <Appbar actions=Some(actions) />
             </div>
         }
         .into_any()
@@ -75,7 +76,7 @@ pub fn Layout(
                         <img class="img" src="/assets/img/quilt.png" />
                     </a>
                     <div class="nav">
-                        <buttons::Refresh on_click=move |_| reload_window() />
+                        <buttons::Refresh on_click=move |_| reload_window() disabled=transit />
                         <buttons::Settings />
                     </div>
                 </div>
@@ -152,7 +153,12 @@ pub fn Layout(
 }
 
 #[derive(Clone, Copy)]
-struct TransitScreen;
+struct InsideLayout;
+
+/// Whether the caller is already drawn inside a [`Layout`].
+pub fn inside_layout() -> bool {
+    use_context::<InsideLayout>().is_some()
+}
 
 fn reload_window() {
     let _ = web_sys::window().and_then(|w| w.location().reload().ok());
@@ -216,6 +222,7 @@ mod tests {
     use super::*;
     use crate::test_support::mount;
     use leptos_router::components::Router;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// Synchronous, so no other test sees the marker it sets.
@@ -314,28 +321,35 @@ mod tests {
         assert_eq!(labels, ["Refresh", "Settings"]);
     }
 
-    #[wasm_bindgen_test]
-    fn a_layout_inside_a_transit_screen_is_transit_too() {
-        theme::set_v2(true);
-        let el = mount(|| {
-            view! {
-                <Router>
-                    <Layout breadcrumbs=vec![] notification=RwSignal::new(None) transit=true>
-                        <Layout breadcrumbs=vec![] notification=RwSignal::new(None)>
-                            "error page"
-                        </Layout>
-                    </Layout>
-                </Router>
-            }
-        });
-        theme::set_v2(false);
-        assert!(!draws_redesigned_bar(&el), "markup was {}", el.inner_html());
+    fn refresh_is_disabled(el: &web_sys::Element) -> bool {
+        let buttons = el.query_selector_all("button").unwrap();
+        let refresh = (0..buttons.length())
+            .filter_map(|i| buttons.item(i))
+            .find(|b| b.text_content().unwrap_or_default().trim() == "Refresh")
+            .expect("a Refresh is drawn");
+        refresh
+            .dyn_into::<web_sys::HtmlButtonElement>()
+            .unwrap()
+            .disabled()
     }
 
     #[wasm_bindgen_test]
-    fn a_transit_screen_keeps_v1s_bar_under_the_preview() {
+    fn a_transit_screen_draws_the_preview_bar_with_refresh_disabled() {
         let el = settings_like(true, true);
+        assert!(draws_redesigned_bar(&el), "markup was {}", el.inner_html());
+        assert!(refresh_is_disabled(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_transit_screen_draws_v1s_bar_with_refresh_disabled() {
+        let el = settings_like(false, true);
         assert!(draws_v1_bar(&el), "markup was {}", el.inner_html());
-        assert!(!draws_redesigned_bar(&el), "markup was {}", el.inner_html());
+        assert!(refresh_is_disabled(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    fn refresh_is_live_on_other_routes() {
+        assert!(!refresh_is_disabled(&settings_like(true, false)));
+        assert!(!refresh_is_disabled(&settings_like(false, false)));
     }
 }

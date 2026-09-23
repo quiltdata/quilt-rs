@@ -4,6 +4,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::components::buttons;
+use crate::components::layout;
 use crate::components::{Layout, Notification};
 
 /// Handle a command error that left the surface with nothing to render.
@@ -57,20 +58,23 @@ fn render_page_error(message: &str, notification: RwSignal<Option<Notification>>
             let _ = commands::debug_dot_quilt().await;
         });
     };
-    view! {
-        <Layout breadcrumbs=vec![] notification=notification>
-            <div class="qui-page-error container">
-                <h1 class="title">"Error"</h1>
-                <p class="message">{message}</p>
-                <div class="button-group">
-                    <buttons::ReloadPage on_click=on_reload />
-                    <buttons::OpenDotQuilt on_click=on_dot_quilt />
-                    <buttons::GoHome />
-                </div>
+    let body = view! {
+        <div class="qui-page-error container">
+            <h1 class="title">"Error"</h1>
+            <p class="message">{message}</p>
+            <div class="button-group">
+                <buttons::ReloadPage on_click=on_reload />
+                <buttons::OpenDotQuilt on_click=on_dot_quilt />
+                <buttons::GoHome />
             </div>
-        </Layout>
+        </div>
+    };
+    // A caller that failed inside its own shell already drew the appbar.
+    if layout::inside_layout() {
+        body.into_any()
+    } else {
+        view! { <Layout breadcrumbs=vec![] notification=notification>{body}</Layout> }.into_any()
     }
-    .into_any()
 }
 
 /// Get the current browser path and query string (e.g. "/installed-package?namespace=user/pkg").
@@ -91,4 +95,46 @@ struct ErrorResponse {
     message: String,
     #[serde(default)]
     host: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use leptos_router::components::Router;
+    use wasm_bindgen_test::*;
+
+    fn appbars(el: &web_sys::Element) -> u32 {
+        el.query_selector_all(".layout-appbar").unwrap().length()
+    }
+
+    #[wasm_bindgen_test]
+    fn a_page_that_failed_before_its_shell_gets_one_from_the_error_page() {
+        let el = mount(|| {
+            view! {
+                <Router>{handle_or_display("boom", RwSignal::new(None))}</Router>
+            }
+        });
+        assert_eq!(appbars(&el), 1, "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    fn a_page_that_failed_inside_its_shell_keeps_one_appbar() {
+        let el = mount(|| {
+            let notification = RwSignal::new(None);
+            view! {
+                <Router>
+                    <Layout breadcrumbs=vec![] notification=notification>
+                        {handle_or_display("boom", notification)}
+                    </Layout>
+                </Router>
+            }
+        });
+        assert!(
+            el.text_content().unwrap_or_default().contains("boom"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert_eq!(appbars(&el), 1, "markup was {}", el.inner_html());
+    }
 }
