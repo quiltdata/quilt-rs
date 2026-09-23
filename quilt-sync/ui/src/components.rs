@@ -1,3 +1,4 @@
+pub mod appbar;
 pub mod buttons;
 pub mod ignore_popup;
 pub mod layout;

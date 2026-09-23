@@ -1,0 +1,68 @@
+/* Brand ground in both themes, same as v1's bar.
+ *
+ * States its own ink and type: outside the v2 frame it would inherit v1's
+ * `body` (Roboto, unthemed black).
+ *
+ * Hosts other than the v2 frame may set `--q-appbar-min-height`,
+ * `--q-appbar-container` and `--q-appbar-gutter`; see `layout.css`. */
+.appbar {
+  display: flex;
+  align-items: center;
+  min-height: var(--q-appbar-min-height, 0);
+  background: var(--q-bgColor-brand);
+  color: var(--q-fgColor-onBrand);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  flex: none;
+}
+
+/* Defaults match the frame's `.notice` and `.main`, so the logo lines up with the regions. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  width: 100%;
+  max-width: var(--q-appbar-container, var(--q-container));
+  margin-inline: auto;
+  padding-inline: var(--q-appbar-gutter, var(--q-space-4));
+  padding-block: var(--q-space-2);
+  min-height: calc(var(--q-control-height) + 2 * var(--q-space-2));
+  /* Both themes' rings are under 3:1 on the brand ground. */
+  --q-focus-outlineColor: var(--q-fgColor-onBrand);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.logo img {
+  height: 22px;
+  width: auto;
+}
+
+.actions {
+  margin-left: auto;
+  display: flex;
+  flex: none;
+  gap: var(--q-space-2);
+}
+
+/* Unframed on the brand ground, like v1's link buttons. */
+.actions button {
+  background: transparent;
+  border-color: transparent;
+  color: inherit;
+}
+
+.actions button:hover:not(:disabled) {
+  background: var(--q-overlay-onBrand-hover);
+  border-color: transparent;
+  color: inherit;
+}
+
+.actions button:active:not(:disabled) {
+  background: var(--q-overlay-onBrand-active);
+}

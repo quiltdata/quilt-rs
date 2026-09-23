@@ -93,6 +93,16 @@ pub fn set_v2(on: bool) {
     remember_v2(on);
 }
 
+/// Whether the root carries [`V2_CLASS`].
+///
+/// Never stale when a route reads it: `index.html` restores it before first
+/// paint, and saving the preview in Settings navigates to `/`, which sets it.
+pub fn is_v2() -> bool {
+    document()
+        .document_element()
+        .is_some_and(|root| root.class_list().contains(V2_CLASS))
+}
+
 /// Where the generation is kept for the *next* launch, read by `index.html`'s
 /// inline script before the first paint.
 ///

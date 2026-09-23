@@ -49,7 +49,8 @@ pub fn RemotePackage() -> impl IntoView {
     });
 
     view! {
-        <Layout breadcrumbs=vec![] notification=notification>
+        // Mounting runs the deep link, so a window reload would run it again.
+        <Layout breadcrumbs=vec![] notification=notification transit=true>
             <Suspense fallback=move || {
                 view! { <Spinner /> }
             }>
@@ -63,5 +64,47 @@ pub fn RemotePackage() -> impl IntoView {
                 })}
             </Suspense>
         </Layout>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{mount, sleep_ms};
+    use crate::theme;
+    use leptos_router::components::Router;
+    use wasm_bindgen_test::*;
+
+    /// With no Tauri host the read rejects, so this also covers the error
+    /// page's nested `Layout`.
+    #[wasm_bindgen_test]
+    async fn the_preview_does_not_hand_the_relay_its_bar() {
+        theme::set_v2(true);
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <RemotePackage />
+                </Router>
+            }
+        });
+        sleep_ms(100).await;
+        theme::set_v2(false);
+
+        assert!(
+            el.text_content().unwrap_or_default().contains("Error"),
+            "the failure path must have drawn; markup was {}",
+            el.inner_html()
+        );
+
+        assert!(
+            el.query_selector("header").unwrap().is_none(),
+            "a Refresh here reloads the window and re-runs the deep link; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            el.query_selector(".qui-appbar").unwrap().is_some(),
+            "the relay keeps the bar it draws today; markup was {}",
+            el.inner_html()
+        );
     }
 }
