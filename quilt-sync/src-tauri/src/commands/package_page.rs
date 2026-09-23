@@ -64,6 +64,20 @@ pub struct CurrentRevisionData {
     pub obtained_at: f64,
 }
 
+/// One row of `Revisions you have`, newest obtained first.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionHistoryRow {
+    pub message: Option<String>,
+    pub obtained_at: f64,
+    pub published: bool,
+    /// The catalog page for exactly this revision, or `None`: an unpublished
+    /// row has no page to link, and a remote with no catalog host has no
+    /// catalog. Built here rather than from the header's `uri` so the hash that
+    /// addresses it never crosses the wire as data.
+    pub catalog_url: Option<String>,
+}
+
 /// The header region: identity, one resolved condition, and what the overflow
 /// menu may offer.
 #[derive(Serialize)]
@@ -384,6 +398,68 @@ async fn get_package_page_data_from_model(
     })
 }
 
+/// Project the engine's entries onto wire rows, in the engine's order.
+fn revision_history_rows(
+    lineage: &quilt::lineage::PackageLineage,
+    entries: Vec<quilt::flow::HistoryEntry>,
+) -> Vec<RevisionHistoryRow> {
+    entries
+        .into_iter()
+        .map(|entry| RevisionHistoryRow {
+            catalog_url: lineage
+                .remote_uri
+                .as_ref()
+                .filter(|_| entry.published)
+                .and_then(|uri| {
+                    quilt_uri::S3PackageUri::from(&quilt_uri::ManifestUri {
+                        hash: entry.revision.hash.clone(),
+                        ..uri.clone()
+                    })
+                    .display_for_catalog()
+                    .ok()
+                })
+                .map(|url| url.to_string()),
+            message: entry.revision.message,
+            obtained_at: epoch_millis(entry.revision.obtained),
+            published: entry.published,
+        })
+        .collect()
+}
+
+/// The revisions this copy holds, for the context pane's popover. Lazy: the
+/// page read carries only the count (`revision-list-lazy`). Not under the
+/// page's mutation lock — it is a read (`page-owns-pane-actions`).
+#[tauri::command]
+pub async fn get_revision_history(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+) -> Result<Vec<RevisionHistoryRow>, String> {
+    let namespace: quilt_uri::Namespace = namespace
+        .try_into()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+
+    get_revision_history_from_model(&*m, &namespace)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
+async fn get_revision_history_from_model(
+    m: &impl model::QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> Result<Vec<RevisionHistoryRow>, Error> {
+    let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })?;
+    // One snapshot: the rows' publication and their links read the same remote.
+    let lineage = m.get_installed_package_lineage(&installed).await?;
+    let entries = m
+        .get_installed_package_revision_history(&installed, &lineage)
+        .await?;
+    Ok(revision_history_rows(&lineage, entries))
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -392,6 +468,7 @@ mod tests {
     use crate::commands::RoleCache;
     use crate::commands::test_support::{
         access_denied_error, access_denied_error_on, make_installed_package, make_manifest_uri,
+        make_manifest_uri_no_origin,
     };
     use crate::quilt::lineage::UpstreamState;
     use quilt_rs::RoleInfo;
@@ -571,6 +648,145 @@ mod tests {
     async fn the_page_read_carries_the_revision_count() {
         let data = page(&RoleCache::default(), Ok(settled()), None).await;
         assert_eq!(data.context.revision_count, 4);
+    }
+
+    fn history_entry(
+        hash: &str,
+        at_millis: i64,
+        message: Option<&str>,
+        published: bool,
+    ) -> quilt::flow::HistoryEntry {
+        quilt::flow::HistoryEntry {
+            revision: quilt::flow::Revision {
+                hash: hash.to_string(),
+                obtained: DateTime::from_timestamp_millis(at_millis).unwrap(),
+                message: message.map(ToString::to_string),
+            },
+            published,
+        }
+    }
+
+    fn remote_lineage(uri: quilt_uri::ManifestUri) -> quilt::lineage::PackageLineage {
+        quilt::lineage::PackageLineage::from_remote(uri, "abcdef".to_string())
+    }
+
+    const PUBLISHED_URL: &str =
+        "https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash";
+
+    #[test]
+    fn revision_history_wire_form_is_verbatim() {
+        let rows = vec![
+            RevisionHistoryRow {
+                message: Some("Sent".to_string()),
+                obtained_at: 1_758_500_000_000.0,
+                published: true,
+                catalog_url: Some(PUBLISHED_URL.to_string()),
+            },
+            RevisionHistoryRow {
+                message: None,
+                obtained_at: 1_758_400_000_000.0,
+                published: false,
+                catalog_url: None,
+            },
+        ];
+
+        assert_eq!(
+            serde_json::to_string(&rows).unwrap(),
+            r#"[{"message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash"},{"message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null}]"#,
+        );
+    }
+
+    /// The link addresses the row's own revision, not the lineage's current one.
+    #[test]
+    fn a_published_row_links_to_its_exact_revision() {
+        let rows = revision_history_rows(
+            &remote_lineage(make_manifest_uri(NS)),
+            vec![history_entry(
+                "published-hash",
+                1_758_500_000_000,
+                Some("Sent"),
+                true,
+            )],
+        );
+
+        assert_eq!(
+            rows,
+            vec![RevisionHistoryRow {
+                message: Some("Sent".to_string()),
+                obtained_at: 1_758_500_000_000.0,
+                published: true,
+                catalog_url: Some(PUBLISHED_URL.to_string()),
+            }]
+        );
+        assert!(
+            !PUBLISHED_URL.contains("abcdef"),
+            "the lineage's hash must not address another row's page"
+        );
+    }
+
+    #[test]
+    fn an_unpublished_row_has_no_link() {
+        let rows = revision_history_rows(
+            &remote_lineage(make_manifest_uri(NS)),
+            vec![history_entry(
+                "local-hash",
+                1_758_400_000_000,
+                Some("Draft"),
+                false,
+            )],
+        );
+
+        assert!(!rows[0].published);
+        assert_eq!(rows[0].catalog_url, None);
+    }
+
+    #[test]
+    fn a_remote_without_a_catalog_host_links_nothing() {
+        let rows = revision_history_rows(
+            &remote_lineage(make_manifest_uri_no_origin(NS)),
+            vec![history_entry(
+                "published-hash",
+                1_758_500_000_000,
+                Some("Sent"),
+                true,
+            )],
+        );
+
+        assert!(rows[0].published);
+        assert_eq!(rows[0].catalog_url, None);
+    }
+
+    /// The engine owns newest-first; the projection must not re-sort.
+    #[test]
+    fn the_rows_keep_the_engine_order() {
+        let rows = revision_history_rows(
+            &remote_lineage(make_manifest_uri(NS)),
+            vec![
+                history_entry("c", 1_758_300_000_000, Some("Third"), false),
+                history_entry("a", 1_758_500_000_000, Some("First"), true),
+                history_entry("b", 1_758_400_000_000, Some("Second"), false),
+            ],
+        );
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.message.as_deref())
+                .collect::<Vec<_>>(),
+            vec![Some("Third"), Some("First"), Some("Second")]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_package_is_an_error_not_an_empty_history() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package().returning(|_| Ok(None));
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let err = get_revision_history_from_model(&m, &ns)
+            .await
+            .expect_err("an absent package has no history to be empty");
+
+        assert!(err.to_string().contains("team/dataset"), "{err}");
     }
 
     /// A pause outranks what the tree says, because it is WHY the tree is not

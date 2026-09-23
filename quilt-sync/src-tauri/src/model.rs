@@ -118,6 +118,14 @@ pub trait QuiltModel {
         Ok(package.revision_count().await?)
     }
 
+    async fn get_installed_package_revision_history(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<Vec<quilt::flow::HistoryEntry>, Error> {
+        Ok(package.revision_history(lineage).await?)
+    }
+
     async fn get_installed_package_records(
         &self,
         package: &quilt::InstalledPackage,

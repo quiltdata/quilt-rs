@@ -268,6 +268,7 @@ fn main() {
             commands::refresh_main_page_package,
             commands::get_main_page_watcher,
             commands::get_package_page_data,
+            commands::get_revision_history,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,
