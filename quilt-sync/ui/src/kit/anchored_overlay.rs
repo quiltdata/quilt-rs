@@ -24,7 +24,8 @@
 //! does. Left alone it would sit where the trigger *used* to be, and in a list of
 //! rows that is worse than a bug: the commands would appear to belong to whatever
 //! row had scrolled into that spot. So any scroll anywhere, and any resize,
-//! closes it. Reopening is one click; acting on the wrong file is not undoable.
+//! closes it — except a scroll of the surface's own overflow, which moves no
+//! anchor. Reopening is one click; acting on the wrong file is not undoable.
 //!
 //! # The body can be pending
 //!
@@ -64,6 +65,9 @@ pub enum Align {
     /// overflow `[⋯]`, or the caret of a [`SplitButton`](super::SplitButton).
     End,
 }
+
+/// The scroll and resize listener held while a surface is open.
+type Dismisser = Closure<dyn FnMut(web_sys::Event)>;
 
 #[component]
 pub fn AnchoredOverlay(
@@ -117,8 +121,7 @@ pub fn AnchoredOverlay(
     // other, so at most one of these surfaces is open at a time.
     // `new_local`: a DOM closure is neither `Send` nor `Sync`, and this is a
     // single-threaded wasm document.
-    let dismisser: StoredValue<Option<Closure<dyn FnMut()>>, LocalStorage> =
-        StoredValue::new_local(None);
+    let dismisser: StoredValue<Option<Dismisser>, LocalStorage> = StoredValue::new_local(None);
 
     let detach = move || {
         dismisser.update_value(|held| {
@@ -142,7 +145,22 @@ pub fn AnchoredOverlay(
             if !open.get_untracked() {
                 return;
             }
-            let closure = Closure::<dyn FnMut()>::new(move || open.set(false));
+            let closure =
+                Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                    // The surface scrolling its own overflow has moved nothing it is anchored to.
+                    let inside = event
+                        .target()
+                        .and_then(|target| target.dyn_into::<web_sys::Node>().ok())
+                        .zip(surface.get_untracked())
+                        .is_some_and(|(target, surface)| {
+                            surface
+                                .unchecked_ref::<web_sys::Node>()
+                                .contains(Some(&target))
+                        });
+                    if !inside {
+                        open.set(false);
+                    }
+                });
             let f = closure.as_ref().unchecked_ref();
             // Capture phase: a scroll inside the file list never reaches `window`
             // by bubbling, and that list is exactly where the rows are.
@@ -276,7 +294,55 @@ fn horizontal(
 )]
 mod tests {
     use super::*;
+    use crate::test_support::{mount, sleep_ms};
     use wasm_bindgen_test::*;
+
+    fn scroll(target: &web_sys::EventTarget) {
+        let event = web_sys::Event::new("scroll").unwrap();
+        target.dispatch_event(&event).unwrap();
+    }
+
+    /// The surface scrolls its own overflow (`max-height: 60vh`), and a scroll
+    /// there has not moved the anchor, so it must not dismiss the surface the
+    /// reader is scrolling. A scroll anywhere else still does.
+    #[wasm_bindgen_test]
+    async fn scrolling_inside_the_surface_keeps_it_open() {
+        let open = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <AnchoredOverlay
+                    trigger=|_| view! { <button>"Open"</button> }.into_any()
+                    open=open
+                    aria_label="Scrolled"
+                >
+                    <p>"Long"</p>
+                </AnchoredOverlay>
+            }
+        });
+        open.set(true);
+        leptos::task::tick().await;
+        // The dismisser is armed a frame late; wait it out.
+        sleep_ms(50).await;
+        let surface = el
+            .query_selector("[aria-label='Scrolled']")
+            .unwrap()
+            .unwrap();
+
+        scroll(&surface);
+        leptos::task::tick().await;
+        assert!(
+            open.get_untracked(),
+            "a scroll inside the surface closed it"
+        );
+        assert!(surface.matches(":popover-open").unwrap());
+
+        scroll(&web_sys::window().unwrap().document().unwrap());
+        leptos::task::tick().await;
+        assert!(
+            !open.get_untracked(),
+            "a scroll outside the surface must close it"
+        );
+    }
 
     /// A trailing trigger hangs its surface leftwards from its own right edge.
     /// This is the case the clamp used to swallow: left-aligning a `[⋯]` near the
