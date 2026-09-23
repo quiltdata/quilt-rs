@@ -462,6 +462,11 @@ pub fn ContextPaneScene() -> impl IntoView {
                     namespace=NAMESPACE
                     fetch=history
                     open_catalog=Callback::new(|_: String| ())
+                    w=crate::pages::Wiring::new()
+                    commands=crate::pages::KeepingCommands {
+                        store: |_, _| Box::pin(async { Ok(()) }),
+                        download: |_, _| Box::pin(async { Ok(()) }),
+                    }
                 />
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">

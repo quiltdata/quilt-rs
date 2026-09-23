@@ -17,6 +17,7 @@ use super::status_watch::StatusWatch;
 mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
+pub(crate) mod keeping;
 mod revision_history;
 mod role_dialog;
 
@@ -203,6 +204,8 @@ fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
                     namespace=namespace
                     fetch=context_pane::fetch_revision_history
                     open_catalog=open_catalog
+                    w=w
+                    commands=keeping::KeepingCommands::app()
                 />
             </div>
         </div>
@@ -737,12 +740,13 @@ mod tests {
             aside.get_attribute("aria-label").as_deref(),
             Some("About this package")
         );
-        // The header's closed dialogs carry their own paragraphs; only the body's count.
+        // The header's closed dialogs and Keeping's group carry their own paragraphs;
+        // only loose ones count.
         let paragraphs = el.query_selector_all("p").unwrap();
         let loose = (0..paragraphs.length())
             .filter_map(|i| paragraphs.item(i))
             .filter_map(|n| n.dyn_into::<web_sys::Element>().ok())
-            .any(|p| p.closest("dialog").unwrap().is_none());
+            .any(|p| p.closest("dialog, [role=radiogroup]").unwrap().is_none());
         assert!(
             !loose,
             "the loose namespace placeholder is gone; markup was {}",
