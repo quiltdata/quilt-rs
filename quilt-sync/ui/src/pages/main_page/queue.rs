@@ -434,7 +434,7 @@ pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
             super::package_page_href(namespace)
         }
         // Unreachable from `action`; mapped so this match cannot go stale.
-        PackageAction::SwitchRole => crate::routes::package_page_href(namespace),
+        PackageAction::SwitchRole => super::package_page_href(namespace),
     }
 }
 

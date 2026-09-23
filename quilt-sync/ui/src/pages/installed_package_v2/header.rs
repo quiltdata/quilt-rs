@@ -32,8 +32,9 @@
 //!
 //! # Where each command reports
 //!
-//! Four channels and one rule, by what the command does. Navigating reports by
-//! arriving. A self-evident effect says nothing and reports only its failure,
+//! Three channels — the notification stack, the page's band, a dialog — and
+//! one rule, by what the command does. Navigating reports by arriving, on none
+//! of them. A self-evident effect says nothing and reports only its failure,
 //! on the page's band. `Get latest` keeps what pull already does — its report
 //! reaches the notification stack — and its failure goes to the band. A
 //! dialog-borne command draws its refusal inside the dialog, which stays open.
