@@ -98,9 +98,10 @@ pub fn set_v2(on: bool) {
 /// For the v1 shell, which draws the redesigned appbar when this is on. Read
 /// rather than fetched: `/` is the one place the preview is resolved, and a
 /// second fetch per page would put a frame of the wrong bar in front of every v1
-/// route. Not reactive either — a route reads it when it draws, so a reader who
-/// ticks the preview in Settings sees the bar change on the next route drawn
-/// after `/`, which is where they go to see the new home anyway.
+/// route. Not reactive either, and nothing needs it to be. A fresh document
+/// gets the marker from `index.html`, which restores the answer `/` last
+/// recorded. Saving the preview in Settings navigates straight to `/`, which
+/// records it again before any other route is drawn.
 pub fn is_v2() -> bool {
     document()
         .document_element()
