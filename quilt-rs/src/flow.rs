@@ -11,6 +11,8 @@ mod create_package;
 mod install_package;
 mod install_paths;
 mod list_revisions;
+#[cfg(test)]
+mod older_revision_tests;
 mod publish;
 mod pull;
 mod pull_outcome;
