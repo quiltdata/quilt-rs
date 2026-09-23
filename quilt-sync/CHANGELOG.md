@@ -39,6 +39,7 @@
 - **Refresh** on the screen a `quilt+s3://` link opens on, while it installs, no longer opens the link's file a second time: there is nothing on that screen to refresh, so the button is unavailable. Going **Back** from the package that screen takes you to, or from Settings if you leave it that way, no longer returns to it and opens the file again either (<https://github.com/quiltdata/quilt-rs/pull/988>)
 - A screen that fails to load shows one top bar, not two. Settings and the screen a `quilt+s3://` link opens on drew the error page's own bar under theirs (<https://github.com/quiltdata/quilt-rs/pull/988>)
 - Downloading a package's files no longer replaces a file of your own that is already at the same place in the package folder. If you had created a file there and not yet committed it, the download wrote the remote file over it and your file was lost; now the download stops with "A local file is already at …" naming it, and your file is left as it was (<https://github.com/quiltdata/quilt-rs/pull/986>)
+- A package with more than 1000 files now lists its first 1000 in path order. It used to fill the list with changed files first and drop others that sort before them, so the list skipped around the package (<https://github.com/quiltdata/quilt-rs/pull/992>)
 
 ### quilt-rs
 
