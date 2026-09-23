@@ -381,8 +381,8 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
     Flip a radio and the caption and the download action answer together. \
     Click a trigger: the surface hangs leftwards over the file list, which is \
     the only direction the page has for it. In the list a published revision \
-    wears a cloud and links to the catalog; the unsent one wears the slashed \
-    cloud. \
+    wears a cloud and ends in an icon that opens the catalog; the unsent one \
+    wears the slashed cloud and no icon. \
     \
     Unresolved: `Replace mine with the published one` does not fit 280px and \
     truncates.";

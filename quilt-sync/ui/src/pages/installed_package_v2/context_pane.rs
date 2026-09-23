@@ -463,7 +463,15 @@ mod tests {
             .query_selector(&format!("a[href=\"{PUBLISHED_URL}\"]"))
             .unwrap()
             .expect("the published row links to its exact revision");
-        assert!(link.text_content().unwrap_or_default().contains("Sent"));
+        assert_eq!(
+            link.get_attribute("aria-label").as_deref(),
+            Some("Open in catalog")
+        );
+        let sent = element_saying(&surface, "\u{201c}Sent\u{201d}");
+        assert!(
+            sent.closest("a").unwrap().is_none(),
+            "the message is text beside the link, not inside it"
+        );
         assert!(
             surface
                 .text_content()
@@ -512,7 +520,7 @@ mod tests {
 
         let before = web_sys::window().unwrap().location().href().unwrap();
         surface(&el)
-            .query_selector("a")
+            .query_selector("[aria-label='Open in catalog']")
             .unwrap()
             .expect("the published row's link")
             .unchecked_into::<web_sys::HtmlElement>()

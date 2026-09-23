@@ -52,34 +52,6 @@
   font-size: var(--q-text-body);
 }
 
-/* A link, and styled as one. The row is not: the time beside the message is when
- * *this copy* obtained the revision, which is not a fact the catalog holds. */
-.link {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--q-text-body);
-  color: var(--q-fgColor-accent);
-  text-decoration: none;
-}
-
-/* The placeholder keeps its italics and takes the link colour: two classes beat
- * the one that greys it, so an unnamed revision still reads as reachable. */
-.link.empty {
-  color: var(--q-fgColor-accent);
-}
-
-.link:hover {
-  text-decoration: underline;
-}
-
-.link:focus-visible {
-  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
-  outline-offset: var(--q-focus-outlineOffset);
-  border-radius: var(--q-radius);
-}
-
 .empty {
   font-size: var(--q-text-body);
   color: var(--q-fgColor-muted);
@@ -89,4 +61,33 @@
 .when {
   font-size: var(--q-text-body);
   color: var(--q-fgColor-muted);
+}
+
+/* The catalog link. Muted until it is pointed at: it is one action among rows
+ * that are mostly read, and a column of accent glyphs would be the column of
+ * accent links again. `flex: none` so an ellipsising message gives up its width
+ * first and the icon is never pushed out of a 280px pane; the `2px` sits it on
+ * the message's line, as `.glyph` does. */
+.open {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  color: var(--q-fgColor-muted);
+}
+
+.open svg {
+  width: 16px;
+  height: 16px;
+}
+
+.open:hover {
+  color: var(--q-fgColor-accent);
+}
+
+.open:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+  border-radius: var(--q-radius);
 }
