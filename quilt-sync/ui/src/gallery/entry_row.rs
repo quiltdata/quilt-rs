@@ -4,6 +4,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
+use crate::differs_caption;
 use crate::kit::EntryAction;
 use crate::kit::EntryRow;
 use crate::kit::EntrySelection;
@@ -150,6 +151,7 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
                     action=open("notes/ernest-thread.md", opened)
                     actions=menu()
                 />
+                {differs_caption(1)}
             </Cell>
             <Cell full=true label="long name — truncates, whole value in the title">
                 <EntryRow

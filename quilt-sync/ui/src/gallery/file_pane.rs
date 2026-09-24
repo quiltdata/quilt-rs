@@ -99,6 +99,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
+use crate::differs_caption;
 use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
@@ -125,8 +126,9 @@ use quilt_sync_ui::util::format_size;
 
 /// The two files the resolve fixture has differing between the revisions. Both
 /// are local and both are in the first screen of the list, because a mark the
-/// reader has to scroll to proves nothing about the marking.
-const MARKED: &[&str] = &[
+/// reader has to scroll to proves nothing about the marking. The context pane's
+/// resolve scenes count this same list, so the sentence describes these rows.
+pub const MARKED: &[&str] = &[
     "README.md",
     "investigations/2026-09-15-installed-package-page/design-01.md",
 ];
@@ -1220,6 +1222,7 @@ pub fn FilePaneScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
                 {pane(Pane { marked: MARKED, ..Pane::new("fp-marked") })}
+                {differs_caption(MARKED.len())}
             </Cell>
             <Cell full=true label="Keeping → the whole package: no boxes, no select-all, no footer">
                 {pane(Pane { whole: true, ..Pane::new("fp-whole") })}
@@ -1258,9 +1261,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="both confirms, opened here directly — `Stop keeping` is also on every row's menu">
                 <div class="g-inline">
                     <Button on_click=move |_| keeping.open.set(true)>"Stop keeping"</Button>
-                    <Button on_click=move |_| replacing.set(true)>
-                        "Replace mine with the published one"
-                    </Button>
+                    <Button on_click=move |_| replacing.set(true)>"Replace mine"</Button>
                 </div>
                 {stop_keeping(keeping)}
                 {replace_mine(replacing)}

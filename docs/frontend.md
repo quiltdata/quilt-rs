@@ -214,7 +214,7 @@ Routes are defined in `main.rs` using leptos\_router:
 | `/` | `Home` | |
 | `/main` | `MainPage` | |
 | `/installed-packages-list` | `InstalledPackagesList` | |
-| `/installed-package` | `InstalledPackage` | `namespace`, `filter` |
+| `/installed-package` | `InstalledPackage` | `namespace`, `filter`, `resolve` (`1` opens the v2 page's resolve mode) |
 | `/commit` | `Commit` | `namespace` |
 | `/merge` | `Merge` | `namespace` |
 | `/login` | `Login` | `host`, `back` |

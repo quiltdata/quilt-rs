@@ -7,12 +7,17 @@
 //! manufactures a state the page does not know, which is worse than a page that
 //! says less.
 //!
-//! # The sentence is the UI's, never the backend's
+//! # The sentence is the UI's; a detail may be the backend's
 //!
 //! `words` is fixed copy the caller owns. A `Result<_, String>` error text is not
 //! a word from the vocabulary: it cannot be reviewed, it cannot be changed
-//! without a backend release, and no mechanical test can see it. The backend's
-//! text is for the log.
+//! without a backend release, and no mechanical test can see it. So it never
+//! stands in for the sentence, and by default it is for the log.
+//!
+//! Where the spec calls for the reason to be shown, a caller passes it as
+//! `detail`, as resolve mode does for a refused comparison. It is drawn under
+//! the sentence, muted, and before the button: the reader learns what failed
+//! and why, then what to do about it.
 //!
 //! # `Try again` is not a prop
 //!
@@ -50,6 +55,10 @@ pub fn LoadFailure(
     /// What failed, in the UI's own words — `Could not load your revisions.`
     #[prop(into)]
     words: String,
+    /// Why, when the spec calls for the reason to be shown — resolve mode's
+    /// refused comparison. Drawn muted, beneath `words` and above the button.
+    #[prop(optional, into)]
+    detail: Option<String>,
     /// Runs the read that failed. Required: a failure with no way out is a dead
     /// end, and the surface that has one cannot be recovered without a reload.
     on_retry: Callback<()>,
@@ -68,7 +77,10 @@ pub fn LoadFailure(
 
     view! {
         <div class=class>
-            <p class=style::words>{words}</p>
+            <div class=style::text>
+                <p class=style::words>{words}</p>
+                {detail.map(|text| view! { <p class=style::detail>{text}</p> })}
+            </div>
             <Button on_click=move |_| on_retry.run(())>"Try again"</Button>
         </div>
     }

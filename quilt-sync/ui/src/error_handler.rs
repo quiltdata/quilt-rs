@@ -5,6 +5,7 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::components::buttons;
 use crate::components::{Layout, Notification};
+use crate::kit::error_text::ErrorResponse;
 
 /// Handle a command error that left the surface with nothing to render.
 ///
@@ -106,14 +107,6 @@ fn current_path_and_query() -> String {
             Some(format!("{path}{search}"))
         })
         .unwrap_or_default()
-}
-
-#[derive(serde::Deserialize)]
-struct ErrorResponse {
-    kind: String,
-    message: String,
-    #[serde(default)]
-    host: Option<String>,
 }
 
 #[cfg(test)]

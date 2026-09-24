@@ -1,0 +1,39 @@
+/* The same column as the ordinary pane (`context_pane.module.scss`), since
+ * the mode swaps it whole. */
+.root {
+  width: 280px;
+  flex: none;
+}
+
+@container (max-width: 800px) {
+  .root {
+    width: 100%;
+  }
+}
+
+/* The two whole-revision choices, one above the other at the pane's width,
+ * each with its hint beneath it. Proximity does the pairing: a hint sits
+ * `space-1` under its own button and `space-6` above the next, so it cannot
+ * read as belonging to both. */
+.choices {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--q-space-6);
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--q-space-1);
+}
+
+/* Keeping's caption (`choice_group.module.scss`), and muted even when the
+ * button is sealed: the hint still says what the choice would do. */
+.hint {
+  margin: 0;
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-fgColor-muted);
+}

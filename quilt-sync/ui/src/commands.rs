@@ -398,6 +398,29 @@ pub struct PackageContextData {
     /// is `get_revision_history`, fetched on open.
     pub revision_count: usize,
     pub keeping: KeepingData,
+    /// The resolve comparison; `Some` only while the package is diverged.
+    pub resolve: Option<ResolveData>,
+}
+
+/// What each resolve choice would cost, or why that cannot be read.
+/// Mirrors `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ResolveData {
+    Compared {
+        published_message: Option<String>,
+        /// Logical keys that differ, sorted and uncapped: the file pane's marks.
+        differing: Vec<String>,
+        unpublished: usize,
+        uncommitted: usize,
+    },
+    Refused {
+        reason: String,
+    },
 }
 
 /// Which files this copy keeps. Mirrors
@@ -535,6 +558,9 @@ pub async fn get_revision_history(namespace: String) -> Result<Vec<RevisionHisto
 }
 
 /// Install the backlog the page read listed. Keeping's download action.
+///
+/// The command returns the paths it skipped because the remote no longer holds
+/// their bytes. Dropped here until the v2 files pane has a place to show them.
 pub async fn package_download_backlog(namespace: String, paths: Vec<String>) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -542,7 +568,9 @@ pub async fn package_download_backlog(namespace: String, paths: Vec<String>) -> 
         namespace: String,
         paths: Vec<String>,
     }
-    tauri::invoke("package_download_backlog", &Args { namespace, paths }).await
+    tauri::invoke::<_, Vec<String>>("package_download_backlog", &Args { namespace, paths })
+        .await
+        .map(|_skipped| ())
 }
 
 pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
@@ -1666,8 +1694,8 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, KeepingScope, PackageContextData,
-        PackageItemData, PullOutcome, RevisionHistoryRow, RolesData, ViolationField, WorkflowInfo,
-        WorkflowIntent,
+        PackageItemData, PullOutcome, ResolveData, RevisionHistoryRow, RolesData, ViolationField,
+        WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
 
@@ -1695,7 +1723,7 @@ mod tests {
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]}}"#,
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
         )
         .unwrap();
 
@@ -1709,6 +1737,43 @@ mod tests {
         assert_eq!(context.keeping.scope, KeepingScope::EntirePackage);
         assert_eq!(context.keeping.total, 56);
         assert_eq!(context.keeping.remote_only, ["plate/b.csv", "plate/c.csv"]);
+        assert_eq!(context.resolve, None);
+    }
+
+    /// Anchored identically in the backend's
+    /// `resolve_compared_wire_form_is_verbatim` test.
+    #[test]
+    fn resolve_compared_wire_form_is_verbatim() {
+        let resolve = serde_json::from_str::<ResolveData>(
+            r#"{"kind":"compared","publishedMessage":"Add Caihong folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve,
+            ResolveData::Compared {
+                published_message: Some("Add Caihong folder-upload note".to_string()),
+                differing: vec!["plate/a.csv".to_string(), "plate/b.csv".to_string()],
+                unpublished: 2,
+                uncommitted: 1,
+            }
+        );
+    }
+
+    /// Anchored identically in the backend's
+    /// `resolve_refused_wire_form_is_verbatim` test.
+    #[test]
+    fn resolve_refused_wire_form_is_verbatim() {
+        let resolve =
+            serde_json::from_str::<ResolveData>(r#"{"kind":"refused","reason":"AccessDenied"}"#)
+                .unwrap();
+
+        assert_eq!(
+            resolve,
+            ResolveData::Refused {
+                reason: "AccessDenied".to_string(),
+            }
+        );
     }
 
     /// Anchored identically in the backend's

@@ -1,8 +1,9 @@
 //! The first complete slice of the package context pane.
 //!
 //! One current revision, the bucket it belongs to, the revisions this copy
-//! holds, loaded when their popover opens, and what this copy keeps. Resolution
-//! controls arrive with the data and actions that can make them truthful.
+//! holds, loaded when their popover opens, and what this copy keeps. This is
+//! the pane's ordinary mode; the page swaps it whole for `resolve.rs`'s
+//! `ResolvePane` while the resolve mode is open.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -252,6 +253,7 @@ mod tests {
                 total: 1,
                 remote_only: Vec::new(),
             },
+            resolve: None,
         }
     }
 

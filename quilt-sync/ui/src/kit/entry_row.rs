@@ -123,6 +123,10 @@ pub enum EntryAction {
 pub const DIFFERS_TITLE: &str =
     "Your version of this file and the published version have different contents.";
 
+/// The id of the resolve pane's sentence counting the marked rows, which each
+/// marked row names as its description.
+pub const DIFFERS_ID: &str = "resolve-differing";
+
 #[component]
 pub fn EntryRow(
     /// What to show. The caller decides whether that is the whole path or the
@@ -240,6 +244,7 @@ pub fn EntryRow(
             // keyboard-reachable and is absent on touch, which is why the pane
             // also says it once in prose for the rows as a set.
             title=differs.then_some(DIFFERS_TITLE)
+            aria-describedby=differs.then_some(DIFFERS_ID)
         >
             {main}
             {if actions.is_empty() {
@@ -408,6 +413,31 @@ mod tests {
             opened.get_untracked(),
             0,
             "opening the menu did not open the file"
+        );
+    }
+
+    /// The title is not keyboard-reachable, so a marked row also points at the
+    /// resolve pane's sentence.
+    #[wasm_bindgen_test]
+    fn a_marked_row_is_described_by_the_pane_s_sentence() {
+        let marked = mount(|| view! { <EntryRow name="plate/a.csv" size="1 KB" differs=true /> });
+        let row = marked
+            .query_selector("[aria-describedby]")
+            .unwrap()
+            .expect("a described row");
+        assert_eq!(
+            row.get_attribute("aria-describedby").as_deref(),
+            Some(DIFFERS_ID)
+        );
+
+        let plain = mount(|| view! { <EntryRow name="plate/b.csv" size="1 KB" /> });
+        assert!(
+            plain
+                .query_selector("[aria-describedby]")
+                .unwrap()
+                .is_none(),
+            "markup was {}",
+            plain.inner_html()
         );
     }
 }

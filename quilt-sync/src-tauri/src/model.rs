@@ -143,6 +143,15 @@ pub trait QuiltModel {
             .collect())
     }
 
+    /// This copy's revision against the published `latest`, read fresh.
+    async fn get_installed_package_resolve_comparison(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<quilt::flow::ResolveComparison, Error> {
+        Ok(package.resolve_comparison(lineage).await?)
+    }
+
     async fn get_installed_package_records(
         &self,
         package: &quilt::InstalledPackage,
@@ -193,7 +202,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         paths: &[PathBuf],
-    ) -> Result<quilt::lineage::LineagePaths, Error> {
+    ) -> Result<quilt::flow::InstallPathsReport, Error> {
         Ok(package.install_paths(paths).await?)
     }
 

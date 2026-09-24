@@ -19,6 +19,7 @@ use crate::io::manifest::RowsStream;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Manifest;
@@ -28,15 +29,54 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+/// What [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths)
+/// did: the paths the copy now tracks, and the requested ones it left out.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InstallPathsReport {
+    /// Every path the lineage tracks after the install, as before.
+    pub paths: LineagePaths,
+    /// Requested paths whose bytes the remote no longer holds, so they were
+    /// neither placed nor tracked: a bare `physical_key` on an unversioned
+    /// bucket whose object a later revision replaced. Empty when every
+    /// requested path was installed.
+    pub skipped: Vec<PathBuf>,
+}
+
+/// Fetches a row's object into the store, but only if the bytes are the row's.
+/// Returns `false`, and leaves the store as it was, when they are not.
+///
+/// The store is content-addressed by the row's hash and trusted on every later
+/// read, so what lands there must be verified first: a `physical_key` without a
+/// `versionId` names whatever the object is *now*, and once a later revision has
+/// replaced it the remote returns that revision's bytes. Filed unverified they
+/// read as a local modification nobody made, and a retry would take them from
+/// the store as a cache hit. So the fetch lands in this apply's staging
+/// directory and moves into the store only once it hashes to the row.
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     host: Option<&Host>,
     object_dest: &PathBuf,
-    uri: &S3Uri,
-) -> Res {
-    let stream = remote.get_object_stream(host, uri).await?;
-    storage.write_byte_stream(object_dest, stream.body).await
+    row: &ManifestRow,
+    run_staging: &Path,
+) -> Res<bool> {
+    let uri: S3Uri = row.physical_key.parse()?;
+    let stream = remote.get_object_stream(host, &uri).await?;
+    let fetched = run_staging.join(uuid::Uuid::new_v4().to_string());
+    storage.write_byte_stream(&fetched, stream.body).await?;
+    if refresh_hash(storage, &fetched, row.clone())
+        .await?
+        .is_some()
+    {
+        debug!(
+            "❌ Fetched bytes for {} do not match its row",
+            row.logical_key.display()
+        );
+        storage.remove_file(&fetched).await?;
+        return Ok(false);
+    }
+    storage.rename(&fetched, object_dest).await?;
+    Ok(true)
 }
 
 /// Copies an object out of the store into this apply's staging directory,
@@ -214,6 +254,21 @@ pub(crate) enum Protect<'a> {
     Absent,
 }
 
+/// What an apply does with a row whose fetched bytes do not hash to it — the
+/// remote no longer holds that revision's content, as an unversioned bucket
+/// allows once a later put replaces the key.
+pub(crate) enum OnMismatch {
+    /// Fail the whole apply with [`InstallPathError::ContentMismatch`] and place
+    /// nothing. The reconcile needs this: it applies a whole revision, and the
+    /// lineage it saves on success names the new base, so a path it left out
+    /// would be recorded at a row its working file does not hold.
+    Refuse,
+    /// Leave the row out, install every row that verifies, and report the ones
+    /// left out. The user's download: an unversioned bucket should degrade to
+    /// the files it still holds rather than fail them all.
+    Skip,
+}
+
 /// Refuses the whole call if any requested path is already installed.
 ///
 /// The check reads `lineage.paths`, not the working tree: "already installed"
@@ -263,6 +318,11 @@ async fn refuse_existing_working_files(
 /// any of them is already installed or already has a file in the working
 /// folder.
 ///
+/// Returns the new lineage and the paths it **skipped**: rows whose bytes the
+/// remote no longer holds (see [`OnMismatch::Skip`]). A skipped path is neither
+/// placed nor tracked, and nothing of it enters the object store, so asking for
+/// it again fetches afresh.
+///
 /// This is the verb a user reaches, directly or through
 /// [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths).
 /// Writing over a path someone is editing loses work that was never committed
@@ -281,7 +341,7 @@ pub async fn install_paths(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entries_paths: &[&PathBuf],
-) -> Res<PackageLineage> {
+) -> Res<(PackageLineage, Vec<PathBuf>)> {
     refuse_already_installed(&lineage, entries_paths)?;
     refuse_existing_working_files(storage, &working_dir, entries_paths).await?;
     // Checked up front so a refusal fetches nothing, and again at placement
@@ -296,6 +356,7 @@ pub async fn install_paths(
         remote,
         entries_paths,
         &Protect::Absent,
+        OnMismatch::Skip,
     )
     .await
 }
@@ -338,10 +399,11 @@ pub(crate) async fn install_paths_over(
     remote: &impl Remote,
     entries_paths: &[&PathBuf],
     protect: &Protect<'_>,
-) -> Res<PackageLineage> {
+    on_mismatch: OnMismatch,
+) -> Res<(PackageLineage, Vec<PathBuf>)> {
     if entries_paths.is_empty() {
         info!("No paths to install");
-        return Ok(lineage);
+        return Ok((lineage, Vec::new()));
     }
 
     let remote_uri = lineage.remote()?.clone();
@@ -364,6 +426,7 @@ pub(crate) async fn install_paths_over(
     //   add installed package entry:
     //     remote: RemoteManifest
     let mut entries = BTreeMap::new();
+    let mut skipped = Vec::new();
     // Outside the tree the status walk reads: a staging file beside the working
     // file would be reported as a new file, committed if a commit landed in the
     // window, and left as a permanent stray by a kill. One subdirectory per
@@ -393,16 +456,29 @@ pub(crate) async fn install_paths_over(
 
             if storage.exists(&object_dest).await {
                 debug!("✔️ Object already in cache: {}", object_dest.display());
-            } else {
-                cache_immutable_object(
-                    storage,
-                    remote,
-                    remote_uri.origin.as_ref(),
-                    &object_dest,
-                    &row.physical_key.parse()?,
-                )
-                .await?;
+            } else if cache_immutable_object(
+                storage,
+                remote,
+                remote_uri.origin.as_ref(),
+                &object_dest,
+                row,
+                &run_staging,
+            )
+            .await?
+            {
                 debug!("✔️ Cached object: {}", object_dest.display());
+            } else {
+                match on_mismatch {
+                    OnMismatch::Refuse => {
+                        return Err(Error::InstallPath(InstallPathError::ContentMismatch(
+                            row.logical_key.clone(),
+                        )));
+                    }
+                    OnMismatch::Skip => {
+                        skipped.push(row.logical_key.clone());
+                        continue;
+                    }
+                }
             }
 
             // Diagnostic only: the `file://` URL the row *would* carry if rows were
@@ -458,8 +534,12 @@ pub(crate) async fn install_paths_over(
     let dest_dir = paths.installed_manifests_dir(&namespace);
     build_manifest_from_rows_stream(storage, dest_dir, manifest.header.clone(), stream).await?;
 
-    info!("✔️ Successfully installed {} paths", entries_paths.len());
-    Ok(lineage)
+    info!(
+        "✔️ Installed {} paths, skipped {}",
+        entries_paths.len() - skipped.len(),
+        skipped.len()
+    );
+    Ok((lineage, skipped))
 }
 
 #[cfg(test)]
@@ -478,6 +558,13 @@ mod tests {
     use crate::lineage::Home;
     use crate::paths;
     use quilt_uri::ManifestUri;
+
+    /// The SHA-256 multihash of `body`. A fetched object is verified against
+    /// its row, so a row the test downloads must name its body's real hash.
+    fn sha256_of(body: &[u8]) -> multihash::Multihash<256> {
+        use sha2::Digest;
+        multihash::Multihash::wrap(0x12, &sha2::Sha256::digest(body)).unwrap()
+    }
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
@@ -523,7 +610,7 @@ mod tests {
         // We deal with cached file, so remote is "empty" and doesn't make any HTTP calls,
         // since it doesn't throw "key not found"
         let remote = MockRemote::default();
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
@@ -577,8 +664,8 @@ mod tests {
             .put_object(None, &remote_object_uri, Vec::new())
             .await?;
 
-        // Create the manifest with a single remote row with a random hash
-        let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x12, b"anything")?;
+        // Create the manifest with a single remote row naming that object's hash
+        let hash = sha256_of(b"");
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
@@ -592,7 +679,7 @@ mod tests {
         assert!(lineage.paths.is_empty());
 
         // Perform the installation
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
@@ -640,7 +727,7 @@ mod tests {
         let row_2 = ManifestRow {
             logical_key: PathBuf::from("b/b"),
             physical_key: "s3://bucket/foo/bar".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"two")?.try_into()?,
+            hash: sha256_of(b"two").try_into()?,
             ..ManifestRow::default()
         };
         let row_3 = ManifestRow {
@@ -652,7 +739,7 @@ mod tests {
         let row_4 = ManifestRow {
             logical_key: PathBuf::from("d/d/d/d"),
             physical_key: "s3://bucket/foo/baz".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"four")?.try_into()?,
+            hash: sha256_of(b"four").try_into()?,
             ..ManifestRow::default()
         };
         let mut manifest = Manifest::default();
@@ -677,11 +764,11 @@ mod tests {
         let remote = MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.physical_key)?;
         remote
-            .put_object(None, &remote_object_uri_2, Vec::new())
+            .put_object(None, &remote_object_uri_2, b"two".to_vec())
             .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.physical_key)?;
         remote
-            .put_object(None, &remote_object_uri_4, Vec::new())
+            .put_object(None, &remote_object_uri_4, b"four".to_vec())
             .await?;
 
         let entries_paths = vec![
@@ -694,7 +781,7 @@ mod tests {
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
 
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
@@ -781,7 +868,8 @@ mod tests {
         for i in 0..2048 {
             let path = PathBuf::from(format!("path_{i}.txt"));
             let place = format!("s3://bucket/path_{i}.txt");
-            let hash = multihash::Multihash::wrap(0x12, format!("hash_{i}").as_bytes())?;
+            let body = format!("body_{i}").into_bytes();
+            let hash = sha256_of(&body);
 
             let row = ManifestRow {
                 logical_key: path.clone(),
@@ -795,7 +883,7 @@ mod tests {
 
             // Simulate remote objects
             let remote_uri = S3Uri::from_str(&place)?;
-            remote.put_object(None, &remote_uri, Vec::new()).await?;
+            remote.put_object(None, &remote_uri, body).await?;
         }
 
         // Create references for the function call
@@ -809,7 +897,7 @@ mod tests {
 
         assert!(lineage.paths.is_empty());
 
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,

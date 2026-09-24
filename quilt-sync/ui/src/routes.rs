@@ -14,6 +14,18 @@
 
 use quilt_uri::Namespace;
 
+/// Flip locally to work on the rebuilt package screen. Never commit it true.
+///
+/// An in-code flag rather than a setting, because the screen is not ready to be
+/// offered: a row in Settings tells a reader the unfinished page exists, and a
+/// stored value outlives the build that wrote it. The one cost is that a flag in
+/// the source can be committed on by accident, which `main.rs`'s
+/// `the_unfinished_package_page_is_off` is the guard against.
+///
+/// Here in the library rather than in the binary that routes on it, so the main
+/// page's queue can send a Resolve to the page `/installed-package` renders.
+pub const UNFINISHED_PACKAGE_PAGE: bool = false;
+
 /// The installed-package screen for one package.
 ///
 /// `namespace` goes in the query string because `installed_package` reads it
@@ -28,6 +40,12 @@ pub fn package_page_href(namespace: &Namespace) -> String {
     let namespace = namespace.to_string();
     let namespace = urlencoding::encode(&namespace);
     format!("/installed-package?namespace={namespace}&filter=unmodified")
+}
+
+/// The package screen with the resolve mode asked for. The plain address
+/// plus `resolve=1`, so leaving is exactly dropping the parameter.
+pub fn resolve_href(namespace: &Namespace) -> String {
+    format!("{}&resolve=1", package_page_href(namespace))
 }
 
 /// Where the [Sign in] button goes. `pages/login.rs` reads both parameters from
@@ -88,6 +106,20 @@ mod tests {
         );
         assert_eq!(commit_href(&ns("org/pkg")), "/commit?namespace=org%2Fpkg");
         assert_eq!(merge_href(&ns("org/pkg")), "/merge?namespace=org%2Fpkg");
+    }
+
+    /// The mode is the plain address plus one parameter, so leaving it is
+    /// exactly dropping that parameter; the namespace stays one parameter.
+    #[test]
+    fn the_resolve_mode_is_the_plain_address_plus_one_parameter() {
+        assert_eq!(
+            resolve_href(&ns("org/pkg")),
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"
+        );
+        assert_eq!(
+            resolve_href(&ns("team/a&b")),
+            "/installed-package?namespace=team%2Fa%26b&filter=unmodified&resolve=1"
+        );
     }
 
     /// The defect this module exists for. `&` starts a new parameter and `#` a
