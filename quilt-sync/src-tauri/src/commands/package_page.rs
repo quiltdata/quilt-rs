@@ -319,18 +319,16 @@ fn keeping_data(
     }
 }
 
-/// The gate: the status the header shows decides, not the on-disk snapshot,
-/// whose `latest_hash` is stale in exactly the case Resolve exists for. A
-/// blocked status on a snapshot that says diverged refuses without comparing,
-/// because the uncommitted count needs the status. A failed comparison
-/// refuses in the pane and never fails the page read.
+/// The gate: the header's status decides, not the snapshot, whose `latest_hash` is stale here.
+/// A blocked status on a snapshot that says diverged refuses without comparing.
+/// A failed comparison refuses in the pane and never fails the page read.
 async fn resolve_for_page(
     m: &impl model::QuiltModel,
     installed: &quilt::InstalledPackage,
     lineage: &quilt::lineage::PackageLineage,
-    read: Option<&Result<quilt::lineage::InstalledPackageStatus, String>>,
+    status_read: Option<&Result<quilt::lineage::InstalledPackageStatus, String>>,
 ) -> Option<ResolveData> {
-    match read? {
+    match status_read? {
         Ok(status) if status.upstream_state == UpstreamState::Diverged => Some(
             match m
                 .get_installed_package_resolve_comparison(installed, lineage)
@@ -363,6 +361,7 @@ fn resolve_data(
         .iter()
         .map(|key| key.display().to_string())
         .collect();
+    // `PathBuf` orders by component, so `a-b` and `a/b` swap once they are strings.
     differing.sort();
     ResolveData::Compared {
         published_message: comparison.published_message,
@@ -467,7 +466,7 @@ async fn get_package_page_data_from_model(
 
     let mut role_switch = None;
     // The status, or why a blocked read refused; `None` when it was not asked.
-    let mut read: Option<Result<quilt::lineage::InstalledPackageStatus, String>> = None;
+    let mut status_read: Option<Result<quilt::lineage::InstalledPackageStatus, String>> = None;
     let state = if misconfigured_remote(&lineage) {
         // The same predicate both main-page phases apply before resolving, for
         // the same reason: without a catalog there is nowhere to vend
@@ -502,11 +501,11 @@ async fn get_package_page_data_from_model(
                         Some(status.changes.len()),
                     )
                 };
-                read = Some(Ok(status));
+                status_read = Some(Ok(status));
                 state
             }
             Err(err) => {
-                read = Some(Err(err.to_frontend_string()));
+                status_read = Some(Err(err.to_frontend_string()));
                 match blocked_state(&err) {
                     // The one state whose remedy is worth a round trip, and the
                     // only place this function goes back to the network.
@@ -523,13 +522,13 @@ async fn get_package_page_data_from_model(
     };
 
     // A blocked read counts from tracking alone.
-    let status = read.as_ref().and_then(|r| r.as_ref().ok());
+    let status = status_read.as_ref().and_then(|r| r.as_ref().ok());
     let keeping = keeping_data(
         &lineage,
         &m.get_installed_package_keys(&installed, &lineage).await?,
         status.map(|s| &s.changes),
     );
-    let resolve = resolve_for_page(m, &installed, &lineage, read.as_ref()).await;
+    let resolve = resolve_for_page(m, &installed, &lineage, status_read.as_ref()).await;
     let context = package_context_data(
         namespace,
         &lineage,

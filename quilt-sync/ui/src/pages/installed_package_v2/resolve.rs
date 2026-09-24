@@ -124,6 +124,11 @@ pub fn ResolvePane(
     commands: ResolveCommands,
 ) -> impl IntoView {
     let count = move || marks.with(|m| m.as_ref().map_or(0, |m| m.len()));
+    let yours = view! {
+        <PaneSection nested=true label="Yours">
+            <RevisionRow message=revision.message.unwrap_or_default() at=revision.obtained_at />
+        </PaneSection>
+    };
     let (published, extents) = match resolve {
         commands::ResolveData::Compared {
             published_message,
@@ -133,12 +138,7 @@ pub fn ResolvePane(
         } => (
             view! {
                 <p id=DIFFERS_ID>{move || differs_sentence(count())}</p>
-                <PaneSection nested=true label="Yours">
-                    <RevisionRow
-                        message=revision.message.clone().unwrap_or_default()
-                        at=revision.obtained_at
-                    />
-                </PaneSection>
+                {yours}
                 <PaneSection nested=true label="Published">
                     // The kit draws `No message` for an empty one; no time, since
                     // this copy has not obtained it.
@@ -150,12 +150,7 @@ pub fn ResolvePane(
         ),
         commands::ResolveData::Refused { reason } => (
             view! {
-                <PaneSection nested=true label="Yours">
-                    <RevisionRow
-                        message=revision.message.clone().unwrap_or_default()
-                        at=revision.obtained_at
-                    />
-                </PaneSection>
+                {yours}
                 <LoadFailure
                     words="Could not compare the revisions."
                     on_retry=Callback::new(move |()| w.reload.notify())
@@ -180,12 +175,11 @@ pub fn ResolvePane(
     let confirmation = extents.map(|(unpublished, uncommitted)| {
         // Read once: the dialog's sentence is fixed while it is drawn, and
         // the set does not change while the mode is open on one payload.
-        let differing = marks.with_untracked(|m| m.as_ref().map_or(0, |m| m.len()));
         replace_confirmation(
             target,
             w,
             commands.reset,
-            consequence(unpublished, differing, uncommitted),
+            consequence(unpublished, untrack(count), uncommitted),
         )
     });
 
@@ -318,7 +312,7 @@ mod tests {
     use crate::commands::{CurrentRevisionData, ResolveData};
     use crate::kit::{BannerVariant, DIFFERS_ID};
     use crate::pages::installed_package_v2::{Outcome, Wiring};
-    use crate::test_support::{element_saying, mount, sleep_ms};
+    use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos::prelude::*;
     use quilt_uri::{Namespace, S3PackageUri};
     use std::cell::{Cell, RefCell};
@@ -481,16 +475,6 @@ mod tests {
         })
     }
 
-    /// The button whose text is `label`, as `header.rs`'s helper finds one.
-    fn button(el: &web_sys::Element, label: &str) -> web_sys::HtmlButtonElement {
-        let all = el.query_selector_all("button").unwrap();
-        (0..all.length())
-            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
-            .find(|b| b.text_content().unwrap_or_default().trim() == label)
-            .unwrap_or_else(|| panic!("no button says {label:?}; markup was {}", el.inner_html()))
-            .unchecked_into()
-    }
-
     const CERTIFY: &str = "Make mine the shared one";
     const REPLACE: &str = "Replace mine with the published one";
 
@@ -530,7 +514,7 @@ mod tests {
         );
 
         for label in [CERTIFY, REPLACE] {
-            assert!(!button(&el, label).disabled(), "{label} is enabled");
+            assert!(!button_saying(&el, label).disabled(), "{label} is enabled");
         }
     }
 
@@ -582,10 +566,10 @@ mod tests {
             "markup was {}",
             el.inner_html()
         );
-        button(&el, "Try again");
+        button_saying(&el, "Try again");
         assert!(!w.busy.get_untracked());
         for label in [CERTIFY, REPLACE] {
-            assert!(button(&el, label).disabled(), "{label} is disabled");
+            assert!(button_saying(&el, label).disabled(), "{label} is disabled");
         }
     }
 
@@ -617,7 +601,7 @@ mod tests {
             }
         });
         leptos::task::tick().await;
-        button(&el, "Try again").click();
+        button_saying(&el, "Try again").click();
         leptos::task::tick().await;
         assert_eq!(RELOADS.get(), 1);
     }
@@ -629,7 +613,7 @@ mod tests {
         w.busy.set(true);
         leptos::task::tick().await;
         for label in [CERTIFY, REPLACE] {
-            assert!(button(&el, label).disabled(), "{label} is disabled");
+            assert!(button_saying(&el, label).disabled(), "{label} is disabled");
         }
     }
 
@@ -638,7 +622,7 @@ mod tests {
         let el = pane(compared(0, 0), marks(&["plate/a.csv"]), Wiring::new());
         for label in [CERTIFY, REPLACE] {
             assert!(
-                button(&el, label).has_attribute("data-wrap"),
+                button_saying(&el, label).has_attribute("data-wrap"),
                 "{label} wraps"
             );
         }
@@ -748,7 +732,7 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button(&el, CERTIFY).click();
+        button_saying(&el, CERTIFY).click();
         settle().await;
 
         assert_eq!(CERTIFIED.with_borrow(Clone::clone), vec!["team/dataset"]);
@@ -779,7 +763,7 @@ mod tests {
             with(refuses_certify, resets_ok),
         )
         .await;
-        button(&el, CERTIFY).click();
+        button_saying(&el, CERTIFY).click();
         settle().await;
 
         assert_eq!(
@@ -806,7 +790,7 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button(&el, REPLACE).click();
+        button_saying(&el, REPLACE).click();
         leptos::task::tick().await;
 
         let dialog = open_dialog(&el).expect("the confirmation is open");
@@ -824,7 +808,7 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button(&el, REPLACE).click();
+        button_saying(&el, REPLACE).click();
         leptos::task::tick().await;
 
         let dialog = open_dialog(&el).expect("the confirmation is open");
@@ -846,9 +830,9 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button(&el, REPLACE).click();
+        button_saying(&el, REPLACE).click();
         leptos::task::tick().await;
-        button(&el, "Replace mine").click();
+        button_saying(&el, "Replace mine").click();
         settle().await;
         settle().await;
 
@@ -880,9 +864,9 @@ mod tests {
             with(certifies_ok, refuses_reset),
         )
         .await;
-        button(&el, REPLACE).click();
+        button_saying(&el, REPLACE).click();
         leptos::task::tick().await;
-        button(&el, "Replace mine").click();
+        button_saying(&el, "Replace mine").click();
         settle().await;
 
         let dialog = open_dialog(&el).expect("the confirmation stays open");
@@ -921,14 +905,14 @@ mod tests {
             with(certifies_ok, reset_never),
         )
         .await;
-        button(&el, REPLACE).click();
+        button_saying(&el, REPLACE).click();
         leptos::task::tick().await;
-        button(&el, "Replace mine").click();
+        button_saying(&el, "Replace mine").click();
         settle().await;
 
         assert!(w.busy.get_untracked(), "the page is held");
         for label in [CERTIFY, REPLACE] {
-            assert!(button(&el, label).disabled(), "{label} is disabled");
+            assert!(button_saying(&el, label).disabled(), "{label} is disabled");
         }
     }
 
@@ -946,7 +930,7 @@ mod tests {
         .await;
 
         let dialog = open_dialog(&el).expect("the confirmation is open");
-        let verb = button(&dialog, "Replace mine");
+        let verb = button_saying(&dialog, "Replace mine");
         assert!(
             verb.get_attribute("aria-busy").as_deref() == Some("true") || verb.disabled(),
             "the verb is sealed; markup was {}",

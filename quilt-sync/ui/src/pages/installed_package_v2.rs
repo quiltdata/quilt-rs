@@ -171,9 +171,7 @@ pub struct Dialogs {
     /// the consequence.
     pub undo: RwSignal<bool>,
     pub remove: RwSignal<bool>,
-    /// The resolve mode's *Replace mine with the published one*. Here, not in
-    /// the pane: the reset writes files, the watcher re-reads mid-command, and
-    /// the rebuilt pane must find its confirmation still open.
+    /// Resolve's *Replace mine with the published one*: here, so a re-read mid-reset keeps it open.
     pub replace: RwSignal<bool>,
 }
 
@@ -414,10 +412,8 @@ fn read_page(
 #[component]
 fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     let query = use_query_map();
-    // The address is the only input the page has. Memos, because one route
-    // serves every package and a link from another page swaps the parameter
-    // without remounting, and because the read must not re-run when only
-    // `resolve` changes: the mode opens with no loading state of its own.
+    // The address is the only input, and changes without a remount: one route serves every package.
+    // Memos, so only `namespace` re-runs the read: the mode opens with no loading state.
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
     let asked = Memo::new(move |_| query.read().get("resolve").as_deref() == Some("1"));
 
@@ -698,7 +694,7 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{element_saying, mount, sleep_ms};
+    use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
     use wasm_bindgen::JsCast;
@@ -897,7 +893,10 @@ mod tests {
         // Inside a `Router`, where the page always is.
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())}</Router> }
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+            }
         });
         let aside = el
             .query_selector("aside")
@@ -927,7 +926,10 @@ mod tests {
     fn the_body_carries_the_revision_trigger() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())}</Router> }
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+            }
         });
         let trigger = element_saying(&el, "Revisions you have (1)")
             .closest("button")
@@ -950,7 +952,10 @@ mod tests {
     fn the_body_carries_keeping() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())}</Router> }
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+            }
         });
         let group = el
             .query_selector("[role=radiogroup]")
@@ -1338,18 +1343,6 @@ mod tests {
             .unwrap()
     }
 
-    fn has_button_saying(el: &web_sys::Element, text: &str) -> bool {
-        let all = el.query_selector_all("button").unwrap();
-        (0..all.length()).any(|i| {
-            all.item(i)
-                .unwrap()
-                .text_content()
-                .unwrap_or_default()
-                .trim()
-                == text
-        })
-    }
-
     #[wasm_bindgen_test]
     async fn resolve_1_on_a_diverged_package_opens_the_mode() {
         let el = screen_at(RESOLVE, diverged_read).await;
@@ -1357,7 +1350,9 @@ mod tests {
         element_saying(&el, "Yours");
         element_saying(&el, "Published");
         assert!(
-            !has_button_saying(&el, "Revisions you have (1)"),
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("Revisions you have (1)"),
             "the ordinary pane is swapped out; markup was {}",
             el.inner_html()
         );
@@ -1463,12 +1458,7 @@ mod tests {
             },
         )
         .await;
-        element_saying(&el, "Make mine the shared one")
-            .closest("button")
-            .unwrap()
-            .expect("the certify button")
-            .unchecked_into::<web_sys::HtmlElement>()
-            .click();
+        button_saying(&el, "Make mine the shared one").click();
         sleep_ms(10).await;
 
         move_to(OTHER);

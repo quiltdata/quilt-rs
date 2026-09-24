@@ -155,7 +155,7 @@ pub fn Button(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use crate::test_support::{button_saying, mount};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -361,15 +361,6 @@ mod tests {
             assert!(rule.contains(token), "the rule spends {token}: {rule}");
         }
         assert!(!rule.contains('#'), "tokens only, no literal: {rule}");
-    }
-
-    /// Found by its text, as a reader finds it.
-    fn button_saying(el: &web_sys::Element, label: &str) -> web_sys::Element {
-        let all = el.query_selector_all("button").unwrap();
-        (0..all.length())
-            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
-            .find(|b| b.text_content().unwrap_or_default().trim() == label)
-            .unwrap_or_else(|| panic!("no button says {label:?}; markup was {}", el.inner_html()))
     }
 
     /// Opt-in: every other button keeps one line and the ellipsis.

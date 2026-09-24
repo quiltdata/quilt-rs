@@ -95,8 +95,7 @@
 }
 
 /* ── wrap — opt-in, for a label that must be read whole ─────────────────
- * The button grows downwards: `min-height` above lets it, and no height is set.
- * An attribute rather than a class, so the tests find it by the same name. */
+ * The button grows downwards: `min-height` above lets it, and no height is set. */
 .btn[data-wrap] {
   white-space: normal;
 }

@@ -66,3 +66,13 @@ pub(crate) fn element_saying(root: &web_sys::Element, text: &str) -> web_sys::Ht
         .unwrap_or_else(|| panic!("nothing says {text:?}; markup was {}", root.inner_html()))
         .unchecked_into()
 }
+
+/// The button whose text is exactly these words, as a reader finds it.
+pub(crate) fn button_saying(root: &web_sys::Element, text: &str) -> web_sys::HtmlButtonElement {
+    let all = root.query_selector_all("button").unwrap();
+    (0..all.length())
+        .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+        .find(|b| b.text_content().unwrap_or_default().trim() == text)
+        .unwrap_or_else(|| panic!("no button says {text:?}; markup was {}", root.inner_html()))
+        .unchecked_into()
+}

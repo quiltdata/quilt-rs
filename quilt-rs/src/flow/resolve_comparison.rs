@@ -22,7 +22,8 @@ pub struct ResolveComparison {
     /// The published revision's own message, from its manifest header.
     pub published_message: Option<String>,
     /// Keys one side lists and the other does not, or both list with
-    /// different content hashes. Rows only: a metadata-only difference is none.
+    /// different content hashes, sorted by path. Rows only: a metadata-only
+    /// difference is none.
     pub differing: Vec<PathBuf>,
     /// Revisions in the pending commit chain the registry does not list —
     /// the ones a reset strands and nobody else holds.
