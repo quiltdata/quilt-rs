@@ -442,11 +442,11 @@ pub(crate) async fn refresh_then_maybe_sync(
                 return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                // A download of this package is writing its lineage, and the
+                // A download or hand pull of this package is writing its lineage, and the
                 // pull's write would drop what it records (qhq-a4za). Leave the
                 // package `Behind`, with no pause and no backoff, for the next tick.
-                let Some(_ordered) = aggregator.try_lock_for_pull(namespace) else {
-                    info!("autosync: namespace={namespace} is downloading, pulling next tick");
+                let Some(_ordered) = aggregator.try_lock_lineage_writer(namespace) else {
+                    info!("autosync: namespace={namespace} is being written, pulling next tick");
                     return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
                 };
                 // Bracket only this call. The classify above reads — it

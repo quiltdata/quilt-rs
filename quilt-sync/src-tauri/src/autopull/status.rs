@@ -86,10 +86,11 @@ pub struct SyncTrayAggregator {
     /// short apply can overlap that work and finish before the question is
     /// asked. Comparing epochs across the span answers "did one happen?".
     applying: Mutex<BTreeMap<Namespace, ApplyState>>,
-    /// One lock per namespace, ordering the tick's pull against a download of
-    /// the same package. Both read the package's lineage, await, and write the
-    /// whole entry back, so an overlap loses whichever wrote first (qhq-a4za).
-    /// A stopgap until quilt-rs orders its own lineage writers.
+    /// One lock per namespace, ordering the pulls (the tick's and a hand-pressed
+    /// one) against a download of the same package. Each reads the package's
+    /// lineage, awaits, and writes the whole entry back, so an overlap loses
+    /// whichever wrote first (qhq-a4za). A stopgap until quilt-rs orders its own
+    /// lineage writers.
     ///
     /// Not the apply guard: that is a counter two readers poll, it cannot be
     /// waited on, and v1's picked-file download deliberately does not raise it.
@@ -152,18 +153,19 @@ impl SyncTrayAggregator {
         Arc::clone(writers.entry(namespace.clone()).or_default())
     }
 
-    /// Hold for the length of a download of this package. Waits out a tick's
-    /// pull already in flight rather than refusing: the user asked for the
-    /// download, and a retry would land where the wait does, on the revision
-    /// the pull reached.
-    pub async fn lock_for_download(&self, namespace: &Namespace) -> OwnedMutexGuard<()> {
+    /// Hold for the length of a user's download or pull of this package. Waits
+    /// out a writer already in flight rather than refusing: the user asked for
+    /// it, and a retry would land where the wait does, on the revision the
+    /// other writer left.
+    pub async fn lock_lineage_writer(&self, namespace: &Namespace) -> OwnedMutexGuard<()> {
         self.lineage_writer(namespace).lock_owned().await
     }
 
-    /// The tick's side of [`Self::lock_for_download`]: `None` while a download
-    /// of this package is in flight, and the tick skips the pull. It never
-    /// waits, because the package stays `Behind` and the next tick tries again.
-    pub fn try_lock_for_pull(&self, namespace: &Namespace) -> Option<OwnedMutexGuard<()>> {
+    /// The tick's side of [`Self::lock_lineage_writer`]: `None` while a user's
+    /// download or pull of this package is in flight, and the tick skips its
+    /// pull. It never waits, because the package stays `Behind` and the next
+    /// tick tries again.
+    pub fn try_lock_lineage_writer(&self, namespace: &Namespace) -> Option<OwnedMutexGuard<()>> {
         self.lineage_writer(namespace).try_lock_owned().ok()
     }
 

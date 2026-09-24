@@ -663,7 +663,7 @@ pub async fn package_download_backlog(
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
         )
         .map(result, msg_ok, |err| {
-            format!("Failed to download files: {err}")
+            format!("Failed to download files: {}", err.user_facing())
         })?;
     Ok(skipped)
 }
@@ -675,7 +675,7 @@ async fn download_backlog_from_model(
     paths: &[String],
 ) -> Result<Vec<PathBuf>, Error> {
     // Taken first, so a wait for the tick's pull raises no quit prompt of its own.
-    let _ordered = watcher.lock_for_download(namespace).await;
+    let _ordered = watcher.lock_lineage_writer(namespace).await;
     // A whole-package catch-up, so it raises the in-flight flag a pull does:
     // quitting mid-download would leave files in place that the lineage never records.
     let _applying = watcher.apply_guard(namespace);

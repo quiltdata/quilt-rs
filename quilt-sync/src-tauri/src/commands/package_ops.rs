@@ -395,10 +395,17 @@ pub async fn package_commit_and_push(
 }
 
 async fn package_pull_command(
-    m: &model::Model,
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
     namespace: &str,
 ) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    // Taken first, so waiting out a download raises no quit prompt of its own.
+    let _ordered = watcher.lock_lineage_writer(&namespace).await;
+    // A hand-pressed pull writes working files exactly as the tick's does, so
+    // it raises the same in-flight flag — otherwise quitting during one would
+    // interrupt it without asking.
+    let _applying = watcher.apply_guard(&namespace);
     let report = model::package_pull(m, &namespace, None).await?;
     Ok((namespace, report))
 }
@@ -444,15 +451,7 @@ pub async fn package_pull(
     let msg_init = format!("Pulling package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    // A hand-pressed pull writes working files exactly as the tick's does, so
-    // it raises the same in-flight flag — otherwise quitting during one would
-    // interrupt it without asking.
-    let result = {
-        let _applying = watcher.apply_guard(
-            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
-        );
-        package_pull_command(&m, &namespace).await
-    };
+    let result = package_pull_command(&*m, &watcher, &namespace).await;
     let mut reported = false;
     if let Ok((ns, report)) = &result {
         watcher.clear_paused(ns).await;
@@ -702,7 +701,7 @@ async fn package_install_paths_command(
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     // Not the apply flag (installing picked files only adds them), but the
     // tick's pull must still not overlap it: both write the lineage.
-    let _ordered = watcher.lock_for_download(&uri.namespace).await;
+    let _ordered = watcher.lock_lineage_writer(&uri.namespace).await;
     model::install_paths_only(m, &uri.namespace, paths).await
 }
 
@@ -719,7 +718,7 @@ pub async fn package_install_paths(
     // Installing names its package by URI, so the catalog is already in hand.
     let target = S3PackageUri::try_from(uri.as_str()).ok();
     let msg_init = format!("Installing paths from {uri}");
-    let msg_err = |err: &Error| format!("Failed to install paths: {err}");
+    let msg_err = |err: &Error| format!("Failed to install paths: {}", err.user_facing());
 
     let result = package_install_paths_command(&m, &watcher, &uri, &paths).await;
     let msg_ok = match &result {
@@ -877,7 +876,7 @@ pub async fn handle_remote_package(
         && let Some(ref path) = s3_uri.path
     {
         // A download like any other: the tick's pull must not overlap it.
-        let _ordered = watcher.lock_for_download(&s3_uri.namespace).await;
+        let _ordered = watcher.lock_lineage_writer(&s3_uri.namespace).await;
         let installed_package = m
             .get_installed_package(&s3_uri.namespace)
             .await
@@ -959,6 +958,57 @@ mod tests {
         Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
             quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
         )))
+    }
+
+    /// A hand-pressed pull and a download each read the package's lineage,
+    /// await, and write the whole entry back, so an overlap loses one of the
+    /// writes (qhq-a4za). A pull pressed mid-download waits for it to finish.
+    #[tokio::test]
+    async fn a_hand_pull_started_during_a_download_waits_for_it() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(ns.clone()),
+            ))
+        });
+        m.expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+        let remote = quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ns.clone(),
+            hash: "h1".to_string(),
+            origin: None,
+        };
+        m.expect_package_pull().times(1).returning(move |_, _, _| {
+            Ok(quilt::flow::PullReport {
+                manifest_uri: remote.clone(),
+                added: Vec::new(),
+                added_not_fetched: Vec::new(),
+                updated: Vec::new(),
+                removed: Vec::new(),
+                message: None,
+            })
+        });
+        let m = Arc::new(m);
+        let watcher = Arc::new(Watcher::new_for_test(Arc::new(LogReporter)));
+
+        let downloading = watcher.lock_lineage_writer(&ns).await;
+        let pull = tokio::spawn({
+            let (m, watcher) = (Arc::clone(&m), Arc::clone(&watcher));
+            async move { super::package_pull_command(&*m, &watcher, "acme/demo").await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            !pull.is_finished(),
+            "the pull must not run while the download is in flight"
+        );
+
+        drop(downloading);
+        pull.await
+            .unwrap()
+            .expect("the pull runs once the download is done");
     }
 
     /// A certify installs no revision, so its success must lift the tick's

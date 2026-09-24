@@ -1847,7 +1847,7 @@ async fn the_tick_skips_a_package_while_it_downloads_and_pulls_it_on_the_next_ti
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
     model.expect_package_pull().times(0);
     {
-        let _downloading = agg.lock_for_download(&ns).await;
+        let _downloading = agg.lock_lineage_writer(&ns).await;
         run_once(&model, &RoleCache::default(), &inner).await?;
     }
     assert!(
@@ -1885,7 +1885,7 @@ async fn a_download_of_another_package_does_not_hold_the_pull_back() -> Result<(
         .times(1)
         .returning(|_, _, _| Ok(applied()));
 
-    let _downloading = agg.lock_for_download(&("acme", "other").into()).await;
+    let _downloading = agg.lock_lineage_writer(&("acme", "other").into()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
     Ok(())
 }

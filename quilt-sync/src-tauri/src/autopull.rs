@@ -165,13 +165,14 @@ impl Watcher {
         self.inner.aggregator.apply_guard(namespace)
     }
 
-    /// Hold for the length of a download of this package, so the tick's pull
-    /// never overlaps it (qhq-a4za). Waits out a pull already in flight.
-    pub async fn lock_for_download(
+    /// Hold for the length of a user's download or pull of this package, so no
+    /// two lineage writers the desktop drives overlap (qhq-a4za). Waits out one
+    /// already in flight.
+    pub async fn lock_lineage_writer(
         &self,
         namespace: &Namespace,
     ) -> tokio::sync::OwnedMutexGuard<()> {
-        self.inner.aggregator.lock_for_download(namespace).await
+        self.inner.aggregator.lock_lineage_writer(namespace).await
     }
 
     /// Whether a pull is applying — writing working files — right now.
