@@ -9,12 +9,29 @@
   gap: var(--q-space-3);
 }
 
+/* The sentence and its detail are one statement, so they sit closer to each
+ * other than either does to the button. */
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-1);
+}
+
 /* Measured rather than filled: a failure sentence is one line of prose, and prose
  * set the full width of a card is read at a line length nothing else on the page
  * uses. */
-.words {
+.words,
+.detail {
   margin: 0;
   max-width: 70ch;
+}
+
+/* The reason, where a caller shows one: body size, muted, so the sentence stays
+ * the thing read first. */
+.detail {
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-fgColor-muted);
 }
 
 /* Standing where rows would, in a box whose padding is the rows' own. It borrows

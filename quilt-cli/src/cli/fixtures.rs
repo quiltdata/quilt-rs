@@ -141,6 +141,37 @@ pub mod packages {
         pub const R1_LEN: usize = 4 * 1024 * 1024;
     }
 
+    /// Two revisions on `fiskus-sandbox-dev`, a bucket **without versioning**,
+    /// so every row's `physical_key` is a bare key with no `?versionId`.
+    ///
+    /// | revision | top-hash | shape |
+    /// |---|---|---|
+    /// | r1 | `cfc6d21a…503590` | `a.txt` = `a v1`, `b.txt` = `b v1` |
+    /// | r2 | `88d45bb1…bba211` | `b.txt` = `b v2` — currently `latest` |
+    ///
+    /// Both revisions point `b.txt` at the same key, so r2's push replaced r1's
+    /// bytes: the remote no longer holds r1's `b.txt`. `a.txt` is unchanged.
+    ///
+    /// Never push to this package again. A push that writes `b v1` back would
+    /// make r1's `b.txt` fetchable, and the live test that relies on it being
+    /// gone would fail.
+    ///
+    /// Reachable with ambient `~/.aws` credentials: the URI carries no
+    /// `&catalog=`, so no stack login is needed.
+    pub mod unversioned {
+        pub const NAMESPACE_STR: &str = "fiskus/unversioned-skip";
+
+        /// r1 — its `b.txt` was overwritten by r2.
+        pub const R1_URI: &str = "quilt+s3://fiskus-sandbox-dev#package=fiskus/unversioned-skip@cfc6d21adc2e8153f319965cdd80477e4a7443b9f64a21bae1b9048b05503590";
+
+        /// Unchanged by r2, so r1's bytes are still on the remote.
+        pub const KEPT: &str = "a.txt";
+        pub const KEPT_R1_BODY: &[u8] = b"a v1\n";
+
+        /// Replaced by r2 at the same bare key.
+        pub const REPLACED: &str = "b.txt";
+    }
+
     pub mod invalid {
         pub const URI: &str = "quilt+s3://some-nonsense";
     }

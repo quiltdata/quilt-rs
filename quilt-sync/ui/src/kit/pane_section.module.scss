@@ -53,6 +53,22 @@
   margin-top: var(--q-space-2);
 }
 
+/* A section's content starts at its edge. Spacing inside is the `gap`'s, and a
+ * paragraph's default margin on top would add air only when the section happens
+ * to open with prose — so the space under a rule would depend on what follows
+ * it. */
+.root > :first-child {
+  margin-top: 0;
+}
+
+/* A top-level section after anything that is not one — resolve mode's
+ * `BackLink`, which the card divides from it with its own hairline — gets the
+ * same air under that rule as under the one drawn between two sections. The
+ * rule and the space above it stay the card's, as they are for rows. */
+* + .root:not(.nested) {
+  padding-top: var(--q-pane-divider-below, var(--q-space-3));
+}
+
 /* Two blocks of a pane are divided, and the rule gets the same air above it as
  * below. `Card` draws a flush hairline between any two of its children, which is
  * right for rows — they carry their own padding — and wrong here: against a

@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.32.1-dev]
+
+### Changed
+
+- `quilt install` with paths installs every file it can when the bucket has no versioning and a later revision has replaced some objects. It used to take the later revision's bytes for such a file, which then read as modified. Now it skips the file and lists it as `Skipped: "<path>" (no longer on the remote)` rather than as a `Path:`, and in the `--json` output under a new `skipped` key instead of `paths` (<https://github.com/quiltdata/quilt-rs/pull/991>)
+
+### quilt-rs
+
+- Updated [from v0.39.1 to v0.40.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.1...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.32.0] - 2026-09-18
 
 ### Added

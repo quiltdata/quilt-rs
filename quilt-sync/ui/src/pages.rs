@@ -23,7 +23,13 @@ pub use installed_package_v2::context_pane::{CurrentRevisionPane, RevisionHistor
 pub use installed_package_v2::{MenuCommand, MenuItem, menu_items};
 // The gallery's live context pane takes the page's wiring; it builds an idle one.
 pub use installed_package_v2::Wiring;
+// What the file pane will read: the page's one differing set and its scope.
 pub use installed_package_v2::keeping::{BacklogDownload, KeepingCommands, ScopeStore};
+pub use installed_package_v2::{FileMarks, differing_marks};
+// The gallery's resolve cell and scene draw the live pane.
+pub use installed_package_v2::resolve::{
+    ResolveCommands, ResolvePane, RevisionChoice, differs_sentence,
+};
 pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
 pub use main_page::MainPage;

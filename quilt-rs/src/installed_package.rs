@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -136,7 +135,20 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         lineage: &lineage::PackageLineage,
     ) -> Res<Vec<flow::HistoryEntry>> {
         let revisions = self.revisions().await?;
-        let published: HashSet<String> = match lineage.remote_uri.as_ref() {
+        let published = self.registry_listing(lineage).await?;
+        Ok(revisions
+            .into_iter()
+            .map(|revision| flow::HistoryEntry {
+                published: published.contains(&revision.hash),
+                revision,
+            })
+            .collect())
+    }
+
+    /// The revisions the registry of `lineage`'s remote lists. No remote,
+    /// or no catalog host (so no registry to ask): no request, and none.
+    async fn registry_listing(&self, lineage: &lineage::PackageLineage) -> Res<HashSet<String>> {
+        Ok(match lineage.remote_uri.as_ref() {
             Some(ManifestUri {
                 origin: Some(host),
                 bucket,
@@ -149,14 +161,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 .into_iter()
                 .collect(),
             _ => HashSet::new(),
-        };
-        Ok(revisions
-            .into_iter()
-            .map(|revision| flow::HistoryEntry {
-                published: published.contains(&revision.hash),
-                revision,
-            })
-            .collect())
+        })
     }
 
     /// The revision selected by one lineage snapshot.
@@ -184,6 +189,38 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             obtained,
             message: manifest.header.message,
         }))
+    }
+
+    /// [`flow::compare_for_resolve`] over the manifest `lineage` selects and the
+    /// published `latest`, resolved now rather than read from `lineage`, whose
+    /// `latest_hash` is only as fresh as the last write. The published manifest
+    /// is cached by hash. The listing follows [`Self::revision_history`]'s rule:
+    /// no catalog host, no request, and the whole chain is unpublished.
+    ///
+    /// # Errors
+    /// No remote; the tag read, the manifest fetch or the listing failing.
+    pub async fn resolve_comparison(
+        &self,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<flow::ResolveComparison> {
+        let remote_uri = lineage.remote()?.clone();
+        let fresh = flow::refresh_latest_hash(lineage.clone(), &*self.remote).await?;
+        let published_uri = ManifestUri {
+            hash: fresh.latest_hash,
+            ..remote_uri.clone()
+        };
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
+        let published =
+            cache_remote_manifest(&self.paths, &self.storage, &*self.remote, &published_uri)
+                .await?;
+        let current = self.manifest_from_lineage(lineage).await?;
+        let listed = self.registry_listing(lineage).await?;
+        Ok(flow::compare_for_resolve(
+            &current,
+            &published,
+            lineage.commit.as_ref(),
+            &listed,
+        ))
     }
 
     pub async fn manifest(&self) -> Res<Manifest> {
@@ -325,9 +362,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(status)
     }
 
-    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<LineagePaths> {
+    /// Downloads `paths` and starts tracking them. A path whose bytes the
+    /// remote no longer holds is skipped, not an error: see
+    /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped).
+    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
         if paths.is_empty() {
-            return Ok(BTreeMap::new());
+            return Ok(flow::InstallPathsReport::default());
         }
 
         self.scaffold_paths().await?;
@@ -338,7 +378,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
         let mut manifest = self.manifest().await?;
-        let lineage = flow::install_paths(
+        let (lineage, skipped) = flow::install_paths(
             lineage,
             &mut manifest,
             &self.paths,
@@ -350,7 +390,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.paths)
+        Ok(flow::InstallPathsReport {
+            paths: lineage.paths,
+            skipped,
+        })
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
@@ -1051,6 +1094,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
 #[cfg(test)]
 mod current_revision_tests;
+#[cfg(test)]
+mod resolve_comparison_tests;
 #[cfg(test)]
 mod revision_history_tests;
 #[cfg(test)]

@@ -18,6 +18,9 @@ pub struct Input {
 pub struct Output {
     installed_package: quilt_rs::InstalledPackage,
     paths: Vec<std::path::PathBuf>,
+    /// Requested paths not installed because the remote no longer holds their
+    /// bytes (an unversioned bucket, overwritten since).
+    skipped: Vec<std::path::PathBuf>,
 }
 
 #[cfg(test)]
@@ -27,15 +30,31 @@ impl Output {
     }
 }
 
+impl Output {
+    /// The requested paths that were installed: every one but the skipped.
+    fn installed(&self) -> impl Iterator<Item = &PathBuf> {
+        self.paths
+            .iter()
+            .filter(|path| !self.skipped.contains(path))
+    }
+}
+
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = vec![format!("{}", self.installed_package)];
-        if self.paths.is_empty() {
+        let installed: Vec<_> = self.installed().collect();
+        if installed.is_empty() {
             output.push("No paths installed".to_string());
         } else {
-            for path in &self.paths {
+            for path in installed {
                 output.push(format!("Path: \"{}\"", path.display()));
             }
+        }
+        for path in &self.skipped {
+            output.push(format!(
+                "Skipped: \"{}\" (no longer on the remote)",
+                path.display()
+            ));
         }
         write!(f, "{}", output.join("\n"))
     }
@@ -46,13 +65,17 @@ impl Render for Output {
         serde_json::json!({
             "namespace": self.installed_package.namespace.to_string(),
             "paths": self
-                .paths
-                .iter()
+                .installed()
                 // Unlike every other payload's keys, these are the caller's
-                // own `&path=` and `--path` values echoed back unfiltered —
-                // never matched against the manifest. A non-UTF-8 argument
+                // own `&path=` and `--path` values echoed back, less the
+                // skipped ones — never matched against the manifest. A non-UTF-8 argument
                 // renders lossily here; it also matches no manifest key, so
                 // it installs nothing.
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "skipped": self
+                .skipped
+                .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
         })
@@ -81,9 +104,8 @@ async fn install_package(
 async fn install_paths(
     installed_package: &quilt_rs::InstalledPackage,
     paths: &[PathBuf],
-) -> Result<(), Error> {
-    installed_package.install_paths(paths).await?;
-    Ok(())
+) -> Result<Vec<PathBuf>, Error> {
+    Ok(installed_package.install_paths(paths).await?.skipped)
 }
 
 fn get_entries(
@@ -117,13 +139,16 @@ pub async fn model(
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let paths = get_entries(path, paths);
 
-    if !paths.is_empty() {
-        install_paths(&installed_package, &paths).await?;
-    }
+    let skipped = if paths.is_empty() {
+        Vec::new()
+    } else {
+        install_paths(&installed_package, &paths).await?
+    };
 
     Ok(Output {
         installed_package,
         paths,
+        skipped,
     })
 }
 
@@ -288,6 +313,81 @@ mod tests {
         Ok(())
     }
 
+    /// On a bucket without versioning, an older revision's key may name bytes a
+    /// later revision wrote. Installing r1 must not put r2's `b.txt` under r1's
+    /// row, where it would read as Modified. It skips `b.txt`, reports it,
+    /// installs `a.txt`, and leaves status clean. Asking again still skips it,
+    /// because the wrong bytes never entered the object store.
+    #[test(tokio::test)]
+    async fn live_unversioned_install_skips_a_replaced_file_and_installs_the_rest()
+    -> Result<(), Error> {
+        use crate::cli::fixtures::packages::unversioned as pkg;
+
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
+        let working_dir = temp_dir.path().join(pkg::NAMESPACE_STR);
+        let requested = vec![PathBuf::from(pkg::KEPT), PathBuf::from(pkg::REPLACED)];
+
+        let output = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: Some(requested.clone()),
+                uri: pkg::R1_URI.to_string(),
+            },
+        )
+        .await?;
+
+        assert_eq!(output.to_json()["paths"], serde_json::json!([pkg::KEPT]));
+        assert_eq!(
+            output.to_json()["skipped"],
+            serde_json::json!([pkg::REPLACED])
+        );
+        assert!(
+            format!("{output}").ends_with(&format!(
+                "Skipped: \"{}\" (no longer on the remote)",
+                pkg::REPLACED
+            )),
+            "{output}"
+        );
+        assert_eq!(
+            tokio::fs::read(working_dir.join(pkg::KEPT)).await?,
+            pkg::KEPT_R1_BODY
+        );
+        assert!(
+            !working_dir.join(pkg::REPLACED).exists(),
+            "r2's bytes were placed under r1's row"
+        );
+
+        let installed = output.get_installed_package();
+        let lineage = installed.lineage().await?;
+        assert_eq!(
+            lineage.paths.keys().collect::<Vec<_>>(),
+            vec![&PathBuf::from(pkg::KEPT)]
+        );
+        let status = installed.status(None).await?;
+        assert!(
+            status.changes.is_empty(),
+            "untouched files read as changed: {:?}",
+            status.changes.keys().collect::<Vec<_>>()
+        );
+
+        let retry = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: Some(vec![PathBuf::from(pkg::REPLACED)]),
+                uri: pkg::R1_URI.to_string(),
+            },
+        )
+        .await?;
+        assert_eq!(
+            retry.to_json()["skipped"],
+            serde_json::json!([pkg::REPLACED])
+        );
+        assert!(!working_dir.join(pkg::REPLACED).exists());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn json_carries_namespace_and_paths() -> Result<(), Error> {
         use crate::cli::create;
@@ -304,12 +404,48 @@ mod tests {
 
         let output = Output {
             installed_package: created.installed_package,
-            paths: vec![std::path::PathBuf::from("data/one.csv")],
+            paths: vec![
+                std::path::PathBuf::from("data/one.csv"),
+                std::path::PathBuf::from("data/two.csv"),
+            ],
+            skipped: vec![std::path::PathBuf::from("data/two.csv")],
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/pkg","paths":["data/one.csv"]}"#
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"]}"#
+        );
+        Ok(())
+    }
+
+    /// A skipped path is listed once, as skipped, never as a `Path:` line: that
+    /// list reads as the files now on disk.
+    #[test(tokio::test)]
+    async fn text_lists_a_skipped_path_only_as_skipped() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let created = m
+            .create(create::Input {
+                namespace: ("test", "pkg").into(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        let output = Output {
+            installed_package: created.installed_package,
+            paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+            skipped: vec![PathBuf::from("b.txt")],
+        };
+
+        assert!(
+            format!("{output}").ends_with(concat!(
+                "\nPath: \"a.txt\"",
+                "\nSkipped: \"b.txt\" (no longer on the remote)"
+            )),
+            "{output}"
         );
         Ok(())
     }
@@ -332,11 +468,12 @@ mod tests {
         let output = Output {
             installed_package: created.installed_package,
             paths: Vec::new(),
+            skipped: Vec::new(),
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/bare","paths":[]}"#
+            r#"{"namespace":"test/bare","paths":[],"skipped":[]}"#
         );
         Ok(())
     }
