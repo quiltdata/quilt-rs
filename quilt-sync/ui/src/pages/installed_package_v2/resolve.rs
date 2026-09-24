@@ -158,9 +158,9 @@ pub fn ResolvePane(
                 {yours}
                 <LoadFailure
                     words="Could not compare the revisions."
+                    detail=reason
                     on_retry=Callback::new(move |()| w.reload.notify())
                 />
-                <p>{reason}</p>
             }
             .into_any(),
             None,
@@ -644,6 +644,20 @@ mod tests {
         for label in [CERTIFY, REPLACE] {
             assert!(choice(&el, label).disabled(), "{label} is disabled");
         }
+    }
+
+    /// Lead, reason, then the way out: the reason is not left below the button.
+    #[wasm_bindgen_test]
+    fn a_refused_comparison_gives_its_reason_before_the_retry() {
+        let el = pane(refused(), None, Wiring::new());
+        let lead = element_saying(&el, "Could not compare the revisions.");
+        let reason = element_saying(&el, "AccessDenied");
+        let retry = button_saying(&el, "Try again");
+        let follows = |a: &web_sys::Element, b: &web_sys::Element| {
+            a.compare_document_position(b) & web_sys::Node::DOCUMENT_POSITION_FOLLOWING != 0
+        };
+        assert!(follows(&lead, &reason), "markup was {}", el.inner_html());
+        assert!(follows(&reason, &retry), "markup was {}", el.inner_html());
     }
 
     #[wasm_bindgen_test]
