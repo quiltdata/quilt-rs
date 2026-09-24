@@ -259,8 +259,9 @@ pub(crate) enum Protect<'a> {
 /// allows once a later put replaces the key.
 pub(crate) enum OnMismatch {
     /// Fail the whole apply with [`InstallPathError::ContentMismatch`] and place
-    /// nothing. The reconcile needs this: it has already advanced the lineage to
-    /// the new base, so a path it left out would be tracked at the wrong row.
+    /// nothing. The reconcile needs this: it applies a whole revision, and the
+    /// lineage it saves on success names the new base, so a path it left out
+    /// would be recorded at a row its working file does not hold.
     Refuse,
     /// Leave the row out, install every row that verifies, and report the ones
     /// left out. The user's download: an unversioned bucket should degrade to
