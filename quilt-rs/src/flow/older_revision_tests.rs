@@ -2,9 +2,9 @@
 //! revision modifies must not read as changed. Entry status is measured against
 //! the installed revision, never against `latest`.
 //!
-//! Found while diagnosing `qhq-a4za`, but not its cause: real packages pin every
-//! key to an S3 version. The unversioned case is a bucket without versioning,
-//! where a later revision's put replaces the bytes an older row names.
+//! Real packages pin every key to an S3 version. The unversioned case is a
+//! bucket without versioning, where a later revision's put replaces the bytes
+//! an older row names.
 
 use std::path::Path;
 use std::path::PathBuf;
