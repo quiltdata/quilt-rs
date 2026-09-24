@@ -39,6 +39,7 @@ use crate::Scene;
 use crate::commands::CurrentRevisionData;
 use crate::commands::ResolveData;
 use crate::commands::RevisionHistoryRow;
+use crate::gallery::file_pane::MARKED;
 use crate::kit::Align;
 use crate::kit::AnchoredOverlay;
 use crate::kit::Button;
@@ -329,7 +330,7 @@ fn in_page(pane: AnyView) -> AnyView {
 /// pane is already inside: an anchor to anything further away scrolls, and a
 /// link that says it does nothing should not move the page.
 fn resolve(exit: &str, resolve: ResolveData) -> AnyView {
-    let differing: BTreeSet<String> = DIFFERING.iter().map(|&key| key.to_string()).collect();
+    let differing: BTreeSet<String> = MARKED.iter().map(|&key| key.to_string()).collect();
     view! {
         <crate::pages::ResolvePane
             namespace=Namespace::try_from(NAMESPACE).expect("a scene namespace")
@@ -351,13 +352,10 @@ fn resolve(exit: &str, resolve: ResolveData) -> AnyView {
     .into_any()
 }
 
-/// The two files the fixture's revisions disagree on.
-const DIFFERING: [&str; 2] = ["plate/a.csv", "plate/b.csv"];
-
 fn compared() -> ResolveData {
     ResolveData::Compared {
         published_message: Some("Add Caihong folder-upload note".to_string()),
-        differing: DIFFERING.iter().map(|&key| key.to_string()).collect(),
+        differing: MARKED.iter().map(|&key| key.to_string()).collect(),
         unpublished: 2,
         uncommitted: 1,
     }

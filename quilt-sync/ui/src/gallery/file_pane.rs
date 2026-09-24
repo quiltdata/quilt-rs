@@ -130,8 +130,9 @@ use quilt_sync_ui::util::format_size;
 
 /// The two files the resolve fixture has differing between the revisions. Both
 /// are local and both are in the first screen of the list, because a mark the
-/// reader has to scroll to proves nothing about the marking.
-const MARKED: &[&str] = &[
+/// reader has to scroll to proves nothing about the marking. The context pane's
+/// resolve scenes count this same list, so the sentence describes these rows.
+pub const MARKED: &[&str] = &[
     "README.md",
     "investigations/2026-09-15-installed-package-page/design-01.md",
 ];
