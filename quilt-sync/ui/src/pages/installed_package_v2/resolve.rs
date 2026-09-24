@@ -42,30 +42,34 @@ fn plural<'a>(n: usize, one: &'a str, many: &'a str) -> &'a str {
 /// The confirmation's one sentence: each extent that is not zero, in the
 /// order the reset reaches them, then the warning (`#resolve-flow`).
 pub(super) fn consequence(unpublished: usize, differing: usize, uncommitted: usize) -> String {
-    let mut clauses = Vec::new();
+    // Reset rewrites only files downloaded here, so a differing file is named
+    // as "your version" discarded, not as a file replaced on disk.
+    let mut discarded = Vec::new();
     if unpublished > 0 {
-        clauses.push(format!(
-            "discards {unpublished} unpublished {}",
+        discarded.push(format!(
+            "{unpublished} unpublished {}",
             plural(unpublished, "revision", "revisions")
         ));
     }
     if differing > 0 {
-        clauses.push(format!(
-            "replaces {differing} {} from the published revision",
+        discarded.push(format!(
+            "your version of {differing} {} from the published one",
             plural(differing, "file that differs", "files that differ")
         ));
     }
-    if uncommitted > 0 {
-        clauses.push(format!(
+    let both_discarded = discarded.len() > 1;
+    let discards = (!discarded.is_empty()).then(|| format!("discards {}", discarded.join(" and ")));
+    let overwrites = (uncommitted > 0).then(|| {
+        format!(
             "overwrites uncommitted edits to {uncommitted} {}",
             plural(uncommitted, "file", "files")
-        ));
-    }
-    let said = match clauses.as_slice() {
-        [] => "replaces your revision with the published one".to_string(),
-        [one] => one.clone(),
-        [first, second] => format!("{first} and {second}"),
-        [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+        )
+    });
+    let said = match (discards, overwrites) {
+        (None, None) => "replaces your revision with the published one".to_string(),
+        (Some(one), None) | (None, Some(one)) => one,
+        (Some(first), Some(second)) if both_discarded => format!("{first}, and {second}"),
+        (Some(first), Some(second)) => format!("{first} and {second}"),
     };
     format!("{}. This cannot be undone.", capitalised(&said))
 }
@@ -347,8 +351,8 @@ mod tests {
     fn every_extent_is_named() {
         assert_eq!(
             consequence(2, 3, 1),
-            "Discards 2 unpublished revisions, replaces 3 files that differ from the published \
-             revision, and overwrites uncommitted edits to 1 file. This cannot be undone."
+            "Discards 2 unpublished revisions and your version of 3 files that differ from the \
+             published one, and overwrites uncommitted edits to 1 file. This cannot be undone."
         );
     }
 
@@ -356,17 +360,44 @@ mod tests {
     fn singulars_are_singular() {
         assert_eq!(
             consequence(1, 1, 1),
-            "Discards 1 unpublished revision, replaces 1 file that differs from the published \
-             revision, and overwrites uncommitted edits to 1 file. This cannot be undone."
+            "Discards 1 unpublished revision and your version of 1 file that differs from the \
+             published one, and overwrites uncommitted edits to 1 file. This cannot be undone."
+        );
+        assert_eq!(
+            consequence(0, 0, 2),
+            "Overwrites uncommitted edits to 2 files. This cannot be undone."
+        );
+    }
+
+    #[test]
+    fn the_discards_share_one_verb() {
+        assert_eq!(
+            consequence(2, 3, 0),
+            "Discards 2 unpublished revisions and your version of 3 files that differ from the \
+             published one. This cannot be undone."
         );
     }
 
     #[test]
     fn a_zero_extent_is_left_out() {
         assert_eq!(
+            consequence(2, 0, 1),
+            "Discards 2 unpublished revisions and overwrites uncommitted edits to 1 file. \
+             This cannot be undone."
+        );
+        assert_eq!(
             consequence(0, 3, 1),
-            "Replaces 3 files that differ from the published revision and overwrites \
-             uncommitted edits to 1 file. This cannot be undone."
+            "Discards your version of 3 files that differ from the published one and \
+             overwrites uncommitted edits to 1 file. This cannot be undone."
+        );
+        assert_eq!(
+            consequence(0, 3, 0),
+            "Discards your version of 3 files that differ from the published one. \
+             This cannot be undone."
+        );
+        assert_eq!(
+            consequence(0, 0, 1),
+            "Overwrites uncommitted edits to 1 file. This cannot be undone."
         );
         assert_eq!(
             consequence(2, 0, 0),
@@ -814,9 +845,9 @@ mod tests {
         let dialog = open_dialog(&el).expect("the confirmation is open");
         element_saying(
             &dialog,
-            "Discards 2 unpublished revisions, replaces 2 files that differ from the \
-             published revision, and overwrites uncommitted edits to 1 file. This cannot \
-             be undone.",
+            "Discards 2 unpublished revisions and your version of 2 files that differ from \
+             the published one, and overwrites uncommitted edits to 1 file. This cannot be \
+             undone.",
         );
     }
 
