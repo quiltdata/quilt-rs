@@ -22,6 +22,7 @@ use crate::error::Error;
 use crate::model;
 use crate::notify::Notify;
 use crate::quilt;
+use crate::quilt::lineage::UpstreamState;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::RemotePackageEvent;
 
@@ -61,6 +62,9 @@ pub struct PackageContextData {
     /// list: the list is `get_revision_history`, fetched on open.
     pub revision_count: usize,
     pub keeping: KeepingData,
+    /// `None` unless the package is diverged, as the status the header shows
+    /// says; see `get_package_page_data_from_model`.
+    pub resolve: Option<ResolveData>,
 }
 
 /// Which files this copy keeps, as the pane says it. Its own wire enum rather
@@ -83,6 +87,28 @@ pub struct KeepingData {
     /// Listed by the current revision and not downloaded here, sorted: the
     /// backlog, and exactly what `Download N files` installs.
     pub remote_only: Vec<String>,
+}
+
+/// The resolve mode's facts, or why they could not be read. Present only
+/// for a diverged package; see `get_package_page_data_from_model`.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ResolveData {
+    Compared {
+        published_message: Option<String>,
+        /// Sorted logical keys, the whole package: neither capped nor filtered,
+        /// because the pane's count and the file pane's marks read this one value.
+        differing: Vec<String>,
+        unpublished: usize,
+        /// Tracked paths with a local change: the edits a reset overwrites.
+        uncommitted: usize,
+    },
+    /// The manifest fetch, the listing, the status or the session failed.
+    Refused { reason: String },
 }
 
 /// The current revision's user-facing facts.
@@ -293,12 +319,69 @@ fn keeping_data(
     }
 }
 
+/// The gate: the status the header shows decides, not the on-disk snapshot,
+/// whose `latest_hash` is stale in exactly the case Resolve exists for. A
+/// blocked status on a snapshot that says diverged refuses without comparing,
+/// because the uncommitted count needs the status. A failed comparison
+/// refuses in the pane and never fails the page read.
+async fn resolve_for_page(
+    m: &impl model::QuiltModel,
+    installed: &quilt::InstalledPackage,
+    lineage: &quilt::lineage::PackageLineage,
+    read: Option<&Result<quilt::lineage::InstalledPackageStatus, String>>,
+) -> Option<ResolveData> {
+    match read? {
+        Ok(status) if status.upstream_state == UpstreamState::Diverged => Some(
+            match m
+                .get_installed_package_resolve_comparison(installed, lineage)
+                .await
+            {
+                Ok(comparison) => resolve_data(lineage, comparison, &status.changes),
+                Err(err) => ResolveData::Refused {
+                    reason: err.to_frontend_string(),
+                },
+            },
+        ),
+        Err(reason) if UpstreamState::from(lineage.clone()) == UpstreamState::Diverged => {
+            Some(ResolveData::Refused {
+                reason: reason.clone(),
+            })
+        }
+        Ok(_) | Err(_) => None,
+    }
+}
+
+/// Untracked files are not counted: reset's touch set is `lineage.paths`
+/// (`flow/reset_to_latest.rs:56`), and a file it does not track stays.
+fn resolve_data(
+    lineage: &quilt::lineage::PackageLineage,
+    comparison: quilt::flow::ResolveComparison,
+    changes: &quilt::lineage::ChangeSet,
+) -> ResolveData {
+    let mut differing: Vec<String> = comparison
+        .differing
+        .iter()
+        .map(|key| key.display().to_string())
+        .collect();
+    differing.sort();
+    ResolveData::Compared {
+        published_message: comparison.published_message,
+        differing,
+        unpublished: comparison.unpublished,
+        uncommitted: changes
+            .keys()
+            .filter(|p| lineage.paths.contains_key(*p))
+            .count(),
+    }
+}
+
 fn package_context_data(
     namespace: &quilt_uri::Namespace,
     lineage: &quilt::lineage::PackageLineage,
     revision: Option<quilt::flow::Revision>,
     revision_count: usize,
     keeping: KeepingData,
+    resolve: Option<ResolveData>,
 ) -> Result<PackageContextData, Error> {
     let revision = revision.ok_or_else(|| {
         Error::General(format!(
@@ -318,6 +401,7 @@ fn package_context_data(
             .filter(|bucket| !bucket.is_empty()),
         revision_count,
         keeping,
+        resolve,
     })
 }
 
@@ -382,8 +466,8 @@ async fn get_package_page_data_from_model(
         .map(quilt_uri::S3PackageUri::from);
 
     let mut role_switch = None;
-    // `None` unless the status was read: a blocked read counts from tracking.
-    let mut changes: Option<quilt::lineage::ChangeSet> = None;
+    // The status, or why a blocked read refused; `None` when it was not asked.
+    let mut read: Option<Result<quilt::lineage::InstalledPackageStatus, String>> = None;
     let state = if misconfigured_remote(&lineage) {
         // The same predicate both main-page phases apply before resolving, for
         // the same reason: without a catalog there is nowhere to vend
@@ -418,29 +502,42 @@ async fn get_package_page_data_from_model(
                         Some(status.changes.len()),
                     )
                 };
-                changes = Some(status.changes);
+                read = Some(Ok(status));
                 state
             }
-            Err(err) => match blocked_state(&err) {
-                // The one state whose remedy is worth a round trip, and the
-                // only place this function goes back to the network.
-                Some(PackageStateDto::RoleDenied { .. }) => {
-                    let (role, switch) = role_remedy(m, roles, &err).await;
-                    role_switch = switch;
-                    PackageStateDto::RoleDenied { role }
+            Err(err) => {
+                read = Some(Err(err.to_frontend_string()));
+                match blocked_state(&err) {
+                    // The one state whose remedy is worth a round trip, and the
+                    // only place this function goes back to the network.
+                    Some(PackageStateDto::RoleDenied { .. }) => {
+                        let (role, switch) = role_remedy(m, roles, &err).await;
+                        role_switch = switch;
+                        PackageStateDto::RoleDenied { role }
+                    }
+                    Some(state) => state,
+                    None => return Err(err),
                 }
-                Some(state) => state,
-                None => return Err(err),
-            },
+            }
         }
     };
 
+    // A blocked read counts from tracking alone.
+    let status = read.as_ref().and_then(|r| r.as_ref().ok());
     let keeping = keeping_data(
         &lineage,
         &m.get_installed_package_keys(&installed, &lineage).await?,
-        changes.as_ref(),
+        status.map(|s| &s.changes),
     );
-    let context = package_context_data(namespace, &lineage, revision, revision_count, keeping)?;
+    let resolve = resolve_for_page(m, &installed, &lineage, read.as_ref()).await;
+    let context = package_context_data(
+        namespace,
+        &lineage,
+        revision,
+        revision_count,
+        keeping,
+        resolve,
+    )?;
 
     Ok(PackagePageData {
         context,
@@ -585,7 +682,6 @@ mod tests {
         access_denied_error, access_denied_error_on, make_installed_package, make_manifest_uri,
         make_manifest_uri_no_origin,
     };
-    use crate::quilt::lineage::UpstreamState;
     use quilt_rs::RoleInfo;
 
     const NS: &str = "team/dataset";
@@ -642,7 +738,157 @@ mod tests {
             .expect_get_installed_package_status()
             .times(1)
             .return_once(move |_, _| status);
+        // `.times(0)`: a read that is not diverged fetches nothing new.
         model
+            .expect_get_installed_package_resolve_comparison()
+            .times(0);
+        model
+    }
+
+    /// One installed package on `lineage`, whose status call answers `status`.
+    /// The comparison is left to each test.
+    fn mock_package(
+        lineage: &quilt::lineage::PackageLineage,
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+    ) -> crate::model::MockQuiltModel {
+        let mut model = crate::model::mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        let snapshot = lineage.clone();
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| Ok(snapshot.clone()));
+        model
+            .expect_get_installed_package_current_revision()
+            .returning(|_, _| Ok(Some(revision("Local commit"))));
+        model
+            .expect_get_installed_package_revision_count()
+            .returning(|_| Ok(1));
+        model
+            .expect_get_installed_package_keys()
+            .returning(|_, _| Ok(keys(&["a.csv"])));
+        model
+            .expect_get_installed_package_status()
+            .times(1)
+            .return_once(move |_, _| status);
+        model
+    }
+
+    async fn read(model: &crate::model::MockQuiltModel) -> Result<PackagePageData, Error> {
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        get_package_page_data_from_model(model, &RoleCache::default(), &ns, None).await
+    }
+
+    /// Diverged on disk: the remote at `b`, the registry's latest `l`, and a
+    /// commit `c` over `b`.
+    fn diverged_snapshot() -> quilt::lineage::PackageLineage {
+        let mut uri = make_manifest_uri(NS);
+        uri.hash = "b".to_string();
+        let mut lineage = quilt::lineage::PackageLineage::from_remote(uri, "l".to_string());
+        lineage.base_hash = "b".to_string();
+        lineage.commit = Some(quilt::lineage::CommitState {
+            timestamp: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
+            hash: "c".to_string(),
+            prev_hashes: Vec::new(),
+        });
+        lineage
+            .paths
+            .insert(PathBuf::from("a.csv"), quilt::lineage::PathState::default());
+        lineage
+    }
+
+    fn diverged(changes: quilt::lineage::ChangeSet) -> quilt::lineage::InstalledPackageStatus {
+        quilt::lineage::InstalledPackageStatus::new(UpstreamState::Diverged, changes)
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_read_fetches_nothing_new() {
+        let page = page(&RoleCache::default(), Ok(settled()), None).await;
+
+        assert_eq!(page.context.resolve, None);
+    }
+
+    #[tokio::test]
+    async fn a_diverged_read_carries_the_comparison() {
+        let lineage = diverged_snapshot();
+        let mut model = mock_package(&lineage, Ok(diverged(modified("a.csv"))));
+        model
+            .expect_get_installed_package_resolve_comparison()
+            .times(1)
+            .returning(|_, lineage| {
+                assert_eq!(lineage.current_hash(), Some("c"));
+                Ok(quilt::flow::ResolveComparison {
+                    published_message: Some("Sent".to_string()),
+                    differing: vec![PathBuf::from("plate/a.csv")],
+                    unpublished: 2,
+                })
+            });
+
+        let page = read(&model).await.unwrap();
+
+        assert_eq!(
+            page.context.resolve,
+            Some(ResolveData::Compared {
+                published_message: Some("Sent".to_string()),
+                differing: vec!["plate/a.csv".to_string()],
+                unpublished: 2,
+                uncommitted: 1,
+            })
+        );
+        assert_eq!(page.header.state, PackageStateDto::Diverged);
+    }
+
+    #[tokio::test]
+    async fn a_failed_comparison_refuses_and_the_page_still_draws() {
+        let lineage = diverged_snapshot();
+        let mut model = mock_package(&lineage, Ok(diverged(modified("a.csv"))));
+        model
+            .expect_get_installed_package_resolve_comparison()
+            .times(1)
+            .return_once(|_, _| Err(access_denied_error()));
+
+        let page = read(&model)
+            .await
+            .expect("a comparison never fails the page");
+
+        assert_eq!(
+            page.context.resolve,
+            Some(ResolveData::Refused {
+                reason: access_denied_error().to_frontend_string(),
+            })
+        );
+        assert_eq!(page.header.state, PackageStateDto::Diverged);
+    }
+
+    /// Uncommitted is unknowable without the status, so no comparison is asked.
+    #[tokio::test]
+    async fn a_blocked_status_on_a_diverged_snapshot_refuses_without_comparing() {
+        let lineage = diverged_snapshot();
+        let mut model = mock_package(&lineage, Err(access_denied_error()));
+        model
+            .expect_get_installed_package_resolve_comparison()
+            .times(0);
+
+        let page = read(&model).await.unwrap();
+
+        assert_eq!(
+            page.context.resolve,
+            Some(ResolveData::Refused {
+                reason: access_denied_error().to_frontend_string(),
+            })
+        );
+        assert_eq!(
+            page.header.state,
+            PackageStateDto::RoleDenied { role: None }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blocked_status_on_a_settled_snapshot_carries_nothing() {
+        let page = page(&RoleCache::default(), Err(access_denied_error()), None).await;
+
+        assert_eq!(page.context.resolve, None);
     }
 
     async fn page(
@@ -690,11 +936,12 @@ mod tests {
             bucket: Some("quilt-lab-plates".to_string()),
             revision_count: 4,
             keeping: keeping_fixture(),
+            resolve: None,
         };
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]}}"#,
+            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
         );
     }
 
@@ -720,6 +967,97 @@ mod tests {
             PathBuf::from(path),
             quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
         )])
+    }
+
+    fn comparison(differing: &[&str], unpublished: usize) -> quilt::flow::ResolveComparison {
+        quilt::flow::ResolveComparison {
+            published_message: Some("Add Caihong folder-upload note".to_string()),
+            differing: differing.iter().map(PathBuf::from).collect(),
+            unpublished,
+        }
+    }
+
+    #[test]
+    fn resolve_compared_wire_form_is_verbatim() {
+        let data = resolve_data(
+            &lineage_tracking(&["a.csv"]),
+            comparison(&["plate/a.csv", "plate/b.csv"], 2),
+            &modified("a.csv"),
+        );
+
+        assert_eq!(
+            serde_json::to_string(&data).unwrap(),
+            r#"{"kind":"compared","publishedMessage":"Add Caihong folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+        );
+    }
+
+    #[test]
+    fn resolve_refused_wire_form_is_verbatim() {
+        let data = ResolveData::Refused {
+            reason: "AccessDenied".to_string(),
+        };
+
+        assert_eq!(
+            serde_json::to_string(&data).unwrap(),
+            r#"{"kind":"refused","reason":"AccessDenied"}"#,
+        );
+    }
+
+    /// A deletion reset restores is an edit it overwrites; a new file it does
+    /// not track stays.
+    #[test]
+    fn only_tracked_paths_with_a_change_are_uncommitted() {
+        let row = quilt::manifest::ManifestRow::default;
+        let changes = quilt::lineage::ChangeSet::from([
+            (
+                PathBuf::from("a.csv"),
+                quilt::lineage::Change::Modified(row()),
+            ),
+            (
+                PathBuf::from("b.csv"),
+                quilt::lineage::Change::Removed(row()),
+            ),
+            (
+                PathBuf::from("new.csv"),
+                quilt::lineage::Change::Added(row()),
+            ),
+        ]);
+
+        let data = resolve_data(
+            &lineage_tracking(&["a.csv", "b.csv"]),
+            comparison(&[], 0),
+            &changes,
+        );
+
+        let ResolveData::Compared { uncommitted, .. } = data else {
+            panic!("a comparison projects to Compared, got {data:?}");
+        };
+        assert_eq!(uncommitted, 2);
+    }
+
+    /// No cap, per `#resolve-seams`: the pane's count and the file pane's
+    /// marks read this one value.
+    #[test]
+    fn the_differing_set_crosses_whole_and_sorted() {
+        let keys: Vec<String> = (0..1_500)
+            .rev()
+            .map(|i| format!("plate/{i:04}.csv"))
+            .collect();
+        let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+
+        let data = resolve_data(
+            &lineage_tracking(&[]),
+            comparison(&refs, 0),
+            &quilt::lineage::ChangeSet::new(),
+        );
+
+        let ResolveData::Compared { differing, .. } = data else {
+            panic!("a comparison projects to Compared, got {data:?}");
+        };
+        let mut expected = keys.clone();
+        expected.sort();
+        assert_eq!(differing.len(), 1_500);
+        assert_eq!(differing, expected);
     }
 
     fn keeping_fixture() -> KeepingData {
@@ -803,6 +1141,7 @@ mod tests {
             Some(revision("Pending commit")),
             1,
             keeping_fixture(),
+            None,
         )
         .unwrap();
 
@@ -816,6 +1155,7 @@ mod tests {
                 bucket: Some("test".to_string()),
                 revision_count: 1,
                 keeping: keeping_fixture(),
+                resolve: None,
             }
         );
     }
@@ -829,6 +1169,7 @@ mod tests {
             Some(revision("Local commit")),
             1,
             keeping_fixture(),
+            None,
         )
         .unwrap();
 
@@ -848,6 +1189,7 @@ mod tests {
             Some(revision("Initial upload")),
             1,
             keeping_fixture(),
+            None,
         )
         .unwrap();
 
@@ -863,6 +1205,7 @@ mod tests {
             None,
             1,
             keeping_fixture(),
+            None,
         )
         .unwrap_err();
 
