@@ -256,6 +256,28 @@ fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Call
     })
 }
 
+/// What the file pane draws from the latest answer, keyed on the package it
+/// was read for.
+///
+/// `LocalResource::get` keeps the last answer while a re-read is out. For the
+/// same package that is the point — a watcher re-read keeps the list on screen
+/// rather than flashing its skeleton. For another package it would paint the
+/// last package's files under this one's header, so an answer read for a
+/// different namespace is not yet an answer: the same keying the context
+/// pane's revision history uses, so it cannot paint stale rows either.
+fn listing_for(
+    answer: Option<(String, Result<file_pane::FileList, String>)>,
+    showing: &str,
+) -> Listing {
+    match answer {
+        Some((read_for, answer)) if read_for == showing => match answer {
+            Ok(list) => Listing::Ready(list),
+            Err(_) => Listing::Failed,
+        },
+        _ => Listing::Loading,
+    }
+}
+
 /// Opens a downloaded file in its default application, reporting a failure on
 /// the keyed band. Not `run`, for `catalog_opener`'s reason: opening a file
 /// writes nothing, so it neither takes `busy` nor clears the band.
@@ -354,18 +376,16 @@ pub fn InstalledPackageV2() -> impl IntoView {
     });
 
     // The file pane's own read, beside the page's: same address, same re-reads.
+    // Each answer carries the package it was read for; see `listing_for`.
     let files = LocalResource::new(move || {
         reload.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
-        commands::get_installed_package_data(namespace, None)
+        async move {
+            let answer = commands::get_installed_package_data(namespace.clone(), None).await;
+            (namespace, answer.map(file_pane::FileList::from))
+        }
     });
-    // `get` keeps the last answer while a re-read is out, so the list stays
-    // put rather than flashing its skeleton at every watcher event.
-    let listing = Signal::derive(move || match files.get() {
-        None => Listing::Loading,
-        Some(Ok(data)) => Listing::Ready(data.into()),
-        Some(Err(_)) => Listing::Failed,
-    });
+    let listing = Signal::derive(move || listing_for(files.get(), &namespace()));
     // Not remembered: another package, or another visit, starts at the
     // default. A memo on the namespace alone, so the rest of the address —
     // Resolve's `resolve=1` — is not a new package.
@@ -652,6 +672,45 @@ mod tests {
             },
             sync_paused: None,
         }
+    }
+
+    fn one_file() -> file_pane::FileList {
+        file_pane::FileList {
+            entries: Vec::new(),
+            total: 1,
+            truncated: false,
+        }
+    }
+
+    /// Keyed like the context pane's history: an answer read for package A is
+    /// not drawn under package B's header while B's read is out. A re-read of
+    /// the same package keeps the list it has.
+    #[test]
+    fn a_file_list_read_for_another_package_is_loading() {
+        let answer = |ns: &str| Some((ns.to_string(), Ok(one_file())));
+        assert!(matches!(
+            listing_for(answer("team/a"), "team/b"),
+            Listing::Loading
+        ));
+        assert!(matches!(
+            listing_for(answer("team/b"), "team/b"),
+            Listing::Ready(_)
+        ));
+        assert!(matches!(
+            listing_for(
+                Some(("team/a".to_string(), Err("gone".to_string()))),
+                "team/b"
+            ),
+            Listing::Loading
+        ));
+        assert!(matches!(
+            listing_for(
+                Some(("team/b".to_string(), Err("gone".to_string()))),
+                "team/b"
+            ),
+            Listing::Failed
+        ));
+        assert!(matches!(listing_for(None, "team/b"), Listing::Loading));
     }
 
     /// A pane whose read has not answered, which is all these tests need of it.
