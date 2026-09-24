@@ -26,7 +26,8 @@ use crate::routes;
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/resolve.module.scss");
 
 /// The pane's one sentence, counting the page's differing set.
-pub(super) fn differs_sentence(differing: usize) -> String {
+#[must_use]
+pub fn differs_sentence(differing: usize) -> String {
     if differing == 0 {
         // Nothing is marked, so the sentence points at nothing (R12).
         return "No files differ between these revisions.".to_string();

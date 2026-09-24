@@ -104,6 +104,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
+use crate::differs_caption;
 use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
@@ -1186,6 +1187,7 @@ pub fn FilePaneScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
                 {pane(Pane { marked: MARKED, ..Pane::new("fp-marked") })}
+                {differs_caption(MARKED.len())}
             </Cell>
             <Cell full=true label="Keeping → the whole package: no boxes, no select-all, no footer">
                 {pane(Pane { whole: true, ..Pane::new("fp-whole") })}
