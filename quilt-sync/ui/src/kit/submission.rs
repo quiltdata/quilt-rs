@@ -16,7 +16,7 @@ use leptos::prelude::*;
 
 use super::Banner;
 use super::BannerVariant;
-use crate::error_handler::readable;
+use super::readable;
 
 /// The caller's action, boxed so a component's signature does not carry its future's
 /// type. `Rc` and not `Arc`: this is a single-threaded wasm document, and the event

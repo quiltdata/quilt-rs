@@ -17,7 +17,7 @@ use quilt_uri::{Namespace, S3PackageUri};
 
 use super::{Outcome, Replace, Wiring, holding, run};
 use crate::commands;
-use crate::error_handler::readable;
+use crate::kit::readable;
 use crate::kit::{
     BackLink, BannerVariant, Button, ButtonVariant, Card, ConfirmDialog, DIFFERS_ID, LoadFailure,
     PaneSection, RevisionRow, Submit, unique_id,

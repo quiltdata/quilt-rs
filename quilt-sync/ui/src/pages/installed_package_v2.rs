@@ -17,7 +17,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
-use crate::error_handler::readable;
+use crate::kit::readable;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
 
