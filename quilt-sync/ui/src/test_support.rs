@@ -3,17 +3,39 @@
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
+thread_local! {
+    /// Every view `mount` has drawn, still mounted, with the owner above it.
+    static MOUNTED: std::cell::RefCell<Vec<(Owner, Box<dyn std::any::Any>)>> =
+        std::cell::RefCell::default();
+}
+
 /// Mount a view into a fresh container under `<body>` and hand back the
 /// container to query.
 ///
-/// The handle is forgotten rather than held: dropping it unmounts the view, and
-/// every caller wants it to outlive the call.
+/// The handle is kept rather than dropped: dropping it unmounts the view, and
+/// every caller wants it to outlive the call. [`unmount_earlier`] is the one
+/// way it goes.
 pub(crate) fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
     let doc = web_sys::window().unwrap().document().unwrap();
     let container: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
     doc.body().unwrap().append_child(&container).unwrap();
-    leptos::mount::mount_to(container.clone(), f).forget();
+    // An owner above the handle's own, because something the view spawns can
+    // keep that one alive past its handle; this one is cleaned up by hand.
+    let owner = Owner::new();
+    let handle = owner.with(|| leptos::mount::mount_to(container.clone(), f));
+    MOUNTED.with(|m| m.borrow_mut().push((owner, Box::new(handle))));
     container.into()
+}
+
+/// Unmount every view earlier tests mounted. Each `Router` listens for link
+/// clicks on the window and the first one registered takes the click, so a
+/// test that clicks a link must be the only router left.
+pub(crate) fn unmount_earlier() {
+    let earlier = MOUNTED.with(|m| std::mem::take(&mut *m.borrow_mut()));
+    for (owner, handle) in earlier {
+        owner.cleanup();
+        drop(handle);
+    }
 }
 
 /// A promise-backed sleep — four lines over `set_timeout`, which is why the

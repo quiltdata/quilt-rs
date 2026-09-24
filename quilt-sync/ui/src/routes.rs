@@ -30,6 +30,12 @@ pub fn package_page_href(namespace: &Namespace) -> String {
     format!("/installed-package?namespace={namespace}&filter=unmodified")
 }
 
+/// The package screen with the resolve mode asked for. The plain address
+/// plus `resolve=1`, so leaving is exactly dropping the parameter.
+pub fn resolve_href(namespace: &Namespace) -> String {
+    format!("{}&resolve=1", package_page_href(namespace))
+}
+
 /// Where the [Sign in] button goes. `pages/login.rs` reads both parameters from
 /// the query string; `back` is where login returns the user afterwards.
 ///
@@ -88,6 +94,20 @@ mod tests {
         );
         assert_eq!(commit_href(&ns("org/pkg")), "/commit?namespace=org%2Fpkg");
         assert_eq!(merge_href(&ns("org/pkg")), "/merge?namespace=org%2Fpkg");
+    }
+
+    /// The mode is the plain address plus one parameter, so leaving it is
+    /// exactly dropping that parameter; the namespace stays one parameter.
+    #[test]
+    fn the_resolve_mode_is_the_plain_address_plus_one_parameter() {
+        assert_eq!(
+            resolve_href(&ns("org/pkg")),
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"
+        );
+        assert_eq!(
+            resolve_href(&ns("team/a&b")),
+            "/installed-package?namespace=team%2Fa%26b&filter=unmodified&resolve=1"
+        );
     }
 
     /// The defect this module exists for. `&` starts a new parameter and `#` a

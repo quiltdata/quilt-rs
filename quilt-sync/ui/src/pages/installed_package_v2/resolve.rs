@@ -92,6 +92,16 @@ pub struct ResolveCommands {
     pub reset: RevisionChoice,
 }
 
+impl ResolveCommands {
+    /// The app's: `certify_latest` and `reset_local`.
+    pub(super) fn app() -> Self {
+        Self {
+            certify: |namespace, uri| Box::pin(commands::certify_latest(namespace, uri)),
+            reset: |namespace, uri| Box::pin(commands::reset_local(namespace, uri)),
+        }
+    }
+}
+
 /// The pane's other mode: this copy's revision beside the published one, and
 /// the two choices between them. It swaps the ordinary pane whole.
 #[component]
