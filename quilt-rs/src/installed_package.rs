@@ -1052,6 +1052,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 #[cfg(test)]
 mod current_revision_tests;
 #[cfg(test)]
+mod older_revision_tests;
+#[cfg(test)]
 mod revision_history_tests;
 #[cfg(test)]
 mod set_remote_tests;
