@@ -16,6 +16,7 @@ use leptos::prelude::*;
 
 use super::Banner;
 use super::BannerVariant;
+use crate::error_handler::readable;
 
 /// The caller's action, boxed so a component's signature does not carry its future's
 /// type. `Rc` and not `Arc`: this is a single-threaded wasm document, and the event
@@ -147,7 +148,7 @@ impl Submission {
         view! {
             <Show when=move || error.get().is_some()>
                 <Banner variant=BannerVariant::Critical on_dismiss=move |_| error.set(None)>
-                    {move || error.get().unwrap_or_default()}
+                    {move || error.get().map(|e| readable(&e)).unwrap_or_default()}
                 </Banner>
             </Show>
         }

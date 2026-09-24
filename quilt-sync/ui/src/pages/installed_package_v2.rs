@@ -17,6 +17,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
+use crate::error_handler::readable;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
 
@@ -545,7 +546,7 @@ fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<String>) -> 
                         on_dismiss=move |_| outcome.set(None)
                     >
                         {said.lead}
-                        {said.detail.map(|detail| view! { " " {detail} })}
+                        {said.detail.map(|detail| view! { " " {readable(&detail)} })}
                     </Banner>
                 }
             }
@@ -883,6 +884,49 @@ mod tests {
 
         assert_eq!(during, (true, None), "held, and the band cleared");
         assert!(!busy.get_untracked(), "released once it settles");
+    }
+
+    /// A command refused with `Error::to_frontend_string`'s JSON puts the message
+    /// on the band, never the envelope it travelled in.
+    #[wasm_bindgen_test]
+    async fn a_failed_command_shows_the_backend_s_message_not_its_json() {
+        const DENIED: &str = "The active role does not have access to this object.";
+        let busy = RwSignal::new(false);
+        let outcome = RwSignal::new(None);
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+        run(
+            busy,
+            outcome,
+            "team/dataset".to_string(),
+            "Could not make your revision the shared one.",
+            None,
+            async {
+                Err(
+                    r#"{"kind":"access_denied","message":"The active role does not have access to this object."}"#
+                        .to_string(),
+                )
+            },
+        );
+        sleep_ms(0).await;
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(
+            text.contains("Could not make your revision the shared one."),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            text.contains(DENIED),
+            "the message is drawn; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !text.contains("\"kind\""),
+            "the JSON is not; markup was {}",
+            el.inner_html()
+        );
     }
 
     /// A successful payload swaps the header and pane together. The old loose

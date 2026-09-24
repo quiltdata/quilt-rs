@@ -17,6 +17,7 @@ use quilt_uri::{Namespace, S3PackageUri};
 
 use super::{Outcome, Replace, Wiring, holding, run};
 use crate::commands;
+use crate::error_handler::readable;
 use crate::kit::{
     BackLink, BannerVariant, Button, ButtonVariant, Card, ConfirmDialog, DIFFERS_ID, LoadFailure,
     PaneSection, RevisionRow, Submit, unique_id,
@@ -158,7 +159,7 @@ pub fn ResolvePane(
                 {yours}
                 <LoadFailure
                     words="Could not compare the revisions."
-                    detail=reason
+                    detail=readable(&reason)
                     on_retry=Callback::new(move |()| w.reload.notify())
                 />
             }
@@ -1024,6 +1025,65 @@ mod tests {
             &el,
             "2 files differ between these revisions — marked in the list.",
         );
+    }
+
+    /// What `Error::to_frontend_string` sends for a denied object: JSON, not prose.
+    const DENIED_JSON: &str = r#"{"kind":"access_denied","message":"The active role does not have access to this object."}"#;
+    const DENIED: &str = "The active role does not have access to this object.";
+
+    fn refuses_reset_as_json(namespace: String, _: Option<S3PackageUri>) -> Answer<String> {
+        RESET.with_borrow_mut(|r| r.push(namespace));
+        Box::pin(async { Err(DENIED_JSON.to_string()) })
+    }
+
+    /// The reader sees the backend's message, never the envelope it travelled in.
+    fn says_the_message_not_the_json(el: &web_sys::Element) {
+        let text = el.text_content().unwrap_or_default();
+        assert!(
+            text.contains(DENIED),
+            "the message is drawn; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !text.contains("\"kind\""),
+            "the JSON is not; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_refused_comparison_shows_the_backend_s_message_not_its_json() {
+        let el = pane(
+            ResolveData::Refused {
+                reason: DENIED_JSON.into(),
+            },
+            None,
+            Wiring::new(),
+        );
+        says_the_message_not_the_json(&el);
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refused_replace_shows_the_backend_s_message_not_its_json() {
+        let w = Wiring::new();
+        let el = choosing(
+            compared(0, 0),
+            two_marks(),
+            w,
+            with(certifies_ok, refuses_reset_as_json),
+        )
+        .await;
+        choice(&el, REPLACE).click();
+        leptos::task::tick().await;
+        verb(&el).click();
+        settle().await;
+
+        let dialog = open_dialog(&el).expect("the confirmation stays open");
+        let alert = dialog
+            .query_selector("[role=alert]")
+            .unwrap()
+            .expect("the refusal, inside the dialog");
+        says_the_message_not_the_json(&alert);
     }
 
     #[wasm_bindgen_test]
