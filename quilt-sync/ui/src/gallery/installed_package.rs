@@ -50,7 +50,7 @@
 //! # One primary per screen
 //!
 //! The header's action is the way *into* a mode, so while the mode is on screen
-//! it hides. Resolve is the case: entering leaves `Make mine the shared one` as
+//! it hides. Resolve is the case: entering leaves `Share mine` as
 //! the page's one primary, and the pane's `BackLink` closes the mode and brings
 //! the header's `Resolve` back with it. The two read as one control in two
 //! states rather than as two controls, and the header keeps `Open folder`, the
@@ -58,9 +58,10 @@
 //! it is also what settles what the resolve pane's exit is.
 //!
 //! **Both ends are drawn, two cells apart rather than one click apart.** The
-//! exit is a `BackLink` because leaving the mode is a navigation — the page
-//! drops `?resolve=1` and the router redraws it — so in a gallery, which has no
-//! router, it is an anchor that does nothing — pointed at this cell's own
+//! pane is the app's own `ResolvePane`, and its exit is a `BackLink` because
+//! leaving the mode is a navigation — the page drops `?resolve=1` and the
+//! router redraws it — so in a gallery, which has no router, it is an anchor
+//! that does nothing — pointed at this cell's own
 //! window, because an anchor aimed anywhere further away scrolls, and a link
 //! that says it does nothing must not move the page. The same way the revisions
 //! surface's catalog links have no browser to open. The last cell is the mode
@@ -165,8 +166,8 @@ const NOTE: &str = "The page at its own floor, 1024×560, which is where the ver
     and six, against the four §1 measured when the layout was first drawn and the four v1 \
     manages. The header is what paid for it, at 60px against the 108 budgeted. The third \
     cell is the 900px default for comparison, the fourth is 760px wide where the shell \
-    stacks itself, and the last is resolve mode, where the marked rows and the sentence \
-    naming them are finally on screen together.";
+    stacks itself, and the last is resolve mode, the app's own resolve pane beside the \
+    marked rows, so the rows and the sentence naming them are finally on screen together.";
 
 #[component]
 pub fn InstalledPackageScene() -> impl IntoView {

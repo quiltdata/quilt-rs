@@ -19,6 +19,7 @@ mod pull_outcome;
 pub(crate) mod push;
 mod recommit;
 mod reset_to_latest;
+mod resolve_comparison;
 mod status;
 mod undo_commit;
 mod uninstall_package;
@@ -61,6 +62,7 @@ pub use push::PushResult;
 pub use push::push_package as push;
 pub use recommit::recommit_for_remote as recommit;
 pub use reset_to_latest::reset_to_latest;
+pub use resolve_comparison::{ResolveComparison, compare_for_resolve};
 
 pub use status::create_status as status;
 pub use status::refresh_latest_hash;

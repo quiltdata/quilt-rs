@@ -28,16 +28,21 @@
 //! `Keeping`. That is the pane's shape reporting a kit gap, not a scene's
 //! mistake.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
 use leptos::prelude::*;
+use quilt_uri::Namespace;
 
 use crate::Cell;
 use crate::Scene;
+use crate::commands::CurrentRevisionData;
+use crate::commands::ResolveData;
 use crate::commands::RevisionHistoryRow;
+use crate::gallery::file_pane::MARKED;
 use crate::kit::Align;
 use crate::kit::AnchoredOverlay;
-use crate::kit::BackLink;
 use crate::kit::Button;
-use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CatalogLink;
 use crate::kit::Choice;
@@ -309,69 +314,57 @@ fn in_page(pane: AnyView) -> AnyView {
     .into_any()
 }
 
-/// The pane under `?resolve=1`.
-///
-/// No outer heading: the mode is already named by the sentence under it, and a
-/// `PaneSection("Resolve")` wrapping two labelled sides draws the same label
-/// style at two levels, which is a hierarchy the reader cannot see.
+/// The pane under `?resolve=1`: the app's own `ResolvePane`, fed the fixture
+/// and commands that answer at once.
 ///
 /// The two buttons are deliberately not mirrors. One publishes what is already
-/// here; the other replaces local files and is the one that opens a `Dialog`. The
-/// kit has no Danger button and should not — Danger is a *status* colour in this
-/// system, so a red confirm would read as *this errored* — which leaves the
-/// weight to be carried by the arrangement and by the dialog's own copy.
-fn resolve(exit: &str, on_page: bool) -> AnyView {
-    let exit = exit.to_string();
-
+/// here; the other replaces local files and is the one that opens the
+/// confirmation, whose verb is the kit's `ButtonVariant::Danger`
+/// (`kit/confirm_dialog.rs`). What the pane avoids is a Danger *pane* button:
+/// before the confirmation nothing has been risked, so the weight is carried by
+/// the arrangement and by the dialog's own copy.
+///
+/// The exit is **inert in a gallery**. Leaving resolve is a navigation — the
+/// real page drops `?resolve=1` and the router redraws — and there is no router
+/// here to answer it, so every caller points the `BackLink` at the cell the
+/// pane is already inside: an anchor to anything further away scrolls, and a
+/// link that says it does nothing should not move the page.
+fn resolve(exit: &str, resolve: ResolveData) -> AnyView {
+    let differing: BTreeSet<String> = MARKED.iter().map(|&key| key.to_string()).collect();
     view! {
-        <aside
-            aria-label="About this package"
-            class=on_page.then_some("g-ip-contextpane")
-            style=(!on_page).then_some(PANE)
-        >
-            <Card>
-                <div class="g-stack" style="gap:var(--q-space-3)">
-                    // The mode's exit, and **inert in a gallery**. Leaving
-                    // resolve is a navigation — the real page drops `?resolve=1`
-                    // and the router redraws — so this is an anchor rather than
-                    // a control, and there is no router here to answer it.
-                    //
-                    // The caller says where it points, and every caller points
-                    // it at the cell the pane is already inside: an anchor to
-                    // anything further away scrolls, and a link that says it
-                    // does nothing should not move the page. What the exit
-                    // *does* is two cells apart rather than one click apart —
-                    // with the mode open the header has no primary, and in
-                    // every other cell `Resolve` is back on it.
-                    <BackLink href=exit label=NAMESPACE />
-                    <PaneSection>
-                        <p style="margin:0">
-                            "2 files differ between these revisions — marked in the list."
-                        </p>
-                        <PaneSection nested=true label="Yours">
-                            <RevisionRow
-                                message="Re-run plate 7 with the corrected layout"
-                                at=ago(0.4 * HOUR)
-                            />
-                        </PaneSection>
-                        <PaneSection nested=true label="Published">
-                            <RevisionRow
-                                message="Add Caihong folder-upload note"
-                                at=ago(2.0 * HOUR)
-                            />
-                        </PaneSection>
-                        <div class="g-stack" style="gap:var(--q-space-2)">
-                            <Button variant=ButtonVariant::Primary on_click=|_| ()>
-                                "Make mine the shared one"
-                            </Button>
-                            <Button on_click=|_| ()>"Replace mine with the published one"</Button>
-                        </div>
-                    </PaneSection>
-                </div>
-            </Card>
-        </aside>
+        <crate::pages::ResolvePane
+            namespace=Namespace::try_from(NAMESPACE).expect("a scene namespace")
+            uri=None
+            revision=CurrentRevisionData {
+                message: Some("Re-run plate 7 with the corrected layout".to_string()),
+                obtained_at: ago(0.4 * HOUR),
+            }
+            resolve=resolve
+            marks=Signal::stored(Some(Arc::new(differing)))
+            back_href=exit.to_string()
+            w=crate::pages::Wiring::new()
+            commands=crate::pages::ResolveCommands {
+                certify: |_, _| Box::pin(async { Ok(String::new()) }),
+                reset: |_, _| Box::pin(async { Ok(String::new()) }),
+            }
+        />
     }
     .into_any()
+}
+
+fn compared() -> ResolveData {
+    ResolveData::Compared {
+        published_message: Some("Add Caihong folder-upload note".to_string()),
+        differing: MARKED.iter().map(|&key| key.to_string()).collect(),
+        unpublished: 2,
+        uncommitted: 1,
+    }
+}
+
+fn refused() -> ResolveData {
+    ResolveData::Refused {
+        reason: "The bucket did not answer.".to_string(),
+    }
 }
 
 /// What the cells are for, and what looking at them settled.
@@ -386,8 +379,10 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
     wears a cloud and ends in an icon that opens the catalog; the unsent one \
     wears the slashed cloud and no icon. \
     \
-    Unresolved: `Replace mine with the published one` does not fit 280px and \
-    truncates.";
+    In resolve mode both choices fit on one line at 280px, each with the \
+    sentence that says what it does beneath it. They are a block of their own \
+    under the comparison, ruled off from Published, and each hint sits close \
+    under its button and well clear of the next.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -416,7 +411,7 @@ pub fn ContextPaneRegion(
 ) -> impl IntoView {
     let open = RwSignal::new(false);
     if resolving {
-        resolve(&exit, true)
+        resolve(&exit, compared())
     } else {
         pane(open, revision_list(), scope, pending, true)
     }
@@ -460,6 +455,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                             total: TOTAL,
                             remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
                         },
+                        resolve: None,
                     }
                     namespace=NAMESPACE
                     fetch=history
@@ -504,7 +500,10 @@ pub fn ContextPaneScene() -> impl IntoView {
                 )}
             </Cell>
             <Cell wide=true label="resolve mode, with the exit the design left open">
-                {resolve("#contextpane", false)}
+                {resolve("#contextpane", compared())}
+            </Cell>
+            <Cell wide=true label="resolve mode — the comparison could not be read">
+                {resolve("#contextpane", refused())}
             </Cell>
         </Scene>
     }

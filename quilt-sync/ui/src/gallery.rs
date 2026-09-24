@@ -413,6 +413,15 @@ pub fn Scene(title: &'static str, note: &'static str, children: Children) -> imp
     }
 }
 
+/// The resolve pane's sentence, for a cell that draws marked rows without the
+/// pane. A marked row's `aria-describedby` names `DIFFERS_ID`, which in the app
+/// only the pane carries; a cell without it would point at nothing.
+/// `count` is how many rows the cell marks, which the sentence counts.
+#[must_use]
+pub fn differs_caption(count: usize) -> AnyView {
+    view! { <p class="g-note" id=kit::DIFFERS_ID>{pages::differs_sentence(count)}</p> }.into_any()
+}
+
 #[component]
 #[allow(clippy::must_use_candidate, reason = "consumed by view!")]
 pub fn Cell(
@@ -437,5 +446,65 @@ pub fn Cell(
             <span class="g-cell__label">{label}</span>
             <div class="g-cell__body">{children()}</div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use leptos::prelude::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use crate::gallery::entry_row::EntryRowStories;
+    use crate::gallery::file_pane::FilePaneScene;
+    use crate::gallery::installed_package::InstalledPackageScene;
+
+    /// Every id a scene's `aria-describedby` names, and whether the scene itself
+    /// draws it. Scoped to the scene, because the gallery is one page and another
+    /// scene's sentence would otherwise answer for this one's rows.
+    fn dangling_descriptions<N: IntoView + 'static>(
+        scene: impl FnOnce() -> N + 'static,
+    ) -> Vec<String> {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), scene);
+        let described = container.query_selector_all("[aria-describedby]").unwrap();
+        let mut missing = Vec::new();
+        for i in 0..described.length() {
+            let el: web_sys::Element = described.item(i).unwrap().dyn_into().unwrap();
+            let ids = el.get_attribute("aria-describedby").unwrap();
+            for id in ids.split_whitespace() {
+                if container
+                    .query_selector(&format!("[id='{id}']"))
+                    .unwrap()
+                    .is_none()
+                {
+                    missing.push(id.to_string());
+                }
+            }
+        }
+        drop(handle);
+        container.remove();
+        missing
+    }
+
+    #[wasm_bindgen_test]
+    fn every_description_the_entry_row_stories_name_is_drawn() {
+        assert_eq!(dangling_descriptions(EntryRowStories), Vec::<String>::new());
+    }
+
+    #[wasm_bindgen_test]
+    fn every_description_the_file_pane_scene_names_is_drawn() {
+        assert_eq!(dangling_descriptions(FilePaneScene), Vec::<String>::new());
+    }
+
+    #[wasm_bindgen_test]
+    fn every_description_the_installed_package_scene_names_is_drawn() {
+        assert_eq!(
+            dangling_descriptions(InstalledPackageScene),
+            Vec::<String>::new()
+        );
     }
 }

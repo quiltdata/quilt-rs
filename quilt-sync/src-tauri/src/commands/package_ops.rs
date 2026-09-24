@@ -75,9 +75,24 @@ pub async fn package_commit(
         .map(result.map(|_| ()), msg_ok, msg_err)
 }
 
-async fn certify_latest_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
+async fn certify_latest_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     model::package_revision_certify_latest(m, namespace.clone()).await?;
+    Ok(namespace)
+}
+
+/// Certify, then lift the tick's pause as reset does: the tick pauses every
+/// diverged package, and certifying installs nothing that would clear it.
+async fn certify_and_resume(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &str,
+) -> Result<(), Error> {
+    let ns = certify_latest_command(m, namespace).await?;
+    watcher.clear_paused(&ns).await;
     Ok(())
 }
 
@@ -85,6 +100,7 @@ async fn certify_latest_command(m: &model::Model, namespace: &str) -> Result<(),
 pub async fn certify_latest(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
@@ -98,7 +114,7 @@ pub async fn certify_latest(
             MixpanelEvent::LatestCertified(RemotePackageEvent::for_uri(uri.as_ref())),
         )
         .map(
-            certify_latest_command(&m, &namespace).await,
+            certify_and_resume(&*m, &watcher, &namespace).await,
             msg_ok,
             msg_err,
         )
@@ -918,7 +934,13 @@ pub async fn get_revision_message(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::Error;
+    use crate::autopull::PausedReason;
+    use crate::autopull::Watcher;
+    use crate::autopull::reporter::LogReporter;
+    use crate::model::MockQuiltModel;
     use crate::quilt;
 
     /// The error S3 returns when the active role cannot write a bucket. The
@@ -929,6 +951,74 @@ mod tests {
         Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
             quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
         )))
+    }
+
+    /// A certify installs no revision, so its success must lift the tick's
+    /// diverged pause itself, as reset does; otherwise autosync stays stopped.
+    #[tokio::test]
+    async fn certifying_resumes_a_diverged_pause() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let watcher = certify_watcher(&ns).await;
+        let mut model = installed_model();
+        model
+            .expect_package_revision_certify_latest()
+            .times(1)
+            .returning(|_| {
+                Ok(quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                })
+            });
+
+        super::certify_and_resume(&model, &watcher, "acme/demo")
+            .await
+            .expect("certify");
+
+        assert_eq!(watcher.paused_reason(&ns).await, None);
+    }
+
+    /// A refused certify changed nothing, so the package is still diverged.
+    #[tokio::test]
+    async fn a_refused_certify_leaves_the_pause() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let watcher = certify_watcher(&ns).await;
+        let mut model = installed_model();
+        model
+            .expect_package_revision_certify_latest()
+            .times(1)
+            .returning(|_| Err(access_denied_error()));
+
+        assert!(
+            super::certify_and_resume(&model, &watcher, "acme/demo")
+                .await
+                .is_err()
+        );
+
+        assert_eq!(
+            watcher.paused_reason(&ns).await,
+            Some(PausedReason::Diverged)
+        );
+    }
+
+    async fn certify_watcher(ns: &quilt_uri::Namespace) -> Watcher {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        watcher
+            .pause_for_test(ns.clone(), PausedReason::Diverged)
+            .await;
+        watcher
+    }
+
+    fn installed_model() -> MockQuiltModel {
+        let mut model = MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into()),
+            ))
+        });
+        model
     }
 
     /// A refusal drawn in a dialog stands above the fields the reader is about to
