@@ -82,9 +82,9 @@ pub struct Wiring {
     /// performs it.
     pub goto: RwSignal<Option<String>>,
     /// Where the page goes in place of the current entry, so *Back* never
-    /// returns to it: leaving the resolve mode on a success. [`Wiring::follow`]
-    /// performs it.
-    pub replace_to: RwSignal<Option<String>>,
+    /// returns to it: leaving the resolve mode on a success. Keyed, as
+    /// `outcome` is: [`Wiring::follow`] drops it once its package is off screen.
+    pub replace_to: RwSignal<Option<Replace>>,
     pub dialogs: Dialogs,
 }
 
@@ -151,6 +151,13 @@ pub(super) fn run(
     });
 }
 
+/// A navigation in place of the current entry, and the package it leaves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Replace {
+    pub namespace: String,
+    pub to: String,
+}
+
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
 pub struct Dialogs {
@@ -190,9 +197,9 @@ impl Wiring {
         }
     }
 
-    /// Perform `goto` and `replace_to`. Called once, by whoever owns the
-    /// signals, inside a router.
-    fn follow(self) {
+    /// Perform `goto`, and `replace_to` while `showing` is its package. Called
+    /// once, by whoever owns the signals, inside a router.
+    fn follow(self, showing: Signal<String>) {
         let Self {
             goto, replace_to, ..
         } = self;
@@ -202,15 +209,18 @@ impl Wiring {
                 navigate(&target, NavigateOptions::default());
                 goto.set(None);
             }
-            if let Some(target) = replace_to.get() {
+            if let Some(Replace { namespace, to }) = replace_to.get() {
+                replace_to.set(None);
+                if namespace != showing.get_untracked() {
+                    return;
+                }
                 navigate(
-                    &target,
+                    &to,
                     NavigateOptions {
                         replace: true,
                         ..NavigateOptions::default()
                     },
                 );
-                replace_to.set(None);
             }
         });
     }
@@ -266,7 +276,12 @@ fn normalized_address(
 /// `asked` is the address's `resolve=1`; the mode is open only when this
 /// payload also carries a comparison, so the header, the pane and the marks
 /// all read one `open`.
-fn package_body(data: commands::PackagePageData, w: Wiring, asked: Signal<bool>) -> AnyView {
+fn package_body(
+    data: commands::PackagePageData,
+    w: Wiring,
+    asked: Signal<bool>,
+    resolving: ResolveCommands,
+) -> AnyView {
     let commands::PackagePageData {
         header, context, ..
     } = data;
@@ -302,7 +317,7 @@ fn package_body(data: commands::PackagePageData, w: Wiring, asked: Signal<bool>)
                     marks=marks.differing
                     back_href=routes::package_page_href(&ns)
                     w=w
-                    commands=ResolveCommands::app()
+                    commands=resolving
                 />
             }
             .into_any(),
@@ -381,7 +396,7 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
 /// so no setting and no build offers it.
 #[component]
 pub fn InstalledPackageV2() -> impl IntoView {
-    view! { <PackageScreen read=read_page /> }
+    view! { <PackageScreen read=read_page resolving=ResolveCommands::app() /> }
 }
 
 /// The page's one read: the header, the pane and the pause, for one namespace.
@@ -394,10 +409,10 @@ fn read_page(
     Box::pin(commands::get_package_page_data(namespace))
 }
 
-/// The page over whichever read it is given, so a routed test can feed it a
-/// payload without a Tauri host.
+/// The page over whichever read and resolve commands it is given, so a routed
+/// test can feed it a payload without a Tauri host.
 #[component]
-fn PackageScreen(read: PageRead) -> impl IntoView {
+fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     let query = use_query_map();
     // The address is the only input the page has. Memos, because one route
     // serves every package and a link from another page swaps the parameter
@@ -411,7 +426,7 @@ fn PackageScreen(read: PageRead) -> impl IntoView {
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
     // Here and not in the header, which every re-read rebuilds — see `Wiring`.
     let w = Wiring::new();
-    w.follow();
+    w.follow(ns.into());
     let Wiring {
         outcome, reload, ..
     } = w;
@@ -447,8 +462,11 @@ fn PackageScreen(read: PageRead) -> impl IntoView {
         let Some(Ok(answered)) = data.get() else {
             return;
         };
-        if let Some(plain) = normalized_address(asked.get(), &ns.get(), &answered) {
-            w.replace_to.set(Some(plain));
+        if let Some(to) = normalized_address(asked.get(), &ns.get(), &answered) {
+            w.replace_to.set(Some(Replace {
+                namespace: ns.get(),
+                to,
+            }));
         }
     });
 
@@ -483,7 +501,7 @@ fn PackageScreen(read: PageRead) -> impl IntoView {
             <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => package_body(d, w, asked.into()),
+                        Ok(d) => package_body(d, w, asked.into(), resolving),
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
@@ -879,7 +897,7 @@ mod tests {
         // Inside a `Router`, where the page always is.
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w, Signal::stored(false))}</Router> }
+            view! { <Router>{package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())}</Router> }
         });
         let aside = el
             .query_selector("aside")
@@ -909,7 +927,7 @@ mod tests {
     fn the_body_carries_the_revision_trigger() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w, Signal::stored(false))}</Router> }
+            view! { <Router>{package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())}</Router> }
         });
         let trigger = element_saying(&el, "Revisions you have (1)")
             .closest("button")
@@ -932,7 +950,7 @@ mod tests {
     fn the_body_carries_keeping() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w, Signal::stored(false))}</Router> }
+            view! { <Router>{package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())}</Router> }
         });
         let group = el
             .query_selector("[role=radiogroup]")
@@ -978,7 +996,7 @@ mod tests {
                 <Router>
                     {move || {
                         reads.track();
-                        package_body(page_data(), w, Signal::stored(false))
+                        package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())
                     }}
                 </Router>
             }
@@ -1279,6 +1297,15 @@ mod tests {
 
     /// The page at `address`, reading through `read`, inside a router.
     async fn screen_at(address: &str, read: PageRead) -> web_sys::Element {
+        screen_resolving(address, read, ResolveCommands::app()).await
+    }
+
+    /// [`screen_at`], with the resolve mode's commands answered by `resolving`.
+    async fn screen_resolving(
+        address: &str,
+        read: PageRead,
+        resolving: ResolveCommands,
+    ) -> web_sys::Element {
         crate::test_support::unmount_earlier();
         READS.with(|r| r.set(0));
         go_to(address);
@@ -1288,7 +1315,7 @@ mod tests {
                     <Routes fallback=|| view! { "no route" }>
                         <Route
                             path=path!("/installed-package")
-                            view=move || view! { <PackageScreen read=read /> }
+                            view=move || view! { <PackageScreen read=read resolving=resolving /> }
                         />
                     </Routes>
                 </Router>
@@ -1384,6 +1411,80 @@ mod tests {
             READS.with(std::cell::Cell::get),
             1,
             "leaving does not re-read"
+        );
+    }
+
+    thread_local! {
+        static CERTIFY_RELEASED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Every package diverged, each answered as the namespace asked.
+    fn diverged_as_asked(namespace: String) -> Read {
+        let mut data = diverged(compared());
+        data.header.namespace = namespace.try_into().unwrap();
+        counted(data)
+    }
+
+    /// A certify that succeeds once the test releases it.
+    fn certifies_when_released(_: String, _: Option<quilt_uri::S3PackageUri>) -> Choice {
+        Box::pin(async {
+            while !CERTIFY_RELEASED.get() {
+                sleep_ms(5).await;
+            }
+            Ok("certified".to_string())
+        })
+    }
+
+    type Choice = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>>>>;
+
+    /// Moving between packages the way the router hears it: a new entry, then `popstate`.
+    fn move_to(address: &str) {
+        let window = web_sys::window().unwrap();
+        window
+            .history()
+            .unwrap()
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(address))
+            .unwrap();
+        window
+            .dispatch_event(&web_sys::Event::new("popstate").unwrap())
+            .unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_late_certify_for_a_package_left_behind_does_not_drag_the_reader_back() {
+        const OTHER: &str = "/installed-package?namespace=team%2Fother";
+        CERTIFY_RELEASED.set(false);
+        let el = screen_resolving(
+            RESOLVE,
+            diverged_as_asked,
+            ResolveCommands {
+                certify: certifies_when_released,
+                reset: |_, _| Box::pin(std::future::pending()),
+            },
+        )
+        .await;
+        element_saying(&el, "Make mine the shared one")
+            .closest("button")
+            .unwrap()
+            .expect("the certify button")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        sleep_ms(10).await;
+
+        move_to(OTHER);
+        sleep_ms(50).await;
+        assert_eq!(search(), "?namespace=team%2Fother", "on the other package");
+
+        CERTIFY_RELEASED.set(true);
+        sleep_ms(50).await;
+
+        assert_eq!(search(), "?namespace=team%2Fother", "still on it");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("Your revision is now the shared one."),
+            "the first package's success is not drawn here; markup was {}",
+            el.inner_html()
         );
     }
 

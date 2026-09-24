@@ -15,7 +15,7 @@ use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 use quilt_uri::{Namespace, S3PackageUri};
 
-use super::{Outcome, Wiring, holding, run};
+use super::{Outcome, Replace, Wiring, holding, run};
 use crate::commands;
 use crate::kit::{
     BackLink, BannerVariant, Button, ButtonVariant, Card, ConfirmDialog, DIFFERS_ID, LoadFailure,
@@ -243,8 +243,14 @@ fn certify_press(target: Target, w: Wiring, certify: RevisionChoice) -> impl Fn(
         let task = async move {
             let answer = certify(ns.clone(), uri).await;
             if answer.is_ok() {
-                outcome.try_set(Some(success(ns, "Your revision is now the shared one.")));
-                replace_to.try_set(Some(plain));
+                outcome.try_set(Some(success(
+                    ns.clone(),
+                    "Your revision is now the shared one.",
+                )));
+                replace_to.try_set(Some(Replace {
+                    namespace: ns,
+                    to: plain,
+                }));
             }
             answer
         };
@@ -285,8 +291,8 @@ fn replace_confirmation(
                 async move {
                     // A refusal answers the dialog, which draws it and stays open.
                     holding(busy, outcome, reset(namespace.clone(), uri)).await?;
-                    outcome.set(Some(success(namespace, "Replaced with the published revision.")));
-                    replace_to.set(Some(plain));
+                    outcome.set(Some(success(namespace.clone(), "Replaced with the published revision.")));
+                    replace_to.set(Some(Replace { namespace, to: plain }));
                     reload.notify();
                     Ok(())
                 }
@@ -756,7 +762,10 @@ mod tests {
                 detail: None,
             })
         );
-        assert_eq!(w.replace_to.get_untracked().as_deref(), Some(BACK));
+        assert_eq!(
+            w.replace_to.get_untracked().map(|r| r.to).as_deref(),
+            Some(BACK)
+        );
         assert_eq!(RELOADED.get(), 1, "the page re-reads");
     }
 
@@ -854,7 +863,10 @@ mod tests {
                 detail: None,
             })
         );
-        assert_eq!(w.replace_to.get_untracked().as_deref(), Some(BACK));
+        assert_eq!(
+            w.replace_to.get_untracked().map(|r| r.to).as_deref(),
+            Some(BACK)
+        );
         assert_eq!(RELOADED.get(), 1, "the page re-reads");
     }
 

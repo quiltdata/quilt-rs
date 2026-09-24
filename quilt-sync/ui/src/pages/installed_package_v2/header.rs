@@ -591,7 +591,7 @@ mod tests {
                         <Route
                             path=path!("/installed-package")
                             view=move || {
-                                w.follow();
+                                w.follow(Signal::stored("team/dataset".to_string()));
                                 view! { <PageHeader data=data.clone() w=w /> }
                             }
                         />
