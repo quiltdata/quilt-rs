@@ -1825,3 +1825,67 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
     );
     Ok(())
 }
+
+// ── A pull and a download of the same package never overlap ──
+//
+// `pull` and `install_paths` each read the package's lineage, await, and write
+// the whole entry back, so whichever writes last wins. With the pull last, the
+// package names the newer revision with the downloaded paths gone, and an
+// untouched file reads Modified (qhq-a4za). Until quilt-rs orders lineage
+// writers itself, the tick stays out of the way of a download.
+
+#[tokio::test]
+async fn the_tick_skips_a_package_while_it_downloads_and_pulls_it_on_the_next_tick()
+-> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let inner = inner_with(Arc::clone(&agg));
+
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model.expect_package_pull().times(0);
+    {
+        let _downloading = agg.lock_for_download(&ns).await;
+        run_once(&model, &RoleCache::default(), &inner).await?;
+    }
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "a skipped pull is not a pause"
+    );
+    assert!(
+        inner.backoff.read().await.is_empty(),
+        "nor a failure to back off from: the next tick simply tries again"
+    );
+
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+    run_once(&model, &RoleCache::default(), &inner).await?;
+    Ok(())
+}
+
+// A download of one package says nothing about another.
+#[tokio::test]
+async fn a_download_of_another_package_does_not_hold_the_pull_back() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let inner = inner_with(Arc::clone(&agg));
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+
+    let _downloading = agg.lock_for_download(&("acme", "other").into()).await;
+    run_once(&model, &RoleCache::default(), &inner).await?;
+    Ok(())
+}

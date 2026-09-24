@@ -165,6 +165,15 @@ impl Watcher {
         self.inner.aggregator.apply_guard(namespace)
     }
 
+    /// Hold for the length of a download of this package, so the tick's pull
+    /// never overlaps it (qhq-a4za). Waits out a pull already in flight.
+    pub async fn lock_for_download(
+        &self,
+        namespace: &Namespace,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        self.inner.aggregator.lock_for_download(namespace).await
+    }
+
     /// Whether a pull is applying — writing working files — right now.
     /// Synchronous, because its caller is a menu/window event handler that
     /// cannot await.

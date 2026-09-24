@@ -694,11 +694,15 @@ pub async fn package_create(
 
 async fn package_install_paths_command(
     m: &model::Model,
+    watcher: &Watcher,
     uri: &str,
     paths: &[String],
 ) -> Result<Vec<PathBuf>, Error> {
     let uri = quilt_uri::S3PackageUri::try_from(uri)?;
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    // Not the apply flag (installing picked files only adds them), but the
+    // tick's pull must still not overlap it: both write the lineage.
+    let _ordered = watcher.lock_for_download(&uri.namespace).await;
     model::install_paths_only(m, &uri.namespace, paths).await
 }
 
@@ -708,6 +712,7 @@ async fn package_install_paths_command(
 pub async fn package_install_paths(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     uri: String,
     paths: Vec<String>,
 ) -> Result<String, String> {
@@ -716,7 +721,7 @@ pub async fn package_install_paths(
     let msg_init = format!("Installing paths from {uri}");
     let msg_err = |err: &Error| format!("Failed to install paths: {err}");
 
-    let result = package_install_paths_command(&m, &uri, &paths).await;
+    let result = package_install_paths_command(&m, &watcher, &uri, &paths).await;
     let msg_ok = match &result {
         Ok(skipped) if !skipped.is_empty() => format!(
             "Installed {} of {} paths; skipped {} no longer on the remote: {}",
@@ -853,6 +858,7 @@ fn banner_for_outcome(
 pub async fn handle_remote_package(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
     uri: String,
 ) -> Result<RemotePackageResult, String> {
     let s3_uri: quilt_uri::S3PackageUri = uri
@@ -870,6 +876,8 @@ pub async fn handle_remote_package(
     if let model::InstallOutcome::Installed = outcome
         && let Some(ref path) = s3_uri.path
     {
+        // A download like any other: the tick's pull must not overlap it.
+        let _ordered = watcher.lock_for_download(&s3_uri.namespace).await;
         let installed_package = m
             .get_installed_package(&s3_uri.namespace)
             .await
