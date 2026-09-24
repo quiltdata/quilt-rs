@@ -913,7 +913,7 @@ fn pane(p: Pane) -> AnyView {
                                                   var(--q-space-3); \
                                                   color:var(--q-fgColor-muted); \
                                                   font-size:var(--q-text-body)">
-                                            "This package has 4,312 files. Showing the first 1,000."
+                                            "This package has 4,312 files. This list covers the first 1,000 by path."
                                         </p>
                                     }
                                 })}

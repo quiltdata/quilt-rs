@@ -223,6 +223,9 @@ fn thousands(n: usize) -> String {
 
 /// The one line saying the list is not all of the package.
 ///
+/// It describes the loaded list, not the view: a facet or a search narrows the
+/// rows further, and the notice still speaks of the list they are drawn from.
+///
 /// Page-local and not a kit piece: not a `Banner`, which reports an outcome
 /// for the whole page, and not a `ZeroLine`, which is the healthy queue's
 /// one-liner. It sits inside the list's box, above the rows it qualifies.
@@ -231,7 +234,7 @@ fn CapNotice(total: usize, shown: usize) -> impl IntoView {
     view! {
         <p class=style::cap>
             {format!(
-                "This package has {} files. Showing the first {}.",
+                "This package has {} files. This list covers the first {} by path.",
                 thousands(total),
                 thousands(shown),
             )}
@@ -636,7 +639,8 @@ mod pane_tests {
 
         let cut = pane(Listing::Ready(list(rows(), 4_312, true)));
         assert!(
-            text(&cut).contains("This package has 4,312 files. Showing the first 2."),
+            text(&cut)
+                .contains("This package has 4,312 files. This list covers the first 2 by path."),
             "markup was {}",
             cut.inner_html()
         );
