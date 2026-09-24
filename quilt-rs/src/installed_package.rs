@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -325,9 +324,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(status)
     }
 
-    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<LineagePaths> {
+    /// Downloads `paths` and starts tracking them. A path whose bytes the
+    /// remote no longer holds is skipped, not an error: see
+    /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped).
+    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
         if paths.is_empty() {
-            return Ok(BTreeMap::new());
+            return Ok(flow::InstallPathsReport::default());
         }
 
         self.scaffold_paths().await?;
@@ -338,7 +340,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
         let mut manifest = self.manifest().await?;
-        let lineage = flow::install_paths(
+        let (lineage, skipped) = flow::install_paths(
             lineage,
             &mut manifest,
             &self.paths,
@@ -350,7 +352,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.paths)
+        Ok(flow::InstallPathsReport {
+            paths: lineage.paths,
+            skipped,
+        })
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {

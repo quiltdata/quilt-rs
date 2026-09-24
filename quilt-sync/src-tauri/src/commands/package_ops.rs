@@ -680,13 +680,14 @@ async fn package_install_paths_command(
     m: &model::Model,
     uri: &str,
     paths: &[String],
-) -> Result<(), Error> {
+) -> Result<Vec<PathBuf>, Error> {
     let uri = quilt_uri::S3PackageUri::try_from(uri)?;
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    model::install_paths_only(m, &uri.namespace, paths).await?;
-    Ok(())
+    model::install_paths_only(m, &uri.namespace, paths).await
 }
 
+/// Returns the notice the page shows. A path the remote no longer holds the
+/// bytes for is skipped and counted in it, not an error for the whole call.
 #[tauri::command]
 pub async fn package_install_paths(
     m: tauri::State<'_, model::Model>,
@@ -697,19 +698,29 @@ pub async fn package_install_paths(
     // Installing names its package by URI, so the catalog is already in hand.
     let target = S3PackageUri::try_from(uri.as_str()).ok();
     let msg_init = format!("Installing paths from {uri}");
-    let msg_ok = format!("Successfully installed {} paths", paths.len());
     let msg_err = |err: &Error| format!("Failed to install paths: {err}");
 
+    let result = package_install_paths_command(&m, &uri, &paths).await;
+    let msg_ok = match &result {
+        Ok(skipped) if !skipped.is_empty() => format!(
+            "Installed {} of {} paths; skipped {} no longer on the remote: {}",
+            paths.len() - skipped.len(),
+            paths.len(),
+            skipped.len(),
+            skipped
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => format!("Successfully installed {} paths", paths.len()),
+    };
     Notify::new(msg_init)
         .on_success(
             &tracing,
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(target.as_ref())),
         )
-        .map(
-            package_install_paths_command(&m, &uri, &paths).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 async fn add_to_quiltignore_command(
@@ -853,9 +864,17 @@ pub async fn handle_remote_package(
             .await
             .map_err(|e| e.to_frontend_string())?
         {
-            m.package_install_paths(&installed_package, std::slice::from_ref(path))
+            let report = m
+                .package_install_paths(&installed_package, std::slice::from_ref(path))
                 .await
                 .map_err(|e| e.to_frontend_string())?;
+            // One path asked for, so skipping it leaves nothing to open.
+            if !report.skipped.is_empty() {
+                return Err(Error::from(quilt::Error::InstallPath(
+                    quilt::InstallPathError::ContentMismatch(path.clone()),
+                ))
+                .to_frontend_string());
+            }
         }
         m.open_in_default_application(&s3_uri.namespace, path)
             .await

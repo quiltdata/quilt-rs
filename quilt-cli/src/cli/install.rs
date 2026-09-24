@@ -18,6 +18,9 @@ pub struct Input {
 pub struct Output {
     installed_package: quilt_rs::InstalledPackage,
     paths: Vec<std::path::PathBuf>,
+    /// Requested paths not installed because the remote no longer holds their
+    /// bytes (an unversioned bucket, overwritten since).
+    skipped: Vec<std::path::PathBuf>,
 }
 
 #[cfg(test)]
@@ -37,6 +40,12 @@ impl std::fmt::Display for Output {
                 output.push(format!("Path: \"{}\"", path.display()));
             }
         }
+        for path in &self.skipped {
+            output.push(format!(
+                "Skipped: \"{}\" (no longer on the remote)",
+                path.display()
+            ));
+        }
         write!(f, "{}", output.join("\n"))
     }
 }
@@ -53,6 +62,11 @@ impl Render for Output {
                 // never matched against the manifest. A non-UTF-8 argument
                 // renders lossily here; it also matches no manifest key, so
                 // it installs nothing.
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "skipped": self
+                .skipped
+                .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
         })
@@ -81,9 +95,8 @@ async fn install_package(
 async fn install_paths(
     installed_package: &quilt_rs::InstalledPackage,
     paths: &[PathBuf],
-) -> Result<(), Error> {
-    installed_package.install_paths(paths).await?;
-    Ok(())
+) -> Result<Vec<PathBuf>, Error> {
+    Ok(installed_package.install_paths(paths).await?.skipped)
 }
 
 fn get_entries(
@@ -117,13 +130,16 @@ pub async fn model(
     let installed_package = install_package(local_domain, &uri, namespace).await?;
     let paths = get_entries(path, paths);
 
-    if !paths.is_empty() {
-        install_paths(&installed_package, &paths).await?;
-    }
+    let skipped = if paths.is_empty() {
+        Vec::new()
+    } else {
+        install_paths(&installed_package, &paths).await?
+    };
 
     Ok(Output {
         installed_package,
         paths,
+        skipped,
     })
 }
 
@@ -304,12 +320,16 @@ mod tests {
 
         let output = Output {
             installed_package: created.installed_package,
-            paths: vec![std::path::PathBuf::from("data/one.csv")],
+            paths: vec![
+                std::path::PathBuf::from("data/one.csv"),
+                std::path::PathBuf::from("data/two.csv"),
+            ],
+            skipped: vec![std::path::PathBuf::from("data/two.csv")],
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/pkg","paths":["data/one.csv"]}"#
+            r#"{"namespace":"test/pkg","paths":["data/one.csv","data/two.csv"],"skipped":["data/two.csv"]}"#
         );
         Ok(())
     }
@@ -332,11 +352,12 @@ mod tests {
         let output = Output {
             installed_package: created.installed_package,
             paths: Vec::new(),
+            skipped: Vec::new(),
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/bare","paths":[]}"#
+            r#"{"namespace":"test/bare","paths":[],"skipped":[]}"#
         );
         Ok(())
     }

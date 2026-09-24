@@ -153,7 +153,9 @@ pub(crate) async fn apply_latest_update(
     // stay tracked across the write, which the user-facing verb refuses by
     // design. Safe only because the touch set already excludes every path the
     // user touched — see `pull::touch_set`.
-    let mut lineage = flow::install_paths_over(
+    // `Refuse`, so nothing is ever skipped: the lineage already names the new
+    // base, and a path left out here would stay tracked at its old row.
+    let (mut lineage, _skipped) = flow::install_paths_over(
         lineage,
         manifest,
         paths,
@@ -166,6 +168,7 @@ pub(crate) async fn apply_latest_update(
             LocalWork::Protect => Protect::BaseContent(&base_rows),
             LocalWork::Discard => Protect::Nothing,
         },
+        flow::OnMismatch::Refuse,
     )
     .await?;
 

@@ -1,6 +1,10 @@
-//! `qhq-a4za`: install an older revision, download every file, and a file the
-//! newer revision modifies must not read as changed. Entry status is measured
-//! against the installed revision, never against `latest`.
+//! Install an older revision, download every file, and a file the newer
+//! revision modifies must not read as changed. Entry status is measured against
+//! the installed revision, never against `latest`.
+//!
+//! Found while diagnosing `qhq-a4za`, but not its cause: real packages pin every
+//! key to an S3 version. The unversioned case is a bucket without versioning,
+//! where a later revision's put replaces the bytes an older row names.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -9,8 +13,6 @@ use std::str::FromStr;
 use aws_sdk_s3::primitives::ByteStream;
 use test_log::test;
 
-use crate::Error;
-use crate::InstallPathError;
 use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::flow;
@@ -169,18 +171,26 @@ impl Rev1Installed {
     }
 
     /// Select all + Download.
-    async fn download_all(&self) -> Res<PackageLineage> {
-        let mut manifest = Manifest::from_path(&self.storage, &self.installed_manifest()).await?;
+    async fn download_all(&self) -> Res<(PackageLineage, Vec<PathBuf>)> {
         let all = [PathBuf::from("changes.txt"), PathBuf::from("same.txt")];
+        self.download(self.lineage.clone(), &all).await
+    }
+
+    async fn download(
+        &self,
+        lineage: PackageLineage,
+        paths: &[PathBuf],
+    ) -> Res<(PackageLineage, Vec<PathBuf>)> {
+        let mut manifest = Manifest::from_path(&self.storage, &self.installed_manifest()).await?;
         flow::install_paths(
-            self.lineage.clone(),
+            lineage,
             &mut manifest,
             &self.domain_paths,
             self.package_home.clone(),
             self.namespace.clone(),
             &self.storage,
             &self.remote,
-            &all.iter().collect::<Vec<_>>(),
+            &paths.iter().collect::<Vec<_>>(),
         )
         .await
     }
@@ -204,7 +214,8 @@ impl Rev1Installed {
 #[test(tokio::test)]
 async fn downloading_an_older_revision_leaves_untouched_files_unchanged() -> Res {
     let package = Rev1Installed::new(true).await?;
-    let lineage = package.download_all().await?;
+    let (lineage, skipped) = package.download_all().await?;
+    assert!(skipped.is_empty(), "skipped {skipped:?}");
 
     let on_disk = tokio::fs::read(package.package_home.join("changes.txt")).await?;
     assert_eq!(on_disk, b"one");
@@ -218,47 +229,71 @@ async fn downloading_an_older_revision_leaves_untouched_files_unchanged() -> Res
     Ok(())
 }
 
-/// `qhq-a4za`. A bare physical key names whatever the object is *now*. Once
-/// revision 2 has replaced it, downloading revision 1 used to fetch revision
-/// 2's bytes and file them under revision 1's row, and the untouched file read
-/// Modified. Bytes that do not match their row are refused, the working tree
-/// is left as it was, and the refusal holds on retry: the wrong bytes must not
-/// have been cached under revision 1's hash either.
+/// A bare physical key names whatever the object is *now*. Once revision 2 has
+/// replaced it, downloading revision 1 used to fetch revision 2's bytes and file
+/// them under revision 1's row, and the untouched file read Modified. Now the
+/// row whose bytes are gone is skipped and reported, and every other row is
+/// installed: an unversioned bucket degrades, it does not fail the download.
 #[test(tokio::test)]
-async fn an_unversioned_key_never_places_latests_bytes_under_an_older_row() -> Res {
+async fn an_unversioned_key_skips_the_replaced_row_and_installs_the_rest() -> Res {
     let package = Rev1Installed::new(false).await?;
 
-    for attempt in ["first", "retry"] {
-        match package.download_all().await {
-            Err(Error::InstallPath(InstallPathError::ContentMismatch(path))) => {
-                assert_eq!(path, PathBuf::from("changes.txt"), "{attempt}");
-            }
-            Err(err) => panic!("{attempt}: refused for the wrong reason: {err}"),
-            Ok(lineage) => panic!(
-                "{attempt}: placed {:?} under revision 1's row; status changes: {:?}",
-                String::from_utf8_lossy(
-                    &tokio::fs::read(package.package_home.join("changes.txt")).await?
-                ),
-                package
-                    .status(lineage)
-                    .await?
-                    .changes
-                    .keys()
-                    .collect::<Vec<_>>()
-            ),
-        }
-        assert!(
-            !package
-                .storage
-                .exists(package.package_home.join("changes.txt"))
-                .await
-        );
-        assert!(
-            !package
-                .storage
-                .exists(package.package_home.join("same.txt"))
-                .await
-        );
-    }
+    let (lineage, skipped) = package.download_all().await?;
+
+    assert_eq!(skipped, vec![PathBuf::from("changes.txt")]);
+    assert_eq!(
+        tokio::fs::read(package.package_home.join("same.txt")).await?,
+        b"same"
+    );
+    assert!(
+        !package
+            .storage
+            .exists(package.package_home.join("changes.txt"))
+            .await,
+        "revision 2's bytes were placed under revision 1's row"
+    );
+    assert_eq!(
+        lineage.paths.keys().collect::<Vec<_>>(),
+        vec![&PathBuf::from("same.txt")]
+    );
+    let status = package.status(lineage).await?;
+    assert!(
+        status.changes.is_empty(),
+        "untouched files read as changed: {:?}",
+        status.changes.keys().collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+/// Asking again for what was skipped still skips it: the wrong bytes were never
+/// filed under revision 1's hash, so a retry fetches afresh rather than taking
+/// them from the object store as a cache hit.
+#[test(tokio::test)]
+async fn retrying_a_skipped_path_does_not_take_wrong_bytes_from_the_store() -> Res {
+    let package = Rev1Installed::new(false).await?;
+    let (lineage, skipped) = package.download_all().await?;
+
+    let (lineage, skipped) = package.download(lineage, &skipped).await?;
+
+    assert_eq!(skipped, vec![PathBuf::from("changes.txt")]);
+    assert!(
+        !package
+            .storage
+            .exists(package.package_home.join("changes.txt"))
+            .await,
+        "the retry placed revision 2's bytes under revision 1's row"
+    );
+    let manifest = Manifest::from_path(&package.storage, &package.installed_manifest()).await?;
+    let row = manifest
+        .get_record(&PathBuf::from("changes.txt"))
+        .expect("revision 1 has changes.txt");
+    assert!(
+        !package
+            .storage
+            .exists(package.domain_paths.object(row.hash.digest()))
+            .await,
+        "revision 2's bytes are in the store under revision 1's hash"
+    );
+    assert!(package.status(lineage).await?.changes.is_empty());
     Ok(())
 }
