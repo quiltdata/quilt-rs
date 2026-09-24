@@ -39,7 +39,7 @@ impl Flag {
 ///
 /// Every row here is a reader's to find, so work with nothing to show them yet
 /// gets no row at all. The rebuilt package screen is the case today: it is
-/// switched by an in-code flag (`main.rs`'s `UNFINISHED_PACKAGE_PAGE`), which a
+/// switched by an in-code flag (`routes.rs`'s `UNFINISHED_PACKAGE_PAGE`), which a
 /// developer flips in the source and no build carries on. A row — even a
 /// disabled one — would tell a reader the unfinished page exists and invite the
 /// question.

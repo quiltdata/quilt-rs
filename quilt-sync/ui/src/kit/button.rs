@@ -64,6 +64,9 @@ pub fn Button(
     /// The id of what it opens.
     #[prop(optional, into)]
     aria_controls: MaybeProp<String>,
+    /// The id of the words that say what it does, drawn beside it by the caller.
+    #[prop(optional, into)]
+    aria_describedby: MaybeProp<String>,
     /// Submits the form named by `form` rather than doing nothing on its own.
     ///
     /// The default is `type="button"` and stays that way: a `<button>` inside a `<form>`
@@ -133,6 +136,7 @@ pub fn Button(
             aria-busy=move || if is_loading.get() { "true" } else { "false" }
             aria-expanded=move || aria_expanded.get().map(|v| v.to_string())
             aria-controls=move || aria_controls.get()
+            aria-describedby=move || aria_describedby.get()
             on:click=move |ev| {
                 if !is_disabled.get() {
                     on_click(ev);

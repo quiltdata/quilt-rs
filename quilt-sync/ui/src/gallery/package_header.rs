@@ -225,7 +225,7 @@ fn scene_menu() -> Vec<MenuItem> {
 /// One primary per screen is the rule this serves. Resolve mode is the case: the
 /// header's `Resolve` is what opens the pane, and while the pane is open it
 /// would be a second primary button offering what is already being offered —
-/// beside the pane's own `Make mine the shared one`, which is the real one. The
+/// beside the pane's own `Share mine`, which is the real one. The
 /// pane's `BackLink` closes the mode and the header's action comes back with it,
 /// so the pair reads as one control in two states rather than as two controls.
 fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bool) -> AnyView {

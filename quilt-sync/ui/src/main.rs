@@ -13,6 +13,7 @@ use quilt_sync_ui::components;
 use quilt_sync_ui::kit;
 use quilt_sync_ui::pages;
 use quilt_sync_ui::panic_report;
+use quilt_sync_ui::routes::UNFINISHED_PACKAGE_PAGE;
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -51,15 +52,6 @@ fn App() -> impl IntoView {
         </Router>
     }
 }
-
-/// Flip locally to work on the rebuilt package screen. Never commit it true.
-///
-/// An in-code flag rather than a setting, because the screen is not ready to be
-/// offered: a row in Settings tells a reader the unfinished page exists, and a
-/// stored value outlives the build that wrote it. The one cost is that a flag in
-/// the source can be committed on by accident, which
-/// `the_unfinished_package_page_is_off` below is the guard against.
-const UNFINISHED_PACKAGE_PAGE: bool = false;
 
 /// `/` is the main page, and the flag decides which one it is.
 ///

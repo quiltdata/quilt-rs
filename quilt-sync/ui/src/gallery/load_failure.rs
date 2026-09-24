@@ -45,6 +45,15 @@ pub fn LoadFailureStories() -> impl IntoView {
                     />
                 </Card>
             </Cell>
+            <Cell wide=true label="with a detail — the reason, where the spec shows it">
+                <div style="width:264px">
+                    <LoadFailure
+                        words="Could not compare the revisions."
+                        detail="The bucket did not answer."
+                        on_retry=Callback::new(|()| ())
+                    />
+                </div>
+            </Cell>
             <Cell wide=true label="a longer sentence — 70ch, so it is read as prose">
                 <LoadFailure
                     words="Could not load your packages. Your files are still on this \

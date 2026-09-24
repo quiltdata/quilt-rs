@@ -261,7 +261,7 @@ fn primary_action(
     } = w;
     let ns = data.namespace.clone();
     let uri = data.uri.clone();
-    let resolve_to = crate::routes::merge_href(&ns);
+    let resolve_to = crate::routes::resolve_href(&ns);
     let publish_to = crate::routes::commit_href(&ns);
     let revision_to = publish_to.clone();
     // The deployment to sign in to, when the state names one. `None` for a bare
@@ -401,12 +401,19 @@ fn danger_dialogs(
 }
 
 /// The header, for one package.
+///
+/// `resolving` is the page's one `open`: while the resolve mode is open the
+/// pane holds the choices, so the primary is hidden and the rest stays.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads it from there"
 )]
-pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView {
+pub fn PageHeader(
+    data: commands::PackageHeaderData,
+    w: Wiring,
+    #[prop(optional, into)] resolving: Signal<bool>,
+) -> impl IntoView {
     // The dialogs' flags and `goto` are the page's, not this header's: a
     // re-read rebuilds the header, and must not shut a dialog or drop a
     // navigation on the way — see `Wiring`.
@@ -422,6 +429,8 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
         role: role_open,
         undo: undo_open,
         remove: remove_open,
+        // The resolve pane's confirmation, not the header's.
+        replace: _,
     } = dialogs;
     let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);
@@ -458,7 +467,20 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
                 <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
 
                 <div class=style::actions>
-                    {primary_action(&data, action, w, goto, publish_choice, bucket_open, role_open)}
+                    {move || {
+                        (!resolving.get())
+                            .then(|| {
+                                primary_action(
+                                    &payload.read_value(),
+                                    action,
+                                    w,
+                                    goto,
+                                    publish_choice,
+                                    bucket_open,
+                                    role_open,
+                                )
+                            })
+                    }}
                     <Button disabled=Signal::derive(move || busy.get()) on_click=on_open_folder>
                         "Open folder"
                     </Button>
@@ -569,7 +591,7 @@ mod tests {
                         <Route
                             path=path!("/installed-package")
                             view=move || {
-                                w.follow();
+                                w.follow(Signal::stored("team/dataset".to_string()));
                                 view! { <PageHeader data=data.clone() w=w /> }
                             }
                         />
@@ -694,23 +716,91 @@ mod tests {
         );
     }
 
-    /// The same rule for the other route. `Diverged` is the one state that
-    /// offers it.
+    /// Resolve is a mode of this page, not another route: it pushes `resolve=1`
+    /// on this package's address, so Back leaves the mode. `mount_routed` keeps
+    /// `/merge`, so a regression to the merge page shows here.
     #[wasm_bindgen_test]
-    async fn resolve_arrives_on_the_merge_page() {
+    async fn resolve_opens_the_mode_on_this_page() {
         let el = mount_routed(data(kit::PackageState::Diverged));
         sleep_ms(50).await;
+        let window = web_sys::window().unwrap();
+        let before = window.history().unwrap().length().unwrap();
 
         button(&el, "Resolve").click();
         sleep_ms(50).await;
 
+        assert_eq!(
+            window.location().search().unwrap(),
+            "?namespace=team%2Fdataset&filter=unmodified&resolve=1",
+        );
+        assert_eq!(
+            window.history().unwrap().length().unwrap(),
+            before + 1,
+            "pushed, not replaced"
+        );
         assert!(
-            el.text_content()
+            !el.text_content()
                 .unwrap_or_default()
                 .contains("the merge page"),
             "markup was {}",
             el.inner_html()
         );
+    }
+
+    /// While the mode is open the pane holds the two choices, so the header's
+    /// primary would be a second way in to where the reader already is. The
+    /// state, `Open folder` and the menu stay.
+    #[wasm_bindgen_test]
+    fn while_the_mode_is_open_the_header_offers_no_primary() {
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <PageHeader
+                        data=data(kit::PackageState::Diverged)
+                        w=Wiring::new()
+                        resolving=Signal::stored(true)
+                    />
+                </Router>
+            }
+        });
+        assert!(
+            el.query_selector("[data-primary-action]")
+                .unwrap()
+                .is_none(),
+            "no primary in the mode; markup was {}",
+            el.inner_html()
+        );
+        button(&el, "Open folder");
+        assert!(
+            el.query_selector("[aria-label='More actions for this package']")
+                .unwrap()
+                .is_some(),
+            "the menu stays; markup was {}",
+            el.inner_html()
+        );
+        element_saying(
+            &el,
+            &render(&kit::PackageState::Diverged, kit::Site::PageHeader).words,
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn leaving_the_mode_brings_resolve_back() {
+        let resolving = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <PageHeader
+                        data=data(kit::PackageState::Diverged)
+                        w=Wiring::new()
+                        resolving=resolving
+                    />
+                </Router>
+            }
+        });
+        resolving.set(false);
+        leptos::task::tick().await;
+        button(&el, "Resolve");
     }
 
     /// Sign in goes to the deployment the state names, and is offered only where
@@ -1265,8 +1355,9 @@ mod tests {
         assert!(!menu_item(&el, "Undo last revision").disabled());
     }
 
-    /// Nothing else on this page confirms. A third `ConfirmDialog` would be a
-    /// tone rule nobody decided.
+    /// Nothing else on the header confirms. A third `ConfirmDialog` here would be
+    /// a tone rule nobody decided; the pane's `Replace mine` is the
+    /// page's one other, decided in `replace-confirmation`.
     #[wasm_bindgen_test]
     fn only_the_two_danger_items_are_followed_by_a_confirmation() {
         let el = mount_header(data(kit::PackageState::Latest));

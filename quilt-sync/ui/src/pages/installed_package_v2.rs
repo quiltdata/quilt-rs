@@ -1,15 +1,25 @@
-//! The v2 package page. Behind `main.rs`'s `UNFINISHED_PACKAGE_PAGE`.
+//! The v2 package page. Behind `routes.rs`'s `UNFINISHED_PACKAGE_PAGE`.
 //!
-//! The header and the first context-pane slice are drawn from one authoritative
-//! read. The file pane has not landed yet, so the shell deliberately leaves its
-//! growing left side empty rather than drawing provisional content.
+//! The header and the context pane are drawn from one authoritative read. The
+//! pane has two modes: the ordinary one, and Resolve, which `resolve=1` asks
+//! for and a diverged package's comparison makes real. The file pane has not
+//! landed yet, so the shell deliberately leaves its growing left side empty
+//! rather than drawing provisional content; the differing set it will mark is
+//! already derived here, as [`FileMarks`].
+
+use std::collections::BTreeSet;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
+use crate::kit::readable;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
+use crate::routes;
 
 use super::status_watch::StatusWatch;
 use crate::components::appbar::appbar_actions;
@@ -18,12 +28,14 @@ mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
 pub(crate) mod keeping;
+pub(crate) mod resolve;
 mod revision_history;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
+use resolve::{ResolveCommands, ResolvePane};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
 
@@ -70,6 +82,10 @@ pub struct Wiring {
     /// `Send + Sync` and `use_navigate`'s closure is neither; [`Wiring::follow`]
     /// performs it.
     pub goto: RwSignal<Option<String>>,
+    /// Where the page goes in place of the current entry, so *Back* never
+    /// returns to it: leaving the resolve mode on a success. Keyed, as
+    /// `outcome` is: [`Wiring::follow`] drops it once its package is off screen.
+    pub replace_to: RwSignal<Option<Replace>>,
     pub dialogs: Dialogs,
 }
 
@@ -136,6 +152,13 @@ pub(super) fn run(
     });
 }
 
+/// A navigation in place of the current entry, and the package it leaves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Replace {
+    pub namespace: String,
+    pub to: String,
+}
+
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
 pub struct Dialogs {
@@ -149,6 +172,8 @@ pub struct Dialogs {
     /// the consequence.
     pub undo: RwSignal<bool>,
     pub remove: RwSignal<bool>,
+    /// Resolve's *Replace mine*: here, so a re-read mid-reset keeps it open.
+    pub replace: RwSignal<bool>,
 }
 
 impl Wiring {
@@ -160,24 +185,41 @@ impl Wiring {
             outcome: RwSignal::new(None),
             reload: Trigger::new(),
             goto: RwSignal::new(None),
+            replace_to: RwSignal::new(None),
             dialogs: Dialogs {
                 bucket: RwSignal::new(false),
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),
+                replace: RwSignal::new(false),
             },
         }
     }
 
-    /// Perform `goto`. Called once, by whoever owns the signals, inside a
-    /// router.
-    fn follow(self) {
-        let goto = self.goto;
+    /// Perform `goto`, and `replace_to` while `showing` is its package. Called
+    /// once, by whoever owns the signals, inside a router.
+    fn follow(self, showing: Signal<String>) {
+        let Self {
+            goto, replace_to, ..
+        } = self;
         let navigate = use_navigate();
         Effect::new(move |_| {
             if let Some(target) = goto.get() {
                 navigate(&target, NavigateOptions::default());
                 goto.set(None);
+            }
+            if let Some(Replace { namespace, to }) = replace_to.get() {
+                replace_to.set(None);
+                if namespace != showing.get_untracked() {
+                    return;
+                }
+                navigate(
+                    &to,
+                    NavigateOptions {
+                        replace: true,
+                        ..NavigateOptions::default()
+                    },
+                );
             }
         });
     }
@@ -190,24 +232,111 @@ impl Default for Wiring {
     }
 }
 
+/// What the file pane will read. Built by `package_body`; the pane counts
+/// `differing` today, and the file pane marks rows by it later.
+#[derive(Clone, Copy)]
+pub struct FileMarks {
+    /// Keys are `EntryData.filename`'s form: the logical key's `display()`.
+    pub differing: Memo<Option<Arc<BTreeSet<String>>>>,
+    /// The scope as read back (`KeepingData.scope`), never one still being stored.
+    pub scope: commands::KeepingScope,
+}
+
+/// The page's one differing set: present only while the mode is open on a
+/// diverged package with a comparison (`#resolve-seams`).
+pub fn differing_marks(
+    open: Signal<bool>,
+    resolve: Option<&commands::ResolveData>,
+) -> Memo<Option<Arc<BTreeSet<String>>>> {
+    let set = match resolve {
+        Some(commands::ResolveData::Compared { differing, .. }) => {
+            Some(Arc::new(differing.iter().cloned().collect::<BTreeSet<_>>()))
+        }
+        Some(commands::ResolveData::Refused { .. }) | None => None,
+    };
+    Memo::new(move |_| if open.get() { set.clone() } else { None })
+}
+
+/// Where this page should be instead, when it was asked for a mode the
+/// package does not have: only an answered read about the package on screen decides.
+fn normalized_address(
+    asked: bool,
+    showing: &str,
+    answered: &commands::PackagePageData,
+) -> Option<String> {
+    let namespace = &answered.header.namespace;
+    (asked && namespace.to_string() == showing && answered.context.resolve.is_none())
+        .then(|| routes::package_page_href(namespace))
+}
+
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
-fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
-    let namespace = data.header.namespace.to_string();
+///
+/// `asked` is the address's `resolve=1`; the mode is open only when this
+/// payload also carries a comparison, so the header, the pane and the marks
+/// all read one `open`.
+fn package_body(
+    data: commands::PackagePageData,
+    w: Wiring,
+    asked: Signal<bool>,
+    resolving: ResolveCommands,
+) -> AnyView {
+    let commands::PackagePageData {
+        header, context, ..
+    } = data;
+    let diverged = context.resolve.is_some();
+    let open = Memo::new(move |_| asked.get() && diverged);
+    let marks = FileMarks {
+        differing: differing_marks(open.into(), context.resolve.as_ref()),
+        scope: context.keeping.scope,
+    };
+    // The confirmation's flag is the page's, so it outlives the mode unless
+    // closed here: a mode that reopens must not find it already open.
+    let replace = w.dialogs.replace;
+    Effect::new(move |_| {
+        if !open.get() && replace.get_untracked() {
+            replace.set(false);
+        }
+    });
+
+    let ns = header.namespace.clone();
+    let uri = header.uri.clone();
+    let namespace = ns.to_string();
     let open_catalog = catalog_opener(namespace.clone(), w.outcome);
-    view! {
-        <div class=style::page>
-            <PageHeader data=data.header w=w />
-            <div class=style::shell>
+    let context = StoredValue::new(context);
+    let pane = move || {
+        let context = context.get_value();
+        match context.resolve.clone().filter(|_| open.get()) {
+            Some(resolve) => view! {
+                <ResolvePane
+                    namespace=ns.clone()
+                    uri=uri.clone()
+                    revision=context.revision
+                    resolve=resolve
+                    marks=marks.differing
+                    back_href=routes::package_page_href(&ns)
+                    w=w
+                    commands=resolving
+                />
+            }
+            .into_any(),
+            None => view! {
                 <CurrentRevisionPane
-                    data=data.context
-                    namespace=namespace
+                    data=context
+                    namespace=namespace.clone()
                     fetch=context_pane::fetch_revision_history
                     open_catalog=open_catalog
                     w=w
                     commands=keeping::KeepingCommands::app()
                 />
-            </div>
+            }
+            .into_any(),
+        }
+    };
+    view! {
+        <div class=style::page>
+            <PageHeader data=header w=w resolving=open />
+            <div class=style::shell>{pane}</div>
         </div>
     }
     .into_any()
@@ -261,27 +390,40 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
 
 /// What `/installed-package` renders when the in-code flag is on.
 ///
-/// No reader reaches it: `main.rs`'s `UNFINISHED_PACKAGE_PAGE` is a constant in
+/// No reader reaches it: `routes.rs`'s `UNFINISHED_PACKAGE_PAGE` is a constant in
 /// the source, flipped by whoever is working on this screen and committed off,
 /// so no setting and no build offers it.
 #[component]
 pub fn InstalledPackageV2() -> impl IntoView {
-    let query = use_query_map();
-    // The address is the only input the page has yet. Read reactively, because
-    // one route serves every package and a link from another page swaps the
-    // parameter without remounting.
-    let namespace = move || query.read().get("namespace").unwrap_or_default();
+    view! { <PackageScreen read=read_page resolving=ResolveCommands::app() /> }
+}
 
-    // One read for the whole page. Re-runs when the address changes, because one
-    // route serves every package and a link from another page swaps the
-    // parameter without remounting; and whenever `reload` fires — the watcher
-    // reporting news about this package, or the failure arm's way out.
+/// The page's one read: the header, the pane and the pause, for one namespace.
+pub(crate) type PageRead =
+    fn(String) -> Pin<Box<dyn Future<Output = Result<commands::PackagePageData, String>>>>;
+
+fn read_page(
+    namespace: String,
+) -> Pin<Box<dyn Future<Output = Result<commands::PackagePageData, String>>>> {
+    Box::pin(commands::get_package_page_data(namespace))
+}
+
+/// The page over whichever read and resolve commands it is given, so a routed
+/// test can feed it a payload without a Tauri host.
+#[component]
+fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
+    let query = use_query_map();
+    // The address is the only input, and changes without a remount: one route serves every package.
+    // Memos, so only `namespace` re-runs the read: the mode opens with no loading state.
+    let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
+    let asked = Memo::new(move |_| query.read().get("resolve").as_deref() == Some("1"));
+
     // What the reader has already read and closed. Keyed on the message, so a
     // different pause is news again — see `pause_banner`.
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
     // Here and not in the header, which every re-read rebuilds — see `Wiring`.
     let w = Wiring::new();
-    w.follow();
+    w.follow(ns.into());
     let Wiring {
         outcome, reload, ..
     } = w;
@@ -293,14 +435,35 @@ pub fn InstalledPackageV2() -> impl IntoView {
     // either way, and a button that only knows about presses says nothing while
     // the page refetches under it.
     let in_flight = RwSignal::new(false);
+    // One read for the whole page. Re-runs when the namespace changes, and
+    // whenever `reload` fires — the watcher reporting news about this package,
+    // or the failure arm's way out.
     let data = LocalResource::new(move || {
         reload.track();
-        let namespace = query.read().get("namespace").unwrap_or_default();
+        let namespace = ns.get();
         async move {
             in_flight.set(true);
-            let answer = commands::get_package_page_data(namespace).await;
+            let answer = read(namespace).await;
             in_flight.set(false);
             answer
+        }
+    });
+
+    // A `resolve=1` the package cannot honour is replaced by the plain address,
+    // so *Back* never re-enters a mode that does not exist. The resource keeps
+    // its last value while it re-reads, so only an answered read decides.
+    Effect::new(move |_| {
+        if in_flight.get() {
+            return;
+        }
+        let Some(Ok(answered)) = data.get() else {
+            return;
+        };
+        if let Some(to) = normalized_address(asked.get(), &ns.get(), &answered) {
+            w.replace_to.set(Some(Replace {
+                namespace: ns.get(),
+                to,
+            }));
         }
     });
 
@@ -316,7 +479,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
             // skeleton here would reserve a band for news that usually is not
             // there, and the page would settle by collapsing it.
             banner=view! {
-                {outcome_band(outcome, Signal::derive(namespace))}
+                {outcome_band(outcome, ns.into())}
                 <Suspense fallback=|| ()>
                     {move || Suspend::new(async move {
                         match data.await {
@@ -335,13 +498,13 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => package_body(d, w),
+                        Ok(d) => package_body(d, w, asked.into(), resolving),
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
                         // never reaches here: the command resolves those to a
                         // state, and the header draws them.
-                        Err(_) => package_failure(namespace(), reload),
+                        Err(_) => package_failure(ns.get(), reload),
                     }
                 })}
             </Suspense>
@@ -383,7 +546,7 @@ fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<String>) -> 
                         on_dismiss=move |_| outcome.set(None)
                     >
                         {said.lead}
-                        {said.detail.map(|detail| view! { " " {detail} })}
+                        {said.detail.map(|detail| view! { " " {readable(&detail)} })}
                     </Banner>
                 }
             }
@@ -532,7 +695,7 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{element_saying, mount, sleep_ms};
+    use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
     use wasm_bindgen::JsCast;
@@ -572,6 +735,7 @@ mod tests {
                     total: 1,
                     remote_only: Vec::new(),
                 },
+                resolve: None,
             },
             sync_paused: None,
         }
@@ -722,6 +886,49 @@ mod tests {
         assert!(!busy.get_untracked(), "released once it settles");
     }
 
+    /// A command refused with `Error::to_frontend_string`'s JSON puts the message
+    /// on the band, never the envelope it travelled in.
+    #[wasm_bindgen_test]
+    async fn a_failed_command_shows_the_backend_s_message_not_its_json() {
+        const DENIED: &str = "The active role does not have access to this object.";
+        let busy = RwSignal::new(false);
+        let outcome = RwSignal::new(None);
+        let el =
+            mount(move || outcome_band(outcome, Signal::derive(|| "team/dataset".to_string())));
+        run(
+            busy,
+            outcome,
+            "team/dataset".to_string(),
+            "Could not make your revision the shared one.",
+            None,
+            async {
+                Err(
+                    r#"{"kind":"access_denied","message":"The active role does not have access to this object."}"#
+                        .to_string(),
+                )
+            },
+        );
+        sleep_ms(0).await;
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap_or_default();
+        assert!(
+            text.contains("Could not make your revision the shared one."),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            text.contains(DENIED),
+            "the message is drawn; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !text.contains("\"kind\""),
+            "the JSON is not; markup was {}",
+            el.inner_html()
+        );
+    }
+
     /// A successful payload swaps the header and pane together. The old loose
     /// paragraph was only scaffolding; package identity now belongs to the
     /// header while the pane is a named complementary landmark.
@@ -730,7 +937,10 @@ mod tests {
         // Inside a `Router`, where the page always is.
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w)}</Router> }
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+            }
         });
         let aside = el
             .query_selector("aside")
@@ -760,7 +970,10 @@ mod tests {
     fn the_body_carries_the_revision_trigger() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w)}</Router> }
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+            }
         });
         let trigger = element_saying(&el, "Revisions you have (1)")
             .closest("button")
@@ -783,7 +996,10 @@ mod tests {
     fn the_body_carries_keeping() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w)}</Router> }
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+            }
         });
         let group = el
             .query_selector("[role=radiogroup]")
@@ -829,7 +1045,7 @@ mod tests {
                 <Router>
                     {move || {
                         reads.track();
-                        package_body(page_data(), w)
+                        package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())
                     }}
                 </Router>
             }
@@ -1046,5 +1262,290 @@ mod tests {
             "the placeholder sits in the v2 page frame; markup was {}",
             el.inner_html()
         );
+    }
+
+    const PLAIN: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
+    const RESOLVE: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified&resolve=1";
+
+    fn compared() -> commands::ResolveData {
+        commands::ResolveData::Compared {
+            published_message: Some("Theirs".to_string()),
+            differing: vec!["plate/a.csv".to_string(), "plate/b.csv".to_string()],
+            unpublished: 1,
+            uncommitted: 0,
+        }
+    }
+
+    fn refused() -> commands::ResolveData {
+        commands::ResolveData::Refused {
+            reason: "AccessDenied".to_string(),
+        }
+    }
+
+    fn diverged(resolve: commands::ResolveData) -> commands::PackagePageData {
+        let mut data = page_data();
+        data.header.state = crate::kit::PackageState::Diverged;
+        data.context.resolve = Some(resolve);
+        data
+    }
+
+    #[test]
+    fn only_an_answered_read_that_is_not_diverged_normalises() {
+        assert_eq!(
+            normalized_address(true, "team/dataset", &page_data()).as_deref(),
+            Some(PLAIN)
+        );
+        assert_eq!(
+            normalized_address(true, "team/dataset", &diverged(compared())),
+            None
+        );
+        assert_eq!(
+            normalized_address(true, "team/dataset", &diverged(refused())),
+            None
+        );
+        assert_eq!(
+            normalized_address(false, "team/dataset", &page_data()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_read_about_another_package_decides_nothing() {
+        assert_eq!(normalized_address(true, "other/pkg", &page_data()), None);
+    }
+
+    thread_local! {
+        static READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    type Read = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<commands::PackagePageData, String>>>,
+    >;
+
+    fn counted(data: commands::PackagePageData) -> Read {
+        READS.with(|r| r.set(r.get() + 1));
+        Box::pin(async move { Ok(data) })
+    }
+
+    fn diverged_read(_: String) -> Read {
+        counted(diverged(compared()))
+    }
+
+    fn refused_read(_: String) -> Read {
+        counted(diverged(refused()))
+    }
+
+    fn settled_read(_: String) -> Read {
+        counted(page_data())
+    }
+
+    fn pending_read(_: String) -> Read {
+        READS.with(|r| r.set(r.get() + 1));
+        Box::pin(std::future::pending())
+    }
+
+    /// The page at `address`, reading through `read`, inside a router.
+    async fn screen_at(address: &str, read: PageRead) -> web_sys::Element {
+        screen_resolving(address, read, ResolveCommands::app()).await
+    }
+
+    /// [`screen_at`], with the resolve mode's commands answered by `resolving`.
+    async fn screen_resolving(
+        address: &str,
+        read: PageRead,
+        resolving: ResolveCommands,
+    ) -> web_sys::Element {
+        crate::test_support::unmount_earlier();
+        READS.with(|r| r.set(0));
+        go_to(address);
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/installed-package")
+                            view=move || view! { <PackageScreen read=read resolving=resolving /> }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(50).await;
+        el
+    }
+
+    fn search() -> String {
+        web_sys::window().unwrap().location().search().unwrap()
+    }
+
+    fn history_length() -> u32 {
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .length()
+            .unwrap()
+    }
+
+    #[wasm_bindgen_test]
+    async fn resolve_1_on_a_diverged_package_opens_the_mode() {
+        let el = screen_at(RESOLVE, diverged_read).await;
+
+        element_saying(&el, "Yours");
+        element_saying(&el, "Published");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("Revisions you have (1)"),
+            "the ordinary pane is swapped out; markup was {}",
+            el.inner_html()
+        );
+        assert!(search().ends_with("&resolve=1"), "search was {}", search());
+    }
+
+    #[wasm_bindgen_test]
+    async fn resolve_1_on_a_package_that_is_not_diverged_normalises_in_place() {
+        let before = history_length();
+        let el = screen_at(RESOLVE, settled_read).await;
+
+        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(history_length(), before, "replaced, not pushed");
+        element_saying(&el, "Revisions you have (1)");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_read_still_loading_decides_nothing() {
+        let _el = screen_at(RESOLVE, pending_read).await;
+
+        assert!(search().ends_with("&resolve=1"), "search was {}", search());
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refused_comparison_keeps_the_mode() {
+        let el = screen_at(RESOLVE, refused_read).await;
+
+        element_saying(&el, "Could not compare the revisions.");
+        assert_eq!(
+            search(),
+            "?namespace=team%2Fdataset&filter=unmodified&resolve=1"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_back_link_leaves_the_mode_in_place() {
+        let el = screen_at(RESOLVE, diverged_read).await;
+        let before = history_length();
+
+        el.query_selector(&format!("a[href='{PLAIN}']"))
+            .unwrap()
+            .expect("the back link")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        sleep_ms(50).await;
+
+        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(
+            history_length(),
+            before,
+            "replaced, so Back does not return to the mode"
+        );
+        element_saying(&el, "Revisions you have (1)");
+        assert_eq!(
+            READS.with(std::cell::Cell::get),
+            1,
+            "leaving does not re-read"
+        );
+    }
+
+    thread_local! {
+        static CERTIFY_RELEASED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Every package diverged, each answered as the namespace asked.
+    fn diverged_as_asked(namespace: String) -> Read {
+        let mut data = diverged(compared());
+        data.header.namespace = namespace.try_into().unwrap();
+        counted(data)
+    }
+
+    /// A certify that succeeds once the test releases it.
+    fn certifies_when_released(_: String, _: Option<quilt_uri::S3PackageUri>) -> Choice {
+        Box::pin(async {
+            while !CERTIFY_RELEASED.get() {
+                sleep_ms(5).await;
+            }
+            Ok("certified".to_string())
+        })
+    }
+
+    type Choice = std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>>>>;
+
+    /// Moving between packages the way the router hears it: a new entry, then `popstate`.
+    fn move_to(address: &str) {
+        let window = web_sys::window().unwrap();
+        window
+            .history()
+            .unwrap()
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(address))
+            .unwrap();
+        window
+            .dispatch_event(&web_sys::Event::new("popstate").unwrap())
+            .unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_late_certify_for_a_package_left_behind_does_not_drag_the_reader_back() {
+        const OTHER: &str = "/installed-package?namespace=team%2Fother";
+        CERTIFY_RELEASED.set(false);
+        let el = screen_resolving(
+            RESOLVE,
+            diverged_as_asked,
+            ResolveCommands {
+                certify: certifies_when_released,
+                reset: |_, _| Box::pin(std::future::pending()),
+            },
+        )
+        .await;
+        button_saying(&el, "Share mine").click();
+        sleep_ms(10).await;
+
+        move_to(OTHER);
+        sleep_ms(50).await;
+        assert_eq!(search(), "?namespace=team%2Fother", "on the other package");
+
+        CERTIFY_RELEASED.set(true);
+        sleep_ms(50).await;
+
+        assert_eq!(search(), "?namespace=team%2Fother", "still on it");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("Your revision is now the shared one."),
+            "the first package's success is not drawn here; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_marks_exist_only_while_the_mode_is_open() {
+        let open = RwSignal::new(false);
+        let resolve = compared();
+        let marks = differing_marks(open.into(), Some(&resolve));
+        assert_eq!(marks.get_untracked(), None, "closed");
+
+        open.set(true);
+        let expected: std::collections::BTreeSet<String> = ["plate/a.csv", "plate/b.csv"]
+            .into_iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            marks.get_untracked(),
+            Some(std::sync::Arc::new(expected)),
+            "open"
+        );
+
+        let refused = refused();
+        let marks = differing_marks(Signal::stored(true), Some(&refused));
+        assert_eq!(marks.get_untracked(), None, "nothing to mark");
     }
 }
