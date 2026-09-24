@@ -18,6 +18,7 @@ mod bucket_form;
 pub(crate) mod context_pane;
 mod header;
 pub(crate) mod keeping;
+pub(crate) mod resolve;
 mod revision_history;
 mod role_dialog;
 

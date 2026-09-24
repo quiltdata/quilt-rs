@@ -98,8 +98,10 @@ pub fn RevisionRow(
     /// four call sites cannot quote it four ways.
     #[prop(into)]
     message: String,
-    /// When this copy obtained it.
-    at: EpochMillis,
+    /// When this copy obtained it. Absent for the published side of a
+    /// resolve, which is a revision this copy has not obtained.
+    #[prop(optional)]
+    at: Option<EpochMillis>,
     /// Whether it reached the platform. `None` draws no glyph at all, for the
     /// callers that are not showing a list — the current revision under the
     /// pane's own heading, and the two sides of a resolve, where the header and
@@ -193,9 +195,11 @@ pub fn RevisionRow(
             {glyph}
             <div class=style::body>
                 {body}
-                <span class=style::when>
-                    <RelativeTime at=at />
-                </span>
+                {at.map(|at| view! {
+                    <span class=style::when>
+                        <RelativeTime at=at />
+                    </span>
+                })}
             </div>
             {link}
         </div>
@@ -317,5 +321,17 @@ mod tests {
             before,
             "the test page did not navigate"
         );
+    }
+
+    /// The published side of a resolve has no time this copy knows.
+    #[wasm_bindgen_test]
+    fn a_row_without_a_time_draws_none() {
+        let el = mount(|| view! { <RevisionRow message="Theirs" /> });
+        assert!(
+            el.query_selector("time").unwrap().is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "\u{201c}Theirs\u{201d}");
     }
 }

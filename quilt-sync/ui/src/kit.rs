@@ -100,6 +100,7 @@ pub use countdown::Countdown;
 pub use dialog::Dialog;
 pub use entry_group::EntryGroup;
 pub use entry_group::GroupSelection;
+pub use entry_row::DIFFERS_ID;
 pub use entry_row::DIFFERS_TITLE;
 pub use entry_row::EntryAction;
 pub use entry_row::EntryRow;

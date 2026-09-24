@@ -84,6 +84,12 @@ pub fn Button(
     /// Return does nothing destructive. Same prop `TextInput` has for a form's first field.
     #[prop(optional)]
     autofocus: bool,
+    /// Lets the label take a second line rather than truncate. Opt-in, for a
+    /// label that must be read whole in a narrow column; every other button
+    /// keeps one line and the ellipsis. An attribute, not a class, so the
+    /// stylesheet and the tests find it by the same name.
+    #[prop(optional)]
+    wrap: bool,
     children: Children,
 ) -> impl IntoView {
     let is_loading = Signal::derive(move || loading.get().unwrap_or(false));
@@ -128,6 +134,7 @@ pub fn Button(
             type=button_type
             form=move || form.get()
             autofocus=autofocus
+            data-wrap=wrap.then_some("")
             class=class
             disabled=move || is_disabled.get()
             aria-busy=move || if is_loading.get() { "true" } else { "false" }
@@ -354,5 +361,61 @@ mod tests {
             assert!(rule.contains(token), "the rule spends {token}: {rule}");
         }
         assert!(!rule.contains('#'), "tokens only, no literal: {rule}");
+    }
+
+    /// Found by its text, as a reader finds it.
+    fn button_saying(el: &web_sys::Element, label: &str) -> web_sys::Element {
+        let all = el.query_selector_all("button").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .find(|b| b.text_content().unwrap_or_default().trim() == label)
+            .unwrap_or_else(|| panic!("no button says {label:?}; markup was {}", el.inner_html()))
+    }
+
+    /// Opt-in: every other button keeps one line and the ellipsis.
+    #[wasm_bindgen_test]
+    fn a_wrapping_button_says_so_and_others_do_not() {
+        let el = mount(|| {
+            view! {
+                <Button wrap=true on_click=|_| {}>"Replace mine with the published one"</Button>
+                <Button on_click=|_| {}>"Cancel"</Button>
+            }
+        });
+        assert!(
+            button_saying(&el, "Replace mine with the published one").has_attribute("data-wrap")
+        );
+        assert!(!button_saying(&el, "Cancel").has_attribute("data-wrap"));
+    }
+
+    /// The last value of `property` declared in the rule opened by `selector`,
+    /// parsed as the loading test parses its own.
+    fn declared(sheet: &str, selector: &str, property: &str) -> Option<String> {
+        let rule = sheet
+            .split(&format!("{selector} {{"))
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())?;
+        rule.split("/*")
+            .map(|part| part.split_once("*/").map_or(part, |(_, rest)| rest))
+            .flat_map(|part| part.lines())
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .flat_map(|line| line.split(';'))
+            .filter_map(|declaration| declaration.split_once(':'))
+            .filter(|(name, _)| name.trim() == property)
+            .map(|(_, value)| value.trim().to_string())
+            .last()
+    }
+
+    /// Read from the source: the wasm runner loads no stylesheet.
+    #[test]
+    fn the_stylesheet_lets_a_wrapping_label_break() {
+        const SHEET: &str = include_str!("button.module.scss");
+        assert_eq!(
+            declared(SHEET, "[data-wrap]", "white-space").as_deref(),
+            Some("normal")
+        );
+        assert_eq!(
+            declared(SHEET, "[data-wrap] .label", "text-overflow").as_deref(),
+            Some("clip")
+        );
     }
 }

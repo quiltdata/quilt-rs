@@ -1,0 +1,21 @@
+/* The same column as the ordinary pane (`context_pane.module.scss`), since
+ * the mode swaps it whole. */
+.root {
+  width: 280px;
+  flex: none;
+}
+
+@container (max-width: 800px) {
+  .root {
+    width: 100%;
+  }
+}
+
+/* The two whole-revision choices, one above the other at the pane's width:
+ * their labels are long, and each may take a second line (`Button`'s `wrap`). */
+.choices {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
