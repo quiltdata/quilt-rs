@@ -35,7 +35,7 @@ mod revision_history;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
-use file_pane::{FilePane, FilePaneSkeleton, Grouping, Listing};
+use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing};
 pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 use resolve::{ResolveCommands, ResolvePane};
@@ -244,6 +244,7 @@ impl Default for Wiring {
 struct Files {
     listing: Signal<Listing>,
     grouping: RwSignal<String>,
+    facet: RwSignal<String>,
     retry: Callback<()>,
 }
 
@@ -357,6 +358,7 @@ fn package_body(
                 <FilePane
                     listing=files.listing
                     grouping=files.grouping
+                    facet=files.facet
                     on_open=open_file
                     on_retry=files.retry
                 />
@@ -538,13 +540,16 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     // default. `ns` is a memo on the namespace alone, so the rest of the
     // address — Resolve's `resolve=1` — is not a new package.
     let grouping = RwSignal::new(Grouping::BaseFolder.label().to_string());
+    let facet = RwSignal::new(Facet::All.key().to_string());
     Effect::new(move |_| {
         ns.track();
         grouping.set(Grouping::BaseFolder.label().to_string());
+        facet.set(Facet::All.key().to_string());
     });
     let files = Files {
         listing,
         grouping,
+        facet,
         retry: Callback::new(move |()| files.refetch()),
     };
 
@@ -843,6 +848,7 @@ mod tests {
     fn one_file() -> file_pane::FileList {
         file_pane::FileList {
             entries: Vec::new(),
+            counts: commands::EntryCounts::default(),
             total: 1,
             truncated: false,
         }
@@ -884,6 +890,7 @@ mod tests {
         Files {
             listing: Signal::stored(Listing::Loading),
             grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
+            facet: RwSignal::new(Facet::All.key().to_string()),
             retry: Callback::new(|()| ()),
         }
     }

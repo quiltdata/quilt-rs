@@ -1123,7 +1123,7 @@ fn replace_mine(open: RwSignal<bool>) -> AnyView {
 }
 
 /// The page's `FilePane`, fed this scene's package as the page read would send
-/// it: sorted by path, ignored files included for the pane to hide.
+/// it: sorted by path, ignored files included for its `Ignored` facet.
 fn live() -> AnyView {
     let mut files = package();
     files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1146,15 +1146,31 @@ fn live() -> AnyView {
         })
         .collect();
     let total = entries.len();
+    // Counted as the backend counts them (`EntryCounts::of`).
+    let mut counts = crate::commands::EntryCounts::default();
+    for e in &entries {
+        if e.ignored_by.is_some() {
+            counts.ignored += 1;
+            continue;
+        }
+        counts.all += 1;
+        match e.status.as_str() {
+            "added" | "modified" | "deleted" => counts.changed += 1,
+            "remote" => counts.not_downloaded += 1,
+            _ => {}
+        }
+    }
     view! {
         <div style=format!("display:flex; flex-direction:column; {LIST_RESTING}; height:400px")>
             <crate::pages::FilePane
                 listing=Signal::stored(crate::pages::Listing::Ready(crate::pages::FileList {
                     entries,
+                    counts,
                     total,
                     truncated: false,
                 }))
                 grouping=RwSignal::new(crate::pages::Grouping::BaseFolder.label().to_string())
+                facet=RwSignal::new(crate::pages::Facet::All.key().to_string())
                 on_open=Callback::new(|_: String| ())
                 on_retry=Callback::new(|()| ())
             />

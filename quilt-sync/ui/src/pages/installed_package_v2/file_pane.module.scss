@@ -38,7 +38,9 @@
 
 .skeletonbar {
   display: flex;
+  flex-wrap: wrap-reverse;
   justify-content: flex-end;
+  gap: var(--q-space-2);
   padding-bottom: var(--q-space-2);
 }
 

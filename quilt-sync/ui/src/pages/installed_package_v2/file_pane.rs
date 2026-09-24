@@ -9,7 +9,7 @@
 //!
 //! Search takes a row of its own above the toolbar; select-all sits on the
 //! toolbar's left, in the rows' checkbox column; grouping and the facets are one
-//! right-hand group. This slice ships grouping. The other slots are left
+//! right-hand group. Grouping and the facets are drawn. The other slots are left
 //! absent rather than drawn inert — a control that does nothing is worse than
 //! one that is not there yet.
 //!
@@ -17,8 +17,13 @@
 //!
 //! - **Rows, silent at rest.** `Downloaded` carries no label; `Changed`, `New`,
 //!   `Deleted` and `Not downloaded` do (design §3's table).
-//! - **Ignored files are hidden.** The `Ignored` facet is the only view that
-//!   shows them, and it has not landed.
+//! - **The facets filter by state.** `All · Changed · Not downloaded ·
+//!   Ignored`, each with the package's count (the payload's `counts`, not the
+//!   loaded rows). A facet at zero stays in place and cannot be chosen, except
+//!   `All`, the home a facet that empties falls back to. `All` leaves ignored
+//!   files out; only `Ignored` shows them, with no label and no box, since the
+//!   view already says it and an ignored file is never selectable. A tracked
+//!   file that is also ignored is two rows, as in v1, and counts under both.
 //! - **A click does the thing the row can do.** A file that is here opens, a
 //!   missing one is `EntryRow`'s `Select` shape, and a deleted one is inert.
 //!   The box is the row's own until the selection slice gives the pane one.
@@ -27,11 +32,11 @@
 
 use leptos::prelude::*;
 
-use crate::commands::{EntryData, InstalledPackageData};
+use crate::commands::{EntryCounts, EntryData, InstalledPackageData};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Card, EntryAction, EntryGroup, EntryRow, EntrySelection, ListToolbar, LoadFailure,
-    Naming, Select, SkeletonBox,
+    Naming, Segment, SegmentedControl, Select, SkeletonBox,
 };
 use crate::util::format_size;
 
@@ -72,6 +77,80 @@ impl Grouping {
             .into_iter()
             .find(|g| g.label() == label)
             .unwrap_or(Self::BaseFolder)
+    }
+}
+
+/// Which files the list shows, by where they stand. One choice of four, and
+/// the pane's only filter.
+///
+/// Held by the page as its [`Facet::key`], the words without the count: the
+/// count moves when the package does, and a choice held as the words would
+/// then match no segment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Facet {
+    /// Every file that is not ignored.
+    All,
+    /// Added, modified or deleted.
+    Changed,
+    /// In the revision and not on disk.
+    NotDownloaded,
+    /// Matched by `.quiltignore`. The only view that shows them.
+    Ignored,
+}
+
+impl Facet {
+    const ALL: [Self; 4] = [Self::All, Self::Changed, Self::NotDownloaded, Self::Ignored];
+
+    /// The segment's words without its count, and the value the page holds.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Changed => "Changed",
+            Self::NotDownloaded => "Not downloaded",
+            Self::Ignored => "Ignored",
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|f| f.key() == key)
+            .unwrap_or(Self::All)
+    }
+
+    /// The package's count for this facet: the whole package, not the rows
+    /// that were loaded.
+    const fn count(self, counts: &EntryCounts) -> usize {
+        match self {
+            Self::All => counts.all,
+            Self::Changed => counts.changed,
+            Self::NotDownloaded => counts.not_downloaded,
+            Self::Ignored => counts.ignored,
+        }
+    }
+
+    /// Whether a row belongs in this view. The backend's rule for the counts
+    /// (`EntryCounts::of`), so a facet shows the rows its count counted.
+    const fn admits(self, place: Place, ignored: bool) -> bool {
+        match self {
+            Self::Ignored => ignored,
+            _ if ignored => false,
+            Self::All => true,
+            Self::Changed => matches!(place, Place::Changed | Place::New | Place::Deleted),
+            Self::NotDownloaded => matches!(place, Place::Missing),
+        }
+    }
+
+    /// Nothing in the package for this view, so it cannot be chosen. Never
+    /// `All`, which stays choosable at zero.
+    fn is_empty(self, counts: &EntryCounts) -> bool {
+        self != Self::All && self.count(counts) == 0
+    }
+
+    /// `Not downloaded 17`.
+    fn words(self, counts: &EntryCounts) -> String {
+        format!("{} {}", self.key(), thousands(self.count(counts)))
     }
 }
 
@@ -145,6 +224,8 @@ pub fn group(paths: &[&str], grouping: Grouping) -> Vec<Item> {
 pub struct FileList {
     /// Sorted by path, then capped.
     pub entries: Vec<EntryData>,
+    /// The facets' counts, over the whole package.
+    pub counts: EntryCounts,
     /// Every file the package has, before the cap.
     pub total: usize,
     /// The backend cut the list. Never inferred from `entries.len()`.
@@ -155,6 +236,7 @@ impl From<InstalledPackageData> for FileList {
     fn from(data: InstalledPackageData) -> Self {
         Self {
             entries: data.entries,
+            counts: data.counts,
             total: data.total,
             truncated: data.truncated,
         }
@@ -170,7 +252,7 @@ pub enum Listing {
 }
 
 /// Where a file is, which decides its words and its click.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Place {
     /// Here and unchanged. Silent.
     Here,
@@ -248,15 +330,19 @@ struct Row {
     path: String,
     size: String,
     place: Place,
+    /// Matched by `.quiltignore`. Drawn only under [`Facet::Ignored`], where
+    /// the view already says it, so the row carries no label and no click.
+    ignored: bool,
 }
 
 /// One row. `name` is what the list shows — the whole path, or the part under
 /// a heading — and the whole path is always the `title`.
 fn row(r: &Row, name: String, on_open: Callback<String>) -> AnyView {
-    let state = r.place.state();
+    let state = if r.ignored { None } else { r.place.state() };
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
     let action = match r.place {
+        _ if r.ignored => None,
         Place::Here | Place::Changed | Place::New => {
             let path = r.path.clone();
             Some(EntryAction::Open(Callback::new(move |()| {
@@ -346,9 +432,42 @@ fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> Any
     .into_any()
 }
 
+/// The four facets, each carrying the package's count.
+///
+/// A facet at zero stays in its place and cannot be chosen, except `All`: it
+/// is the pane's home, and the view a facet that empties falls back to. The
+/// fallback happens here, before the control is built, because an inert
+/// segment must not hold the choice (`Segment::inert`).
+fn facets(counts: &EntryCounts, facet: RwSignal<String>) -> impl IntoView {
+    if Facet::from_key(&facet.get_untracked()).is_empty(counts) {
+        facet.set(Facet::All.key().to_string());
+    }
+    let options = Facet::ALL
+        .into_iter()
+        .map(|f| {
+            let words = f.words(counts);
+            let segment = if f.is_empty(counts) {
+                Segment::inert(words)
+            } else {
+                Segment::new(words)
+            };
+            segment.valued(f.key())
+        })
+        .collect();
+    view! {
+        <SegmentedControl
+            aria_label="Show files"
+            name="file-facets"
+            options=options
+            selected=facet
+        />
+    }
+}
+
 /// The toolbar under the search row: select-all's slot on the left, the view
-/// controls on the right.
-fn toolbar(grouping: RwSignal<String>) -> impl IntoView {
+/// controls on the right. The facets need the package's counts, so a pane
+/// with no answer draws grouping alone.
+fn toolbar(grouping: RwSignal<String>, facets: Option<AnyView>) -> impl IntoView {
     view! {
         // Stacks upwards, so the line nearest the rows is the one acting on
         // them. Select-all (the selection slice) goes first, on the left.
@@ -359,7 +478,7 @@ fn toolbar(grouping: RwSignal<String>) -> impl IntoView {
                     options=Grouping::ALL.iter().map(|g| g.label().to_string()).collect()
                     selected=grouping
                 />
-                // The facets (their own slice) follow here, flush right.
+                {facets}
             </div>
         </ListToolbar>
     }
@@ -372,6 +491,9 @@ pub fn FilePane(
     /// The `Group:` select's value. The page owns it, so a re-read does not
     /// reset it; a visit to another package does.
     grouping: RwSignal<String>,
+    /// The chosen [`Facet`], as its [`Facet::key`]. The page owns it, for the
+    /// grouping's reason.
+    facet: RwSignal<String>,
     /// Open a downloaded file, by its logical path.
     on_open: Callback<String>,
     /// Read the list again after a failure.
@@ -381,7 +503,7 @@ pub fn FilePane(
         Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
         Listing::Failed => view! {
             <section class=style::root aria-label="Files">
-                {toolbar(grouping)}
+                {toolbar(grouping, None)}
                 <Card flush=true label="Files" fill=true>
                     <LoadFailure
                         centred=true
@@ -392,60 +514,90 @@ pub fn FilePane(
             </section>
         }
         .into_any(),
-        Listing::Ready(list) => ready(list, grouping, on_open),
+        Listing::Ready(list) => ready(list, grouping, facet, on_open),
     }
 }
 
-fn ready(list: FileList, grouping: RwSignal<String>, on_open: Callback<String>) -> AnyView {
+fn ready(
+    list: FileList,
+    grouping: RwSignal<String>,
+    facet: RwSignal<String>,
+    on_open: Callback<String>,
+) -> AnyView {
     let FileList {
         entries,
+        counts,
         total,
         truncated,
     } = list;
-    let shown = entries.len();
+    let loaded = entries.len();
     let rows: Vec<Row> = entries
         .into_iter()
-        .filter(|e| e.ignored_by.is_none())
         .map(|e| Row {
             place: Place::of(&e.status),
             size: format_size(e.size),
+            ignored: e.ignored_by.is_some(),
             path: e.filename,
         })
         .collect();
+    let rows = StoredValue::new(rows);
+    // The rows the view shows. The one place a view narrows the loaded rows:
+    // what the list draws and what select-all would tick both read it.
+    let shown = Signal::derive(move || {
+        let f = Facet::from_key(&facet.get());
+        rows.with_value(|rs| {
+            rs.iter()
+                .filter(|r| f.admits(r.place, r.ignored))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+    });
 
-    let body = if rows.is_empty() {
+    let body = move || {
         if total == 0 {
-            view! {
+            return view! {
                 <Blankslate
                     heading="Nothing in this package"
                     description="The published revision has no files in it yet."
                 />
             }
-            .into_any()
-        } else {
-            view! {
-                <Blankslate
-                    compact=true
-                    heading="No files to show"
-                    description="Every file in this package is ignored."
-                />
-            }
-            .into_any()
+            .into_any();
         }
-    } else {
-        let rows = StoredValue::new(rows);
-        (move || {
-            let g = Grouping::from_label(&grouping.get());
-            rows.with_value(|rs| rows_view(rs, g, on_open))
+        let g = Grouping::from_label(&grouping.get());
+        shown.with(|rs| {
+            if !rs.is_empty() {
+                return rows_view(rs, g, on_open);
+            }
+            // Empty, and never zero-count unless it is `All`: an inert facet
+            // cannot be chosen. So `All` at zero is a package all ignored,
+            // and any other empty view counts files the cap left out.
+            if Facet::from_key(&facet.get()) == Facet::All && counts.all == 0 {
+                view! {
+                    <Blankslate
+                        compact=true
+                        heading="No files to show"
+                        description="Every file in this package is ignored."
+                    />
+                }
+                .into_any()
+            } else {
+                view! {
+                    <Blankslate
+                        compact=true
+                        heading="None of the loaded files are in this view"
+                        description="Its files sort after the ones this list covers."
+                    />
+                }
+                .into_any()
+            }
         })
-        .into_any()
     };
 
     view! {
         <section class=style::root aria-label="Files">
-            {toolbar(grouping)}
+            {toolbar(grouping, Some(facets(&counts, facet).into_any()))}
             <Card flush=true label="Files" fill=true>
-                {truncated.then(|| view! { <CapNotice total=total shown=shown /> })}
+                {truncated.then(|| view! { <CapNotice total=total shown=loaded /> })}
                 {body}
             </Card>
         </section>
@@ -460,8 +612,9 @@ pub fn FilePaneSkeleton() -> impl IntoView {
     view! {
         <section class=style::root aria-label="Files">
             <div class=style::skeletonbar>
-                // The `Group:` select's width.
+                // The `Group:` select's width, then the facets'.
                 <SkeletonBox width="166px" height="32px" />
+                <SkeletonBox width="396px" height="32px" />
             </div>
             <Card flush=true label="Files" fill=true busy=Signal::stored(true)>
                 <div class=style::skeleton>
@@ -572,9 +725,53 @@ mod grouping_tests {
 }
 
 #[cfg(test)]
+mod facet_tests {
+    use super::*;
+
+    /// The backend's own rule (`EntryCounts::of`), so a facet shows the rows
+    /// its count counted.
+    #[test]
+    fn each_facet_admits_the_rows_its_count_counts() {
+        let admitted = |facet: Facet| {
+            [
+                ("pristine", false),
+                ("modified", false),
+                ("added", false),
+                ("deleted", false),
+                ("remote", false),
+                ("pristine", true),
+                ("remote", true),
+            ]
+            .into_iter()
+            .filter(|&(status, ignored)| facet.admits(Place::of(status), ignored))
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            admitted(Facet::All),
+            [
+                ("pristine", false),
+                ("modified", false),
+                ("added", false),
+                ("deleted", false),
+                ("remote", false),
+            ]
+        );
+        assert_eq!(
+            admitted(Facet::Changed),
+            [("modified", false), ("added", false), ("deleted", false)]
+        );
+        assert_eq!(admitted(Facet::NotDownloaded), [("remote", false)]);
+        assert_eq!(
+            admitted(Facet::Ignored),
+            [("pristine", true), ("remote", true)]
+        );
+    }
+}
+
+#[cfg(test)]
 mod pane_tests {
     use super::*;
-    use crate::commands::EntryData;
+    use crate::commands::{EntryCounts, EntryData};
     use crate::test_support::{element_saying, mount};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
@@ -597,12 +794,262 @@ mod pane_tests {
         }
     }
 
+    /// A whole list: its counts are its own rows', as the backend counts them.
     fn list(entries: Vec<EntryData>, total: usize, truncated: bool) -> FileList {
+        let mut counts = EntryCounts::default();
+        for e in &entries {
+            if e.ignored_by.is_some() {
+                counts.ignored += 1;
+                continue;
+            }
+            counts.all += 1;
+            match e.status.as_str() {
+                "added" | "modified" | "deleted" => counts.changed += 1,
+                "remote" => counts.not_downloaded += 1,
+                _ => {}
+            }
+        }
         FileList {
             entries,
+            counts,
             total,
             truncated,
         }
+    }
+
+    fn facet(el: &web_sys::Element, words: &str) -> web_sys::HtmlInputElement {
+        element_saying(el, words)
+            .closest("label")
+            .unwrap()
+            .expect("a segment")
+            .query_selector("input[type=radio]")
+            .unwrap()
+            .expect("its radio")
+            .unchecked_into()
+    }
+
+    fn facet_pane(listing: Listing, facet: RwSignal<String>) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listing)
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        })
+    }
+
+    fn drawn(el: &web_sys::Element) -> Vec<String> {
+        let found = el.query_selector_all("[title]").unwrap();
+        (0..found.length())
+            .filter_map(|i| found.get(i)?.dyn_into::<web_sys::Element>().ok())
+            .filter_map(|e| e.get_attribute("title"))
+            .collect()
+    }
+
+    fn mixed() -> FileList {
+        list(
+            vec![
+                entry("added.txt", "added"),
+                entry("deleted.txt", "deleted"),
+                entry("here.txt", "pristine"),
+                entry("modified.txt", "modified"),
+                entry("remote.txt", "remote"),
+                ignored(".DS_Store"),
+            ],
+            6,
+            false,
+        )
+    }
+
+    /// Choosing a facet narrows the rows to it, and `All` brings them back.
+    #[wasm_bindgen_test]
+    async fn choosing_a_facet_narrows_the_rows_to_it() {
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let el = facet_pane(Listing::Ready(mixed()), chosen);
+        assert_eq!(
+            drawn(&el),
+            [
+                "added.txt",
+                "deleted.txt",
+                "here.txt",
+                "modified.txt",
+                "remote.txt"
+            ]
+        );
+
+        facet(&el, "Changed 3").click();
+        leptos::task::tick().await;
+        assert_eq!(chosen.get_untracked(), "Changed", "the page holds the key");
+        assert_eq!(drawn(&el), ["added.txt", "deleted.txt", "modified.txt"]);
+
+        facet(&el, "Not downloaded 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), ["remote.txt"]);
+
+        facet(&el, "All 5").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el).len(), 5);
+    }
+
+    /// Every row under `Ignored` is ignored, so none says so; and an ignored
+    /// file is never selectable, even one that is not downloaded — stop
+    /// ignoring it first.
+    #[wasm_bindgen_test]
+    fn ignored_rows_carry_no_label_and_no_box() {
+        let chosen = RwSignal::new(Facet::Ignored.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![
+                    ignored(".DS_Store"),
+                    EntryData {
+                        ignored_by: Some("*.tmp".to_string()),
+                        ..entry("scratch.tmp", "remote")
+                    },
+                    entry("here.txt", "pristine"),
+                ],
+                3,
+                false,
+            )),
+            chosen,
+        );
+        assert_eq!(drawn(&el), [".DS_Store", "scratch.tmp"]);
+        let list = el
+            .query_selector(&format!(".{}", style::list))
+            .unwrap()
+            .expect("the list");
+        assert!(
+            list.query_selector("input[type=checkbox]")
+                .unwrap()
+                .is_none(),
+            "no box; markup was {}",
+            list.inner_html()
+        );
+        assert!(
+            list.query_selector("button").unwrap().is_none(),
+            "and nothing to click"
+        );
+        assert!(
+            !text(&list).contains("Not downloaded"),
+            "no label; markup was {}",
+            list.inner_html()
+        );
+    }
+
+    /// A tracked file that `.quiltignore` also matches is two rows, as in v1:
+    /// the ignored one under `Ignored`, and the tracked one — here deleted,
+    /// since the walk skips it — under `All` and `Changed`. Counts follow rows.
+    #[wasm_bindgen_test]
+    async fn an_ignored_tracked_file_keeps_both_its_rows() {
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![ignored("data.csv"), entry("data.csv", "deleted")],
+                2,
+                false,
+            )),
+            chosen,
+        );
+        assert_eq!(drawn(&el), ["data.csv"]);
+        assert!(text(&el).contains("Deleted"));
+
+        facet(&el, "Ignored 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), ["data.csv"]);
+        assert!(!text(&el).contains("Deleted"), "the ignored row is silent");
+
+        facet(&el, "Changed 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), ["data.csv"]);
+    }
+
+    /// A facet with nothing in it stays on screen and cannot be chosen. `All`
+    /// always can: it is the pane's home and where a view falls back to.
+    #[wasm_bindgen_test]
+    fn a_zero_count_facet_is_present_and_inert() {
+        let el = pane(Listing::Ready(list(vec![ignored(".DS_Store")], 1, false)));
+        assert!(facet(&el, "Changed 0").disabled());
+        assert!(facet(&el, "Not downloaded 0").disabled());
+        assert!(!facet(&el, "Ignored 1").disabled());
+        assert!(!facet(&el, "All 0").disabled(), "home is never shut");
+    }
+
+    /// A re-read can empty the facet the reader is on — the download finished,
+    /// so `Not downloaded` is zero. The view falls back to `All`, since an
+    /// inert segment cannot hold the choice.
+    #[wasm_bindgen_test]
+    async fn a_chosen_facet_that_empties_falls_back_to_all() {
+        let chosen = RwSignal::new(Facet::NotDownloaded.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(vec![entry("here.txt", "pristine")], 1, false)),
+            chosen,
+        );
+        leptos::task::tick().await;
+        assert_eq!(chosen.get_untracked(), "All");
+        assert!(facet(&el, "All 1").checked());
+        assert_eq!(drawn(&el), ["here.txt"]);
+    }
+
+    /// A package whose every file is ignored has nothing under `All`, and all
+    /// of it under `Ignored`.
+    #[wasm_bindgen_test]
+    async fn a_wholly_ignored_package_lists_its_files_under_ignored() {
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(vec![ignored(".DS_Store")], 1, false)),
+            chosen,
+        );
+        element_saying(&el, "Every file in this package is ignored.");
+
+        facet(&el, "Ignored 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), [".DS_Store"]);
+    }
+
+    /// Over the cap a facet can count files none of whose rows were loaded.
+    /// The view says so rather than drawing an empty box.
+    #[wasm_bindgen_test]
+    fn a_facet_whose_files_are_past_the_cap_says_so() {
+        let el = facet_pane(
+            Listing::Ready(FileList {
+                counts: EntryCounts {
+                    all: 1_500,
+                    changed: 4,
+                    not_downloaded: 0,
+                    ignored: 0,
+                },
+                ..list(vec![entry("a.csv", "pristine")], 1_500, true)
+            }),
+            RwSignal::new(Facet::Changed.key().to_string()),
+        );
+        assert!(drawn(&el).is_empty());
+        element_saying(&el, "None of the loaded files are in this view");
+    }
+
+    /// The facets describe the package, not the loaded rows: over the cap a
+    /// facet still says how many files the package has in it.
+    #[wasm_bindgen_test]
+    fn the_facets_count_the_whole_package() {
+        let el = pane(Listing::Ready(FileList {
+            counts: EntryCounts {
+                all: 4_309,
+                changed: 2,
+                not_downloaded: 17,
+                ignored: 3,
+            },
+            ..list(vec![entry("a.csv", "pristine")], 4_312, true)
+        }));
+        for words in ["All 4,309", "Changed 2", "Not downloaded 17", "Ignored 3"] {
+            assert!(
+                facet(&el, words).name() == "file-facets",
+                "one group of four; markup was {}",
+                el.inner_html()
+            );
+        }
+        assert!(facet(&el, "All 4,309").checked(), "All is the start");
     }
 
     fn pane(listing: Listing) -> web_sys::Element {
@@ -611,6 +1058,7 @@ mod pane_tests {
                 <FilePane
                     listing=Signal::stored(listing)
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    facet=RwSignal::new(Facet::All.key().to_string())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
                 />
@@ -728,6 +1176,7 @@ mod pane_tests {
                         false,
                     )))
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    facet=RwSignal::new(Facet::All.key().to_string())
                     on_open=Callback::new(move |path: String| opened.update(|o| o.push(path)))
                     on_retry=Callback::new(|()| ())
                 />
@@ -778,6 +1227,7 @@ mod pane_tests {
                         false,
                     )))
                     grouping=grouping
+                    facet=RwSignal::new(Facet::All.key().to_string())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
                 />

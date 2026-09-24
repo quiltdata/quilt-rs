@@ -18,6 +18,8 @@
 //! segment, and that view replaced a hidden checkbox precisely because nobody
 //! found it. Behind a `Select` it would be hidden again.
 //!
+//! The page is `installed_package_v2/file_pane.rs`.
+//!
 //! So: reach for a `Select` when the options are a choice the user already knows
 //! they have, and stay here when the options *are* the disclosure. The cost is
 //! width, and it is worth naming in a review rather than discovering in a wrap.
@@ -43,6 +45,7 @@ stylance::import_crate_style!(style, "src/kit/segmented_control.module.scss");
 #[derive(Clone)]
 pub struct Segment {
     label: String,
+    value: String,
     enabled: bool,
 }
 
@@ -50,10 +53,22 @@ impl Segment {
     /// A segment the user can choose.
     #[must_use]
     pub fn new(label: impl Into<String>) -> Self {
+        let label = label.into();
         Self {
-            label: label.into(),
+            value: label.clone(),
+            label,
             enabled: true,
         }
+    }
+
+    /// What choosing this segment stores in `selected`, when it is not the
+    /// words. Words that carry a count change under the user — a facet's
+    /// `Changed 2` becomes `Changed 3` on the next read — and a choice held as
+    /// the words would then match no option. The value is what stays put.
+    #[must_use]
+    pub fn valued(mut self, value: impl Into<String>) -> Self {
+        self.value = value.into();
+        self
     }
 
     /// Visible, in place, and unchoosable — a facet that currently matches
@@ -68,8 +83,8 @@ impl Segment {
     #[must_use]
     pub fn inert(label: impl Into<String>) -> Self {
         Self {
-            label: label.into(),
             enabled: false,
+            ..Self::new(label)
         }
     }
 }
@@ -109,8 +124,7 @@ pub fn SegmentedControl(
         <div class=style::root role="radiogroup" aria-label=aria_label>
             {options
                 .into_iter()
-                .map(|Segment { label, enabled }| {
-                    let value = label.clone();
+                .map(|Segment { label, value, enabled }| {
                     let is_selected = {
                         let value = value.clone();
                         move || selected.get() == value
@@ -206,6 +220,36 @@ mod tests {
         assert_eq!(radios.len(), 2, "the empty facet keeps its place");
         assert!(!radios[0].disabled(), "the one with rows behind it");
         assert!(radios[1].disabled(), "the one without");
+    }
+
+    /// Words that carry a count change under the user; the value they stand for
+    /// does not. Selecting by the words would leave the choice matching no
+    /// option the moment a count moved.
+    #[wasm_bindgen_test]
+    async fn a_segment_selects_by_its_value_not_its_words() {
+        let selected = RwSignal::new("All".to_string());
+        let el = mount(move || {
+            view! {
+                <SegmentedControl
+                    aria_label="Filter files"
+                    name="facets-valued"
+                    options=vec![
+                        Segment::new("All 53").valued("All"),
+                        Segment::new("Changed 2").valued("Changed"),
+                    ]
+                    selected=selected
+                />
+            }
+        });
+        assert!(radios(&el)[0].checked(), "the value picks the option");
+
+        element_saying(&el, "Changed 2").click();
+        assert_eq!(selected.get_untracked(), "Changed", "the value is stored");
+
+        selected.set("All".to_string());
+        leptos::task::tick().await;
+        assert!(radios(&el)[0].checked());
+        assert!(!radios(&el)[1].checked());
     }
 
     /// One `name` across the options is what makes them one choice rather than
