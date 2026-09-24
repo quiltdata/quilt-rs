@@ -252,6 +252,7 @@ mod tests {
                 total: 1,
                 remote_only: Vec::new(),
             },
+            resolve: None,
         }
     }
 

@@ -460,6 +460,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                             total: TOTAL,
                             remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
                         },
+                        resolve: None,
                     }
                     namespace=NAMESPACE
                     fetch=history
