@@ -126,9 +126,7 @@ pub const DIFFERS_TITLE: &str =
 #[component]
 pub fn EntryRow(
     /// What to show. The caller decides whether that is the whole path or the
-    /// leaf under a group heading; this row only truncates it — in the middle,
-    /// keeping the start and the extension, because the end of a name is what
-    /// tells one file from its neighbours.
+    /// leaf under a group heading; this row only truncates it, at the end.
     #[prop(into)]
     name: String,
     /// The whole path, for the `title`, when `name` shows only part of it.
@@ -164,15 +162,6 @@ pub fn EntryRow(
     actions: Vec<MenuAction>,
 ) -> impl IntoView {
     let full_name = path.unwrap_or_else(|| name.clone());
-    // Two boxes, and only the first shrinks: CSS can end-truncate a box but not
-    // cut one in the middle, so the extension is kept out of its reach.
-    let label = move || {
-        let (head, tail) = split_extension(&name);
-        view! {
-            <span class=style::head>{head.to_string()}</span>
-            <span class=style::tail>{tail.to_string()}</span>
-        }
-    };
 
     let class = if differs {
         format!("{} {}", style::root, style::differs)
@@ -213,7 +202,7 @@ pub fn EntryRow(
                     state=Signal::derive(move || selected.get().into())
                     on_toggle=move |next| on_toggle.run(next)
                 />
-                <span class=style::name title=full_name>{label()}</span>
+                <span class=style::name title=full_name>{name}</span>
                 {trailing()}
             </label>
         }
@@ -226,7 +215,7 @@ pub fn EntryRow(
                 {gutter()}
                 <span class=style::nobox />
                 <button type="button" class=style::open title=full_name>
-                    {label()}
+                    {name}
                 </button>
                 {trailing()}
             </div>
@@ -237,7 +226,7 @@ pub fn EntryRow(
             <div class=format!("{} {}", style::main, style::inert)>
                 {gutter()}
                 <span class=style::nobox />
-                <span class=style::name title=full_name>{label()}</span>
+                <span class=style::name title=full_name>{name}</span>
                 {trailing()}
             </div>
         }
@@ -263,68 +252,6 @@ pub fn EntryRow(
                     .into_any()
             }}
         </div>
-    }
-}
-
-/// The longest suffix, dot included, that still counts as an extension. The
-/// tail never shrinks, so an unbounded one could push the size out of its
-/// column.
-const MAX_EXTENSION: usize = 8;
-
-/// Split a name where the ellipsis may not reach: everything before its
-/// extension, and the extension.
-///
-/// Only the last segment's dot counts, and not a leading one — `.DS_Store` is
-/// a name, not an extension.
-#[must_use]
-pub fn split_extension(name: &str) -> (&str, &str) {
-    let leaf_start = name.rfind('/').map_or(0, |at| at + 1);
-    match name[leaf_start..].rfind('.') {
-        Some(dot) if dot > 0 => {
-            let at = leaf_start + dot;
-            let tail = &name[at..];
-            if tail.len() > 1 && tail.len() <= MAX_EXTENSION {
-                (&name[..at], tail)
-            } else {
-                (name, "")
-            }
-        }
-        _ => (name, ""),
-    }
-}
-
-#[cfg(test)]
-mod split_tests {
-    use super::split_extension;
-
-    #[test]
-    fn the_extension_is_kept_whole() {
-        assert_eq!(
-            split_extension("raw/plate-07.csv"),
-            ("raw/plate-07", ".csv")
-        );
-        assert_eq!(split_extension("backup.tar.gz"), ("backup.tar", ".gz"));
-    }
-
-    #[test]
-    fn a_name_with_no_extension_is_all_head() {
-        for name in [
-            "Makefile",
-            ".DS_Store",
-            "notes/.env",
-            "v1.2/README",
-            "trailing.",
-        ] {
-            assert_eq!(split_extension(name), (name, ""), "{name}");
-        }
-    }
-
-    /// A tail that never shrinks must stay short, or it can push the size out
-    /// of its column; a "suffix" this long is not an extension anyway.
-    #[test]
-    fn a_long_suffix_is_not_treated_as_an_extension() {
-        let name = "run.2026-09-24T10-00-00-final-final";
-        assert_eq!(split_extension(name), (name, ""));
     }
 }
 
@@ -405,10 +332,10 @@ mod tests {
         );
     }
 
-    /// The middle ellipsis: the extension is its own box, outside the part
-    /// that truncates, and the whole path is the `title` in every shape.
+    /// The name may be only the part under a heading; the `title` is always
+    /// the whole path, in every shape, since the name can be truncated.
     #[wasm_bindgen_test]
-    fn the_name_keeps_its_extension_apart_and_titles_the_whole_path() {
+    fn the_title_is_the_whole_path() {
         let el = mount(|| {
             view! {
                 <EntryRow name="plate-07.csv" path="raw/plate-07.csv" size="4.1 MB" />
@@ -418,25 +345,19 @@ mod tests {
                     size="33 KB"
                     action=EntryAction::Open(Callback::new(|()| ()))
                 />
+                <EntryRow name="README.md" size="2 KB" />
             }
         });
-        for (path, head, tail) in [
-            ("raw/plate-07.csv", "plate-07", ".csv"),
-            ("notes/design-01.md", "design-01", ".md"),
+        for (path, name) in [
+            ("raw/plate-07.csv", "plate-07.csv"),
+            ("notes/design-01.md", "design-01.md"),
+            ("README.md", "README.md"),
         ] {
-            let name = el
+            let titled = el
                 .query_selector(&format!("[title='{path}']"))
                 .unwrap()
                 .unwrap_or_else(|| panic!("titled {path}; markup was {}", el.inner_html()));
-            let parts = name.children();
-            assert_eq!(
-                parts.length(),
-                2,
-                "head and tail; markup was {}",
-                el.inner_html()
-            );
-            assert_eq!(parts.item(0).unwrap().text_content().unwrap(), head);
-            assert_eq!(parts.item(1).unwrap().text_content().unwrap(), tail);
+            assert_eq!(titled.text_content().unwrap(), name);
         }
     }
 

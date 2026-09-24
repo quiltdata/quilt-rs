@@ -53,9 +53,10 @@
  * platform's, wearing the name's own typography. `FileRow`'s path button makes
  * the same trade — the semantics are the button's, the look is the row's. */
 .open {
-  display: flex;
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   padding: 0;
   border: 0;
@@ -93,25 +94,12 @@
 }
 
 .name {
-  display: flex;
   flex: 1 1 auto;
-  min-width: 0;
-  white-space: nowrap;
-  font-size: var(--q-text-body);
-}
-
-/* The middle ellipsis. The name is two boxes: everything before the extension,
- * which shrinks and ellipsises, and the extension, which does not. So a long
- * name loses its middle and keeps both its start and its type — the end of a
- * path is what tells a file from its neighbours, and end-truncation ate it. */
-.head {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.tail {
-  flex: none;
+  white-space: nowrap;
+  font-size: var(--q-text-body);
 }
 
 .state {

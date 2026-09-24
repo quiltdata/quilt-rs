@@ -1165,8 +1165,9 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
     row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
-    The marked rows draw ahead of their data. Names ellipsise in the middle and keep their \
-    extension. The last cell is the page's own pane over this fixture.";
+    The marked rows draw ahead of their data. Unresolved and visible: under `Group: None` \
+    the ellipsis eats the leaf, kept for now as a deliberate simplification. The last cell \
+    is the page's own pane over this fixture.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -1232,7 +1233,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="a clean copy — `Changed 0` stays in place, inert">
                 {pane(Pane { files: settled_package(), ..Pane::new("fp-settled") })}
             </Cell>
-            <Cell full=true label="Group: None — the gutter goes to zero, and names keep their extension">
+            <Cell full=true label="Group: None — the gutter goes to zero, and the ellipsis eats the leaf">
                 {pane(Pane { grouped: false, ..Pane::new("fp-flat") })}
             </Cell>
             <Cell full=true label="a search and a facet that leave nothing — compact, and no way out">

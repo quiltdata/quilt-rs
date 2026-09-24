@@ -800,7 +800,7 @@ mod pane_tests {
             "no headings under None; markup was {}",
             el.inner_html()
         );
-        element_saying(&el, "notes/a");
+        element_saying(&el, "notes/a.md");
     }
 
     #[wasm_bindgen_test]
