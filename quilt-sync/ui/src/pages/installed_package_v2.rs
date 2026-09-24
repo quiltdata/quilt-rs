@@ -321,7 +321,7 @@ fn package_body(data: commands::PackagePageData, w: Wiring, asked: Signal<bool>)
     };
     view! {
         <div class=style::page>
-            <PageHeader data=header w=w />
+            <PageHeader data=header w=w resolving=open />
             <div class=style::shell>{pane}</div>
         </div>
     }
