@@ -30,13 +30,23 @@ impl Output {
     }
 }
 
+impl Output {
+    /// The requested paths that were installed: every one but the skipped.
+    fn installed(&self) -> impl Iterator<Item = &PathBuf> {
+        self.paths
+            .iter()
+            .filter(|path| !self.skipped.contains(path))
+    }
+}
+
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = vec![format!("{}", self.installed_package)];
-        if self.paths.is_empty() {
+        let installed: Vec<_> = self.installed().collect();
+        if installed.is_empty() {
             output.push("No paths installed".to_string());
         } else {
-            for path in &self.paths {
+            for path in installed {
                 output.push(format!("Path: \"{}\"", path.display()));
             }
         }
@@ -55,11 +65,10 @@ impl Render for Output {
         serde_json::json!({
             "namespace": self.installed_package.namespace.to_string(),
             "paths": self
-                .paths
-                .iter()
+                .installed()
                 // Unlike every other payload's keys, these are the caller's
-                // own `&path=` and `--path` values echoed back unfiltered —
-                // never matched against the manifest. A non-UTF-8 argument
+                // own `&path=` and `--path` values echoed back, less the
+                // skipped ones — never matched against the manifest. A non-UTF-8 argument
                 // renders lossily here; it also matches no manifest key, so
                 // it installs nothing.
                 .map(|path| path.display().to_string())
@@ -328,6 +337,7 @@ mod tests {
         )
         .await?;
 
+        assert_eq!(output.to_json()["paths"], serde_json::json!([pkg::KEPT]));
         assert_eq!(
             output.to_json()["skipped"],
             serde_json::json!([pkg::REPLACED])
@@ -403,7 +413,39 @@ mod tests {
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/pkg","paths":["data/one.csv","data/two.csv"],"skipped":["data/two.csv"]}"#
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"]}"#
+        );
+        Ok(())
+    }
+
+    /// A skipped path is listed once, as skipped, never as a `Path:` line: that
+    /// list reads as the files now on disk.
+    #[test(tokio::test)]
+    async fn text_lists_a_skipped_path_only_as_skipped() -> Result<(), Error> {
+        use crate::cli::create;
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let created = m
+            .create(create::Input {
+                namespace: ("test", "pkg").into(),
+                source: None,
+                message: None,
+            })
+            .await?;
+
+        let output = Output {
+            installed_package: created.installed_package,
+            paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+            skipped: vec![PathBuf::from("b.txt")],
+        };
+
+        assert!(
+            format!("{output}").ends_with(concat!(
+                "\nPath: \"a.txt\"",
+                "\nSkipped: \"b.txt\" (no longer on the remote)"
+            )),
+            "{output}"
         );
         Ok(())
     }
