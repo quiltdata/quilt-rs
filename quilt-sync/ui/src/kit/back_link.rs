@@ -34,9 +34,13 @@ pub fn BackLink(
     /// The destination's own name — `Packages`, not `Back`.
     #[prop(into)]
     label: String,
+    /// Replace the current history entry instead of pushing one, for leaving a
+    /// mode that Back should not return to. The router reads `a.replace`.
+    #[prop(optional)]
+    replace: bool,
 ) -> impl IntoView {
     view! {
-        <a class=style::root href=href>
+        <a class=style::root href=href prop:replace=replace>
             <span class=style::chevron>{icons::chevron_left()}</span>
             {label}
         </a>

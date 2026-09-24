@@ -1432,7 +1432,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn the_back_link_leaves_the_mode_as_a_new_entry() {
+    async fn the_back_link_leaves_the_mode_in_place() {
         let el = screen_at(RESOLVE, diverged_read).await;
         let before = history_length();
 
@@ -1444,7 +1444,11 @@ mod tests {
         sleep_ms(50).await;
 
         assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
-        assert_eq!(history_length(), before + 1, "pushed");
+        assert_eq!(
+            history_length(),
+            before,
+            "replaced, so Back does not return to the mode"
+        );
         element_saying(&el, "Revisions you have (1)");
         assert_eq!(
             READS.with(std::cell::Cell::get),

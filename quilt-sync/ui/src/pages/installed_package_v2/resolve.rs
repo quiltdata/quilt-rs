@@ -195,7 +195,9 @@ pub fn ResolvePane(
     view! {
         <aside aria-label="About this package" class=style::root>
             <Card label="About this package">
-                <BackLink href=back_href label=namespace.to_string() />
+                // Every way out of the mode replaces its entry, so Back skips it;
+                // checked by `the_back_link_leaves_the_mode_in_place`.
+                <BackLink href=back_href label=namespace.to_string() replace=true />
                 <PaneSection>{published}</PaneSection>
                 // The choices are their own block, so the kit's rule sets them
                 // off from the revisions they choose between. Drawn sealed when
