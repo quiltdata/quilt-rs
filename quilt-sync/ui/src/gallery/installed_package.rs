@@ -50,7 +50,7 @@
 //! # One primary per screen
 //!
 //! The header's action is the way *into* a mode, so while the mode is on screen
-//! it hides. Resolve is the case: entering leaves `Make mine the shared one` as
+//! it hides. Resolve is the case: entering leaves `Share mine` as
 //! the page's one primary, and the pane's `BackLink` closes the mode and brings
 //! the header's `Resolve` back with it. The two read as one control in two
 //! states rather than as two controls, and the header keeps `Open folder`, the

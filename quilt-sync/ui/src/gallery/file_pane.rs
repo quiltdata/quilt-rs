@@ -1226,9 +1226,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="both confirms, opened here directly — `Stop keeping` is also on every row's menu">
                 <div class="g-inline">
                     <Button on_click=move |_| keeping.open.set(true)>"Stop keeping"</Button>
-                    <Button on_click=move |_| replacing.set(true)>
-                        "Replace mine with the published one"
-                    </Button>
+                    <Button on_click=move |_| replacing.set(true)>"Replace mine"</Button>
                 </div>
                 {stop_keeping(keeping)}
                 {replace_mine(replacing)}

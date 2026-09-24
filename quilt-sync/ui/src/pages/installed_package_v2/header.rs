@@ -1356,8 +1356,8 @@ mod tests {
     }
 
     /// Nothing else on the header confirms. A third `ConfirmDialog` here would be
-    /// a tone rule nobody decided; the pane's `Replace mine with the published
-    /// one` is the page's one other, decided in `replace-confirmation`.
+    /// a tone rule nobody decided; the pane's `Replace mine` is the
+    /// page's one other, decided in `replace-confirmation`.
     #[wasm_bindgen_test]
     fn only_the_two_danger_items_are_followed_by_a_confirmation() {
         let el = mount_header(data(kit::PackageState::Latest));

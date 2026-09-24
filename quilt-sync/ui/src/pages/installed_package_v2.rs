@@ -171,7 +171,7 @@ pub struct Dialogs {
     /// the consequence.
     pub undo: RwSignal<bool>,
     pub remove: RwSignal<bool>,
-    /// Resolve's *Replace mine with the published one*: here, so a re-read mid-reset keeps it open.
+    /// Resolve's *Replace mine*: here, so a re-read mid-reset keeps it open.
     pub replace: RwSignal<bool>,
 }
 
@@ -1458,7 +1458,7 @@ mod tests {
             },
         )
         .await;
-        button_saying(&el, "Make mine the shared one").click();
+        button_saying(&el, "Share mine").click();
         sleep_ms(10).await;
 
         move_to(OTHER);

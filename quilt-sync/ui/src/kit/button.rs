@@ -64,6 +64,9 @@ pub fn Button(
     /// The id of what it opens.
     #[prop(optional, into)]
     aria_controls: MaybeProp<String>,
+    /// The id of the words that say what it does, drawn beside it by the caller.
+    #[prop(optional, into)]
+    aria_describedby: MaybeProp<String>,
     /// Submits the form named by `form` rather than doing nothing on its own.
     ///
     /// The default is `type="button"` and stays that way: a `<button>` inside a `<form>`
@@ -84,12 +87,6 @@ pub fn Button(
     /// Return does nothing destructive. Same prop `TextInput` has for a form's first field.
     #[prop(optional)]
     autofocus: bool,
-    /// Lets the label take a second line rather than truncate. Opt-in, for a
-    /// label that must be read whole in a narrow column; every other button
-    /// keeps one line and the ellipsis. An attribute, not a class, so the
-    /// stylesheet and the tests find it by the same name.
-    #[prop(optional)]
-    wrap: bool,
     children: Children,
 ) -> impl IntoView {
     let is_loading = Signal::derive(move || loading.get().unwrap_or(false));
@@ -134,12 +131,12 @@ pub fn Button(
             type=button_type
             form=move || form.get()
             autofocus=autofocus
-            data-wrap=wrap.then_some("")
             class=class
             disabled=move || is_disabled.get()
             aria-busy=move || if is_loading.get() { "true" } else { "false" }
             aria-expanded=move || aria_expanded.get().map(|v| v.to_string())
             aria-controls=move || aria_controls.get()
+            aria-describedby=move || aria_describedby.get()
             on:click=move |ev| {
                 if !is_disabled.get() {
                     on_click(ev);
@@ -155,7 +152,7 @@ pub fn Button(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{button_saying, mount};
+    use crate::test_support::mount;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -361,52 +358,5 @@ mod tests {
             assert!(rule.contains(token), "the rule spends {token}: {rule}");
         }
         assert!(!rule.contains('#'), "tokens only, no literal: {rule}");
-    }
-
-    /// Opt-in: every other button keeps one line and the ellipsis.
-    #[wasm_bindgen_test]
-    fn a_wrapping_button_says_so_and_others_do_not() {
-        let el = mount(|| {
-            view! {
-                <Button wrap=true on_click=|_| {}>"Replace mine with the published one"</Button>
-                <Button on_click=|_| {}>"Cancel"</Button>
-            }
-        });
-        assert!(
-            button_saying(&el, "Replace mine with the published one").has_attribute("data-wrap")
-        );
-        assert!(!button_saying(&el, "Cancel").has_attribute("data-wrap"));
-    }
-
-    /// The last value of `property` declared in the rule opened by `selector`,
-    /// parsed as the loading test parses its own.
-    fn declared(sheet: &str, selector: &str, property: &str) -> Option<String> {
-        let rule = sheet
-            .split(&format!("{selector} {{"))
-            .nth(1)
-            .and_then(|rest| rest.split('}').next())?;
-        rule.split("/*")
-            .map(|part| part.split_once("*/").map_or(part, |(_, rest)| rest))
-            .flat_map(|part| part.lines())
-            .map(|line| line.split("//").next().unwrap_or(""))
-            .flat_map(|line| line.split(';'))
-            .filter_map(|declaration| declaration.split_once(':'))
-            .filter(|(name, _)| name.trim() == property)
-            .map(|(_, value)| value.trim().to_string())
-            .last()
-    }
-
-    /// Read from the source: the wasm runner loads no stylesheet.
-    #[test]
-    fn the_stylesheet_lets_a_wrapping_label_break() {
-        const SHEET: &str = include_str!("button.module.scss");
-        assert_eq!(
-            declared(SHEET, "[data-wrap]", "white-space").as_deref(),
-            Some("normal")
-        );
-        assert_eq!(
-            declared(SHEET, "[data-wrap] .label", "text-overflow").as_deref(),
-            Some("clip")
-        );
     }
 }

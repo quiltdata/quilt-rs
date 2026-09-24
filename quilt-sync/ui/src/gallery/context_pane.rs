@@ -379,8 +379,8 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
     wears a cloud and ends in an icon that opens the catalog; the unsent one \
     wears the slashed cloud and no icon. \
     \
-    In resolve mode `Replace mine with the published one` takes two lines at \
-    280px rather than truncating.";
+    In resolve mode both choices fit on one line at 280px, each with the \
+    sentence that says what it does beneath it.";
 
 /// The region itself, for the whole-page scene.
 ///

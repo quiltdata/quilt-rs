@@ -19,7 +19,7 @@ use super::{Outcome, Replace, Wiring, holding, run};
 use crate::commands;
 use crate::kit::{
     BackLink, BannerVariant, Button, ButtonVariant, Card, ConfirmDialog, DIFFERS_ID, LoadFailure,
-    PaneSection, RevisionRow, Submit,
+    PaneSection, RevisionRow, Submit, unique_id,
 };
 use crate::routes;
 
@@ -188,6 +188,9 @@ pub fn ResolvePane(
         )
     });
 
+    let certify_hint = unique_id("resolve-hint");
+    let replace_hint = unique_id("resolve-hint");
+
     view! {
         <aside aria-label="About this package" class=style::root>
             <Card label="About this package">
@@ -195,17 +198,31 @@ pub fn ResolvePane(
                 <PaneSection>
                     {published}
                     <div class=style::choices>
-                        <Button
-                            variant=ButtonVariant::Primary
-                            wrap=true
-                            disabled=sealed
-                            on_click=on_certify
-                        >
-                            "Make mine the shared one"
-                        </Button>
-                        <Button wrap=true disabled=sealed on_click=move |_| replace.set(true)>
-                            "Replace mine with the published one"
-                        </Button>
+                        <div class=style::choice>
+                            <Button
+                                variant=ButtonVariant::Primary
+                                disabled=sealed
+                                on_click=on_certify
+                                aria_describedby=certify_hint.clone()
+                            >
+                                "Share mine"
+                            </Button>
+                            <p id=certify_hint class=style::hint>
+                                "Everyone who syncs gets your revision next. Nothing is deleted."
+                            </p>
+                        </div>
+                        <div class=style::choice>
+                            <Button
+                                disabled=sealed
+                                on_click=move |_| replace.set(true)
+                                aria_describedby=replace_hint.clone()
+                            >
+                                "Replace mine"
+                            </Button>
+                            <p id=replace_hint class=style::hint>
+                                "Swaps your revision and edits here for the published one."
+                            </p>
+                        </div>
                     </div>
                 </PaneSection>
             </Card>
@@ -222,7 +239,7 @@ struct Target {
     plain: String,
 }
 
-/// *Make mine the shared one*: runs at once, since nothing is lost that the
+/// *Share mine*: runs at once, since nothing is lost that the
 /// registry does not keep (`#replace-confirmation`).
 fn certify_press(target: Target, w: Wiring, certify: RevisionChoice) -> impl Fn(MouseEvent) {
     let Wiring {
@@ -257,14 +274,14 @@ fn certify_press(target: Target, w: Wiring, certify: RevisionChoice) -> impl Fn(
             busy,
             outcome,
             namespace,
-            "Could not make your revision the shared one.",
+            "Could not share your revision.",
             Some(reload),
             task,
         );
     }
 }
 
-/// *Replace mine with the published one*'s confirmation, on the page's flag
+/// *Replace mine*'s confirmation, on the page's flag
 /// so it outlives a re-read, as undo's does.
 fn replace_confirmation(
     target: Target,
@@ -507,8 +524,29 @@ mod tests {
         })
     }
 
-    const CERTIFY: &str = "Make mine the shared one";
-    const REPLACE: &str = "Replace mine with the published one";
+    const CERTIFY: &str = "Share mine";
+    const REPLACE: &str = "Replace mine";
+    const CERTIFY_HINT: &str = "Everyone who syncs gets your revision next. Nothing is deleted.";
+    const REPLACE_HINT: &str = "Swaps your revision and edits here for the published one.";
+
+    /// The pane's choice saying `label`, not the dialog's verb of the same words.
+    fn choice(el: &web_sys::Element, label: &str) -> web_sys::HtmlButtonElement {
+        let all = el.query_selector_all("button").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .filter(|b| b.closest("dialog").unwrap().is_none())
+            .find(|b| b.text_content().unwrap_or_default().trim() == label)
+            .unwrap_or_else(|| panic!("no choice says {label:?}; markup was {}", el.inner_html()))
+            .unchecked_into()
+    }
+
+    /// The dialog's verb, once the confirmation is open.
+    fn verb(el: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        button_saying(
+            &open_dialog(el).expect("the confirmation is open"),
+            "Replace mine",
+        )
+    }
 
     #[wasm_bindgen_test]
     fn the_mode_names_both_sides() {
@@ -546,7 +584,7 @@ mod tests {
         );
 
         for label in [CERTIFY, REPLACE] {
-            assert!(!button_saying(&el, label).disabled(), "{label} is enabled");
+            assert!(!choice(&el, label).disabled(), "{label} is enabled");
         }
     }
 
@@ -601,7 +639,7 @@ mod tests {
         button_saying(&el, "Try again");
         assert!(!w.busy.get_untracked());
         for label in [CERTIFY, REPLACE] {
-            assert!(button_saying(&el, label).disabled(), "{label} is disabled");
+            assert!(choice(&el, label).disabled(), "{label} is disabled");
         }
     }
 
@@ -645,18 +683,29 @@ mod tests {
         w.busy.set(true);
         leptos::task::tick().await;
         for label in [CERTIFY, REPLACE] {
-            assert!(button_saying(&el, label).disabled(), "{label} is disabled");
+            assert!(choice(&el, label).disabled(), "{label} is disabled");
         }
     }
 
+    /// Offered or sealed, each choice says what it does beneath it.
     #[wasm_bindgen_test]
-    fn both_choices_may_take_two_lines() {
-        let el = pane(compared(0, 0), marks(&["plate/a.csv"]), Wiring::new());
-        for label in [CERTIFY, REPLACE] {
-            assert!(
-                button_saying(&el, label).has_attribute("data-wrap"),
-                "{label} wraps"
-            );
+    fn each_choice_is_described_by_its_hint() {
+        for (resolve, marked) in [
+            (compared(0, 0), Some(marks(&["plate/a.csv"]))),
+            (refused(), None),
+        ] {
+            let el = pane(resolve, marked, Wiring::new());
+            for (label, hint) in [(CERTIFY, CERTIFY_HINT), (REPLACE, REPLACE_HINT)] {
+                let id = choice(&el, label)
+                    .get_attribute("aria-describedby")
+                    .unwrap_or_else(|| panic!("{label} has a description"));
+                let described = el
+                    .query_selector(&format!("[id='{id}']"))
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{label}'s description {id:?} is drawn"));
+                assert_eq!(described.text_content().unwrap_or_default().trim(), hint);
+                assert_eq!(element_saying(&el, hint).id(), id);
+            }
         }
     }
 
@@ -755,7 +804,7 @@ mod tests {
     const TITLE: &str = "Replace yours with the published revision";
 
     #[wasm_bindgen_test]
-    async fn making_mine_the_shared_one_runs_at_once_and_says_so() {
+    async fn sharing_mine_runs_at_once_and_says_so() {
         let w = Wiring::new();
         let el = choosing(
             compared(0, 0),
@@ -764,7 +813,7 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button_saying(&el, CERTIFY).click();
+        choice(&el, CERTIFY).click();
         settle().await;
 
         assert_eq!(CERTIFIED.with_borrow(Clone::clone), vec!["team/dataset"]);
@@ -795,7 +844,7 @@ mod tests {
             with(refuses_certify, resets_ok),
         )
         .await;
-        button_saying(&el, CERTIFY).click();
+        choice(&el, CERTIFY).click();
         settle().await;
 
         assert_eq!(
@@ -803,7 +852,7 @@ mod tests {
             Some(Outcome {
                 namespace: "team/dataset".into(),
                 variant: BannerVariant::Critical,
-                lead: "Could not make your revision the shared one.".into(),
+                lead: "Could not share your revision.".into(),
                 detail: Some(CERTIFY_REFUSED.into()),
             })
         );
@@ -822,7 +871,7 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button_saying(&el, REPLACE).click();
+        choice(&el, REPLACE).click();
         leptos::task::tick().await;
 
         let dialog = open_dialog(&el).expect("the confirmation is open");
@@ -840,7 +889,7 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button_saying(&el, REPLACE).click();
+        choice(&el, REPLACE).click();
         leptos::task::tick().await;
 
         let dialog = open_dialog(&el).expect("the confirmation is open");
@@ -862,9 +911,9 @@ mod tests {
             with(certifies_ok, resets_ok),
         )
         .await;
-        button_saying(&el, REPLACE).click();
+        choice(&el, REPLACE).click();
         leptos::task::tick().await;
-        button_saying(&el, "Replace mine").click();
+        verb(&el).click();
         settle().await;
         settle().await;
 
@@ -896,9 +945,9 @@ mod tests {
             with(certifies_ok, refuses_reset),
         )
         .await;
-        button_saying(&el, REPLACE).click();
+        choice(&el, REPLACE).click();
         leptos::task::tick().await;
-        button_saying(&el, "Replace mine").click();
+        verb(&el).click();
         settle().await;
 
         let dialog = open_dialog(&el).expect("the confirmation stays open");
@@ -937,14 +986,14 @@ mod tests {
             with(certifies_ok, reset_never),
         )
         .await;
-        button_saying(&el, REPLACE).click();
+        choice(&el, REPLACE).click();
         leptos::task::tick().await;
-        button_saying(&el, "Replace mine").click();
+        verb(&el).click();
         settle().await;
 
         assert!(w.busy.get_untracked(), "the page is held");
         for label in [CERTIFY, REPLACE] {
-            assert!(button_saying(&el, label).disabled(), "{label} is disabled");
+            assert!(choice(&el, label).disabled(), "{label} is disabled");
         }
     }
 

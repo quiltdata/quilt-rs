@@ -11,11 +11,27 @@
   }
 }
 
-/* The two whole-revision choices, one above the other at the pane's width:
- * their labels are long, and each may take a second line (`Button`'s `wrap`). */
+/* The two whole-revision choices, one above the other at the pane's width,
+ * each with its hint beneath it. */
 .choices {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--q-space-2);
+  gap: var(--q-space-3);
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--q-space-1);
+}
+
+/* Keeping's caption (`choice_group.module.scss`), and muted even when the
+ * button is sealed: the hint still says what the choice would do. */
+.hint {
+  margin: 0;
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-fgColor-muted);
 }
