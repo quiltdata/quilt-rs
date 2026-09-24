@@ -34,18 +34,13 @@
 //!
 //! # What this scene draws ahead of its data
 //!
-//! Two cells state facts the backend cannot currently produce, deliberately, so
+//! One cell states a fact the backend cannot currently produce, deliberately, so
 //! that the copy is the target rather than a guess made later:
 //!
 //! - **The marked rows.** Which files differ between two diverged revisions is
 //!   computed nowhere — `MergeData` carries a namespace and a URI, and the
 //!   working-tree changes are local edits against the installed manifest, not
 //!   mine against published (`qhq-mrzt`).
-//! - **The cap.** No total is sent, so *"this package has 4,312 files"* has no
-//!   source. The sentence here says `Showing 1,000 of them` and not *the first
-//!   1,000*: `entries_list` fills from four loops in turn and sorts afterwards,
-//!   so the thousand it keeps is category-biased and the design's own wording
-//!   would be false (`qhq-qpus`).
 //!
 //! # What the render settled, none of it reasoned first
 //!
@@ -909,15 +904,14 @@ fn pane(p: Pane) -> AnyView {
                             {(body == Body::Capped)
                                 .then(|| {
                                     view! {
-                                        // Not "the first 1,000": the backend
-                                        // fills from four loops in turn and
-                                        // sorts afterwards, so the thousand it
-                                        // keeps is not the first of anything.
+                                        // The first 1,000 by path: the page read
+                                        // sorts before it caps and sends the
+                                        // total (quilt-rs#992).
                                         <p style="margin:0; padding:var(--q-space-2) \
                                                   var(--q-space-3); \
                                                   color:var(--q-fgColor-muted); \
                                                   font-size:var(--q-text-body)">
-                                            "This package has 4,312 files. Showing 1,000 of them."
+                                            "This package has 4,312 files. Showing the first 1,000."
                                         </p>
                                     }
                                 })}
@@ -1126,13 +1120,53 @@ fn replace_mine(open: RwSignal<bool>) -> AnyView {
     .into_any()
 }
 
+/// The page's `FilePane`, fed this scene's package as the page read would send
+/// it: sorted by path, ignored files included for the pane to hide.
+fn live() -> AnyView {
+    let mut files = package();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let entries: Vec<crate::commands::EntryData> = files
+        .into_iter()
+        .map(|f| crate::commands::EntryData {
+            status: match f.mark {
+                Mark::Here | Mark::Ignored => "pristine",
+                Mark::Changed => "modified",
+                Mark::New => "added",
+                Mark::Deleted => "deleted",
+                Mark::Missing => "remote",
+            }
+            .to_string(),
+            ignored_by: (f.mark == Mark::Ignored).then(|| ".DS_Store".to_string()),
+            filename: f.path,
+            size: f.bytes,
+            junky_pattern: None,
+            namespace: "team/dataset".try_into().expect("a namespace"),
+        })
+        .collect();
+    let total = entries.len();
+    view! {
+        <div style=format!("display:flex; flex-direction:column; {LIST_RESTING}; height:400px")>
+            <crate::pages::FilePane
+                listing=Signal::stored(crate::pages::Listing::Ready(crate::pages::FileList {
+                    entries,
+                    total,
+                    truncated: false,
+                }))
+                grouping=RwSignal::new(crate::pages::Grouping::BaseFolder.label().to_string())
+                on_open=Callback::new(|_: String| ())
+                on_retry=Callback::new(|()| ())
+            />
+        </div>
+    }
+    .into_any()
+}
+
 const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a \
     row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
-    Two cells draw ahead of their data, the marked rows and the cap's sentence. Unresolved \
-    and visible: under `Group: None` the ellipsis eats the leaf, and `Ignored` is three \
-    files under two headings.";
+    The marked rows draw ahead of their data. Names ellipsise in the middle and keep their \
+    extension. The last cell is the page's own pane over this fixture.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -1198,7 +1232,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="a clean copy — `Changed 0` stays in place, inert">
                 {pane(Pane { files: settled_package(), ..Pane::new("fp-settled") })}
             </Cell>
-            <Cell full=true label="Group: None — the gutter goes to zero, and the ellipsis eats the leaf">
+            <Cell full=true label="Group: None — the gutter goes to zero, and names keep their extension">
                 {pane(Pane { grouped: false, ..Pane::new("fp-flat") })}
             </Cell>
             <Cell full=true label="a search and a facet that leave nothing — compact, and no way out">
@@ -1229,6 +1263,9 @@ pub fn FilePaneScene() -> impl IntoView {
                 </div>
                 {stop_keeping(keeping)}
                 {replace_mine(replacing)}
+            </Cell>
+            <Cell full=true label="live — the page's own pane over this fixture, grouping only so far">
+                <div style=PANE>{live()}</div>
             </Cell>
         </Scene>
     }

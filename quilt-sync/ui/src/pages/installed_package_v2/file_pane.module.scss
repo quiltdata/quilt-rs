@@ -1,0 +1,62 @@
+/*
+ * The file pane. The page's growing half: it takes what the context pane
+ * leaves, and its list takes what the controls above it leave.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--q-space-2);
+}
+
+/* Grouping and the facets, as one right-hand group. It keeps justifying right
+ * when it wraps, and stacks upwards like the toolbar it sits in. */
+.views {
+  display: flex;
+  flex-wrap: wrap-reverse;
+  justify-content: flex-end;
+  gap: var(--q-space-2);
+  margin-left: auto;
+}
+
+/* The rows scroll inside the box; the cap notice above them does not. */
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.cap {
+  margin: 0;
+  padding: var(--q-space-2) var(--q-space-3);
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+.skeletonbar {
+  display: flex;
+  justify-content: flex-end;
+  padding-bottom: var(--q-space-2);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--q-space-2) var(--q-space-3);
+}
+
+/* Stacked under the context pane, the list keeps a floor and the page scrolls,
+ * rather than the list taking the little the context pane leaves. Eight rows,
+ * the same list the wide arrangement gives at the height floor. */
+@container (max-width: 800px) {
+  .root {
+    min-height: 269px;
+  }
+}

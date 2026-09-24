@@ -9,10 +9,22 @@
 
 .shell {
   display: flex;
-  justify-content: flex-end;
   gap: var(--q-space-3);
   flex: 1;
   min-height: 0;
+}
+
+/* Below ~800 the panes stack, context above files: the region with no upper
+ * bound on its length goes last. `order` and not `column-reverse`, because a
+ * reversed column overflows upwards, past the appbar, where no scroll reaches. */
+@container (max-width: 800px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .shell > aside {
+    order: -1;
+  }
 }
 
 .identity {

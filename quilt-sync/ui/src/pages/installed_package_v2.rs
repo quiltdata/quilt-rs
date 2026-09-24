@@ -1,8 +1,9 @@
 //! The v2 package page. Behind `main.rs`'s `UNFINISHED_PACKAGE_PAGE`.
 //!
-//! The header and the first context-pane slice are drawn from one authoritative
-//! read. The file pane has not landed yet, so the shell deliberately leaves its
-//! growing left side empty rather than drawing provisional content.
+//! The header and the context pane are drawn from one authoritative read. The
+//! file pane, the shell's growing left side, has a read of its own —
+//! `get_installed_package_data`, the list v1 draws too — so a package with a
+//! thousand files does not hold the header back.
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
@@ -16,12 +17,14 @@ use crate::components::appbar::appbar_actions;
 
 mod bucket_form;
 pub(crate) mod context_pane;
+pub(crate) mod file_pane;
 mod header;
 pub(crate) mod keeping;
 mod revision_history;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
+use file_pane::{FilePane, FilePaneSkeleton, Grouping, Listing};
 pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 
@@ -190,15 +193,34 @@ impl Default for Wiring {
     }
 }
 
+/// The file pane's inputs that outlive a re-read of the page.
+///
+/// The body is rebuilt on every re-read, so the pane's read and its `Group:`
+/// choice live with the page: the watcher's news must not reset the grouping
+/// or blank the list while it reads again.
+#[derive(Clone, Copy)]
+struct Files {
+    listing: Signal<Listing>,
+    grouping: RwSignal<String>,
+    retry: Callback<()>,
+}
+
 /// Render one successful page payload. Kept pure so its atomic shape can be
 /// tested without pretending the wasm runner has a Tauri host.
-fn package_body(data: commands::PackagePageData, w: Wiring) -> AnyView {
+fn package_body(data: commands::PackagePageData, w: Wiring, files: Files) -> AnyView {
     let namespace = data.header.namespace.to_string();
     let open_catalog = catalog_opener(namespace.clone(), w.outcome);
+    let open_file = file_opener(namespace.clone(), data.header.uri.clone(), w.outcome);
     view! {
         <div class=style::page>
             <PageHeader data=data.header w=w />
             <div class=style::shell>
+                <FilePane
+                    listing=files.listing
+                    grouping=files.grouping
+                    on_open=open_file
+                    on_retry=files.retry
+                />
                 <CurrentRevisionPane
                     data=data.context
                     namespace=namespace
@@ -234,11 +256,38 @@ fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Call
     })
 }
 
+/// Opens a downloaded file in its default application, reporting a failure on
+/// the keyed band. Not `run`, for `catalog_opener`'s reason: opening a file
+/// writes nothing, so it neither takes `busy` nor clears the band.
+fn file_opener(
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    outcome: RwSignal<Option<Outcome>>,
+) -> Callback<String> {
+    Callback::new(move |path: String| {
+        let namespace = namespace.clone();
+        let uri = uri.clone();
+        leptos::task::spawn_local(async move {
+            if let Err(detail) =
+                commands::open_in_default_application(namespace.clone(), path, uri).await
+            {
+                outcome.try_set(Some(Outcome {
+                    namespace,
+                    variant: BannerVariant::Critical,
+                    lead: "Could not open this file.".to_string(),
+                    detail: Some(detail),
+                }));
+            }
+        });
+    })
+}
+
 fn package_skeleton() -> AnyView {
     view! {
         <div class=style::page>
             <PageHeaderSkeleton />
             <div class=style::shell>
+                <FilePaneSkeleton />
                 <CurrentRevisionPaneSkeleton />
             </div>
         </div>
@@ -304,6 +353,34 @@ pub fn InstalledPackageV2() -> impl IntoView {
         }
     });
 
+    // The file pane's own read, beside the page's: same address, same re-reads.
+    let files = LocalResource::new(move || {
+        reload.track();
+        let namespace = query.read().get("namespace").unwrap_or_default();
+        commands::get_installed_package_data(namespace, None)
+    });
+    // `get` keeps the last answer while a re-read is out, so the list stays
+    // put rather than flashing its skeleton at every watcher event.
+    let listing = Signal::derive(move || match files.get() {
+        None => Listing::Loading,
+        Some(Ok(data)) => Listing::Ready(data.into()),
+        Some(Err(_)) => Listing::Failed,
+    });
+    // Not remembered: another package, or another visit, starts at the
+    // default. A memo on the namespace alone, so the rest of the address —
+    // Resolve's `resolve=1` — is not a new package.
+    let grouping = RwSignal::new(Grouping::BaseFolder.label().to_string());
+    let showing = Memo::new(move |_| query.read().get("namespace"));
+    Effect::new(move |_| {
+        showing.track();
+        grouping.set(Grouping::BaseFolder.label().to_string());
+    });
+    let files = Files {
+        listing,
+        grouping,
+        retry: Callback::new(move |()| files.refetch()),
+    };
+
     // `heading` is not reactive and one route serves every package, so it names
     // the page rather than the package; the package's own name is on screen.
     view! {
@@ -335,7 +412,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
             <Suspense fallback=package_skeleton>
                 {move || Suspend::new(async move {
                     match data.await {
-                        Ok(d) => package_body(d, w),
+                        Ok(d) => package_body(d, w, files),
                         // The page keeps its frame and states the failure in
                         // place. A read that failed for a reason the header
                         // could have worded — no session, a refused role —
@@ -577,6 +654,15 @@ mod tests {
         }
     }
 
+    /// A pane whose read has not answered, which is all these tests need of it.
+    fn idle_files() -> Files {
+        Files {
+            listing: Signal::stored(Listing::Loading),
+            grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
+            retry: Callback::new(|()| ()),
+        }
+    }
+
     fn said(namespace: &str, variant: BannerVariant, lead: &str, detail: Option<&str>) -> Outcome {
         Outcome {
             namespace: namespace.to_string(),
@@ -730,7 +816,7 @@ mod tests {
         // Inside a `Router`, where the page always is.
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w)}</Router> }
+            view! { <Router>{package_body(page_data(), w, idle_files())}</Router> }
         });
         let aside = el
             .query_selector("aside")
@@ -760,7 +846,7 @@ mod tests {
     fn the_body_carries_the_revision_trigger() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w)}</Router> }
+            view! { <Router>{package_body(page_data(), w, idle_files())}</Router> }
         });
         let trigger = element_saying(&el, "Revisions you have (1)")
             .closest("button")
@@ -783,7 +869,7 @@ mod tests {
     fn the_body_carries_keeping() {
         let el = mount(|| {
             let w = Wiring::new();
-            view! { <Router>{package_body(page_data(), w)}</Router> }
+            view! { <Router>{package_body(page_data(), w, idle_files())}</Router> }
         });
         let group = el
             .query_selector("[role=radiogroup]")
@@ -829,7 +915,7 @@ mod tests {
                 <Router>
                     {move || {
                         reads.track();
-                        package_body(page_data(), w)
+                        package_body(page_data(), w, idle_files())
                     }}
                 </Router>
             }
@@ -859,14 +945,18 @@ mod tests {
     }
 
     /// The pane's fixed measure is a wide-layout decision, and the page's own
-    /// inline container releases it when that shell narrows.
+    /// inline container releases it — and stacks the shell — when it narrows.
     #[test]
     fn the_shell_and_pane_styles_own_the_responsive_width() {
         const PAGE: &str = include_str!("installed_package_v2.module.scss");
         const PANE: &str = include_str!("installed_package_v2/context_pane.module.scss");
 
         assert!(PAGE.contains("container-type: inline-size"));
-        assert!(PAGE.contains("justify-content: flex-end"));
+        assert!(PAGE.contains("@container (max-width: 800px)"));
+        assert!(
+            PAGE.contains("order: -1"),
+            "context above files when stacked"
+        );
         assert!(PANE.contains("width: 280px"));
         assert!(PANE.contains("@container (max-width: 800px)"));
         assert!(PANE.contains("width: 100%"));

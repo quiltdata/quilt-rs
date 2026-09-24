@@ -19,6 +19,8 @@ pub use installed_package_v2::InstalledPackageV2;
 // The gallery draws this exact live slice rather than maintaining another
 // approximation of the page component.
 pub use installed_package_v2::context_pane::{CurrentRevisionPane, RevisionHistoryFetch};
+// And the live file pane, over the scene's fixture, beside the scene's drawing.
+pub use installed_package_v2::file_pane::{FileList, FilePane, Grouping, Listing};
 // The gallery's header scene draws the page's own overflow menu, inert.
 pub use installed_package_v2::{MenuCommand, MenuItem, menu_items};
 // The gallery's live context pane takes the page's wiring; it builds an idle one.
