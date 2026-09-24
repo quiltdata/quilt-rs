@@ -265,6 +265,13 @@ impl Row {
     }
 }
 
+/// The rows the view shows, in path order. The one place the pane narrows
+/// its rows, so what the list draws and what select-all ticks cannot disagree:
+/// search (#995) and the facets add their tests here.
+fn shown_rows(rows: &[Row]) -> Vec<Row> {
+    rows.to_vec()
+}
+
 /// The paths a box could tick among `rows`, in path order.
 fn offered(rows: &[Row]) -> Vec<String> {
     rows.iter()
@@ -559,10 +566,9 @@ fn ready(
     let loaded = StoredValue::new(offered(&rows));
     let rows = StoredValue::new(rows);
 
-    // The rows the view shows: what the list draws and select-all counts and
-    // ticks. Search and the facets narrow this one signal, and say so in
-    // `narrowed`, so the list and select-all cannot disagree about the screen.
-    let shown: Signal<Vec<Row>> = Signal::derive(move || rows.get_value());
+    // What the list draws and select-all counts and ticks: `shown_rows`, and
+    // `narrowed` says whether it left anything out.
+    let shown: Signal<Vec<Row>> = Signal::derive(move || rows.with_value(|rs| shown_rows(rs)));
     let narrowed = Signal::stored(false);
     let shown_offered = Signal::derive(move || shown.with(|rs| offered(rs)));
     let headed = Signal::derive(move || {
