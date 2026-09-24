@@ -60,3 +60,9 @@
     min-height: 269px;
   }
 }
+
+/* Select-all's box in the rows' checkbox column: the list box's inset plus the
+ * disclosure gutter, which the pane sets to 0 when the list has no heading. */
+.selectall {
+  padding-left: calc(var(--q-space-3) + var(--q-entry-gutter, 16px));
+}
