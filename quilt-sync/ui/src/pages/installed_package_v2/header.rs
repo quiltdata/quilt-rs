@@ -422,6 +422,8 @@ pub fn PageHeader(data: commands::PackageHeaderData, w: Wiring) -> impl IntoView
         role: role_open,
         undo: undo_open,
         remove: remove_open,
+        // The resolve pane's confirmation, not the header's.
+        replace: _,
     } = dialogs;
     let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);

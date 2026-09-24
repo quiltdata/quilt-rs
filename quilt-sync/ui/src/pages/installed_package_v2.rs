@@ -71,6 +71,10 @@ pub struct Wiring {
     /// `Send + Sync` and `use_navigate`'s closure is neither; [`Wiring::follow`]
     /// performs it.
     pub goto: RwSignal<Option<String>>,
+    /// Where the page goes in place of the current entry, so *Back* never
+    /// returns to it: leaving the resolve mode on a success. [`Wiring::follow`]
+    /// performs it.
+    pub replace_to: RwSignal<Option<String>>,
     pub dialogs: Dialogs,
 }
 
@@ -150,6 +154,10 @@ pub struct Dialogs {
     /// the consequence.
     pub undo: RwSignal<bool>,
     pub remove: RwSignal<bool>,
+    /// The resolve mode's *Replace mine with the published one*. Here, not in
+    /// the pane: the reset writes files, the watcher re-reads mid-command, and
+    /// the rebuilt pane must find its confirmation still open.
+    pub replace: RwSignal<bool>,
 }
 
 impl Wiring {
@@ -161,24 +169,38 @@ impl Wiring {
             outcome: RwSignal::new(None),
             reload: Trigger::new(),
             goto: RwSignal::new(None),
+            replace_to: RwSignal::new(None),
             dialogs: Dialogs {
                 bucket: RwSignal::new(false),
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),
+                replace: RwSignal::new(false),
             },
         }
     }
 
-    /// Perform `goto`. Called once, by whoever owns the signals, inside a
-    /// router.
+    /// Perform `goto` and `replace_to`. Called once, by whoever owns the
+    /// signals, inside a router.
     fn follow(self) {
-        let goto = self.goto;
+        let Self {
+            goto, replace_to, ..
+        } = self;
         let navigate = use_navigate();
         Effect::new(move |_| {
             if let Some(target) = goto.get() {
                 navigate(&target, NavigateOptions::default());
                 goto.set(None);
+            }
+            if let Some(target) = replace_to.get() {
+                navigate(
+                    &target,
+                    NavigateOptions {
+                        replace: true,
+                        ..NavigateOptions::default()
+                    },
+                );
+                replace_to.set(None);
             }
         });
     }
