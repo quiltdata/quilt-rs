@@ -244,6 +244,7 @@ impl Default for Wiring {
 struct Files {
     listing: Signal<Listing>,
     grouping: RwSignal<String>,
+    search: RwSignal<String>,
     retry: Callback<()>,
 }
 
@@ -357,6 +358,7 @@ fn package_body(
                 <FilePane
                     listing=files.listing
                     grouping=files.grouping
+                    search=files.search
                     on_open=open_file
                     on_retry=files.retry
                 />
@@ -542,9 +544,16 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         ns.track();
         grouping.set(Grouping::BaseFolder.label().to_string());
     });
+    // The search outlives a re-read too, and is cleared by another package.
+    let search = RwSignal::new(String::new());
+    Effect::new(move |_| {
+        ns.track();
+        search.set(String::new());
+    });
     let files = Files {
         listing,
         grouping,
+        search,
         retry: Callback::new(move |()| files.refetch()),
     };
 
@@ -884,6 +893,7 @@ mod tests {
         Files {
             listing: Signal::stored(Listing::Loading),
             grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
+            search: RwSignal::new(String::new()),
             retry: Callback::new(|()| ()),
         }
     }

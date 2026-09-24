@@ -9,7 +9,7 @@
 //!
 //! Search takes a row of its own above the toolbar; select-all sits on the
 //! toolbar's left, in the rows' checkbox column; grouping and the facets are one
-//! right-hand group. This slice ships grouping. The other slots are left
+//! right-hand group. Search and grouping are drawn. The other slots are left
 //! absent rather than drawn inert — a control that does nothing is worse than
 //! one that is not there yet.
 //!
@@ -24,6 +24,9 @@
 //!   The box is the row's own until the selection slice gives the pane one.
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
+//! - **Search narrows what is shown.** A case-insensitive substring of the
+//!   whole path; headings are drawn from the rows it leaves, and a search that
+//!   leaves none says so.
 
 use leptos::prelude::*;
 
@@ -31,7 +34,7 @@ use crate::commands::{EntryData, InstalledPackageData};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Card, EntryAction, EntryGroup, EntryRow, EntrySelection, ListToolbar, LoadFailure,
-    Naming, Select, SkeletonBox,
+    Naming, SearchInput, Select, SkeletonBox,
 };
 use crate::util::format_size;
 
@@ -138,6 +141,14 @@ pub fn group(paths: &[&str], grouping: Grouping) -> Vec<Item> {
             }
         }))
         .collect()
+}
+
+/// Whether the search keeps a file: a case-insensitive substring of its whole
+/// logical path, so a folder's name finds the files under it. An empty search
+/// keeps everything.
+#[must_use]
+pub fn path_matches(path: &str, query: &str) -> bool {
+    path.to_lowercase().contains(&query.to_lowercase())
 }
 
 /// What the pane draws from: the page read's rows, and whether it cut them.
@@ -346,6 +357,29 @@ fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> Any
     .into_any()
 }
 
+/// The rows the search leaves, in path order. The one place the pane narrows
+/// its rows, so what the list draws and what select-all ticks cannot disagree:
+/// the facets add their test here.
+fn shown_rows(rows: &[Row], query: &str) -> Vec<Row> {
+    rows.iter()
+        .filter(|r| path_matches(&r.path, query))
+        .cloned()
+        .collect()
+}
+
+/// The search, alone on the row above the toolbar and the pane's full width.
+///
+/// The `display:flex` row is load-bearing: `SearchInput` grows along its
+/// parent's main axis, and dropped straight into the pane's column it would
+/// grow tall rather than wide (the gallery's file-pane scene has the story).
+fn search_row(search: RwSignal<String>) -> impl IntoView {
+    view! {
+        <div class=style::search>
+            <SearchInput value=search aria_label="Search files" placeholder="Search files…" />
+        </div>
+    }
+}
+
 /// The toolbar under the search row: select-all's slot on the left, the view
 /// controls on the right.
 fn toolbar(grouping: RwSignal<String>) -> impl IntoView {
@@ -372,6 +406,8 @@ pub fn FilePane(
     /// The `Group:` select's value. The page owns it, so a re-read does not
     /// reset it; a visit to another package does.
     grouping: RwSignal<String>,
+    /// The search field's text. The page owns it for the same reason.
+    search: RwSignal<String>,
     /// Open a downloaded file, by its logical path.
     on_open: Callback<String>,
     /// Read the list again after a failure.
@@ -381,6 +417,7 @@ pub fn FilePane(
         Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
         Listing::Failed => view! {
             <section class=style::root aria-label="Files">
+                {search_row(search)}
                 {toolbar(grouping)}
                 <Card flush=true label="Files" fill=true>
                     <LoadFailure
@@ -392,11 +429,16 @@ pub fn FilePane(
             </section>
         }
         .into_any(),
-        Listing::Ready(list) => ready(list, grouping, on_open),
+        Listing::Ready(list) => ready(list, grouping, search, on_open),
     }
 }
 
-fn ready(list: FileList, grouping: RwSignal<String>, on_open: Callback<String>) -> AnyView {
+fn ready(
+    list: FileList,
+    grouping: RwSignal<String>,
+    search: RwSignal<String>,
+    on_open: Callback<String>,
+) -> AnyView {
     let FileList {
         entries,
         total,
@@ -436,13 +478,27 @@ fn ready(list: FileList, grouping: RwSignal<String>, on_open: Callback<String>) 
         let rows = StoredValue::new(rows);
         (move || {
             let g = Grouping::from_label(&grouping.get());
-            rows.with_value(|rs| rows_view(rs, g, on_open))
+            let rows = search.with(|q| rows.with_value(|rs| shown_rows(rs, q)));
+            if rows.is_empty() {
+                // Compact: `Blankslate`'s own padding is taller than this box
+                // at the height floor. No action yet — see `Blankslate`.
+                return view! {
+                    <Blankslate
+                        compact=true
+                        heading="No files match"
+                        description="Nothing in this view matches what you are looking for."
+                    />
+                }
+                .into_any();
+            }
+            rows_view(&rows, g, on_open)
         })
         .into_any()
     };
 
     view! {
         <section class=style::root aria-label="Files">
+            {search_row(search)}
             {toolbar(grouping)}
             <Card flush=true label="Files" fill=true>
                 {truncated.then(|| view! { <CapNotice total=total shown=shown /> })}
@@ -459,6 +515,8 @@ fn ready(list: FileList, grouping: RwSignal<String>, on_open: Callback<String>) 
 pub fn FilePaneSkeleton() -> impl IntoView {
     view! {
         <section class=style::root aria-label="Files">
+            // The search field: full width, one control high.
+            <SkeletonBox width="100%" height="32px" />
             <div class=style::skeletonbar>
                 // The `Group:` select's width.
                 <SkeletonBox width="166px" height="32px" />
@@ -572,6 +630,30 @@ mod grouping_tests {
 }
 
 #[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_search_matches_every_file() {
+        assert!(path_matches("raw/2026/plate-01.csv", ""));
+    }
+
+    #[test]
+    fn search_ignores_case_on_both_sides() {
+        assert!(path_matches("raw/Plate-01.CSV", "plate-01.csv"));
+        assert!(path_matches("raw/plate-01.csv", "PLATE"));
+    }
+
+    /// The whole logical path, not only the name: a folder finds its files.
+    #[test]
+    fn search_matches_a_substring_anywhere_in_the_path() {
+        assert!(path_matches("raw/2026/plate-01.csv", "2026/pla"));
+        assert!(path_matches("raw/2026/plate-01.csv", "w/20"));
+        assert!(!path_matches("raw/2026/plate-01.csv", "2027"));
+    }
+}
+
+#[cfg(test)]
 mod pane_tests {
     use super::*;
     use crate::commands::EntryData;
@@ -611,6 +693,7 @@ mod pane_tests {
                 <FilePane
                     listing=Signal::stored(listing)
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    search=RwSignal::new(String::new())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
                 />
@@ -728,6 +811,7 @@ mod pane_tests {
                         false,
                     )))
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    search=RwSignal::new(String::new())
                     on_open=Callback::new(move |path: String| opened.update(|o| o.push(path)))
                     on_retry=Callback::new(|()| ())
                 />
@@ -778,6 +862,7 @@ mod pane_tests {
                         false,
                     )))
                     grouping=grouping
+                    search=RwSignal::new(String::new())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
                 />
@@ -821,6 +906,145 @@ mod pane_tests {
 
         let failed = pane(Listing::Failed);
         element_saying(&failed, "Could not read this package's files.");
+    }
+
+    /// Type into the search field as a reader would.
+    async fn type_search(el: &web_sys::Element, query: &str) {
+        let field: web_sys::HtmlInputElement = el
+            .query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field")
+            .unchecked_into();
+        field.set_value(query);
+        field
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        leptos::task::tick().await;
+    }
+
+    fn searchable(search: RwSignal<String>, entries: Vec<EntryData>) -> web_sys::Element {
+        let total = entries.len();
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    search=search
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        })
+    }
+
+    fn titled(el: &web_sys::Element, path: &str) -> bool {
+        el.query_selector(&format!("[title='{path}']"))
+            .unwrap()
+            .is_some()
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_search_field_is_named_and_writes_the_pages_query() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        let field = el
+            .query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field");
+        assert_eq!(
+            field.get_attribute("aria-label").as_deref(),
+            Some("Search files")
+        );
+        type_search(&el, "a.c").await;
+        assert_eq!(search.get_untracked(), "a.c");
+    }
+
+    /// Case-insensitive, over the whole path: `RAW` finds everything under
+    /// `raw/`, including a file whose own name does not say it.
+    #[wasm_bindgen_test]
+    async fn the_search_narrows_the_rows_to_paths_containing_it() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("README.md", "pristine"),
+                entry("raw/2026/plate-01.csv", "remote"),
+                entry("raw/2026/plate-02.csv", "pristine"),
+                entry("notes/raw-data.md", "pristine"),
+            ],
+        );
+        type_search(&el, "RAW/").await;
+        assert!(titled(&el, "raw/2026/plate-01.csv"), "{}", el.inner_html());
+        assert!(titled(&el, "raw/2026/plate-02.csv"));
+        assert!(!titled(&el, "README.md"), "{}", el.inner_html());
+        assert!(!titled(&el, "notes/raw-data.md"));
+
+        type_search(&el, "").await;
+        for path in ["README.md", "raw/2026/plate-01.csv", "notes/raw-data.md"] {
+            assert!(titled(&el, path), "cleared, {path} is back");
+        }
+    }
+
+    /// Headings are drawn from the rows the search leaves: a folder with no
+    /// match has no heading, and one left with a single file loses its heading
+    /// and shows the row's whole path, as any group of one does.
+    #[wasm_bindgen_test]
+    async fn group_headings_follow_the_rows_the_search_leaves() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("notes/a.md", "pristine"),
+                entry("notes/b.md", "pristine"),
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        element_saying(&el, "notes/");
+        element_saying(&el, "raw/");
+
+        type_search(&el, "plate").await;
+        element_saying(&el, "raw/");
+        assert!(
+            !text(&el).contains("notes/"),
+            "no match, no heading: {}",
+            el.inner_html()
+        );
+
+        type_search(&el, "plate-01").await;
+        assert!(
+            el.query_selector("[aria-expanded]").unwrap().is_none(),
+            "a group of one has no heading: {}",
+            el.inner_html()
+        );
+        element_saying(&el, "raw/plate-01.csv");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_search_matching_nothing_says_so() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        type_search(&el, "zzz").await;
+        element_saying(&el, "No files match");
+        assert!(!titled(&el, "a.csv"));
+        assert!(
+            el.query_selector("input[type=search]").unwrap().is_some(),
+            "the field stays, so the reader can change the search"
+        );
+    }
+
+    /// Ignored files stay hidden whatever the search: only their facet shows
+    /// them.
+    #[wasm_bindgen_test]
+    async fn the_search_does_not_find_ignored_files() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![entry("a.csv", "pristine"), ignored(".DS_Store")],
+        );
+        type_search(&el, "DS_Store").await;
+        assert!(!text(&el).contains(".DS_Store"), "{}", el.inner_html());
+        element_saying(&el, "No files match");
     }
 
     #[wasm_bindgen_test]

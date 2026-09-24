@@ -1155,6 +1155,7 @@ fn live() -> AnyView {
                     truncated: false,
                 }))
                 grouping=RwSignal::new(crate::pages::Grouping::BaseFolder.label().to_string())
+                search=RwSignal::new(String::new())
                 on_open=Callback::new(|_: String| ())
                 on_retry=Callback::new(|()| ())
             />
