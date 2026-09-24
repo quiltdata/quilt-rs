@@ -1,7 +1,7 @@
 //! `qhq-a4za`: install an older revision, download every file, and a file the
 //! newer revision modifies must not read as changed.
 //!
-//! Driven through [`InstalledPackage`], the layer QuiltSync's commands call,
+//! Driven through [`InstalledPackage`], the layer `QuiltSync` commands call,
 //! with versioned physical keys as every real manifest carries them.
 
 use std::path::Path;
