@@ -432,6 +432,16 @@ fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> Any
     .into_any()
 }
 
+/// The rows the facet leaves, in path order. The one place the pane narrows
+/// its rows, so what the list draws and what select-all ticks cannot disagree:
+/// the search adds its test here.
+fn shown_rows(rows: &[Row], facet: Facet) -> Vec<Row> {
+    rows.iter()
+        .filter(|r| facet.admits(r.place, r.ignored))
+        .cloned()
+        .collect()
+}
+
 /// The four facets, each carrying the package's count.
 ///
 /// A facet at zero stays in its place and cannot be chosen, except `All`: it
@@ -541,16 +551,9 @@ fn ready(
         })
         .collect();
     let rows = StoredValue::new(rows);
-    // The rows the view shows. The one place a view narrows the loaded rows:
-    // what the list draws and what select-all would tick both read it.
     let shown = Signal::derive(move || {
         let f = Facet::from_key(&facet.get());
-        rows.with_value(|rs| {
-            rs.iter()
-                .filter(|r| f.admits(r.place, r.ignored))
-                .cloned()
-                .collect::<Vec<_>>()
-        })
+        rows.with_value(|rs| shown_rows(rs, f))
     });
 
     let body = move || {
