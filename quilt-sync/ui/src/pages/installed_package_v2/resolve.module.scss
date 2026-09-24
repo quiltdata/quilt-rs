@@ -12,12 +12,14 @@
 }
 
 /* The two whole-revision choices, one above the other at the pane's width,
- * each with its hint beneath it. */
+ * each with its hint beneath it. Proximity does the pairing: a hint sits
+ * `space-1` under its own button and `space-6` above the next, so it cannot
+ * read as belonging to both. */
 .choices {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: var(--q-space-3);
+  gap: var(--q-space-6);
 }
 
 .choice {

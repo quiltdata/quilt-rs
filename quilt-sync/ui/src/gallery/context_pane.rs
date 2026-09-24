@@ -380,7 +380,9 @@ const NOTE: &str = "280px holding two blocks: what the page says about the packa
     wears the slashed cloud and no icon. \
     \
     In resolve mode both choices fit on one line at 280px, each with the \
-    sentence that says what it does beneath it.";
+    sentence that says what it does beneath it. They are a block of their own \
+    under the comparison, ruled off from Published, and each hint sits close \
+    under its button and well clear of the next.";
 
 /// The region itself, for the whole-page scene.
 ///

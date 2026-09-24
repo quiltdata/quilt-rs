@@ -195,8 +195,11 @@ pub fn ResolvePane(
         <aside aria-label="About this package" class=style::root>
             <Card label="About this package">
                 <BackLink href=back_href label=namespace.to_string() />
+                <PaneSection>{published}</PaneSection>
+                // The choices are their own block, so the kit's rule sets them
+                // off from the revisions they choose between. Drawn sealed when
+                // the comparison is refused, so the block stays.
                 <PaneSection>
-                    {published}
                     <div class=style::choices>
                         <div class=style::choice>
                             <Button
@@ -705,6 +708,39 @@ mod tests {
                     .unwrap_or_else(|| panic!("{label}'s description {id:?} is drawn"));
                 assert_eq!(described.text_content().unwrap_or_default().trim(), hint);
                 assert_eq!(element_saying(&el, hint).id(), id);
+            }
+        }
+    }
+
+    /// The choices are a block of their own, after the comparison: neither
+    /// side's section holds them, and nor does the one that holds the sides.
+    #[wasm_bindgen_test]
+    fn the_choices_stand_apart_from_the_revisions() {
+        for (resolve, marked) in [
+            (compared(0, 0), Some(marks(&["plate/a.csv"]))),
+            (refused(), None),
+        ] {
+            let el = pane(resolve, marked, Wiring::new());
+            let yours = section(&el, "Yours");
+            let published = has_heading(&el, "Published").then(|| section(&el, "Published"));
+            for label in [CERTIFY, REPLACE] {
+                let button = choice(&el, label);
+                let own = button
+                    .closest("section")
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{label} sits in a section"));
+                assert!(
+                    !own.contains(Some(&yours)),
+                    "{label}'s section is not the comparison's; markup was {}",
+                    el.inner_html()
+                );
+                if let Some(published) = &published {
+                    assert!(
+                        !published.contains(Some(&button)),
+                        "{label} is not part of Published; markup was {}",
+                        el.inner_html()
+                    );
+                }
             }
         }
     }
