@@ -304,6 +304,80 @@ mod tests {
         Ok(())
     }
 
+    /// On a bucket without versioning, an older revision's key may name bytes a
+    /// later revision wrote. Installing r1 must not put r2's `b.txt` under r1's
+    /// row, where it would read as Modified. It skips `b.txt`, reports it,
+    /// installs `a.txt`, and leaves status clean. Asking again still skips it,
+    /// because the wrong bytes never entered the object store.
+    #[test(tokio::test)]
+    async fn live_unversioned_install_skips_a_replaced_file_and_installs_the_rest()
+    -> Result<(), Error> {
+        use crate::cli::fixtures::packages::unversioned as pkg;
+
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
+        let working_dir = temp_dir.path().join(pkg::NAMESPACE_STR);
+        let requested = vec![PathBuf::from(pkg::KEPT), PathBuf::from(pkg::REPLACED)];
+
+        let output = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: Some(requested.clone()),
+                uri: pkg::R1_URI.to_string(),
+            },
+        )
+        .await?;
+
+        assert_eq!(
+            output.to_json()["skipped"],
+            serde_json::json!([pkg::REPLACED])
+        );
+        assert!(
+            format!("{output}").ends_with(&format!(
+                "Skipped: \"{}\" (no longer on the remote)",
+                pkg::REPLACED
+            )),
+            "{output}"
+        );
+        assert_eq!(
+            tokio::fs::read(working_dir.join(pkg::KEPT)).await?,
+            pkg::KEPT_R1_BODY
+        );
+        assert!(
+            !working_dir.join(pkg::REPLACED).exists(),
+            "r2's bytes were placed under r1's row"
+        );
+
+        let installed = output.get_installed_package();
+        let lineage = installed.lineage().await?;
+        assert_eq!(
+            lineage.paths.keys().collect::<Vec<_>>(),
+            vec![&PathBuf::from(pkg::KEPT)]
+        );
+        let status = installed.status(None).await?;
+        assert!(
+            status.changes.is_empty(),
+            "untouched files read as changed: {:?}",
+            status.changes.keys().collect::<Vec<_>>()
+        );
+
+        let retry = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: Some(vec![PathBuf::from(pkg::REPLACED)]),
+                uri: pkg::R1_URI.to_string(),
+            },
+        )
+        .await?;
+        assert_eq!(
+            retry.to_json()["skipped"],
+            serde_json::json!([pkg::REPLACED])
+        );
+        assert!(!working_dir.join(pkg::REPLACED).exists());
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn json_carries_namespace_and_paths() -> Result<(), Error> {
         use crate::cli::create;
