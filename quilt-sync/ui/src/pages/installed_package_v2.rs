@@ -1,4 +1,4 @@
-//! The v2 package page. Behind `main.rs`'s `UNFINISHED_PACKAGE_PAGE`.
+//! The v2 package page. Behind `routes.rs`'s `UNFINISHED_PACKAGE_PAGE`.
 //!
 //! The header and the context pane are drawn from one authoritative read. The
 //! pane has two modes: the ordinary one, and Resolve, which `resolve=1` asks
@@ -376,7 +376,7 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
 
 /// What `/installed-package` renders when the in-code flag is on.
 ///
-/// No reader reaches it: `main.rs`'s `UNFINISHED_PACKAGE_PAGE` is a constant in
+/// No reader reaches it: `routes.rs`'s `UNFINISHED_PACKAGE_PAGE` is a constant in
 /// the source, flipped by whoever is working on this screen and committed off,
 /// so no setting and no build offers it.
 #[component]

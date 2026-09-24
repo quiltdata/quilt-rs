@@ -14,6 +14,18 @@
 
 use quilt_uri::Namespace;
 
+/// Flip locally to work on the rebuilt package screen. Never commit it true.
+///
+/// An in-code flag rather than a setting, because the screen is not ready to be
+/// offered: a row in Settings tells a reader the unfinished page exists, and a
+/// stored value outlives the build that wrote it. The one cost is that a flag in
+/// the source can be committed on by accident, which `main.rs`'s
+/// `the_unfinished_package_page_is_off` is the guard against.
+///
+/// Here in the library rather than in the binary that routes on it, so the main
+/// page's queue can send a Resolve to the page `/installed-package` renders.
+pub const UNFINISHED_PACKAGE_PAGE: bool = false;
+
 /// The installed-package screen for one package.
 ///
 /// `namespace` goes in the query string because `installed_package` reads it
