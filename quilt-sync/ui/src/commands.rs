@@ -538,6 +538,9 @@ pub async fn get_revision_history(namespace: String) -> Result<Vec<RevisionHisto
 }
 
 /// Install the backlog the page read listed. Keeping's download action.
+///
+/// The command returns the paths it skipped because the remote no longer holds
+/// their bytes. Dropped here until the v2 files pane has a place to show them.
 pub async fn package_download_backlog(namespace: String, paths: Vec<String>) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -545,7 +548,9 @@ pub async fn package_download_backlog(namespace: String, paths: Vec<String>) -> 
         namespace: String,
         paths: Vec<String>,
     }
-    tauri::invoke("package_download_backlog", &Args { namespace, paths }).await
+    tauri::invoke::<_, Vec<String>>("package_download_backlog", &Args { namespace, paths })
+        .await
+        .map(|_skipped| ())
 }
 
 pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {

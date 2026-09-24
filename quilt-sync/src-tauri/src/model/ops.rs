@@ -62,11 +62,13 @@ pub async fn package_commit(
     Ok(())
 }
 
+/// Installs `paths`, then shows them in the file browser. Returns the paths it
+/// skipped because the remote no longer holds their bytes.
 pub async fn install_paths(
     model: &impl QuiltModel,
     installed_package: &quilt::InstalledPackage,
     paths: Vec<PathBuf>,
-) -> Result<PathBuf, Error> {
+) -> Result<Vec<PathBuf>, Error> {
     if paths.is_empty() {
         return Err(Error::General(
             "Cannot install paths: empty paths vector provided".to_string(),
@@ -75,19 +77,26 @@ pub async fn install_paths(
 
     let namespace = &installed_package.namespace;
 
-    model
+    let skipped = model
         .package_install_paths(installed_package, &paths)
-        .await?;
+        .await?
+        .skipped;
 
-    // Post-installation actions based on number of paths
-    if paths.len() == 1 {
+    // Post-installation actions based on number of paths. A skipped file is
+    // not there to reveal, so the folder opens instead.
+    if paths.len() == 1 && skipped.is_empty() {
         let path = &paths[0];
         info!("Installed {:?}", path);
-        model.reveal_in_file_browser(namespace, path).await
+        model.reveal_in_file_browser(namespace, path).await?;
     } else {
-        info!("Installed {} paths", paths.len());
-        model.open_in_file_browser(namespace).await
+        info!(
+            "Installed {} paths, skipped {}",
+            paths.len() - skipped.len(),
+            skipped.len()
+        );
+        model.open_in_file_browser(namespace).await?;
     }
+    Ok(skipped)
 }
 
 pub async fn install_package_only(
@@ -130,7 +139,7 @@ pub async fn install_paths_only(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     paths: Vec<PathBuf>,
-) -> Result<PathBuf, Error> {
+) -> Result<Vec<PathBuf>, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?

@@ -627,6 +627,9 @@ async fn get_revision_history_from_model(
 /// Namespace-keyed like the rest of this page, and not v1's
 /// `package_install_paths`: that opens the file browser after every install
 /// (the file, or the package folder), which a backlog catch-up must not do.
+///
+/// Returns the paths it skipped because the remote no longer holds their
+/// bytes (an unversioned bucket, overwritten since). Empty when all installed.
 #[tauri::command]
 pub async fn package_download_backlog(
     m: tauri::State<'_, model::Model>,
@@ -634,22 +637,35 @@ pub async fn package_download_backlog(
     watcher: tauri::State<'_, Watcher>,
     namespace: String,
     paths: Vec<String>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
+    let result = download_backlog_from_model(&*m, &watcher, &namespace, &paths).await;
+    let skipped: Vec<String> = match &result {
+        Ok(skipped) => skipped.iter().map(|p| p.display().to_string()).collect(),
+        Err(_) => Vec::new(),
+    };
+    let msg_ok = if skipped.is_empty() {
+        format!("Downloaded {} files", paths.len())
+    } else {
+        format!(
+            "Downloaded {} of {} files; skipped {} no longer on the remote",
+            paths.len() - skipped.len(),
+            paths.len(),
+            skipped.len()
+        )
+    };
     Notify::new(format!("Downloading the backlog of {namespace}"))
         .on_success(
             &tracing,
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
         )
-        .map(
-            download_backlog_from_model(&*m, &watcher, &namespace, &paths).await,
-            format!("Downloaded {} files", paths.len()),
-            |err| format!("Failed to download files: {err}"),
-        )
-        .map(|_| ())
+        .map(result, msg_ok, |err| {
+            format!("Failed to download files: {err}")
+        })?;
+    Ok(skipped)
 }
 
 async fn download_backlog_from_model(
@@ -657,7 +673,7 @@ async fn download_backlog_from_model(
     watcher: &Watcher,
     namespace: &quilt_uri::Namespace,
     paths: &[String],
-) -> Result<(), Error> {
+) -> Result<Vec<PathBuf>, Error> {
     // A whole-package catch-up, so it raises the in-flight flag a pull does:
     // quitting mid-download would leave files in place that the lineage never records.
     let _applying = watcher.apply_guard(namespace);
@@ -667,8 +683,7 @@ async fn download_backlog_from_model(
         ))
     })?;
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    m.package_install_paths(&installed, &paths).await?;
-    Ok(())
+    Ok(m.package_install_paths(&installed, &paths).await?.skipped)
 }
 
 #[cfg(test)]
@@ -1417,7 +1432,7 @@ mod tests {
             .times(1)
             .returning(move |_, _| {
                 assert!(aggregator.apply_in_progress(), "held while installing");
-                Ok(std::collections::BTreeMap::new())
+                Ok(quilt::flow::InstallPathsReport::default())
             });
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
@@ -1444,7 +1459,7 @@ mod tests {
                     paths,
                     expected.iter().map(PathBuf::from).collect::<Vec<_>>()
                 );
-                Ok(std::collections::BTreeMap::new())
+                Ok(quilt::flow::InstallPathsReport::default())
             });
         m.expect_reveal_in_file_browser().times(0);
         m.expect_open_in_file_browser().times(0);
@@ -1474,6 +1489,33 @@ mod tests {
         download_backlog_from_model(&m, &test_watcher(), &ns, &["plate/b.csv".into()])
             .await
             .expect("the one path installs");
+    }
+
+    /// On an unversioned bucket a file whose object a later revision replaced
+    /// is skipped, not an error: the download returns it for the page to show.
+    #[tokio::test]
+    async fn a_download_returns_the_files_it_skipped() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_install_paths().returning(|_, _| {
+            Ok(quilt::flow::InstallPathsReport {
+                skipped: vec![PathBuf::from("plate/c.csv")],
+                ..Default::default()
+            })
+        });
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let skipped = download_backlog_from_model(
+            &m,
+            &test_watcher(),
+            &ns,
+            &["plate/b.csv".into(), "plate/c.csv".into()],
+        )
+        .await
+        .expect("a partial download is not an error");
+
+        assert_eq!(skipped, vec![PathBuf::from("plate/c.csv")]);
     }
 
     #[tokio::test]

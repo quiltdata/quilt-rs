@@ -152,6 +152,19 @@ pub enum InstallPathError {
     )]
     LocalFileExists(Vec<PathBuf>),
 
+    /// The remote returned bytes that do not hash to the row being installed.
+    /// The usual cause is a row whose `physical_key` carries no `versionId`:
+    /// it names whatever the object is now, and a later revision has replaced
+    /// it, so this revision's content is no longer on the remote.
+    ///
+    /// Raised only where a partial apply would be wrong, the pull's reconcile.
+    /// `install_paths` skips such a row and reports it instead.
+    #[error(
+        "The remote no longer holds this revision's content for {}: the object it points to has been replaced",
+        .0.display()
+    )]
+    ContentMismatch(PathBuf),
+
     #[error("Failed to uninstall path: {}", .0.display())]
     Uninstall(PathBuf),
 }

@@ -11,6 +11,8 @@ mod create_package;
 mod install_package;
 mod install_paths;
 mod list_revisions;
+#[cfg(test)]
+mod older_revision_tests;
 mod publish;
 mod pull;
 mod pull_outcome;
@@ -33,6 +35,8 @@ pub use commit::UserMeta;
 pub use commit::commit_package as commit;
 pub use create_package::create_package as create;
 pub use install_package::install_package;
+pub use install_paths::InstallPathsReport;
+pub(crate) use install_paths::OnMismatch;
 pub(crate) use install_paths::Protect;
 pub use install_paths::install_paths;
 pub(crate) use install_paths::install_paths_over;

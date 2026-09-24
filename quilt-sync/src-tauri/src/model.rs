@@ -202,7 +202,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         paths: &[PathBuf],
-    ) -> Result<quilt::lineage::LineagePaths, Error> {
+    ) -> Result<quilt::flow::InstallPathsReport, Error> {
         Ok(package.install_paths(paths).await?)
     }
 
