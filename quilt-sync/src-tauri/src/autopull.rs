@@ -166,6 +166,17 @@ impl Watcher {
         self.inner.aggregator.apply_guard(namespace)
     }
 
+    /// Hold for the length of a user's download or pull of this package, so no
+    /// two lineage writers the desktop drives overlap. An overlap lets the later
+    /// write drop what the earlier one recorded, so an untouched file reads
+    /// Modified. Waits out one already in flight.
+    pub async fn lock_lineage_writer(
+        &self,
+        namespace: &Namespace,
+    ) -> tokio::sync::OwnedMutexGuard<()> {
+        self.inner.aggregator.lock_lineage_writer(namespace).await
+    }
+
     /// Whether a pull is applying — writing working files — right now.
     /// Synchronous, because its caller is a menu/window event handler that
     /// cannot await.

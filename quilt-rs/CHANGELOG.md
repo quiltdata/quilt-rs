@@ -32,6 +32,7 @@
 
 ### Changed
 
+- **Breaking:** `InstallPathError` has a new variant, `NotInRevision`, which `flow::install_paths` and `InstalledPackage::install_paths` now return for a path that has no row in the revision being installed. The message reads "<path> is not in the package's current revision". Before, the error was `ManifestError::Table` with "path \"<path>\" not found". An exhaustive `match` on `InstallPathError` outside this crate needs the new arm (<https://github.com/quiltdata/quilt-rs/pull/998>)
 - **Breaking:** `Remote` has a new required method, `published_revisions`, with no default. An implementation of `Remote` outside this crate stops compiling until it adds one; `RemoteS3` and `MockRemote` have it (<https://github.com/quiltdata/quilt-rs/pull/982>)
 
 ### Fixed

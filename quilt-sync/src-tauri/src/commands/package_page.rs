@@ -726,7 +726,7 @@ pub async fn package_download_backlog(
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
         )
         .map(result, msg_ok, |err| {
-            format!("Failed to download files: {err}")
+            format!("Failed to download files: {}", err.user_facing())
         })?;
     Ok(skipped)
 }
@@ -737,6 +737,8 @@ async fn download_backlog_from_model(
     namespace: &quilt_uri::Namespace,
     paths: &[String],
 ) -> Result<Vec<PathBuf>, Error> {
+    // Taken first, so a wait for the tick's pull raises no quit prompt of its own.
+    let _ordered = watcher.lock_lineage_writer(namespace).await;
     // A whole-package catch-up, so it raises the in-flight flag a pull does:
     // quitting mid-download would leave files in place that the lineage never records.
     let _applying = watcher.apply_guard(namespace);
@@ -1809,6 +1811,121 @@ mod tests {
         assert!(
             !watcher.inner_for_test().aggregator.apply_in_progress(),
             "and dropped once it returns"
+        );
+    }
+
+    /// The tick's pull and a download each read the package's lineage, await,
+    /// and write the whole entry back, so an overlap loses one of the writes
+    /// and a file nobody touched reads Modified. A download that starts mid-pull
+    /// waits the pull out, and it is the download that waits: the user asked
+    /// for it, the pull did not.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_download_started_during_the_ticks_pull_waits_for_the_pull_to_finish() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex, mpsc};
+
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let pulling = Arc::new(AtomicBool::new(false));
+        let installed_mid_pull = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let release_rx = Mutex::new(release_rx);
+
+        let mut m = crate::model::mocks::create();
+        let remote = quilt_uri::ManifestUri {
+            bucket: "bucket".to_string(),
+            namespace: ns.clone(),
+            hash: "h0".to_string(),
+            origin: Some("catalog.dev".parse().unwrap()),
+        };
+        let lineage = quilt::lineage::PackageLineage::from_remote(remote.clone(), "h1".to_string());
+        let listed = ns.clone();
+        m.expect_get_installed_packages_list()
+            .returning(move || Ok(vec![make_installed_package(listed.clone())]));
+        m.expect_get_installed_package_lineage()
+            .returning(move |_| Ok(lineage.clone()));
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_get_installed_package_status().returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::Behind,
+                std::collections::BTreeMap::new(),
+            ))
+        });
+        m.expect_package_pull_outcome().returning(|_| {
+            Ok(quilt::flow::PullPreview {
+                outcome: quilt::flow::PullOutcome::CleanUpdate,
+                added: Vec::new(),
+            })
+        });
+        let pulling_in_pull = Arc::clone(&pulling);
+        m.expect_package_pull().times(1).returning(move |_, _, _| {
+            pulling_in_pull.store(true, Ordering::SeqCst);
+            started_tx.send(()).unwrap();
+            // Stands in for the pull's network work, between its lineage read
+            // and its write. Blocks this worker; the download runs on the other.
+            release_rx.lock().unwrap().recv().unwrap();
+            pulling_in_pull.store(false, Ordering::SeqCst);
+            Ok(quilt::flow::PullReport {
+                manifest_uri: remote.clone(),
+                added: Vec::new(),
+                added_not_fetched: Vec::new(),
+                updated: Vec::new(),
+                removed: Vec::new(),
+                message: None,
+            })
+        });
+        let (pulling_in_install, seen) = (Arc::clone(&pulling), Arc::clone(&installed_mid_pull));
+        m.expect_package_install_paths()
+            .times(1)
+            .returning(move |_, _| {
+                seen.lock()
+                    .unwrap()
+                    .push(pulling_in_install.load(Ordering::SeqCst));
+                Ok(quilt::flow::InstallPathsReport::default())
+            });
+        let m = Arc::new(m);
+
+        let watcher = Arc::new(test_watcher());
+        watcher.inner_for_test().settings.write().await.pull.enabled = true;
+
+        let tick = tokio::spawn({
+            let (m, watcher) = (Arc::clone(&m), Arc::clone(&watcher));
+            async move {
+                crate::autopull::tick::run_once(
+                    &*m,
+                    &RoleCache::default(),
+                    watcher.inner_for_test(),
+                )
+                .await
+            }
+        });
+        tokio::task::spawn_blocking(move || started_rx.recv())
+            .await
+            .unwrap()
+            .expect("the tick reaches its pull");
+
+        let download = tokio::spawn({
+            let (m, watcher, ns) = (Arc::clone(&m), Arc::clone(&watcher), ns.clone());
+            async move { download_backlog_from_model(&*m, &watcher, &ns, &["plate/b.csv".into()]).await }
+        });
+        // Long enough for an unordered download to run to completion.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(
+            !download.is_finished(),
+            "the download must not run while the pull is in flight"
+        );
+
+        release_tx.send(()).unwrap();
+        tick.await.unwrap().expect("the tick succeeds");
+        download
+            .await
+            .unwrap()
+            .expect("the download succeeds once the pull is done");
+        assert_eq!(
+            *installed_mid_pull.lock().unwrap(),
+            vec![false],
+            "the download installed once, after the pull"
         );
     }
 

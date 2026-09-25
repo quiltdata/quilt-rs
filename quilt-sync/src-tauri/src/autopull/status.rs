@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -9,6 +10,7 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use serde::Deserialize;
 use serde::Serialize;
+use tokio::sync::OwnedMutexGuard;
 use tokio::sync::watch;
 
 use crate::autopull::activity::ActivityOp;
@@ -87,6 +89,19 @@ pub struct SyncTrayAggregator {
     /// short apply can overlap that work and finish before the question is
     /// asked. Comparing epochs across the span answers "did one happen?".
     applying: Mutex<BTreeMap<Namespace, ApplyState>>,
+    /// One lock per namespace, ordering the pulls (the tick's and a hand-pressed
+    /// one) against a download of the same package. Each reads the package's
+    /// lineage, awaits, and writes the whole entry back, so an overlap loses
+    /// whichever wrote first, and a file nobody touched reads Modified. A
+    /// stopgap until quilt-rs orders its own lineage writers.
+    ///
+    /// Not the apply guard: that is a counter two readers poll, it cannot be
+    /// waited on, and v1's picked-file download deliberately does not raise it.
+    ///
+    /// Entries are never swept. Removing one while a holder still has its `Arc`
+    /// would let the next caller lock a fresh mutex beside it, and the map only
+    /// grows by the packages downloaded or pulled in this session.
+    lineage_writers: Mutex<BTreeMap<Namespace, Arc<tokio::sync::Mutex<()>>>>,
     /// The tick's transfer, if any; its own channel so it never touches the tray mode.
     activity: watch::Sender<Option<AutopullActivity>>,
 }
@@ -149,8 +164,30 @@ impl SyncTrayAggregator {
             state: Mutex::new(AggregatorState::default()),
             tick_in_progress: AtomicBool::new(false),
             applying: Mutex::new(BTreeMap::new()),
+            lineage_writers: Mutex::new(BTreeMap::new()),
             activity: watch::channel(None).0,
         }
+    }
+
+    fn lineage_writer(&self, namespace: &Namespace) -> Arc<tokio::sync::Mutex<()>> {
+        let mut writers = self.lineage_writers.lock().expect("aggregator lock");
+        Arc::clone(writers.entry(namespace.clone()).or_default())
+    }
+
+    /// Hold for the length of a user's download or pull of this package. Waits
+    /// out a writer already in flight rather than refusing: the user asked for
+    /// it, and a retry would land where the wait does, on the revision the
+    /// other writer left.
+    pub async fn lock_lineage_writer(&self, namespace: &Namespace) -> OwnedMutexGuard<()> {
+        self.lineage_writer(namespace).lock_owned().await
+    }
+
+    /// The tick's side of [`Self::lock_lineage_writer`]: `None` while a user's
+    /// download or pull of this package is in flight, and the tick skips its
+    /// pull. It never waits, because the package stays `Behind` and the next
+    /// tick tries again.
+    pub fn try_lock_lineage_writer(&self, namespace: &Namespace) -> Option<OwnedMutexGuard<()>> {
+        self.lineage_writer(namespace).try_lock_owned().ok()
     }
 
     /// Whether *any* package is being written right now — the quit prompt's

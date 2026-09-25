@@ -36,6 +36,7 @@
 
 ### Fixed
 
+- Downloading a package's files while that package is being pulled, whether by background updates or by pressing **Pull**, no longer leaves a file you never touched reading as modified. A background update now skips a package while its files download and tries again on its next round. A download that starts during a pull, and a **Pull** pressed during a download, wait for the other to finish. If the pull moved the package to a revision that no longer has a file you asked for, the download fails and names it: "… is not in the package's current revision" (<https://github.com/quiltdata/quilt-rs/pull/998>)
 - After **Promote my revision** on the merge page, background sync now resumes for that package. It used to stay stopped until QuiltSync was restarted (<https://github.com/quiltdata/quilt-rs/pull/994>)
 - **Refresh** on the screen a `quilt+s3://` link opens on, while it installs, no longer opens the link's file a second time: there is nothing on that screen to refresh, so the button is unavailable. Going **Back** from the package that screen takes you to, or from Settings if you leave it that way, no longer returns to it and opens the file again either (<https://github.com/quiltdata/quilt-rs/pull/988>)
 - A screen that fails to load shows one top bar, not two. Settings and the screen a `quilt+s3://` link opens on drew the error page's own bar under theirs (<https://github.com/quiltdata/quilt-rs/pull/988>)

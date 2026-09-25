@@ -146,6 +146,12 @@ pub enum InstallPathError {
     #[error("Some paths are already installed")]
     AlreadyInstalled,
 
+    /// The path has no row in the revision being installed. Reachable when a
+    /// download waited out a pull that moved the package to a revision
+    /// without it.
+    #[error("{} is not in the package's current revision", .0.display())]
+    NotInRevision(PathBuf),
+
     #[error(
         "A local file is already at {}",
         .0.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")

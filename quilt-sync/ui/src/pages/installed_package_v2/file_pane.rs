@@ -36,6 +36,7 @@
 //!   leaves none says so.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use leptos::prelude::*;
 
@@ -527,6 +528,50 @@ fn shown_rows(rows: &[Row], query: &str, facet: Facet) -> Vec<Row> {
         .collect()
 }
 
+/// How long the query waits after the last keystroke before the list
+/// follows it, so a burst of typing costs one rebuild.
+#[cfg(not(test))]
+const SEARCH_SETTLE: Duration = Duration::from_millis(150);
+/// Short under test: the frontend suite runs against the runner's 20s budget.
+#[cfg(test)]
+pub(crate) const SEARCH_SETTLE: Duration = Duration::from_millis(25);
+
+/// The query the list is drawn for: the field's text once typing pauses.
+///
+/// The field itself stays instant; only the list trails it. An empty field
+/// applies at once, whether the clear control, a deleted query or the page on
+/// another package emptied it. A pending timer is dropped with the pane.
+/// The search field's text, and the query the list is drawn for.
+#[derive(Clone, Copy)]
+struct Search {
+    field: RwSignal<String>,
+    settled: Signal<String>,
+}
+
+fn settled(search: RwSignal<String>) -> Signal<String> {
+    let query = RwSignal::new(search.get_untracked());
+    let timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    Effect::new(move |_| {
+        let typed = search.get();
+        if let Some(handle) = timer.get_value() {
+            handle.clear();
+        }
+        timer.set_value(None);
+        if typed.is_empty() || query.with_untracked(|q| *q == typed) {
+            query.set(typed);
+        } else if let Ok(handle) = set_timeout_with_handle(move || query.set(typed), SEARCH_SETTLE)
+        {
+            timer.set_value(Some(handle));
+        }
+    });
+    on_cleanup(move || {
+        if let Some(Some(handle)) = timer.try_get_value() {
+            handle.clear();
+        }
+    });
+    query.into()
+}
+
 /// The search, alone on the row above the toolbar and the pane's full width.
 ///
 /// The `display:flex` row is load-bearing: `SearchInput` grows along its
@@ -717,6 +762,8 @@ pub fn FilePane(
     #[prop(optional)]
     picking: Picking,
 ) -> impl IntoView {
+    // Outside the match, so a re-read that redraws the list keeps the query.
+    let query = settled(search);
     move || match listing.get() {
         Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
         Listing::Unlisted(reason) => view! {
@@ -734,7 +781,18 @@ pub fn FilePane(
             </section>
         }
         .into_any(),
-        Listing::Ready(list) => ready(list, grouping, collapsed, search, facet, on_open, picking),
+        Listing::Ready(list) => ready(
+            list,
+            grouping,
+            collapsed,
+            Search {
+                field: search,
+                settled: query,
+            },
+            facet,
+            on_open,
+            picking,
+        ),
     }
 }
 
@@ -742,11 +800,12 @@ fn ready(
     list: FileList,
     grouping: RwSignal<String>,
     collapsed: RwSignal<BTreeSet<String>>,
-    search: RwSignal<String>,
+    search: Search,
     facet: RwSignal<String>,
     on_open: Callback<String>,
     picking: Picking,
 ) -> AnyView {
+    let query = search.settled;
     let FileList {
         entries,
         counts,
@@ -766,17 +825,18 @@ fn ready(
     let loaded = StoredValue::new(offered(&rows));
     let rows = StoredValue::new(rows);
 
-    // What the list draws and select-all counts and ticks. A memo, so a
-    // keystroke that leaves the same rows standing — the first letters typed
-    // into a big package — rebuilds nothing.
+    // What the list draws and select-all counts and ticks. A memo over the
+    // settled query and the facet, so a pause that leaves the same rows
+    // standing — the first letters typed into a big package — rebuilds
+    // nothing. The facet is read as it is: only typing is debounced.
     let shown = Memo::new(move |_| {
         let f = Facet::from_key(&facet.get());
-        search.with(|q| rows.with_value(|rs| shown_rows(rs, q, f)))
+        query.with(|q| rows.with_value(|rs| shown_rows(rs, q, f)))
     });
     // A view control narrowed the list. Known here, not from the count: a
     // facet can narrow to exactly as many rows as there are (`SelectAll`).
     let narrowed = Signal::derive(move || {
-        !search.with(String::is_empty) || Facet::from_key(&facet.get()) != Facet::All
+        !query.with(String::is_empty) || Facet::from_key(&facet.get()) != Facet::All
     });
     let shown_offered = Signal::derive(move || shown.with(|rs| offered(rs)));
     let headed = Signal::derive(move || {
@@ -844,7 +904,7 @@ fn ready(
 
     view! {
         <section class=style::root aria-label="Files">
-            {search_row(search)}
+            {search_row(search.field)}
             {toolbar(
                 grouping,
                 select_all(picking, shown_offered, narrowed, headed),
@@ -1633,7 +1693,8 @@ mod pane_tests {
         });
         element_saying(&el, "Select all 2 shown");
         search.set("remote-a".to_string());
-        leptos::task::tick().await;
+        // The list follows the search once typing settles.
+        crate::test_support::sleep_ms(40).await;
         element_saying(&el, "Select all 1 shown");
         // A search hides a tick without undoing it: `[Download]` counts both.
         picking
@@ -1987,8 +2048,15 @@ mod pane_tests {
         assert!(collapsed.get_untracked().contains("notes/"));
     }
 
-    /// Type into the search field as a reader would.
+    /// Type into the search field as a reader would, and wait for the list to
+    /// settle on it.
     async fn type_search(el: &web_sys::Element, query: &str) {
+        type_key(el, query).await;
+        crate::test_support::sleep_ms(40).await;
+    }
+
+    /// Type into the search field, one keystroke of a burst: no pause after.
+    async fn type_key(el: &web_sys::Element, query: &str) {
         let field: web_sys::HtmlInputElement = el
             .query_selector("input[type=search]")
             .unwrap()
@@ -2208,5 +2276,111 @@ mod pane_tests {
             .unwrap()
             .expect("the row");
         assert!(before.is_same_node(Some(&after)), "the row was rebuilt");
+    }
+
+    /// A burst of typing costs one rebuild: while the keys come, the list
+    /// stays as it was, and it follows the last query once typing pauses.
+    #[wasm_bindgen_test]
+    async fn a_burst_of_typing_draws_only_its_final_query() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("notes/raw.md", "pristine"),
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        for key in ["r", "ra", "raw/", "raw/plate-0", "raw/plate-01"] {
+            type_key(&el, key).await;
+            assert_eq!(search.get_untracked(), key, "the field is instant");
+            for path in ["notes/raw.md", "raw/plate-01.csv", "raw/plate-02.csv"] {
+                assert!(
+                    titled(&el, path),
+                    "mid-burst at {key:?}, {path} is still drawn"
+                );
+            }
+        }
+        crate::test_support::sleep_ms(40).await;
+        assert!(titled(&el, "raw/plate-01.csv"), "{}", el.inner_html());
+        assert!(!titled(&el, "raw/plate-02.csv"));
+        assert!(!titled(&el, "notes/raw.md"));
+    }
+
+    /// Clearing is never left waiting: the rows come back on the keystroke.
+    #[wasm_bindgen_test]
+    async fn clearing_the_search_applies_at_once() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        type_search(&el, "zzz").await;
+        element_saying(&el, "No files match");
+        type_key(&el, "").await;
+        assert!(titled(&el, "a.csv"), "{}", el.inner_html());
+    }
+
+    /// Only typing is debounced: a facet applies on the click. And a search
+    /// that settles leaves the facet and the ticks as they were.
+    #[wasm_bindgen_test]
+    async fn a_facet_applies_at_once_and_a_settling_search_keeps_it_and_the_ticks() {
+        let search = RwSignal::new(String::new());
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let picking = Picking::default();
+        let ticked = picking.ticked;
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(
+                        mixed_package(),
+                        mixed_package().len(),
+                        false,
+                    )))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=chosen
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        });
+        tick(&el, "remote-a.csv");
+        leptos::task::tick().await;
+        assert!(ticked.get_untracked().contains("remote-a.csv"));
+
+        let segment: web_sys::HtmlInputElement = el
+            .query_selector("input[type=radio][value='Not downloaded']")
+            .unwrap()
+            .expect("the Not downloaded segment")
+            .unchecked_into();
+        segment.click();
+        leptos::task::tick().await;
+        assert!(
+            !titled(&el, "here.txt"),
+            "no wait for a facet: {}",
+            el.inner_html()
+        );
+        assert!(titled(&el, "remote-b.csv"));
+
+        type_search(&el, "remote-a").await;
+        assert_eq!(chosen.get_untracked(), Facet::NotDownloaded.key());
+        assert!(titled(&el, "remote-a.csv"), "{}", el.inner_html());
+        assert!(!titled(&el, "remote-b.csv"));
+        assert!(
+            ticked.get_untracked().contains("remote-a.csv"),
+            "the tick stands"
+        );
+        let input: web_sys::HtmlInputElement = el
+            .query_selector("[title='remote-a.csv']")
+            .unwrap()
+            .unwrap()
+            .closest("label")
+            .unwrap()
+            .unwrap()
+            .query_selector("input[type=checkbox]")
+            .unwrap()
+            .unwrap()
+            .unchecked_into();
+        assert!(input.checked(), "drawn ticked after the search settles");
     }
 }

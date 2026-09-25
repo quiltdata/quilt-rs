@@ -13,7 +13,6 @@ use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
 use crate::checksum::refresh_hash;
-use crate::error::ManifestError;
 use crate::error::PackageOpError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::build_manifest_from_rows_stream;
@@ -445,12 +444,9 @@ pub(crate) async fn install_paths_over(
 
         for path in entries_paths {
             // TODO: Consider using a hashmap or treemap for manifest.rows
-            let row = manifest
-                .get_record(path)
-                .ok_or(ManifestError::Table(format!(
-                    "path \"{}\" not found",
-                    path.display()
-                )))?;
+            let row = manifest.get_record(path).ok_or_else(|| {
+                Error::InstallPath(InstallPathError::NotInRevision((*path).clone()))
+            })?;
 
             let object_dest = paths.object(row.hash.digest());
 
@@ -838,9 +834,11 @@ mod tests {
             &entries_paths,
         )
         .await;
+        // What the user reads when a download waited out a pull that dropped
+        // the path: it names the path and says why, with no table jargon.
         assert_eq!(
             lineage.unwrap_err().to_string(),
-            r#"Table error: path "z/z" not found"#
+            "z/z is not in the package's current revision"
         );
         Ok(())
     }
