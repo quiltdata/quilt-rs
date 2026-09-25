@@ -118,10 +118,11 @@ pub fn PageScene() -> impl IntoView {
         <Scene
             title="Scene · the appbar while autopull moves files"
             note="The activity line, centered on the bar between the logo and the controls, \
-                  in the on-brand ink at reduced strength. It fades in after about 400ms, so \
-                  reload to watch it arrive. Each bar has its own Activities; without one, \
-                  as in the scene above, the bar draws no line at all. The second label is \
-                  long enough to wrap: it grows the bar, and is never cut."
+                  in the on-brand ink at reduced strength on a faint amber tint with the kit \
+                  radius. It fades in after about 400ms, so reload to watch it arrive. Each \
+                  bar has its own Activities; without one, as in the scene above, the bar \
+                  draws no line at all. The second label is long enough to wrap: it grows \
+                  the bar, and is never cut."
         >
             <div class="g-window g-window--bar">
                 <Provider value=activities("Getting latest for team/pkg\u{2026}")>

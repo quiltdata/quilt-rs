@@ -5,9 +5,9 @@
 //!
 //! A notification says what happened; it is kept by the backend, stacked, and
 //! dismissed by hand. This line says what is running and is never kept, never
-//! dismissed and never carded: no background, border, icon, tone or close
-//! control. It never shows an error either, because failures have surfaces of
-//! their own. A pull uses both in turn: the line while the files change, and the
+//! dismissed and never carded: a faint attention tint, but no border, icon or
+//! close control. It never shows an error either, because failures have
+//! surfaces of their own. A pull uses both in turn: the line while the files change, and the
 //! notification stack's entry once they have.
 //!
 //! # What it draws

@@ -1,5 +1,7 @@
-/* The activity line: plain text on the brand ground, the same in both themes
- * because the ground is. No background, border or icon: it is not a card.
+/* The activity line: text on a faint attention tint with the kit radius, over
+ * the brand ground, the same in both themes because both are. Still no border,
+ * icon or close: it is not a card or a notification. The fade covers the tint
+ * too, so an idle line shows no pill.
  *
  * Kept flat (no nesting) so a test can load it as plain CSS.
  *
@@ -10,6 +12,9 @@
   /* A measure, so a long line wraps into a centered block rather than filling
    * the bar edge to edge. */
   max-width: 48ch;
+  padding: var(--q-space-1) var(--q-space-3);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-attention-onBrand);
   color: var(--q-fgColor-onBrand-muted);
   font-size: var(--q-text-body);
   line-height: var(--q-line-tight);
