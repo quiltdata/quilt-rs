@@ -403,8 +403,9 @@ pub struct EntryList {
     pub truncated: bool,
 }
 
-/// The file pane's list, or why there is none: no list is sent when the
-/// status was not computed, rather than one classified without it.
+/// The file pane's list, or why there is none. A blocked remote status still
+/// lists the files from a local one; no list is sent only when not even that
+/// could be computed, rather than one classified without a status.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(
     tag = "kind",

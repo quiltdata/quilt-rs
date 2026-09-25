@@ -167,8 +167,8 @@ impl From<EntryList> for FileList {
 #[derive(Clone, Debug)]
 pub enum Listing {
     Loading,
-    /// The page read sent no list, and why: its status was not computed, so
-    /// there is nothing honest to classify the rows by.
+    /// The page read sent no list, and why: not even a local status could be
+    /// computed, so there is nothing honest to classify the rows by.
     Unlisted(String),
     Ready(FileList),
 }
