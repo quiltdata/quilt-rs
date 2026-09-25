@@ -1184,6 +1184,7 @@ fn live(list: crate::commands::EntryList) -> AnyView {
                 ))
                 grouping=RwSignal::new(crate::pages::Grouping::BaseFolder.label().to_string())
                 collapsed=RwSignal::new(std::collections::BTreeSet::new())
+                search=RwSignal::new(String::new())
                 on_open=Callback::new(|_: String| ())
                 on_retry=Callback::new(|()| ())
             />

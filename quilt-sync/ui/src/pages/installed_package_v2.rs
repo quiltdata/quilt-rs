@@ -238,13 +238,14 @@ impl Default for Wiring {
 
 /// The file pane's inputs that outlive a re-read of the page.
 ///
-/// The body is rebuilt on every re-read, so the `Group:` choice and the
-/// collapsed folders live with the page: the watcher's news must not reset
-/// them. The list itself is the answer's, drawn with its header.
+/// The body is rebuilt on every re-read, so the `Group:` choice, the
+/// collapsed folders and the search live with the page: the watcher's news
+/// must not reset them. The list itself is the answer's, drawn with its header.
 #[derive(Clone, Copy)]
 struct Files {
     grouping: RwSignal<String>,
     collapsed: RwSignal<BTreeSet<String>>,
+    search: RwSignal<String>,
     retry: Callback<()>,
 }
 
@@ -365,6 +366,7 @@ fn package_body(
                     listing=listing
                     grouping=files.grouping
                     collapsed=files.collapsed
+                    search=files.search
                     on_open=open_file
                     on_retry=files.retry
                 />
@@ -521,19 +523,22 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     });
 
     // Not remembered: another package, or another visit, starts at the
-    // default with every folder open. `ns` is a memo on the namespace alone,
+    // default with every folder open and no search. `ns` is a memo on the namespace alone,
     // so the rest of the address — Resolve's `resolve=1` — is not a new package.
     let grouping = RwSignal::new(Grouping::BaseFolder.label().to_string());
     let collapsed = RwSignal::new(BTreeSet::new());
+    let search = RwSignal::new(String::new());
     Effect::new(move |_| {
         ns.track();
         grouping.set(Grouping::BaseFolder.label().to_string());
         collapsed.set(BTreeSet::new());
+        search.set(String::new());
     });
     // The list comes with the page read, so trying again is reading the page.
     let files = Files {
         grouping,
         collapsed,
+        search,
         retry: Callback::new(move |()| reload.notify()),
     };
 
@@ -855,6 +860,7 @@ mod tests {
         Files {
             grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
             collapsed: RwSignal::new(BTreeSet::new()),
+            search: RwSignal::new(String::new()),
             retry: Callback::new(|()| ()),
         }
     }
@@ -1696,6 +1702,49 @@ mod tests {
             expanded().as_deref(),
             Some("true"),
             "open again on another package; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The search is the page's, like the folders: a re-read keeps it, and
+    /// another package starts with none.
+    #[wasm_bindgen_test]
+    async fn the_search_survives_a_re_read_but_not_another_package() {
+        let el = screen_at(PLAIN, a_folder_as_asked).await;
+        let field = || -> web_sys::HtmlInputElement {
+            el.query_selector("section[aria-label='Files'] input[type=search]")
+                .unwrap()
+                .expect("the search field")
+                .unchecked_into()
+        };
+        field().set_value("b.md");
+        field()
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        sleep_ms(10).await;
+        let shown = |path: &str| {
+            el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
+                .unwrap()
+                .is_some()
+        };
+        assert!(
+            !shown("notes/a.md"),
+            "narrowed; markup was {}",
+            el.inner_html()
+        );
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert_eq!(field().value(), "b.md", "kept across the re-read");
+        assert!(!shown("notes/a.md"), "still narrowed");
+
+        move_to("/installed-package?namespace=team%2Fother");
+        sleep_ms(50).await;
+        assert_eq!(field().value(), "", "cleared on another package");
+        assert!(
+            shown("notes/a.md"),
+            "every row again; markup was {}",
             el.inner_html()
         );
     }
