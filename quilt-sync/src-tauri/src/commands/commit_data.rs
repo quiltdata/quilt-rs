@@ -24,7 +24,7 @@ use crate::model;
 use crate::model::QuiltModel;
 use crate::quilt;
 
-use super::package_data::InstalledPackageEntryData;
+use super::package_entries::InstalledPackageEntryData;
 use super::package_list::denied_mark;
 
 // ── Merge data for Leptos UI ──

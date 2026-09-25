@@ -25,9 +25,11 @@
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
 
+use std::collections::BTreeSet;
+
 use leptos::prelude::*;
 
-use crate::commands::{EntryData, InstalledPackageData};
+use crate::commands::{EntryData, EntryList, FilesData};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Card, EntryAction, EntryGroup, EntryRow, EntrySelection, ListToolbar, LoadFailure,
@@ -151,22 +153,33 @@ pub struct FileList {
     pub truncated: bool,
 }
 
-impl From<InstalledPackageData> for FileList {
-    fn from(data: InstalledPackageData) -> Self {
+impl From<EntryList> for FileList {
+    fn from(list: EntryList) -> Self {
         Self {
-            entries: data.entries,
-            total: data.total,
-            truncated: data.truncated,
+            entries: list.entries,
+            total: list.total,
+            truncated: list.truncated,
         }
     }
 }
 
-/// Where the pane's read stands.
+/// Where the pane's list stands.
 #[derive(Clone, Debug)]
 pub enum Listing {
     Loading,
-    Failed,
+    /// The page read sent no list, and why: its status was not computed, so
+    /// there is nothing honest to classify the rows by.
+    Unlisted(String),
     Ready(FileList),
+}
+
+impl From<FilesData> for Listing {
+    fn from(files: FilesData) -> Self {
+        match files {
+            FilesData::Listed(list) => Self::Ready(list.into()),
+            FilesData::Unlisted { reason } => Self::Unlisted(reason),
+        }
+    }
 }
 
 /// Where a file is, which decides its words and its click.
@@ -292,8 +305,15 @@ fn row(r: &Row, name: String, on_open: Callback<String>) -> AnyView {
     }
 }
 
-/// The rows, grouped as the select says.
-fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> AnyView {
+/// The rows, grouped as the select says. `collapsed` names the headings the
+/// reader closed; it is the page's, so a re-read that rebuilds these views
+/// finds each folder as the reader left it.
+fn rows_view(
+    rows: &[Row],
+    grouping: Grouping,
+    collapsed: RwSignal<BTreeSet<String>>,
+    on_open: Callback<String>,
+) -> AnyView {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let items = group(&paths, grouping);
     // A list with no heading at all has no disclosure to align to, so the
@@ -315,11 +335,23 @@ fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> Any
                     .map(|(index, name)| (rows[index].clone(), name))
                     .collect();
                 let members = StoredValue::new(members);
+                let open = RwSignal::new(!collapsed.with_untracked(|c| c.contains(&heading)));
+                let folder = heading.clone();
+                Effect::new(move |_| {
+                    let open = open.get();
+                    collapsed.update(|c| {
+                        if open {
+                            c.remove(&folder);
+                        } else {
+                            c.insert(folder.clone());
+                        }
+                    });
+                });
                 view! {
                     <EntryGroup
                         name=heading
                         count=Signal::stored(count)
-                        open=RwSignal::new(true)
+                        open=open
                     >
                         {move || {
                             members
@@ -372,6 +404,8 @@ pub fn FilePane(
     /// The `Group:` select's value. The page owns it, so a re-read does not
     /// reset it; a visit to another package does.
     grouping: RwSignal<String>,
+    /// The folder headings the reader collapsed. The page's, like `grouping`.
+    collapsed: RwSignal<BTreeSet<String>>,
     /// Open a downloaded file, by its logical path.
     on_open: Callback<String>,
     /// Read the list again after a failure.
@@ -379,24 +413,30 @@ pub fn FilePane(
 ) -> impl IntoView {
     move || match listing.get() {
         Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
-        Listing::Failed => view! {
+        Listing::Unlisted(reason) => view! {
             <section class=style::root aria-label="Files">
                 {toolbar(grouping)}
                 <Card flush=true label="Files" fill=true>
                     <LoadFailure
                         centred=true
-                        words="Could not read this package's files."
+                        words="Could not list this package's files."
+                        detail=reason
                         on_retry=on_retry
                     />
                 </Card>
             </section>
         }
         .into_any(),
-        Listing::Ready(list) => ready(list, grouping, on_open),
+        Listing::Ready(list) => ready(list, grouping, collapsed, on_open),
     }
 }
 
-fn ready(list: FileList, grouping: RwSignal<String>, on_open: Callback<String>) -> AnyView {
+fn ready(
+    list: FileList,
+    grouping: RwSignal<String>,
+    collapsed: RwSignal<BTreeSet<String>>,
+    on_open: Callback<String>,
+) -> AnyView {
     let FileList {
         entries,
         total,
@@ -418,7 +458,18 @@ fn ready(list: FileList, grouping: RwSignal<String>, on_open: Callback<String>) 
             view! {
                 <Blankslate
                     heading="Nothing in this package"
-                    description="The published revision has no files in it yet."
+                    description="This package has no files yet."
+                />
+            }
+            .into_any()
+        } else if truncated {
+            // Only the loaded rows are known to be ignored: the files past the
+            // cap were never read, so the package as a whole is not described.
+            view! {
+                <Blankslate
+                    compact=true
+                    heading="None of the loaded files are in this view"
+                    description="Every file this list covers is ignored."
                 />
             }
             .into_any()
@@ -436,7 +487,7 @@ fn ready(list: FileList, grouping: RwSignal<String>, on_open: Callback<String>) 
         let rows = StoredValue::new(rows);
         (move || {
             let g = Grouping::from_label(&grouping.get());
-            rows.with_value(|rs| rows_view(rs, g, on_open))
+            rows.with_value(|rs| rows_view(rs, g, collapsed, on_open))
         })
         .into_any()
     };
@@ -611,6 +662,7 @@ mod pane_tests {
                 <FilePane
                     listing=Signal::stored(listing)
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
                 />
@@ -728,6 +780,7 @@ mod pane_tests {
                         false,
                     )))
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
                     on_open=Callback::new(move |path: String| opened.update(|o| o.push(path)))
                     on_retry=Callback::new(|()| ())
                 />
@@ -778,6 +831,7 @@ mod pane_tests {
                         false,
                     )))
                     grouping=grouping
+                    collapsed=RwSignal::new(BTreeSet::new())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
                 />
@@ -819,13 +873,110 @@ mod pane_tests {
             loading.inner_html()
         );
 
-        let failed = pane(Listing::Failed);
-        element_saying(&failed, "Could not read this package's files.");
+        let unlisted = pane(Listing::Unlisted("Access denied".to_string()));
+        element_saying(&unlisted, "Could not list this package's files.");
+        assert!(
+            text(&unlisted).contains("Access denied"),
+            "the reason is stated; markup was {}",
+            unlisted.inner_html()
+        );
+        assert!(
+            unlisted.query_selector("[title]").unwrap().is_none(),
+            "and no row is drawn without a status"
+        );
     }
 
     #[wasm_bindgen_test]
     fn an_empty_package_says_so() {
         let el = pane(Listing::Ready(list(Vec::new(), 0, false)));
         element_saying(&el, "Nothing in this package");
+        assert!(
+            text(&el).contains("This package has no files yet."),
+            "worded for a local-only package too; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Over the cap, only the loaded rows are known to be ignored.
+    #[wasm_bindgen_test]
+    fn a_cut_list_all_ignored_speaks_of_the_loaded_files_only() {
+        let cut = pane(Listing::Ready(list(
+            vec![ignored(".DS_Store")],
+            4_312,
+            true,
+        )));
+        element_saying(&cut, "None of the loaded files are in this view");
+        assert!(
+            !text(&cut).contains("Every file in this package is ignored."),
+            "markup was {}",
+            cut.inner_html()
+        );
+
+        let whole = pane(Listing::Ready(list(vec![ignored(".DS_Store")], 1, false)));
+        assert!(
+            text(&whole).contains("Every file in this package is ignored."),
+            "markup was {}",
+            whole.inner_html()
+        );
+    }
+
+    /// A re-read rebuilds the rows; a folder the reader closed stays closed.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_folder_stays_collapsed_across_a_re_read() {
+        let files = || {
+            Listing::Ready(list(
+                vec![
+                    entry("notes/a.md", "pristine"),
+                    entry("notes/b.md", "pristine"),
+                ],
+                2,
+                false,
+            ))
+        };
+        let listing = RwSignal::new(files());
+        let collapsed = RwSignal::new(BTreeSet::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::from(listing)
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=collapsed
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        let disclosure = || {
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .expect("the folder's disclosure")
+        };
+        disclosure()
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        crate::test_support::sleep_ms(10).await;
+        assert_eq!(
+            disclosure().get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        assert!(
+            collapsed.get_untracked().contains("notes/"),
+            "recorded on the page"
+        );
+
+        listing.set(files());
+        leptos::task::tick().await;
+
+        assert_eq!(
+            disclosure().get_attribute("aria-expanded").as_deref(),
+            Some("false"),
+            "still collapsed; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            el.query_selector("[title='notes/a.md']").unwrap().is_none(),
+            "its rows stay hidden"
+        );
+        assert!(collapsed.get_untracked().contains("notes/"));
     }
 }
