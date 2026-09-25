@@ -67,3 +67,42 @@
 .search {
   display: flex;
 }
+
+/* Select-all's box in the rows' checkbox column. Built as a row is, not
+ * computed: the Card's 1px border stands in for the list box's own edge, then a
+ * row's `space-3` inset, the gutter spacer (`--q-entry-gutter`, set by the pane,
+ * `0px` when the list has no heading) and a row's `space-2` gap before its box.
+ * So the two boxes share one x with or without headings. */
+.selectall {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding-left: calc(1px + var(--q-space-3));
+}
+
+.gutter {
+  flex: 0 0 var(--q-entry-gutter, 16px);
+}
+
+/* The list box's footer: a spacer and the `[Download]` primary, flush right on
+ * the list's inset. `Card` draws the hairline above it. The one carve-out from
+ * the Never Move Geometry Rule, copied from the Banner: 4px and a fade, 160ms,
+ * and no exit animation — unticking the last row grows the list back, and
+ * animating that moves rows under the pointer. Under reduced motion it simply
+ * appears. The gallery's scene draws the same footer with `g-fp-footer`, which
+ * is gallery chrome and so absent from the app's stylesheet. */
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--q-space-2) var(--q-space-3);
+  animation: footer-rise 160ms ease-out;
+}
+
+@keyframes footer-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .footer { animation: none; }
+}

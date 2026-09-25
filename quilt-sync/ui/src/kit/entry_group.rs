@@ -54,6 +54,8 @@ stylance::import_crate_style!(style, "src/kit/entry_group.module.scss");
 pub struct GroupSelection {
     pub state: Signal<CheckState>,
     pub on_toggle: Callback<bool>,
+    /// The box is shown but cannot move, as while a download runs.
+    pub disabled: Signal<bool>,
 }
 
 impl GroupSelection {
@@ -62,6 +64,16 @@ impl GroupSelection {
         Self {
             state: state.into(),
             on_toggle,
+            disabled: Signal::stored(false),
+        }
+    }
+
+    /// Hold the box still while `disabled` is true.
+    #[must_use]
+    pub fn disabled(self, disabled: impl Into<Signal<bool>>) -> Self {
+        Self {
+            disabled: disabled.into(),
+            ..self
         }
     }
 }
@@ -102,12 +114,13 @@ pub fn EntryGroup(
                     {move || if open.get() { icons::chevron_down() } else { icons::chevron_right() }}
                 </button>
                 {match selection {
-                    Some(GroupSelection { state, on_toggle }) => {
+                    Some(GroupSelection { state, on_toggle, disabled }) => {
                         view! {
                             <Checkbox
                                 state=state
                                 on_toggle=move |next| on_toggle.run(next)
                                 aria_label=box_label
+                                disabled=disabled
                             />
                         }
                             .into_any()

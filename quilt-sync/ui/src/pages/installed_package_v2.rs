@@ -36,7 +36,7 @@ mod revision_history;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
-use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing};
+use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 use resolve::{ResolveCommands, ResolvePane};
@@ -248,6 +248,11 @@ struct Files {
     search: RwSignal<String>,
     facet: RwSignal<String>,
     retry: Callback<()>,
+    /// The ticked paths, which a re-read keeps and another package clears.
+    ticked: RwSignal<BTreeSet<String>>,
+    /// The footer's `[Download]` is running. Here for `Wiring::downloading`'s
+    /// reason: the rebuilt button must keep its spinner.
+    downloading: RwSignal<bool>,
 }
 
 /// What the file pane will read. Built by `package_body`; the pane counts
@@ -314,6 +319,13 @@ fn package_body(
         differing: differing_marks(open.into(), context.resolve.as_ref()),
         scope: context.keeping.scope,
     };
+    let picking = Picking {
+        ticked: files.ticked,
+        downloading: files.downloading.into(),
+        busy: w.busy.into(),
+        on_download: file_downloader(header.namespace.to_string(), w, files),
+        whole_package: marks.scope == commands::KeepingScope::EntirePackage,
+    };
     // The confirmation's flag is the page's, so it outlives the mode unless
     // closed here: a mode that reopens must not find it already open.
     let replace = w.dialogs.replace;
@@ -371,11 +383,66 @@ fn package_body(
                     facet=files.facet
                     on_open=open_file
                     on_retry=files.retry
+                    picking=picking
                 />
             </div>
         </div>
     }
     .into_any()
+}
+
+/// The file pane's `[Download]`: `package_download_backlog` over the ticked
+/// paths, under the page's one-command lock.
+///
+/// A success clears the ticks it sent, and the re-read turns the rows `Downloaded`. A
+/// file the remote no longer holds stays `Not downloaded`, and the band says
+/// which ([`download_outcome`]). A failure keeps the ticks, so a retry is one
+/// press. While it runs every box is disabled, as every other command is, so
+/// the ticks it clears are the ones it sent.
+fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<String>> {
+    Callback::new(move |paths: Vec<String>| {
+        let (ns, outcome, downloading, ticked) = (
+            namespace.clone(),
+            w.outcome,
+            files.downloading,
+            files.ticked,
+        );
+        let task = async move {
+            let asked = paths.len();
+            downloading.set(true);
+            let answer = commands::package_download_backlog(ns.clone(), paths.clone()).await;
+            downloading.try_set(false);
+            answer.map(|skipped| {
+                // Safe on any package: every box is disabled while the page's
+                // lock is held, so nothing was ticked since this was sent, and
+                // moving on only took ticks away.
+                ticked.try_update(|t| file_pane::selection::tick_all(t, &paths, false));
+                if let Some(said) = download_outcome(ns, asked, &skipped) {
+                    outcome.try_set(Some(said));
+                }
+                String::new()
+            })
+        };
+        run(
+            w.busy,
+            w.outcome,
+            namespace.clone(),
+            "Could not download the files.",
+            Some(w.reload),
+            task,
+        );
+    })
+}
+
+/// What the band says after a download: nothing when every file came down,
+/// and a warning naming the files the remote no longer holds when some did not.
+fn download_outcome(namespace: String, asked: usize, skipped: &[String]) -> Option<Outcome> {
+    file_pane::selection::unavailable(asked, skipped).map(|(lead, paths)| Outcome {
+        namespace,
+        variant: BannerVariant::Warning,
+        lead,
+        detail: Some(paths),
+    })
 }
 
 /// Opens a revision's catalog page, reporting a failure on the keyed band.
@@ -532,12 +599,15 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     let collapsed = RwSignal::new(BTreeSet::new());
     let search = RwSignal::new(String::new());
     let facet = RwSignal::new(Facet::All.key().to_string());
+    // Ticks name paths in one package, so another package starts with none.
+    let ticked = RwSignal::new(BTreeSet::new());
     Effect::new(move |_| {
         ns.track();
         grouping.set(Grouping::BaseFolder.label().to_string());
         collapsed.set(BTreeSet::new());
         search.set(String::new());
         facet.set(Facet::All.key().to_string());
+        ticked.set(BTreeSet::new());
     });
     // The list comes with the page read, so trying again is reading the page.
     let files = Files {
@@ -546,6 +616,8 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         search,
         facet,
         retry: Callback::new(move |()| reload.notify()),
+        ticked,
+        downloading: RwSignal::new(false),
     };
 
     // A `resolve=1` the package cannot honour is replaced by the plain address,
@@ -861,6 +933,22 @@ mod tests {
         assert_eq!(answer_for(None::<(String, u8)>, "team/b"), None);
     }
 
+    /// A download the remote could not finish is a warning that names the
+    /// files left behind; one it finished says nothing, as success does here.
+    #[test]
+    fn a_download_that_left_files_behind_warns_and_names_them() {
+        assert_eq!(download_outcome("team/a".to_string(), 3, &[]), None);
+        assert_eq!(
+            download_outcome("team/a".to_string(), 3, &["raw/b.csv".to_string()]),
+            Some(said(
+                "team/a",
+                BannerVariant::Warning,
+                "Downloaded 2 of 3. 1 file is no longer on the remote at this revision.",
+                Some("raw/b.csv"),
+            ))
+        );
+    }
+
     /// The pane's page-owned state at rest, which is all these tests need of it.
     fn idle_files() -> Files {
         Files {
@@ -869,6 +957,8 @@ mod tests {
             search: RwSignal::new(String::new()),
             facet: RwSignal::new(Facet::All.key().to_string()),
             retry: Callback::new(|()| ()),
+            ticked: RwSignal::new(BTreeSet::new()),
+            downloading: RwSignal::new(false),
         }
     }
 

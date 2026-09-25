@@ -9,9 +9,9 @@
 //!
 //! Search takes a row of its own above the toolbar; select-all sits on the
 //! toolbar's left, in the rows' checkbox column; grouping and the facets are one
-//! right-hand group. Search, grouping and the facets are drawn. The other slots are left
-//! absent rather than drawn inert — a control that does nothing is worse than
-//! one that is not there yet.
+//! right-hand group. Search, grouping, the facets and select-all are drawn. The other
+//! slots are left absent rather than drawn inert — a control that does nothing is
+//! worse than one that is not there yet.
 //!
 //! # What this slice draws
 //!
@@ -26,7 +26,9 @@
 //!   file that is also ignored is two rows, as in v1, and counts under both.
 //! - **A click does the thing the row can do.** A file that is here opens, a
 //!   missing one is `EntryRow`'s `Select` shape, and a deleted one is inert.
-//!   The box is the row's own until the selection slice gives the pane one.
+//! - **Selection feeds one action.** Select-all, the headings' boxes and the
+//!   footer's `[Download]` read one ticked set the page owns ([`selection`]).
+//!   Under whole-package Keeping none of them is drawn.
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
 //! - **Search narrows what is shown.** A case-insensitive substring of the
@@ -40,10 +42,15 @@ use leptos::prelude::*;
 use crate::commands::{EntryCounts, EntryData, EntryList, FilesData};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
-    Blankslate, Card, EntryAction, EntryGroup, EntryRow, EntrySelection, ListToolbar, LoadFailure,
-    Naming, SearchInput, Segment, SegmentedControl, Select, SkeletonBox,
+    Blankslate, Button, ButtonVariant, Card, EntryAction, EntryGroup, EntryRow, EntrySelection,
+    GroupSelection, ListToolbar, LoadFailure, Naming, SearchInput, Segment, SegmentedControl,
+    Select, SelectAll, SkeletonBox,
 };
 use crate::util::format_size;
+
+pub(crate) mod selection;
+
+pub use selection::Picking;
 
 stylance::import_crate_style!(
     style,
@@ -359,9 +366,25 @@ struct Row {
     ignored: bool,
 }
 
+impl Row {
+    /// Whether a box can tick it: not downloaded, and not ignored — an ignored
+    /// file is stopped being ignored before it is fetched.
+    fn selectable(&self) -> bool {
+        self.place == Place::Missing && !self.ignored
+    }
+}
+
+/// The paths a box could tick among `rows`, in path order.
+fn offered(rows: &[Row]) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.selectable())
+        .map(|r| r.path.clone())
+        .collect()
+}
+
 /// One row. `name` is what the list shows — the whole path, or the part under
 /// a heading — and the whole path is always the `title`.
-fn row(r: &Row, name: String, on_open: Callback<String>) -> AnyView {
+fn row(r: &Row, name: String, on_open: Callback<String>, picking: Picking) -> AnyView {
     let state = if r.ignored { None } else { r.place.state() };
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
@@ -373,15 +396,22 @@ fn row(r: &Row, name: String, on_open: Callback<String>) -> AnyView {
                 on_open.run(path.clone());
             })))
         }
-        // The row's own tick. The selection slice replaces it with the pane's.
-        Place::Missing => {
-            let ticked = RwSignal::new(false);
-            Some(EntryAction::Select(EntrySelection::new(
-                ticked,
-                Callback::new(move |next| ticked.set(next)),
-            )))
+        Place::Missing if r.selectable() && !picking.whole_package => {
+            let ticked = picking.ticked;
+            let (is, set) = (r.path.clone(), r.path.clone());
+            Some(EntryAction::Select(
+                EntrySelection::new(
+                    Signal::derive(move || ticked.with(|t| t.contains(&is))),
+                    Callback::new(move |next| {
+                        ticked.update(|t| selection::tick_all(t, std::slice::from_ref(&set), next));
+                    }),
+                )
+                .disabled(picking.busy),
+            ))
         }
-        Place::Deleted | Place::Unknown => None,
+        // Nothing to open, and nothing to tick: ignored, or the whole package
+        // is kept and the scope fetches it.
+        Place::Missing | Place::Deleted | Place::Unknown => None,
     };
     match action {
         Some(action) => view! {
@@ -410,6 +440,7 @@ fn rows_view(
     grouping: Grouping,
     collapsed: RwSignal<BTreeSet<String>>,
     on_open: Callback<String>,
+    picking: Picking,
 ) -> AnyView {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let items = group(&paths, grouping);
@@ -419,7 +450,7 @@ fn rows_view(
     let drawn = items
         .into_iter()
         .map(|item| match item {
-            Item::Row { index, name } => row(&rows[index], name, on_open),
+            Item::Row { index, name } => row(&rows[index], name, on_open, picking),
             Item::Group {
                 heading,
                 rows: members,
@@ -431,6 +462,8 @@ fn rows_view(
                     .into_iter()
                     .map(|(index, name)| (rows[index].clone(), name))
                     .collect();
+                let pickable: Vec<Row> = members.iter().map(|(r, _)| r.clone()).collect();
+                let pickable = offered(&pickable);
                 let members = StoredValue::new(members);
                 let open = RwSignal::new(!collapsed.with_untracked(|c| c.contains(&heading)));
                 let folder = heading.clone();
@@ -444,30 +477,39 @@ fn rows_view(
                         }
                     });
                 });
-                view! {
-                    <EntryGroup
-                        name=heading
-                        count=Signal::stored(count)
-                        open=open
-                    >
-                        {move || {
-                            members
-                                .with_value(|ms| {
-                                    ms.iter()
-                                        .map(|(r, name)| row(r, name.clone(), on_open))
-                                        .collect_view()
-                                })
-                        }}
-                    </EntryGroup>
+                let children = move || {
+                    members.with_value(|ms| {
+                        ms.iter()
+                            .map(|(r, name)| row(r, name.clone(), on_open, picking))
+                            .collect_view()
+                    })
+                };
+                match group_selection(pickable, picking) {
+                    Some(selection) => view! {
+                        <EntryGroup
+                            name=heading
+                            count=Signal::stored(count)
+                            open=open
+                            selection=selection
+                        >
+                            {children}
+                        </EntryGroup>
+                    }
+                    .into_any(),
+                    None => view! {
+                        <EntryGroup name=heading count=Signal::stored(count) open=open>
+                            {children}
+                        </EntryGroup>
+                    }
+                    .into_any(),
                 }
-                .into_any()
             }
         })
         .collect_view();
     view! {
         <div
             class=style::list
-            style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0" })
+            style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0px" })
         >
             {drawn}
         </div>
@@ -530,14 +572,116 @@ fn facets(counts: &EntryCounts, facet: RwSignal<String>) -> impl IntoView {
     }
 }
 
+/// A heading's box: present when a row under it can be ticked, and never
+/// under whole-package scope. It ticks exactly those rows, so `Mixed` is a fact
+/// about them. `EntryGroup` names it `Select all in {heading}`.
+fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelection> {
+    if picking.whole_package || pickable.is_empty() {
+        return None;
+    }
+    let ticked = picking.ticked;
+    let members = StoredValue::new(pickable);
+    Some(
+        GroupSelection::new(
+            Signal::derive(move || {
+                ticked.with(|t| members.with_value(|ms| selection::group_state(t, ms)))
+            }),
+            Callback::new(move |next| {
+                members.with_value(|ms| ticked.update(|t| selection::tick_all(t, ms, next)));
+            }),
+        )
+        .disabled(picking.busy),
+    )
+}
+
+/// Select-all, in the rows' checkbox column: the list box's `space-3` plus
+/// the gutter the rows keep for a disclosure. Absent under whole-package scope,
+/// and while nothing on screen can be ticked.
+fn select_all(
+    picking: Picking,
+    shown: Signal<Vec<String>>,
+    narrowed: Signal<bool>,
+    headed: Signal<bool>,
+) -> AnyView {
+    if picking.whole_package {
+        return ().into_any();
+    }
+    let ticked = picking.ticked;
+    let selected = Signal::derive(move || {
+        shown.with(|s| ticked.with(|t| selection::ticked_among(t, s).len()))
+    });
+    let total = Signal::derive(move || shown.with(Vec::len));
+    let any = Signal::derive(move || total.get() > 0);
+    view! {
+        <Show when=move || any.get()>
+            <div
+                class=style::selectall
+                style=move || format!("--q-entry-gutter:{}", if headed.get() { "16px" } else { "0px" })
+            >
+                <span class=style::gutter />
+                <SelectAll
+                    selected=selected
+                    total=total
+                    narrowed=narrowed
+                    disabled=picking.busy
+                    on_toggle=move |next| {
+                        shown.with_untracked(|s| ticked.update(|t| selection::tick_all(t, s, next)));
+                    }
+                />
+            </div>
+        </Show>
+    }
+    .into_any()
+}
+
+/// The list box's last child while something is ticked: a right-aligned
+/// primary that counts what it will fetch, `Download 3`. The count is every
+/// loaded tick, hidden ones included, so it can exceed select-all's `1 of 1
+/// selected` under a search (owner, 2026-09-25).
+///
+/// Slides 4px and fades in over 160ms and has no exit (`.footer`, which copies
+/// the Banner's carve-out): unticking the last row grows the list back, and
+/// animating that would move rows under the pointer. Not the gallery's
+/// `g-fp-footer`: that is gallery chrome, which the app does not load.
+fn footer(picking: Picking, loaded: StoredValue<Vec<String>>) -> AnyView {
+    if picking.whole_package {
+        return ().into_any();
+    }
+    let ticked = picking.ticked;
+    // Every loaded row, not only the shown ones: a search hides a tick, it
+    // does not undo it.
+    let chosen =
+        Memo::new(move |_| ticked.with(|t| loaded.with_value(|l| selection::ticked_among(t, l))));
+    view! {
+        <Show when=move || chosen.with(|c| !c.is_empty())>
+            <div class=style::footer>
+                <Button
+                    variant=ButtonVariant::Primary
+                    loading=picking.downloading
+                    disabled=picking.busy
+                    on_click=move |_| picking.on_download.run(chosen.get_untracked())
+                >
+                    {move || format!("Download {}", thousands(chosen.with(Vec::len)))}
+                </Button>
+            </div>
+        </Show>
+    }
+    .into_any()
+}
+
 /// The toolbar under the search row: select-all's slot on the left, the view
 /// controls on the right. The facets need the package's counts, so a pane
 /// with no answer draws grouping alone.
-fn toolbar(grouping: RwSignal<String>, facets: Option<AnyView>) -> impl IntoView {
+fn toolbar(
+    grouping: RwSignal<String>,
+    select_all: AnyView,
+    facets: Option<AnyView>,
+) -> impl IntoView {
     view! {
         // Stacks upwards, so the line nearest the rows is the one acting on
-        // them. Select-all (the selection slice) goes first, on the left.
+        // them. Select-all goes first, on the left.
         <ListToolbar reverse_when_stacked=true>
+            {select_all}
             <div class=style::views>
                 <Select
                     naming=Naming::Prefix("Group".to_string())
@@ -568,13 +712,17 @@ pub fn FilePane(
     on_open: Callback<String>,
     /// Read the list again after a failure.
     on_retry: Callback<()>,
+    /// What is ticked and what `[Download]` does. The page's, so it outlives
+    /// a re-read.
+    #[prop(optional)]
+    picking: Picking,
 ) -> impl IntoView {
     move || match listing.get() {
         Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
         Listing::Unlisted(reason) => view! {
             <section class=style::root aria-label="Files">
                 {search_row(search)}
-                {toolbar(grouping, None)}
+                {toolbar(grouping, ().into_any(), None)}
                 <Card flush=true label="Files" fill=true>
                     <LoadFailure
                         centred=true
@@ -586,7 +734,7 @@ pub fn FilePane(
             </section>
         }
         .into_any(),
-        Listing::Ready(list) => ready(list, grouping, collapsed, search, facet, on_open),
+        Listing::Ready(list) => ready(list, grouping, collapsed, search, facet, on_open, picking),
     }
 }
 
@@ -597,6 +745,7 @@ fn ready(
     search: RwSignal<String>,
     facet: RwSignal<String>,
     on_open: Callback<String>,
+    picking: Picking,
 ) -> AnyView {
     let FileList {
         entries,
@@ -604,7 +753,7 @@ fn ready(
         total,
         truncated,
     } = list;
-    let loaded = entries.len();
+    let loaded_count = entries.len();
     let rows: Vec<Row> = entries
         .into_iter()
         .map(|e| Row {
@@ -614,12 +763,30 @@ fn ready(
             path: e.filename,
         })
         .collect();
+    let loaded = StoredValue::new(offered(&rows));
     let rows = StoredValue::new(rows);
-    // A memo, so a keystroke that leaves the same rows standing — the first
-    // letters typed into a big package — rebuilds nothing.
+
+    // What the list draws and select-all counts and ticks. A memo, so a
+    // keystroke that leaves the same rows standing — the first letters typed
+    // into a big package — rebuilds nothing.
     let shown = Memo::new(move |_| {
         let f = Facet::from_key(&facet.get());
         search.with(|q| rows.with_value(|rs| shown_rows(rs, q, f)))
+    });
+    // A view control narrowed the list. Known here, not from the count: a
+    // facet can narrow to exactly as many rows as there are (`SelectAll`).
+    let narrowed = Signal::derive(move || {
+        !search.with(String::is_empty) || Facet::from_key(&facet.get()) != Facet::All
+    });
+    let shown_offered = Signal::derive(move || shown.with(|rs| offered(rs)));
+    let headed = Signal::derive(move || {
+        let g = Grouping::from_label(&grouping.get());
+        shown.with(|rs| {
+            let paths: Vec<&str> = rs.iter().map(|r| r.path.as_str()).collect();
+            group(&paths, g)
+                .iter()
+                .any(|i| matches!(i, Item::Group { .. }))
+        })
     });
 
     let body = move || {
@@ -635,7 +802,7 @@ fn ready(
         let g = Grouping::from_label(&grouping.get());
         shown.with(|rs| {
             if !rs.is_empty() {
-                return rows_view(rs, g, collapsed, on_open);
+                return rows_view(rs, g, collapsed, on_open, picking);
             }
             let f = Facet::from_key(&facet.get());
             // Compact: `Blankslate`'s own padding is taller than this box at
@@ -678,10 +845,15 @@ fn ready(
     view! {
         <section class=style::root aria-label="Files">
             {search_row(search)}
-            {toolbar(grouping, Some(facets(&counts, facet).into_any()))}
+            {toolbar(
+                grouping,
+                select_all(picking, shown_offered, narrowed, headed),
+                Some(facets(&counts, facet).into_any()),
+            )}
             <Card flush=true label="Files" fill=true>
-                {truncated.then(|| view! { <CapNotice total=total shown=loaded /> })}
+                {truncated.then(|| view! { <CapNotice total=total shown=loaded_count /> })}
                 {body}
+                {footer(picking, loaded)}
             </Card>
         </section>
     }
@@ -908,7 +1080,7 @@ mod facet_tests {
 mod pane_tests {
     use super::*;
     use crate::commands::{EntryCounts, EntryData};
-    use crate::test_support::{element_saying, mount};
+    use crate::test_support::{button_saying, element_saying, mount};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -1210,6 +1382,29 @@ mod pane_tests {
         el.text_content().unwrap_or_default()
     }
 
+    /// Ignored rows are hidden until the `Ignored` facet shows them, and even
+    /// then one that is not downloaded carries no box: stop ignoring it first.
+    #[test]
+    fn only_a_missing_row_that_is_not_ignored_can_be_ticked() {
+        let r = |place, ignored| Row {
+            path: "a.csv".to_string(),
+            size: String::new(),
+            place,
+            ignored,
+        };
+        assert!(r(Place::Missing, false).selectable());
+        assert!(!r(Place::Missing, true).selectable());
+        for place in [
+            Place::Here,
+            Place::Changed,
+            Place::New,
+            Place::Deleted,
+            Place::Unknown,
+        ] {
+            assert!(!r(place, false).selectable());
+        }
+    }
+
     #[test]
     fn counts_carry_thousands_separators() {
         assert_eq!(thousands(0), "0");
@@ -1351,6 +1546,272 @@ mod pane_tests {
             deleted.closest("label").unwrap().is_none(),
             "and a deleted one is inert"
         );
+    }
+
+    /// A pane over these rows, with its selection handed in so a test can
+    /// read what was ticked and what `[Download]` asked for.
+    fn picking_pane(
+        entries: Vec<EntryData>,
+        picking: Picking,
+        grouping: Grouping,
+    ) -> web_sys::Element {
+        let total = entries.len();
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(grouping.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        })
+    }
+
+    fn boxes(el: &web_sys::Element) -> u32 {
+        el.query_selector_all("input[type=checkbox]")
+            .unwrap()
+            .length()
+    }
+
+    fn tick(el: &web_sys::Element, name: &str) {
+        let row = el
+            .query_selector(&format!("[title='{name}']"))
+            .unwrap()
+            .expect("titled row")
+            .closest("label")
+            .unwrap()
+            .expect("a selectable row is a label");
+        let input: web_sys::HtmlElement = row
+            .query_selector("input[type=checkbox]")
+            .unwrap()
+            .unwrap()
+            .unchecked_into();
+        input.click();
+    }
+
+    fn mixed_package() -> Vec<EntryData> {
+        vec![
+            entry("added.txt", "added"),
+            entry("deleted.txt", "deleted"),
+            entry("here.txt", "pristine"),
+            EntryData {
+                status: "remote".to_string(),
+                ..ignored("junk.tmp")
+            },
+            entry("remote-a.csv", "remote"),
+            entry("remote-b.csv", "remote"),
+        ]
+    }
+
+    /// A facet or a search narrows what select-all reaches, and its label
+    /// says so; under `Ignored` nothing can be ticked, so it is gone.
+    #[wasm_bindgen_test]
+    async fn the_view_controls_narrow_select_all_and_say_so() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::NotDownloaded.key().to_string());
+        let entries = mixed_package();
+        let total = entries.len();
+        let picking = Picking::default();
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        });
+        element_saying(&el, "Select all 2 shown");
+        search.set("remote-a".to_string());
+        leptos::task::tick().await;
+        element_saying(&el, "Select all 1 shown");
+        // A search hides a tick without undoing it: `[Download]` counts both.
+        picking
+            .ticked
+            .set(["remote-a.csv".to_string(), "remote-b.csv".to_string()].into());
+        leptos::task::tick().await;
+        element_saying(&el, "1 of 1 selected");
+        button_saying(&el, "Download 2");
+        search.set(String::new());
+        facet.set(Facet::Ignored.key().to_string());
+        leptos::task::tick().await;
+        assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+        assert!(!text(&el).contains("Select all"));
+        button_saying(&el, "Download 2");
+    }
+
+    /// Only a not-downloaded, non-ignored row carries a box — here two of
+    /// them — and select-all counts exactly those.
+    #[wasm_bindgen_test]
+    fn only_downloadable_rows_carry_a_box_and_select_all_counts_them() {
+        let el = picking_pane(mixed_package(), Picking::default(), Grouping::BaseFolder);
+        assert_eq!(
+            boxes(&el),
+            3,
+            "two rows and select-all; markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "Select all 2");
+    }
+
+    #[wasm_bindgen_test]
+    async fn select_all_reads_what_is_ticked_and_ticks_what_is_shown() {
+        let picking = Picking::default();
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+
+        tick(&el, "remote-a.csv");
+        leptos::task::tick().await;
+        element_saying(&el, "1 of 2 selected");
+
+        // Mixed, so a click ticks the rest.
+        element_saying(&el, "1 of 2 selected").click();
+        leptos::task::tick().await;
+        element_saying(&el, "2 of 2 selected");
+        assert_eq!(
+            picking.ticked.get_untracked(),
+            ["remote-a.csv", "remote-b.csv"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+        );
+
+        element_saying(&el, "2 of 2 selected").click();
+        leptos::task::tick().await;
+        element_saying(&el, "Select all 2");
+    }
+
+    /// A heading's box names its group, and ticks the rows under it.
+    #[wasm_bindgen_test]
+    async fn a_heading_box_names_its_group_and_ticks_its_rows() {
+        let picking = Picking::default();
+        let el = picking_pane(
+            vec![
+                entry("raw/a.csv", "remote"),
+                entry("raw/b.csv", "remote"),
+                entry("raw/c.csv", "pristine"),
+            ],
+            picking,
+            Grouping::BaseFolder,
+        );
+        let heading: web_sys::HtmlElement = el
+            .query_selector("input[aria-label='Select all in raw/']")
+            .unwrap()
+            .expect("the heading's box names its group")
+            .unchecked_into();
+        heading.click();
+        leptos::task::tick().await;
+        assert_eq!(picking.ticked.get_untracked().len(), 2);
+        element_saying(&el, "2 of 2 selected");
+    }
+
+    /// The footer exists only while something is ticked, and `[Download]`
+    /// sends the ticked paths in path order.
+    #[wasm_bindgen_test]
+    async fn the_footer_appears_on_a_tick_and_downloads_the_ticked_paths() {
+        let asked = RwSignal::new(Vec::<Vec<String>>::new());
+        let picking = Picking {
+            on_download: Callback::new(move |paths| asked.update(|a| a.push(paths))),
+            ..Picking::default()
+        };
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+        let download = |el: &web_sys::Element| {
+            let all = el.query_selector_all("button").unwrap();
+            (0..all.length())
+                .map(|i| {
+                    all.item(i)
+                        .unwrap()
+                        .unchecked_into::<web_sys::HtmlElement>()
+                })
+                .find(|b| {
+                    b.text_content()
+                        .unwrap_or_default()
+                        .trim()
+                        .starts_with("Download")
+                })
+        };
+        assert!(download(&el).is_none(), "no footer with nothing ticked");
+
+        tick(&el, "remote-b.csv");
+        tick(&el, "remote-a.csv");
+        leptos::task::tick().await;
+        let button = download(&el).expect("the footer's Download");
+        assert_eq!(
+            button.text_content().unwrap_or_default().trim(),
+            "Download 2"
+        );
+        button.click();
+        assert_eq!(
+            asked.get_untracked(),
+            vec![vec!["remote-a.csv".to_string(), "remote-b.csv".to_string()]]
+        );
+    }
+
+    /// While the page runs a command, a download included, no box moves:
+    /// rows, group headings and select-all are all disabled. So a download
+    /// that settles clears only the ticks it sent.
+    #[wasm_bindgen_test]
+    fn every_box_is_disabled_while_the_page_is_busy() {
+        let picking = Picking {
+            busy: Signal::stored(true),
+            ..Picking::default()
+        };
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+        let all = el.query_selector_all("input[type=checkbox]").unwrap();
+        assert!(all.length() > 0, "markup was {}", el.inner_html());
+        for i in 0..all.length() {
+            let input: web_sys::HtmlInputElement = all.item(i).unwrap().unchecked_into();
+            assert!(
+                input.disabled(),
+                "box {i} is live; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn the_download_shows_its_progress_on_the_button() {
+        let picking = Picking {
+            downloading: Signal::stored(true),
+            ..Picking::default()
+        };
+        picking.ticked.set(["remote-a.csv".to_string()].into());
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+        let button = button_saying(&el, "Download 1");
+        assert_eq!(button.get_attribute("aria-busy").as_deref(), Some("true"));
+        assert!(button.disabled());
+    }
+
+    /// Under whole-package Keeping the scope has taken the per-file choice
+    /// away: no boxes, no select-all, and no footer even with a tick left over.
+    #[wasm_bindgen_test]
+    fn whole_package_scope_draws_no_boxes_no_select_all_and_no_footer() {
+        let picking = Picking {
+            whole_package: true,
+            ..Picking::default()
+        };
+        picking.ticked.set(["remote-a.csv".to_string()].into());
+        let el = picking_pane(
+            vec![
+                entry("raw/a.csv", "remote"),
+                entry("raw/b.csv", "remote"),
+                entry("remote-a.csv", "remote"),
+            ],
+            picking,
+            Grouping::BaseFolder,
+        );
+        assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+        assert!(!text(&el).contains("Select all"));
+        assert!(!text(&el).contains("Download"));
     }
 
     #[wasm_bindgen_test]
