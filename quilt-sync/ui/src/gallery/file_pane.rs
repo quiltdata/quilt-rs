@@ -1123,7 +1123,7 @@ fn replace_mine(open: RwSignal<bool>) -> AnyView {
 }
 
 /// This scene's package as the page read's entries: sorted by path, ignored
-/// files included for the pane to hide.
+/// files included for the pane's `Ignored` facet.
 fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
     let mut files = files;
     files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1185,6 +1185,7 @@ fn live(list: crate::commands::EntryList) -> AnyView {
                 grouping=RwSignal::new(crate::pages::Grouping::BaseFolder.label().to_string())
                 collapsed=RwSignal::new(std::collections::BTreeSet::new())
                 search=RwSignal::new(String::new())
+                facet=RwSignal::new(crate::pages::Facet::All.key().to_string())
                 on_open=Callback::new(|_: String| ())
                 on_retry=Callback::new(|()| ())
             />

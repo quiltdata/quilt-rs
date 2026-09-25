@@ -38,8 +38,14 @@ impl KeepingCommands {
             store: |namespace, entire_package| {
                 Box::pin(commands::package_set_sync_scope(namespace, entire_package))
             },
+            // The skipped paths are the file pane's to show; Keeping's
+            // download reports only whether it ran.
             download: |namespace, paths| {
-                Box::pin(commands::package_download_backlog(namespace, paths))
+                Box::pin(async move {
+                    commands::package_download_backlog(namespace, paths)
+                        .await
+                        .map(|_skipped| ())
+                })
             },
         }
     }

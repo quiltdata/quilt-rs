@@ -94,6 +94,8 @@ stylance::import_crate_style!(style, "src/kit/entry_row.module.scss");
 pub struct EntrySelection {
     pub selected: Signal<bool>,
     pub on_toggle: Callback<bool>,
+    /// The box is shown but cannot move, as while a download runs.
+    pub disabled: Signal<bool>,
 }
 
 impl EntrySelection {
@@ -102,6 +104,16 @@ impl EntrySelection {
         Self {
             selected: selected.into(),
             on_toggle,
+            disabled: Signal::stored(false),
+        }
+    }
+
+    /// Hold the box still while `disabled` is true.
+    #[must_use]
+    pub fn disabled(self, disabled: impl Into<Signal<bool>>) -> Self {
+        Self {
+            disabled: disabled.into(),
+            ..self
         }
     }
 }
@@ -199,12 +211,14 @@ pub fn EntryRow(
         Some(EntryAction::Select(EntrySelection {
             selected,
             on_toggle,
+            disabled,
         })) => view! {
             <label class=style::main>
                 {gutter()}
                 <Checkbox
                     state=Signal::derive(move || selected.get().into())
                     on_toggle=move |next| on_toggle.run(next)
+                    disabled=disabled
                 />
                 <span class=style::name title=full_name>{name}</span>
                 {trailing()}
