@@ -267,7 +267,7 @@ fn CapNotice(total: usize, shown: usize) -> impl IntoView {
 }
 
 /// One file, reduced to what drawing it needs.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Row {
     path: String,
     size: String,
@@ -522,23 +522,26 @@ fn ready(
             .into_any()
         }
     } else {
-        let rows = StoredValue::new(rows);
+        // A memo, so a keystroke that leaves the same rows standing — the
+        // first letters typed into a big package — rebuilds nothing.
+        let shown = Memo::new(move |_| search.with(|q| shown_rows(&rows, q)));
         (move || {
             let g = Grouping::from_label(&grouping.get());
-            let rows = search.with(|q| rows.with_value(|rs| shown_rows(rs, q)));
-            if rows.is_empty() {
-                // Compact: `Blankslate`'s own padding is taller than this box
-                // at the height floor. No action yet — see `Blankslate`.
-                return view! {
-                    <Blankslate
-                        compact=true
-                        heading="No files match"
-                        description="Nothing in this view matches what you are looking for."
-                    />
+            shown.with(|rows| {
+                if rows.is_empty() {
+                    // Compact: `Blankslate`'s own padding is taller than this box
+                    // at the height floor. No action yet — see `Blankslate`.
+                    return view! {
+                        <Blankslate
+                            compact=true
+                            heading="No files match"
+                            description="Nothing in this view matches what you are looking for."
+                        />
+                    }
+                    .into_any();
                 }
-                .into_any();
-            }
-            rows_view(&rows, g, collapsed, on_open)
+                rows_view(rows, g, collapsed, on_open)
+            })
         })
         .into_any()
     };
@@ -1256,5 +1259,30 @@ mod pane_tests {
         );
         assert!(el.query_selector("[title='notes/a.md']").unwrap().is_none());
         assert!(titled(&el, "raw/plate-01.csv"));
+    }
+
+    /// A keystroke that leaves the same rows standing rebuilds nothing: the
+    /// rows on screen are the very nodes that were there before it.
+    #[wasm_bindgen_test]
+    async fn a_search_that_keeps_every_row_rebuilds_none() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        let before = el
+            .query_selector("[title='raw/plate-01.csv']")
+            .unwrap()
+            .expect("the row");
+        type_search(&el, "pla").await;
+        type_search(&el, "plat").await;
+        let after = el
+            .query_selector("[title='raw/plate-01.csv']")
+            .unwrap()
+            .expect("the row");
+        assert!(before.is_same_node(Some(&after)), "the row was rebuilt");
     }
 }
