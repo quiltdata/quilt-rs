@@ -59,10 +59,14 @@ jobs:
         with:
           tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
 
+      # The runner's default budget is 20s for the whole run, browser start and
+      # wasm load included, and the suite's own time is about 18s: at that edge
+      # it is killed (SIGKILL, no failing test) partway through. Room to grow.
       - name: Test
         run: cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          WASM_BINDGEN_TEST_TIMEOUT: "60"
 
       # The crate's two test flavours run on two targets and neither harness sees
       # the other's: `wasm-bindgen-test-runner` enumerates only `#[wasm_bindgen_test]`,

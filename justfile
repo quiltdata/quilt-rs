@@ -63,6 +63,7 @@ test:
 test-no-aws:
     cargo nextest run --profile no-aws {{ scope }}
 
-# Run QuiltSync frontend tests in headless Firefox
+# Run QuiltSync frontend tests in headless Firefox. The runner's default 20s
+# budget covers the whole run, and the suite alone takes about 18s.
 test-frontend:
-    CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
+    WASM_BINDGEN_TEST_TIMEOUT=60 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
