@@ -31,7 +31,15 @@ pub struct InstalledPackageData {
     /// "unable to check remote status" copy, and must not offer Login: the
     /// session is healthy, so signing in again re-vends the same role.
     pub no_access_reason: Option<String>,
+    /// Sorted by path, then capped at 1000.
     pub entries: Vec<EntryData>,
+    /// Whole-package facet counts for the v2 file pane.
+    pub counts: EntryCounts,
+    /// Every entry the package has, ignored ones included, before the cap.
+    pub total: usize,
+    /// The cap dropped entries. Set by the backend; never infer it from
+    /// `entries.len()`.
+    pub truncated: bool,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -41,6 +49,18 @@ pub struct InstalledPackageData {
     pub syncs_entire_package: bool,
     /// Whether the experiment that offers the scope control is on.
     pub entire_package_sync_enabled: bool,
+}
+
+/// The v2 file pane's facet counts, over the whole package. The facets are
+/// disjoint apart from `all`, which excludes only the ignored entries.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryCounts {
+    pub all: usize,
+    /// Added, modified and deleted.
+    pub changed: usize,
+    pub not_downloaded: usize,
+    pub ignored: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -1673,11 +1693,30 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, KeepingScope, PackageContextData, PackageItemData,
-        PullOutcome, ResolveData, RevisionHistoryRow, RolesData, ViolationField, WorkflowInfo,
-        WorkflowIntent,
+        CommitViolation, CommitWorkflows, EntryCounts, KeepingScope, PackageContextData,
+        PackageItemData, PullOutcome, ResolveData, RevisionHistoryRow, RolesData, ViolationField,
+        WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
+
+    /// Anchored identically in the backend's `entry_counts_wire_form_is_verbatim`.
+    #[test]
+    fn entry_counts_wire_form_is_verbatim() {
+        let counts = serde_json::from_str::<EntryCounts>(
+            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            counts,
+            EntryCounts {
+                all: 1410,
+                changed: 700,
+                not_downloaded: 700,
+                ignored: 10,
+            }
+        );
+    }
 
     /// Anchored identically in the backend's
     /// `current_revision_context_wire_form_is_verbatim` test, `keeping` included.

@@ -41,6 +41,7 @@
 - A screen that fails to load shows one top bar, not two. Settings and the screen a `quilt+s3://` link opens on drew the error page's own bar under theirs (<https://github.com/quiltdata/quilt-rs/pull/988>)
 - Downloading files from a bucket without versioning, after a later revision replaced some of them, installs the rest and skips those. Before, it placed the later revision's bytes, and the file read as modified though nobody touched it. The notice after the download says how many files were skipped and names them. A `quilt+s3://` link to one such file says it is no longer on the remote instead of opening the wrong one (<https://github.com/quiltdata/quilt-rs/pull/991>)
 - Downloading a package's files no longer replaces a file of your own that is already at the same place in the package folder. If you had created a file there and not yet committed it, the download wrote the remote file over it and your file was lost; now the download stops with "A local file is already at …" naming it, and your file is left as it was (<https://github.com/quiltdata/quilt-rs/pull/986>)
+- A package with more than 1000 files now lists its first 1000 in path order. It used to fill the list with changed files first and drop others that sort before them, so the list skipped around the package (<https://github.com/quiltdata/quilt-rs/pull/992>)
 
 ### quilt-rs
 
