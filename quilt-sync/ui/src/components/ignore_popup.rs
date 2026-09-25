@@ -35,8 +35,15 @@ pub fn IgnorePopup(
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
     on_close: impl Fn() + Clone + 'static,
+    /// A page's one-command lock. Given one, the popup does not add a pattern
+    /// while another command holds it, and holds it while its own write runs,
+    /// so `.quiltignore` never changes under a command writing the same tree.
+    /// v1 and the commit page pass none.
+    #[prop(optional)]
+    lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {
     let pattern = RwSignal::new(data.suggested_pattern.clone());
+    let held = move || lock.is_some_and(|l| l.get());
     let hint = RwSignal::new(Option::<IgnoreHint>::None);
     let submitting = RwSignal::new(false);
 
@@ -86,15 +93,26 @@ pub fn IgnorePopup(
     let on_close_for_submit = on_close.clone();
     let on_submit = move || {
         let p = pattern.get_untracked();
-        if p.trim().is_empty() || submitting.get_untracked() {
+        if p.trim().is_empty()
+            || submitting.get_untracked()
+            || lock.is_some_and(|l| l.get_untracked())
+        {
             return;
         }
         submitting.set(true);
+        if let Some(lock) = lock {
+            lock.set(true);
+        }
         let ns = ns_for_submit.clone();
         let uri = uri_for_submit.clone();
         let on_close = on_close_for_submit.clone();
         leptos::task::spawn_local(async move {
-            match commands::add_to_quiltignore(ns, p, uri).await {
+            let answer = commands::add_to_quiltignore(ns, p, uri).await;
+            // `try_`: the lock is a page's, and the page can be gone by now.
+            if let Some(lock) = lock {
+                lock.try_set(false);
+            }
+            match answer {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     on_close();
@@ -155,7 +173,10 @@ pub fn IgnorePopup(
                         })}
                     </div>
                     <div class="ignore-actions">
-                        <buttons::FormPrimary on_click=on_submit_click disabled=submitting>
+                        <buttons::FormPrimary
+                            on_click=on_submit_click
+                            disabled=Signal::derive(move || submitting.get() || held())
+                        >
                             "Add to .quiltignore"
                         </buttons::FormPrimary>
                         <buttons::FormSecondary on_click=on_cancel />
@@ -217,5 +238,76 @@ pub fn UnignorePopup(
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn popup(lock: Option<RwSignal<bool>>) -> web_sys::Element {
+        let data = IgnorePopupData {
+            namespace: "team/dataset".to_string(),
+            path: "raw/a.csv".to_string(),
+            suggested_pattern: "raw/a.csv".to_string(),
+            uri: None,
+        };
+        mount(move || match lock {
+            Some(lock) => view! {
+                <IgnorePopup
+                    data=data.clone()
+                    notification=RwSignal::new(None)
+                    refetch=Trigger::new()
+                    on_close=|| ()
+                    lock=lock
+                />
+            }
+            .into_any(),
+            None => view! {
+                <IgnorePopup
+                    data=data.clone()
+                    notification=RwSignal::new(None)
+                    refetch=Trigger::new()
+                    on_close=|| ()
+                />
+            }
+            .into_any(),
+        })
+    }
+
+    fn submit(el: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        el.query_selector(".ignore-actions button")
+            .unwrap()
+            .expect("the submit")
+            .unchecked_into()
+    }
+
+    /// Given the page's lock, the popup cannot add a pattern while another
+    /// command holds it, and can once it is released.
+    #[wasm_bindgen_test]
+    async fn a_held_lock_holds_the_submit() {
+        let lock = RwSignal::new(true);
+        let el = popup(Some(lock));
+        assert!(submit(&el).disabled(), "markup was {}", el.inner_html());
+        lock.set(false);
+        leptos::task::tick().await;
+        assert!(!submit(&el).disabled());
+    }
+
+    /// The pattern starts as the one the caller suggested: the v2 pane's path.
+    #[wasm_bindgen_test]
+    async fn the_pattern_starts_as_suggested_and_no_lock_leaves_the_submit_live() {
+        let el = popup(None);
+        leptos::task::tick().await;
+        let input: web_sys::HtmlInputElement = el
+            .query_selector(".ignore-input")
+            .unwrap()
+            .expect("the pattern field")
+            .unchecked_into();
+        assert_eq!(input.value(), "raw/a.csv");
+        assert!(!submit(&el).disabled());
     }
 }
