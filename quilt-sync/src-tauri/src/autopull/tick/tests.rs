@@ -12,6 +12,7 @@ use crate::autopull::Clocks;
 use crate::autopull::PullSettings;
 use crate::autopull::PushSettings;
 use crate::autopull::WindowMode;
+use crate::autopull::activity::AutopullActivity;
 use crate::autopull::reporter::LogReporter;
 use crate::autopull::reporter::test_support::RecordingReporter;
 use crate::model::MockQuiltModel;
@@ -1822,6 +1823,195 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
         inner.paused.read().await.is_empty(),
         "an apply that overlapped the verdict must suppress the pause even though \
          it had finished by the time the gate looked"
+    );
+    Ok(())
+}
+
+// ── The activity line: the tick names exactly its transfers ──
+//
+// The line says a pull or publish is running, so it must span the transfer and
+// nothing else: the check that runs every cadence reads only, and a line lit for
+// it would flicker on every tick with nothing moving.
+
+fn pulling(ns: &Namespace) -> AutopullActivity {
+    AutopullActivity {
+        op: ActivityOp::Pull,
+        namespace: ns.clone(),
+    }
+}
+
+#[tokio::test]
+async fn the_pull_holds_its_activity_while_it_applies() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(move |_, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.activity());
+            Ok(applied())
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(Some(pulling(&ns))),
+        "the apply moves files — the line must name it while it runs"
+    );
+    assert_eq!(agg.activity(), None, "and clear once it returns");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_pull_clears_its_activity() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(move |_, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.activity());
+            Err(Error::from(quilt::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "connection reset",
+            ))))
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(*seen.lock().unwrap(), Some(Some(pulling(&ns))));
+    assert_eq!(
+        agg.activity(),
+        None,
+        "a line left set would say a pull is running after it failed"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_classify_shows_no_activity() -> Result<(), Error> {
+    let agg = test_aggregator();
+    // Not `behind_clean_model`: its status stub would answer first, and this
+    // test needs the walk itself to look.
+    let lineage = behind_clean_lineage();
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (seen_status, agg_status) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_get_installed_package_status()
+        .returning(move |_, _| {
+            seen_status.lock().unwrap().push(agg_status.activity());
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                BTreeMap::new(),
+            ))
+        });
+    let (seen_outcome, agg_outcome) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_package_pull_outcome()
+        .times(1)
+        .returning(move |_| {
+            seen_outcome.lock().unwrap().push(agg_outcome.activity());
+            Ok(preview(PullOutcome::CleanUpdate))
+        });
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.len() >= 2,
+        "both the status walk and the classify must have run, saw {seen:?}"
+    );
+    assert!(
+        seen.iter().all(Option::is_none),
+        "the check reads only — the line must not name it, saw {seen:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h0".to_string(),
+        origin: Some("catalog.dev".parse().unwrap()),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model
+        .expect_get_installed_package_status()
+        .times(1..)
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                BTreeMap::new(),
+            ))
+        });
+    model.expect_package_pull_outcome().times(0);
+    model.expect_package_pull().times(0);
+    model.expect_package_publish().times(0);
+
+    let activity = agg.subscribe_activity();
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert!(
+        !activity.has_changed().unwrap(),
+        "an up-to-date package moves nothing — the line must never be set, \
+         not even for an instant"
     );
     Ok(())
 }

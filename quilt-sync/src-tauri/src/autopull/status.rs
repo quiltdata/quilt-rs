@@ -90,13 +90,6 @@ pub struct SyncTrayAggregator {
     /// The transfer the tick is running, if any — the window's activity line.
     /// On its own channel because it is not the tray mode: `tx` carries what
     /// the icon shows, and this would change it for no reason of the icon's.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the tick takes it next; drop this with the first caller"
-        )
-    )]
     activity: watch::Sender<Option<AutopullActivity>>,
 }
 
@@ -109,13 +102,6 @@ pub struct ApplyGuard<'a> {
 
 /// Names the transfer in flight until dropped — on return, on `?`, or on
 /// unwind.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the tick takes it next; drop this with the first caller"
-    )
-)]
 pub struct ActivityGuard<'a> {
     activity: &'a watch::Sender<Option<AutopullActivity>>,
 }
@@ -227,13 +213,6 @@ impl SyncTrayAggregator {
     ///
     /// No `publish()`: the activity is not the tray mode, and has its own
     /// channel so that taking it never touches what the icon shows.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the tick takes it next; drop this with the first caller"
-        )
-    )]
     pub fn activity_guard(&self, op: ActivityOp, namespace: &Namespace) -> ActivityGuard<'_> {
         self.activity.send_replace(Some(AutopullActivity {
             op,
