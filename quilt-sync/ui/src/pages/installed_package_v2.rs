@@ -516,18 +516,30 @@ fn row_runner(
 /// `util::file_uri` for *Copy URI*, and for *Copy path* the path inside the
 /// package, which a `New` file has though no revision holds it. `None` for a
 /// command that copies nothing, or an address with no remote to build it from.
+///
+/// The header's remote names the revision this copy holds; the address is
+/// built at `Latest` instead, as the recent-files list builds its own
+/// (`util::package_uri`), so a copied address points at the package rather
+/// than at the revision the copier happens to have.
 fn clip(
     command: &RowCommand,
     uri: Option<&quilt_uri::S3PackageUri>,
 ) -> Option<(String, Option<quilt_uri::S3PackageUri>)> {
+    let file = |path: &str| {
+        uri.map(|u| {
+            let latest = quilt_uri::S3PackageUri {
+                revision: quilt_uri::RevisionPointer::Tag(quilt_uri::Tag::Latest),
+                ..u.clone()
+            };
+            crate::util::file_uri(&latest, path)
+        })
+    };
     match command {
         RowCommand::CopyUri(path) => {
-            let file = crate::util::file_uri(uri?, path);
+            let file = file(path)?;
             Some((file.display(), Some(file)))
         }
-        RowCommand::CopyPath(path) => {
-            Some((path.clone(), uri.map(|u| crate::util::file_uri(u, path))))
-        }
+        RowCommand::CopyPath(path) => Some((path.clone(), file(path))),
         _ => None,
     }
 }
@@ -1191,6 +1203,22 @@ mod tests {
         assert_eq!(text, "runs/new.csv");
         assert!(clip(&RowCommand::CopyUri("a.csv".to_string()), None).is_none());
         assert!(clip(&RowCommand::Ignore("a.csv".to_string()), Some(&package)).is_none());
+
+        // The header's remote names the revision this copy holds; the address
+        // names the package, as the recent-files list's does.
+        let pinned = quilt_uri::S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Hash("abc123".to_string()),
+            ..package.clone()
+        };
+        let (text, _) = clip(
+            &RowCommand::CopyUri("runs/one.csv".to_string()),
+            Some(&pinned),
+        )
+        .unwrap();
+        assert_eq!(
+            text,
+            "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=example.quilt.dev"
+        );
     }
 
     /// A download the remote could not finish is a warning that names the
