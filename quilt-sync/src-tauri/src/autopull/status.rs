@@ -224,25 +224,11 @@ impl SyncTrayAggregator {
     }
 
     /// The transfer running now, for a reader that mounts mid-transfer.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the window reads it once it is wired; drop this with the first caller"
-        )
-    )]
     pub fn activity(&self) -> Option<AutopullActivity> {
         self.activity.borrow().clone()
     }
 
     /// Follow the activity: every set and every clear.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the window reads it once it is wired; drop this with the first caller"
-        )
-    )]
     pub fn subscribe_activity(&self) -> watch::Receiver<Option<AutopullActivity>> {
         self.activity.subscribe()
     }
