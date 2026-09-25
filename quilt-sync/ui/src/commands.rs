@@ -2344,6 +2344,64 @@ pub async fn dismiss_toast(id: u64) -> Result<(), String> {
     tauri::invoke("dismiss_toast", &Args { id }).await
 }
 
+// ── Autopull activity (what autopull is doing right now) ──
+
+/// Event carrying autopull's current activity. Kept in lockstep with the backend.
+pub const AUTOPULL_ACTIVITY_EVENT: &str = "autopull-activity";
+
+/// What autopull is doing to a package.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ActivityOp {
+    Pull,
+    Publish,
+}
+
+/// The one pull or publish autopull is running. Mirrors the backend's `AutopullActivity`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutopullActivity {
+    pub op: ActivityOp,
+    pub namespace: Namespace,
+}
+
+/// Autopull's activity now, or `None` when it is idle — the mount-time hydration read.
+pub async fn get_autopull_activity() -> Result<Option<AutopullActivity>, String> {
+    #[derive(Serialize)]
+    struct Args {}
+    tauri::invoke("get_autopull_activity", &Args {}).await
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::{ActivityOp, AutopullActivity};
+
+    /// Pins the backend's wire form: camelCase, the op as a lowercase string.
+    #[test]
+    fn an_activity_reads_from_the_wire() {
+        let pull =
+            serde_json::from_str::<AutopullActivity>(r#"{"op":"pull","namespace":"team/pkg"}"#)
+                .unwrap();
+        assert_eq!(pull.op, ActivityOp::Pull);
+        assert_eq!(pull.namespace.to_string(), "team/pkg");
+
+        let publish =
+            serde_json::from_str::<AutopullActivity>(r#"{"op":"publish","namespace":"team/pkg"}"#)
+                .unwrap();
+        assert_eq!(publish.op, ActivityOp::Publish);
+        assert_eq!(publish.namespace.to_string(), "team/pkg");
+    }
+
+    /// The backend sends `null` when autopull is idle.
+    #[test]
+    fn null_reads_as_nothing() {
+        assert_eq!(
+            serde_json::from_str::<Option<AutopullActivity>>("null").unwrap(),
+            None
+        );
+    }
+}
+
 pub async fn quit_prompt_shown(generation: u64) -> Result<(), String> {
     tauri::invoke("quit_prompt_shown", &QuitPromptShownArgs { generation }).await
 }
