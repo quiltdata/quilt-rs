@@ -3,7 +3,9 @@
 //! The header and the context pane are drawn from one authoritative read. The
 //! pane has two modes: the ordinary one, and Resolve, which `resolve=1` asks
 //! for and a diverged package's comparison makes real. The file pane, the
-//! shell's growing left side, has a read of its own —
+//! shell's growing left side, comes after the context pane in the DOM, so
+//! reading and focus order is context first; the stylesheet places it. It has
+//! a read of its own —
 //! `get_installed_package_data`, the list v1 draws too — so a package with a
 //! thousand files does not hold the header back. The differing set it will
 //! mark is already derived here, as [`FileMarks`].
@@ -354,13 +356,13 @@ fn package_body(
         <div class=style::page>
             <PageHeader data=header w=w resolving=open />
             <div class=style::shell>
+                {pane}
                 <FilePane
                     listing=files.listing
                     grouping=files.grouping
                     on_open=open_file
                     on_retry=files.retry
                 />
-                {pane}
             </div>
         </div>
     }
@@ -441,8 +443,8 @@ fn package_skeleton() -> AnyView {
         <div class=style::page>
             <PageHeaderSkeleton />
             <div class=style::shell>
-                <FilePaneSkeleton />
                 <CurrentRevisionPaneSkeleton />
+                <FilePaneSkeleton />
             </div>
         </div>
     }
@@ -1111,6 +1113,34 @@ mod tests {
         );
     }
 
+    /// Reading and focus order is context first, files second: the context
+    /// pane precedes the file pane in the DOM, whatever the stylesheet draws.
+    #[wasm_bindgen_test]
+    fn the_context_pane_precedes_the_file_pane_in_document_order() {
+        let el = mount(|| {
+            let w = Wiring::new();
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
+            }
+        });
+        let context = el
+            .query_selector("aside[aria-label='About this package']")
+            .unwrap()
+            .expect("the context pane");
+        let files = el
+            .query_selector("section[aria-label='Files']")
+            .unwrap()
+            .expect("the file pane");
+        let following = context.compare_document_position(&files);
+        assert_ne!(
+            following & web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+            0,
+            "the file pane follows the context pane; markup was {}",
+            el.inner_html()
+        );
+    }
+
     /// The live pane's trigger arrives with the body, stating the page read's
     /// count, and nothing opens until it is pressed: the list is lazy.
     #[wasm_bindgen_test]
@@ -1231,8 +1261,12 @@ mod tests {
         assert!(PAGE.contains("container-type: inline-size"));
         assert!(PAGE.contains("@container (max-width: 800px)"));
         assert!(
-            PAGE.contains("order: -1"),
-            "context above files when stacked"
+            PAGE.contains(".shell > aside {\n  order: 1;"),
+            "files on the leading side while the two share a row"
+        );
+        assert!(
+            PAGE.contains("order: 0"),
+            "context above files, in DOM order, when stacked"
         );
         assert!(PANE.contains("width: 280px"));
         assert!(PANE.contains("@container (max-width: 800px)"));

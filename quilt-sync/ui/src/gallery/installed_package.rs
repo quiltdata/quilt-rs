@@ -90,10 +90,9 @@
 //! 300 it took stacked in a column, and every pixel of that is a row of the list
 //! under it.
 //!
-//! One thing that costs: `column-reverse` swaps what you see and leaves the DOM
-//! alone, so at narrow the focus order reaches the file pane before the context
-//! pane above it. A page written in Leptos can reorder the two for real behind a
-//! media query, which is the fix; a stylesheet on its own cannot.
+//! The context pane comes first in the DOM, so reading and focus order is
+//! context, then files, at every width. Wide, `order` draws the files on the
+//! leading side; stacked, the order resets and what you see is DOM order.
 
 use leptos::prelude::*;
 
@@ -146,13 +145,13 @@ fn page(
                         action_open=resolving
                     />
                     <div class="g-ip-shell">
-                        <FilePaneRegion name=name ticked=ticked marked=resolving />
                         <ContextPaneRegion
                             resolving=resolving
                             scope=scope
                             pending=2
                             exit=format!("#{name}")
                         />
+                        <FilePaneRegion name=name ticked=ticked marked=resolving />
                     </div>
                 </div>
             </PageLayout>
