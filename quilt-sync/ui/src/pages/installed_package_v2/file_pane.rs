@@ -44,8 +44,8 @@ use crate::commands::{EntryCounts, EntryData, EntryList, FilesData};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Button, ButtonVariant, Card, EntryAction, EntryGroup, EntryRow, EntrySelection,
-    GroupSelection, ListToolbar, LoadFailure, Naming, SearchInput, Segment, SegmentedControl,
-    Select, SelectAll, SkeletonBox,
+    GroupSelection, ListToolbar, LoadFailure, MenuAction, Naming, SearchInput, Segment,
+    SegmentedControl, Select, SelectAll, SkeletonBox,
 };
 use crate::util::format_size;
 
@@ -365,6 +365,8 @@ struct Row {
     /// Matched by `.quiltignore`. Drawn only under [`Facet::Ignored`], where
     /// the view already says it, so the row carries no label and no click.
     ignored: bool,
+    /// The pattern that matched it, which *Stop ignoring* names.
+    ignored_by: Option<String>,
 }
 
 impl Row {
@@ -383,9 +385,162 @@ fn offered(rows: &[Row]) -> Vec<String> {
         .collect()
 }
 
+/// One command a row's `[⋯]` offers, naming the row it acts on. The pane only
+/// decides which apply; the page runs them, since opening, copying and the
+/// `.quiltignore` popups are the page's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowCommand {
+    /// Open the local file in its default application.
+    Open(String),
+    OpenInCatalog(String),
+    /// The file's `quilt+s3` address, as `util::file_uri` builds it.
+    CopyUri(String),
+    /// A `New` file's path inside the package: no revision holds it, so it has
+    /// no address that resolves.
+    CopyPath(String),
+    /// Open the ignore popup with this path as the pattern.
+    Ignore(String),
+    /// Open the unignore popup for the pattern that matched this path.
+    StopIgnoring {
+        path: String,
+        pattern: String,
+    },
+}
+
+impl RowCommand {
+    /// The item's words.
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Open(_) => "Open file",
+            Self::OpenInCatalog(_) => "Open in catalog",
+            Self::CopyUri(_) => "Copy URI",
+            Self::CopyPath(_) => "Copy path",
+            Self::Ignore(_) => "Ignore",
+            Self::StopIgnoring { .. } => "Stop ignoring",
+        }
+    }
+
+    /// The row it acts on.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Open(path)
+            | Self::OpenInCatalog(path)
+            | Self::CopyUri(path)
+            | Self::CopyPath(path)
+            | Self::Ignore(path)
+            | Self::StopIgnoring { path, .. } => path,
+        }
+    }
+
+    /// Whether it leads to an edit of `.quiltignore`, and so waits for the
+    /// page's lock. The others write nothing, as the row's own open does not.
+    const fn edits_ignore(&self) -> bool {
+        matches!(self, Self::Ignore(_) | Self::StopIgnoring { .. })
+    }
+}
+
+/// What the package can be reached by, which some items need.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reach {
+    /// It has a remote, so a file has a `quilt+s3` address.
+    pub remote: bool,
+    /// Its remote names a catalog host.
+    pub catalog: bool,
+}
+
+/// The page's half of the rows' `[⋯]`: what the package can be reached by,
+/// the page's one-command lock, and where a chosen item goes.
+#[derive(Clone, Copy)]
+pub struct RowMenu {
+    pub reach: Reach,
+    /// The page's lock. The `.quiltignore` items wait for it.
+    pub busy: Signal<bool>,
+    pub on_command: Callback<RowCommand>,
+}
+
+/// The header's words for a command held back by the lock.
+const BUSY: &str = "Something else is running";
+
+/// A row's `[⋯]` items, following the lock while the menu is open.
+fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
+    let Some(RowMenu {
+        reach,
+        busy,
+        on_command,
+    }) = menu
+    else {
+        return Signal::stored(Vec::new());
+    };
+    let commands = row_commands(&r.path, r.place, r.ignored_by.as_deref(), reach);
+    Signal::derive(move || {
+        let busy = busy.get();
+        commands
+            .iter()
+            .map(|command| {
+                let run = command.clone();
+                let action = MenuAction::new(
+                    command.label(),
+                    Callback::new(move |()| on_command.run(run.clone())),
+                );
+                if busy && command.edits_ignore() {
+                    action.disabled(BUSY)
+                } else {
+                    action
+                }
+            })
+            .collect()
+    })
+}
+
+/// The items a row offers, in their fixed order: open, catalog, copy, then the
+/// `.quiltignore` item. v1's entries form gates its buttons the same way, but
+/// Ignore is on every row: the pane does not read `junky_pattern`, and the
+/// popup is prefilled with the path instead.
+fn row_commands(
+    path: &str,
+    place: Place,
+    ignored_by: Option<&str>,
+    reach: Reach,
+) -> Vec<RowCommand> {
+    let path = path.to_string();
+    // An ignored row's file is opened, linked and copied from its tracked row,
+    // if it has one; this row is only the way back.
+    if let Some(pattern) = ignored_by {
+        return vec![RowCommand::StopIgnoring {
+            path,
+            pattern: pattern.to_string(),
+        }];
+    }
+    let mut commands = Vec::new();
+    if matches!(place, Place::Here | Place::Changed | Place::New) {
+        commands.push(RowCommand::Open(path.clone()));
+    }
+    // The catalog shows the published file, which a changed or new row's local
+    // bytes are not.
+    if reach.catalog && matches!(place, Place::Here | Place::Missing) {
+        commands.push(RowCommand::OpenInCatalog(path.clone()));
+    }
+    if place == Place::New {
+        commands.push(RowCommand::CopyPath(path.clone()));
+    } else if reach.remote {
+        commands.push(RowCommand::CopyUri(path.clone()));
+    }
+    commands.push(RowCommand::Ignore(path));
+    commands
+}
+
 /// One row. `name` is what the list shows — the whole path, or the part under
 /// a heading — and the whole path is always the `title`.
-fn row(r: &Row, name: String, on_open: Callback<String>, picking: Picking) -> AnyView {
+fn row(
+    r: &Row,
+    name: String,
+    on_open: Callback<String>,
+    picking: Picking,
+    menu: Option<RowMenu>,
+) -> AnyView {
+    let actions = row_actions(r, menu);
     let state = if r.ignored { None } else { r.place.state() };
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
@@ -423,11 +578,19 @@ fn row(r: &Row, name: String, on_open: Callback<String>, picking: Picking) -> An
                 tone=tone
                 size=r.size.clone()
                 action=action
+                actions=actions
             />
         }
         .into_any(),
         None => view! {
-            <EntryRow name=name path=r.path.clone() state=words tone=tone size=r.size.clone() />
+            <EntryRow
+                name=name
+                path=r.path.clone()
+                state=words
+                tone=tone
+                size=r.size.clone()
+                actions=actions
+            />
         }
         .into_any(),
     }
@@ -442,6 +605,7 @@ fn rows_view(
     collapsed: RwSignal<BTreeSet<String>>,
     on_open: Callback<String>,
     picking: Picking,
+    menu: Option<RowMenu>,
 ) -> AnyView {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let items = group(&paths, grouping);
@@ -451,7 +615,7 @@ fn rows_view(
     let drawn = items
         .into_iter()
         .map(|item| match item {
-            Item::Row { index, name } => row(&rows[index], name, on_open, picking),
+            Item::Row { index, name } => row(&rows[index], name, on_open, picking, menu),
             Item::Group {
                 heading,
                 rows: members,
@@ -481,7 +645,7 @@ fn rows_view(
                 let children = move || {
                     members.with_value(|ms| {
                         ms.iter()
-                            .map(|(r, name)| row(r, name.clone(), on_open, picking))
+                            .map(|(r, name)| row(r, name.clone(), on_open, picking, menu))
                             .collect_view()
                     })
                 };
@@ -761,6 +925,9 @@ pub fn FilePane(
     /// a re-read.
     #[prop(optional)]
     picking: Picking,
+    /// The rows' `[⋯]`. Absent draws none, as the gallery's cells do.
+    #[prop(optional)]
+    menu: Option<RowMenu>,
 ) -> impl IntoView {
     // Outside the match, so a re-read that redraws the list keeps the query.
     let query = settled(search);
@@ -792,10 +959,15 @@ pub fn FilePane(
             facet,
             on_open,
             picking,
+            menu,
         ),
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the pane's props, passed on once to the arm that draws them"
+)]
 fn ready(
     list: FileList,
     grouping: RwSignal<String>,
@@ -804,6 +976,7 @@ fn ready(
     facet: RwSignal<String>,
     on_open: Callback<String>,
     picking: Picking,
+    menu: Option<RowMenu>,
 ) -> AnyView {
     let query = search.settled;
     let FileList {
@@ -819,6 +992,7 @@ fn ready(
             place: Place::of(&e.status),
             size: format_size(e.size),
             ignored: e.ignored_by.is_some(),
+            ignored_by: e.ignored_by,
             path: e.filename,
         })
         .collect();
@@ -862,7 +1036,7 @@ fn ready(
         let g = Grouping::from_label(&grouping.get());
         shown.with(|rs| {
             if !rs.is_empty() {
-                return rows_view(rs, g, collapsed, on_open, picking);
+                return rows_view(rs, g, collapsed, on_open, picking, menu);
             }
             let f = Facet::from_key(&facet.get());
             // Compact: `Blankslate`'s own padding is taller than this box at
@@ -1078,6 +1252,7 @@ mod facet_tests {
             size: String::new(),
             place: Place::of(status),
             ignored: false,
+            ignored_by: None,
         };
         let rows = [
             row("raw/a.csv", "modified"),
@@ -1133,6 +1308,257 @@ mod facet_tests {
             admitted(Facet::Ignored),
             [("pristine", true), ("remote", true)]
         );
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+
+    fn labels(
+        status: &str,
+        ignored_by: Option<&str>,
+        remote: bool,
+        catalog: bool,
+    ) -> Vec<&'static str> {
+        row_commands(
+            "raw/a.csv",
+            Place::of(status),
+            ignored_by,
+            Reach { remote, catalog },
+        )
+        .iter()
+        .map(RowCommand::label)
+        .collect()
+    }
+
+    /// The table in `row-menu-items`, with a remote and a catalog host.
+    #[test]
+    fn each_row_offers_what_v1_offers_it() {
+        let all = |status| labels(status, None, true, true);
+        assert_eq!(
+            all("pristine"),
+            ["Open file", "Open in catalog", "Copy URI", "Ignore"]
+        );
+        assert_eq!(all("modified"), ["Open file", "Copy URI", "Ignore"]);
+        assert_eq!(all("added"), ["Open file", "Copy path", "Ignore"]);
+        assert_eq!(all("deleted"), ["Copy URI", "Ignore"]);
+        assert_eq!(all("remote"), ["Open in catalog", "Copy URI", "Ignore"]);
+    }
+
+    /// An ignored row offers only the way back, whatever its status.
+    #[test]
+    fn an_ignored_row_offers_only_stop_ignoring() {
+        assert_eq!(
+            labels("pristine", Some("*.tmp"), true, true),
+            ["Stop ignoring"]
+        );
+        assert_eq!(
+            row_commands(
+                "a.tmp",
+                Place::Here,
+                Some("*.tmp"),
+                Reach {
+                    remote: true,
+                    catalog: true
+                }
+            ),
+            [RowCommand::StopIgnoring {
+                path: "a.tmp".to_string(),
+                pattern: "*.tmp".to_string(),
+            }]
+        );
+    }
+
+    /// No catalog host, no catalog item; no remote, no address to copy. A New
+    /// row's path needs neither.
+    #[test]
+    fn the_catalog_and_the_address_need_the_package_to_have_them() {
+        assert_eq!(
+            labels("pristine", None, true, false),
+            ["Open file", "Copy URI", "Ignore"]
+        );
+        assert_eq!(
+            labels("pristine", None, false, false),
+            ["Open file", "Ignore"]
+        );
+        assert_eq!(
+            labels("added", None, false, false),
+            ["Open file", "Copy path", "Ignore"]
+        );
+    }
+
+    /// Each command names the row's path, and Ignore is prefilled with it.
+    #[test]
+    fn the_commands_carry_the_row_s_path() {
+        assert_eq!(
+            row_commands(
+                "raw/a.csv",
+                Place::New,
+                None,
+                Reach {
+                    remote: true,
+                    catalog: true
+                }
+            ),
+            [
+                RowCommand::Open("raw/a.csv".to_string()),
+                RowCommand::CopyPath("raw/a.csv".to_string()),
+                RowCommand::Ignore("raw/a.csv".to_string()),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod menu_pane_tests {
+    use super::*;
+    use crate::commands::{EntryCounts, EntryData};
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    const TRIGGER: &str = "button[aria-label='More actions for this file']";
+
+    fn one_row(status: &str, menu: Option<RowMenu>) -> web_sys::Element {
+        let entry = EntryData {
+            filename: "here.txt".to_string(),
+            size: 4_100,
+            status: status.to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            namespace: "team/dataset".try_into().unwrap(),
+        };
+        let list = FileList {
+            entries: vec![entry],
+            counts: EntryCounts {
+                all: 1,
+                ..EntryCounts::default()
+            },
+            total: 1,
+            truncated: false,
+        };
+        let listing = Signal::stored(Listing::Ready(list));
+        let grouping = RwSignal::new(Grouping::None.label().to_string());
+        let facet = RwSignal::new(Facet::All.key().to_string());
+        let (on_open, on_retry) = (Callback::new(|_: String| ()), Callback::new(|()| ()));
+        mount(move || match menu {
+            Some(menu) => view! {
+                <FilePane
+                    listing=listing
+                    grouping=grouping
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=facet
+                    on_open=on_open
+                    on_retry=on_retry
+                    menu=menu
+                />
+            }
+            .into_any(),
+            None => view! {
+                <FilePane
+                    listing=listing
+                    grouping=grouping
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=facet
+                    on_open=on_open
+                    on_retry=on_retry
+                />
+            }
+            .into_any(),
+        })
+    }
+
+    fn menu(busy: Signal<bool>, chosen: RwSignal<Option<RowCommand>>) -> RowMenu {
+        RowMenu {
+            reach: Reach {
+                remote: true,
+                catalog: true,
+            },
+            busy,
+            on_command: Callback::new(move |c| chosen.set(Some(c))),
+        }
+    }
+
+    async fn open_items(el: &web_sys::Element) -> Vec<web_sys::HtmlButtonElement> {
+        el.query_selector(TRIGGER)
+            .unwrap()
+            .expect("the row's [⋯]")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        let found = el.query_selector_all("[popover] button").unwrap();
+        (0..found.length())
+            .map(|i| found.item(i).unwrap().unchecked_into())
+            .collect()
+    }
+
+    fn item<'a>(
+        items: &'a [web_sys::HtmlButtonElement],
+        words: &str,
+    ) -> &'a web_sys::HtmlButtonElement {
+        items
+            .iter()
+            .find(|b| b.text_content().unwrap_or_default().starts_with(words))
+            .unwrap_or_else(|| panic!("no item {words}"))
+    }
+
+    /// The row's `[⋯]` lists what the row allows, and an item hands the page
+    /// its command.
+    #[wasm_bindgen_test]
+    async fn a_row_s_menu_offers_its_items_and_hands_the_chosen_one_to_the_page() {
+        let chosen = RwSignal::new(None);
+        let el = one_row("pristine", Some(menu(Signal::stored(false), chosen)));
+        let items = open_items(&el).await;
+        let words: Vec<String> = items
+            .iter()
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            words,
+            ["Open file", "Open in catalog", "Copy URI", "Ignore"]
+        );
+        item(&items, "Copy URI").click();
+        assert_eq!(
+            chosen.get_untracked(),
+            Some(RowCommand::CopyUri("here.txt".to_string()))
+        );
+    }
+
+    /// The lock holds back the `.quiltignore` items, saying why, and nothing
+    /// else; they come back when it is released, without closing the menu.
+    #[wasm_bindgen_test]
+    async fn while_the_page_is_busy_ignore_waits_and_open_does_not() {
+        let busy = RwSignal::new(true);
+        let el = one_row("pristine", Some(menu(busy.into(), RwSignal::new(None))));
+        let items = open_items(&el).await;
+        let ignore = item(&items, "Ignore");
+        assert!(ignore.disabled());
+        assert_eq!(
+            ignore.get_attribute("title").as_deref(),
+            Some("Something else is running")
+        );
+        assert!(!item(&items, "Open file").disabled());
+        assert!(!item(&items, "Copy URI").disabled());
+
+        busy.set(false);
+        leptos::task::tick().await;
+        let items: Vec<web_sys::HtmlButtonElement> = {
+            let found = el.query_selector_all("[popover] button").unwrap();
+            (0..found.length())
+                .map(|i| found.item(i).unwrap().unchecked_into())
+                .collect()
+        };
+        assert!(!item(&items, "Ignore").disabled());
+    }
+
+    /// A pane given no menu draws none: the gallery's cells.
+    #[wasm_bindgen_test]
+    fn without_a_menu_a_row_draws_no_trigger() {
+        let el = one_row("pristine", None);
+        assert!(el.query_selector(TRIGGER).unwrap().is_none());
     }
 }
 
@@ -1451,6 +1877,7 @@ mod pane_tests {
             size: String::new(),
             place,
             ignored,
+            ignored_by: None,
         };
         assert!(r(Place::Missing, false).selectable());
         assert!(!r(Place::Missing, true).selectable());
