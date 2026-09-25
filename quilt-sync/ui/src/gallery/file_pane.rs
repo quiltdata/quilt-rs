@@ -34,18 +34,13 @@
 //!
 //! # What this scene draws ahead of its data
 //!
-//! Two cells state facts the backend cannot currently produce, deliberately, so
+//! One cell states a fact the backend cannot currently produce, deliberately, so
 //! that the copy is the target rather than a guess made later:
 //!
 //! - **The marked rows.** Which files differ between two diverged revisions is
 //!   computed nowhere — `MergeData` carries a namespace and a URI, and the
 //!   working-tree changes are local edits against the installed manifest, not
 //!   mine against published (`qhq-mrzt`).
-//! - **The cap.** No total is sent, so *"this package has 4,312 files"* has no
-//!   source. The sentence here says `Showing 1,000 of them` and not *the first
-//!   1,000*: `entries_list` fills from four loops in turn and sorts afterwards,
-//!   so the thousand it keeps is category-biased and the design's own wording
-//!   would be false (`qhq-qpus`).
 //!
 //! # What the render settled, none of it reasoned first
 //!
@@ -911,15 +906,14 @@ fn pane(p: Pane) -> AnyView {
                             {(body == Body::Capped)
                                 .then(|| {
                                     view! {
-                                        // Not "the first 1,000": the backend
-                                        // fills from four loops in turn and
-                                        // sorts afterwards, so the thousand it
-                                        // keeps is not the first of anything.
+                                        // The first 1,000 by path: the page read
+                                        // sorts before it caps and sends the
+                                        // total (quilt-rs#992).
                                         <p style="margin:0; padding:var(--q-space-2) \
                                                   var(--q-space-3); \
                                                   color:var(--q-fgColor-muted); \
                                                   font-size:var(--q-text-body)">
-                                            "This package has 4,312 files. Showing 1,000 of them."
+                                            "This package has 4,312 files. This list covers the first 1,000 by path."
                                         </p>
                                     }
                                 })}
@@ -1128,13 +1122,98 @@ fn replace_mine(open: RwSignal<bool>) -> AnyView {
     .into_any()
 }
 
+/// This scene's package as the page read's entries: sorted by path, ignored
+/// files included for the pane to hide.
+fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
+    let mut files = files;
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
+        .into_iter()
+        .map(|f| crate::commands::EntryData {
+            status: match f.mark {
+                Mark::Here | Mark::Ignored => "pristine",
+                Mark::Changed => "modified",
+                Mark::New => "added",
+                Mark::Deleted => "deleted",
+                Mark::Missing => "remote",
+            }
+            .to_string(),
+            ignored_by: (f.mark == Mark::Ignored).then(|| ".DS_Store".to_string()),
+            filename: f.path,
+            size: f.bytes,
+            junky_pattern: None,
+            namespace: "team/dataset".try_into().expect("a namespace"),
+        })
+        .collect()
+}
+
+/// The page read's list over `files`, built as the backend builds it: sorted,
+/// counted over the whole package, then capped at 1,000.
+fn entry_list(files: Vec<File>) -> crate::commands::EntryList {
+    let mut entries = entries(files);
+    let mut counts = crate::commands::EntryCounts::default();
+    for e in &entries {
+        if e.ignored_by.is_some() {
+            counts.ignored += 1;
+            continue;
+        }
+        counts.all += 1;
+        match e.status.as_str() {
+            "added" | "modified" | "deleted" => counts.changed += 1,
+            "remote" => counts.not_downloaded += 1,
+            _ => {}
+        }
+    }
+    let total = entries.len();
+    entries.truncate(1_000);
+    crate::commands::EntryList {
+        truncated: total > entries.len(),
+        entries,
+        counts,
+        total,
+    }
+}
+
+/// The page's `FilePane` over `list`.
+fn live(list: crate::commands::EntryList) -> AnyView {
+    view! {
+        <div style=format!("display:flex; flex-direction:column; {LIST_RESTING}; height:400px")>
+            <crate::pages::FilePane
+                listing=Signal::stored(crate::pages::Listing::from(
+                    crate::commands::FilesData::Listed(list),
+                ))
+                grouping=RwSignal::new(crate::pages::Grouping::BaseFolder.label().to_string())
+                collapsed=RwSignal::new(std::collections::BTreeSet::new())
+                on_open=Callback::new(|_: String| ())
+                on_retry=Callback::new(|()| ())
+            />
+        </div>
+    }
+    .into_any()
+}
+
+/// This scene's package grown to 1,089 files by a folder of plates this copy
+/// has not downloaded, so the page read cuts it.
+fn over_the_cap() -> Vec<File> {
+    let mut files = package();
+    let plates = 1_089 - files.len();
+    for i in 1..=plates {
+        files.push(File::new(
+            format!("plates/plate-{i:04}.csv"),
+            18_000,
+            Mark::Missing,
+        ));
+    }
+    files
+}
+
 const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a \
     row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
-    Two cells draw ahead of their data, the marked rows and the cap's sentence. Unresolved \
-    and visible: under `Group: None` the ellipsis eats the leaf, and `Ignored` is three \
-    files under two headings.";
+    The marked rows draw ahead of their data. Unresolved and visible: under `Group: None` \
+    the ellipsis eats the leaf, kept for now as a deliberate simplification. The last two \
+    cells are the page's own pane over this fixture, the second grown past the cap.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -1231,6 +1310,43 @@ pub fn FilePaneScene() -> impl IntoView {
                 {stop_keeping(keeping)}
                 {replace_mine(replacing)}
             </Cell>
+            <Cell full=true label="live — the page's own pane over this fixture, grouping only so far">
+                <div style=PANE>{live(entry_list(package()))}</div>
+            </Cell>
+            <Cell full=true label="live, over the cap — 1,089 files, the first 1,000 by path loaded">
+                <div style=PANE>{live(entry_list(over_the_cap()))}</div>
+            </Cell>
         </Scene>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// The live cell over the cap says what the page would: the whole count,
+    /// and that the loaded rows are the first 1,000 by path.
+    #[wasm_bindgen_test]
+    fn the_live_cell_over_the_cap_states_the_cap() {
+        let list = entry_list(over_the_cap());
+        assert_eq!((list.entries.len(), list.total), (1_000, 1_089));
+        assert!(list.truncated);
+        assert_eq!(list.counts.all + list.counts.ignored, 1_089);
+
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let el: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&el).unwrap();
+        let handle = leptos::mount::mount_to(el.clone(), move || live(list));
+        let text = el.text_content().unwrap_or_default();
+        drop(handle);
+        el.remove();
+        assert!(
+            text.contains(
+                "This package has 1,089 files. This list covers the first 1,000 by path."
+            ),
+            "text was {text}"
+        );
     }
 }

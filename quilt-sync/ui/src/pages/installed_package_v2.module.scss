@@ -9,10 +9,30 @@
 
 .shell {
   display: flex;
-  justify-content: flex-end;
   gap: var(--q-space-3);
   flex: 1;
   min-height: 0;
+}
+
+/* The context pane comes first in the DOM, so reading and focus order is
+ * context, then files. While the two share a row, `order` puts the files on the
+ * leading side. */
+.shell > aside {
+  order: 1;
+}
+
+/* Below ~800 the panes stack, context above files: the region with no upper
+ * bound on its length goes last. That is DOM order, so `order` resets and
+ * nothing is reversed: a reversed column overflows upwards, past the appbar,
+ * where no scroll reaches. */
+@container (max-width: 800px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .shell > aside {
+    order: 0;
+  }
 }
 
 .identity {

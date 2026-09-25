@@ -130,9 +130,13 @@ pub const DIFFERS_ID: &str = "resolve-differing";
 #[component]
 pub fn EntryRow(
     /// What to show. The caller decides whether that is the whole path or the
-    /// leaf under a group heading; this row only truncates it.
+    /// leaf under a group heading; this row only truncates it, at the end.
     #[prop(into)]
     name: String,
+    /// The whole path, for the `title`, when `name` shows only part of it.
+    /// Absent means `name` already is the whole path.
+    #[prop(optional, into)]
+    path: Option<String>,
     /// The state's words, or nothing at all for a resting state.
     ///
     /// A `MaybeProp` and not an `Option`: a caller enumerating the states — the
@@ -161,7 +165,7 @@ pub fn EntryRow(
     #[prop(optional)]
     actions: Vec<MenuAction>,
 ) -> impl IntoView {
-    let full_name = name.clone();
+    let full_name = path.unwrap_or_else(|| name.clone());
 
     let class = if differs {
         format!("{} {}", style::root, style::differs)
@@ -331,6 +335,35 @@ mod tests {
             el.query_selector("input[type=checkbox]").unwrap().is_none(),
             "a file that is here has nothing to tick",
         );
+    }
+
+    /// The name may be only the part under a heading; the `title` is always
+    /// the whole path, in every shape, since the name can be truncated.
+    #[wasm_bindgen_test]
+    fn the_title_is_the_whole_path() {
+        let el = mount(|| {
+            view! {
+                <EntryRow name="plate-07.csv" path="raw/plate-07.csv" size="4.1 MB" />
+                <EntryRow
+                    name="design-01.md"
+                    path="notes/design-01.md"
+                    size="33 KB"
+                    action=EntryAction::Open(Callback::new(|()| ()))
+                />
+                <EntryRow name="README.md" size="2 KB" />
+            }
+        });
+        for (path, name) in [
+            ("raw/plate-07.csv", "plate-07.csv"),
+            ("notes/design-01.md", "design-01.md"),
+            ("README.md", "README.md"),
+        ] {
+            let titled = el
+                .query_selector(&format!("[title='{path}']"))
+                .unwrap()
+                .unwrap_or_else(|| panic!("titled {path}; markup was {}", el.inner_html()));
+            assert_eq!(titled.text_content().unwrap(), name);
+        }
     }
 
     #[wasm_bindgen_test]
