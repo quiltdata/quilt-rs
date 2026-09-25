@@ -72,6 +72,15 @@ impl Activities {
     pub fn get(&self) -> Vec<Activity> {
         self.0.get()
     }
+
+    /// The label the line draws: the first activity's, or empty. Reactive, as
+    /// [`Self::get`].
+    #[must_use]
+    pub fn first_label(&self) -> String {
+        self.0
+            .with(|all| all.first().map(|first| first.label.clone()))
+            .unwrap_or_default()
+    }
 }
 
 impl Default for Activities {
@@ -85,13 +94,7 @@ impl Default for Activities {
 #[component]
 pub fn ActivityLine() -> impl IntoView {
     use_context::<Activities>().map(|activities| {
-        let label = move || {
-            activities
-                .0
-                .with(|all| all.first().map(|first| first.label.clone()))
-                .unwrap_or_default()
-        };
-        view! { <p class=style::line role="status">{label}</p> }
+        view! { <p class=style::line role="status">{move || activities.first_label()}</p> }
     })
 }
 

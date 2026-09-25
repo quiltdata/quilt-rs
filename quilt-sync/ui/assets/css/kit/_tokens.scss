@@ -404,9 +404,7 @@
    * drawn in. Measured, not assumed. */
   --q-bgColor-brand: #2d306d;
   --q-fgColor-onBrand: #fff;
-  /* The activity line's ink: on-brand at reduced strength, faint beside the
-   * controls but still text. White at 0.72 over the brand ground blends to
-   * about #c4c5d6, 7.0:1 over it. Computed, and well over 4.5:1. */
+  /* The activity line's ink: faint but still text, 7.0:1 over the brand ground. */
   --q-fgColor-onBrand-muted: rgb(255 255 255 / 0.72);
 
   /* Overlays for controls sitting on the brand ground. The grey alphas above

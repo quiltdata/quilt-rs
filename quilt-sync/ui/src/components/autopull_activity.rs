@@ -86,8 +86,8 @@ impl Feed {
 
     /// An event is the newest word: adopt it at once.
     fn follow(self, activity: Option<&commands::AutopullActivity>) {
-        let stamp = self.bump();
-        self.apply_if_current(stamp, activity);
+        self.bump();
+        self.activities.set(activities_for(activity));
     }
 
     /// Read the backend's activity and adopt it if it is still the newest word.
@@ -102,7 +102,7 @@ impl Feed {
 /// Feeds the activity line from autopull. Draws nothing; without
 /// [`kit::Activities`] above it, it does nothing either.
 #[component]
-pub fn AutopullActivity() -> impl IntoView {
+pub fn AutopullActivityFeed() -> impl IntoView {
     let Some(activities) = use_context::<kit::Activities>() else {
         return;
     };
@@ -111,16 +111,13 @@ pub fn AutopullActivity() -> impl IntoView {
     // Whatever autopull was already doing when the window opened.
     spawn_local(feed.hydrate());
 
-    let listener = tauri_bridge::listen::<Option<commands::AutopullActivity>>(
+    // The read after registration closes the startup race: any change after it
+    // arrives as an event, which bumps the stamp.
+    let listener = tauri_bridge::listen_then::<Option<commands::AutopullActivity>>(
         commands::AUTOPULL_ACTIVITY_EVENT,
         move |activity| feed.follow(activity.as_ref()),
+        move || spawn_local(feed.hydrate()),
     );
-
-    // A second read after the listener exists, as the notification stack does:
-    // it narrows the startup race (a change between the first read and the
-    // listener going live) without closing it, since the bridge does not hand
-    // back a registration future.
-    spawn_local(feed.hydrate());
     on_cleanup(move || drop(listener));
 }
 

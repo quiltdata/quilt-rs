@@ -37,7 +37,7 @@ fn App() -> impl IntoView {
     view! {
         <components::UpdateChecker />
         <components::ToastStack />
-        <components::AutopullActivity />
+        <components::AutopullActivityFeed />
         <components::QuitPrompt />
         <Router>
             <Routes fallback=|| view! { <pages::NotFound /> }>

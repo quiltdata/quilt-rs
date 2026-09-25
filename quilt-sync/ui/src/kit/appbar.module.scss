@@ -18,13 +18,7 @@
 }
 
 /* Defaults match the frame's `.notice` and `.main`, so the logo lines up with the regions.
- *
- * Three columns, the outer two equal, so the activity line is centered on the bar
- * itself whatever the controls' width. The logo and the controls name their columns,
- * so the line, which names none, is placed in the middle one, and without a line (no
- * `Activities` context) the controls still sit on the right. Each outer column keeps
- * at least its content's width, so a long line wraps rather than running under
- * either. The height is a floor, so a wrapped line grows the bar. */
+ * Equal outer columns center the activity line on the bar; a long line wraps and grows it. */
 .bar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;

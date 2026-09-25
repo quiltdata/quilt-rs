@@ -87,9 +87,7 @@ pub struct SyncTrayAggregator {
     /// short apply can overlap that work and finish before the question is
     /// asked. Comparing epochs across the span answers "did one happen?".
     applying: Mutex<BTreeMap<Namespace, ApplyState>>,
-    /// The transfer the tick is running, if any — the window's activity line.
-    /// On its own channel because it is not the tray mode: `tx` carries what
-    /// the icon shows, and this would change it for no reason of the icon's.
+    /// The tick's transfer, if any; its own channel so it never touches the tray mode.
     activity: watch::Sender<Option<AutopullActivity>>,
 }
 
@@ -102,6 +100,9 @@ pub struct ApplyGuard<'a> {
 
 /// Names the transfer in flight until dropped — on return, on `?`, or on
 /// unwind.
+///
+/// One slot, cleared on drop: safe because only the tick takes it, and the tick
+/// runs one package at a time.
 pub struct ActivityGuard<'a> {
     activity: &'a watch::Sender<Option<AutopullActivity>>,
 }
@@ -206,13 +207,8 @@ impl SyncTrayAggregator {
         }
     }
 
-    /// Name the transfer for as long as the guard lives. A guard for the same
-    /// reason as [`Self::apply_guard`]: the clear has to survive `?`, an early
-    /// return and an unwind, or the line would say a transfer is running after
-    /// it has failed.
-    ///
-    /// No `publish()`: the activity is not the tray mode, and has its own
-    /// channel so that taking it never touches what the icon shows.
+    /// Name the transfer while the guard lives, so the clear survives `?`, early
+    /// return and unwind.
     pub fn activity_guard(&self, op: ActivityOp, namespace: &Namespace) -> ActivityGuard<'_> {
         self.activity.send_replace(Some(AutopullActivity {
             op,
