@@ -8,7 +8,7 @@ use super::selection::{
 };
 use super::status_banner::StatusBanner;
 use super::sync_scope::{ALL_DOWNLOADED_LINE, STANDING_SCOPE_LINE, SyncScopeBand};
-use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
+use crate::commands::{self, EntryCounts, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
 use crate::components::{
     IgnorePopup, IgnorePopupData, Notification, SetRemotePopup, UnignorePopup, UnignorePopupData,
@@ -66,9 +66,7 @@ pub(super) fn InstalledPackageContent(
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
 
-    let has_changes = entries
-        .iter()
-        .any(|e| matches!(e.status.as_str(), "added" | "modified" | "deleted"));
+    let has_changes = package_has_changes(&data.counts);
 
     // The remote entries this package currently offers, by path. Every read of
     // the selection is resolved against this set, which is what lets a preserved
@@ -528,9 +526,19 @@ fn revision_label(message: Option<&str>, hash: Option<&str>) -> Option<AnyView> 
     }
 }
 
+/// Whether the package has local changes, read from the whole-package count.
+///
+/// Not from `entries`: those are the first 1000 paths, so on a larger package
+/// every change can sort past the cap, and reading the rows would hide
+/// Commit and Push from a package that has something to ship.
+fn package_has_changes(counts: &EntryCounts) -> bool {
+    counts.changed > 0
+}
+
 #[cfg(test)]
 mod tests {
-    use super::commit_affordance_disabled;
+    use super::{commit_affordance_disabled, package_has_changes};
+    use crate::commands::EntryCounts;
     use crate::util::commit_denied_hint;
 
     const DENIED: &str = "Current role ReadOnly has no access to this bucket";
@@ -591,6 +599,22 @@ mod tests {
             Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
         );
         assert_eq!(commit_denied_hint(None), None);
+    }
+
+    /// A change that the cap dropped from the rows still counts, so Commit and
+    /// Push stays on offer; a package with no changes offers nothing to ship.
+    #[test]
+    fn changes_are_read_from_the_whole_package_count() {
+        let capped_away = EntryCounts {
+            all: 1_001,
+            changed: 1,
+            ..EntryCounts::default()
+        };
+        assert!(package_has_changes(&capped_away));
+        assert!(!package_has_changes(&EntryCounts {
+            all: 1_001,
+            ..EntryCounts::default()
+        }));
     }
 
     /// The action bar's markup, sliced out of [`SOURCE`] so the assertions
