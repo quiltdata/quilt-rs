@@ -62,3 +62,8 @@
     min-height: 269px;
   }
 }
+
+/* The search row. A row, because `SearchInput` fills its parent's main axis. */
+.search {
+  display: flex;
+}

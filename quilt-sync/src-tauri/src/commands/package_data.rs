@@ -10,57 +10,10 @@ use crate::model;
 use crate::quilt;
 use crate::routes;
 
+use super::package_entries::{EntryCounts, EntryList, InstalledPackageEntryData, entry_list};
 use super::package_list::denied_mark;
 
 // ── Installed Package data for Leptos UI ──
-
-/// The most entries one page read sends.
-const ENTRIES_CAP: usize = 1000;
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstalledPackageEntryData {
-    pub filename: String,
-    pub size: u64,
-    pub status: String,
-    pub junky_pattern: Option<String>,
-    pub ignored_by: Option<String>,
-    pub namespace: quilt_uri::Namespace,
-}
-
-/// The v2 file pane's facet counts, over the whole package rather than the
-/// capped entries. The facets are disjoint apart from `all`, which holds every
-/// entry except the ignored ones.
-#[derive(Serialize, Debug, Default, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct EntryCounts {
-    pub all: usize,
-    /// Added, modified and deleted.
-    pub changed: usize,
-    /// Listed by the manifest, not in this copy: the `remote` status.
-    pub not_downloaded: usize,
-    /// Matched by `.quiltignore` in the local walk.
-    pub ignored: usize,
-}
-
-impl EntryCounts {
-    fn of(entries: &[InstalledPackageEntryData]) -> Self {
-        let mut counts = Self::default();
-        for entry in entries {
-            if entry.ignored_by.is_some() {
-                counts.ignored += 1;
-                continue;
-            }
-            counts.all += 1;
-            match entry.status.as_str() {
-                "added" | "modified" | "deleted" => counts.changed += 1,
-                "remote" => counts.not_downloaded += 1,
-                _ => {}
-            }
-        }
-        counts
-    }
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,7 +45,7 @@ pub struct InstalledPackageData {
     /// must state the fact and must **not** offer Login: signing in again
     /// re-vends the same denied role, which is the loop this replaces.
     pub no_access_reason: Option<String>,
-    /// Sorted by path, then capped at [`ENTRIES_CAP`].
+    /// Sorted by path, then capped at [`super::package_entries::ENTRIES_CAP`].
     pub entries: Vec<InstalledPackageEntryData>,
     /// Whole-package facet counts; `counts.all + counts.ignored == total`.
     pub counts: EntryCounts,
@@ -194,74 +147,12 @@ async fn get_installed_package_data_from_model(
     let installed_paths = &lineage.paths;
     let manifest_entries = m.get_installed_package_records(&installed_package).await?;
 
-    let junky_map: std::collections::HashMap<_, _> = pkg_status
-        .junky_changes
-        .iter()
-        .map(|(p, pat)| (p.clone(), pat.clone()))
-        .collect();
-
-    let mut entries_list = Vec::new();
-    for (filename, change) in modified_entries {
-        let (status_str, size) = match change {
-            quilt::lineage::Change::Added(r) => ("added", r.size),
-            quilt::lineage::Change::Modified(r) => ("modified", r.size),
-            quilt::lineage::Change::Removed(r) => ("deleted", r.size),
-        };
-        entries_list.push(InstalledPackageEntryData {
-            filename: filename.display().to_string(),
-            size,
-            status: status_str.to_string(),
-            junky_pattern: junky_map.get(filename).cloned(),
-            ignored_by: None,
-            namespace: namespace.clone(),
-        });
-    }
-    for filename in installed_paths.keys() {
-        if modified_entries.contains_key(filename) {
-            continue;
-        }
-        if let Some(row) = manifest_entries.get(filename) {
-            entries_list.push(InstalledPackageEntryData {
-                filename: filename.display().to_string(),
-                size: row.size,
-                status: "pristine".to_string(),
-                junky_pattern: None,
-                ignored_by: None,
-                namespace: namespace.clone(),
-            });
-        }
-    }
-    for (filename, row) in &manifest_entries {
-        if installed_paths.contains_key(filename) || modified_entries.contains_key(filename) {
-            continue;
-        }
-        entries_list.push(InstalledPackageEntryData {
-            filename: filename.display().to_string(),
-            size: row.size,
-            status: "remote".to_string(),
-            junky_pattern: None,
-            ignored_by: None,
-            namespace: namespace.clone(),
-        });
-    }
-    for (filename, pattern, size) in &pkg_status.ignored_files {
-        entries_list.push(InstalledPackageEntryData {
-            filename: filename.display().to_string(),
-            size: *size,
-            status: "pristine".to_string(),
-            junky_pattern: None,
-            ignored_by: Some(pattern.clone()),
-            namespace: namespace.clone(),
-        });
-    }
-
-    // Sort every entry by path before capping, so the loaded rows are the
-    // first paths rather than whichever change class filled the list first.
-    entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
-    let counts = EntryCounts::of(&entries_list);
-    let total = entries_list.len();
-    entries_list.truncate(ENTRIES_CAP);
-    let truncated = total > entries_list.len();
+    let EntryList {
+        entries: entries_list,
+        counts,
+        total,
+        truncated,
+    } = entry_list(namespace, &pkg_status, installed_paths, &manifest_entries);
 
     // Compute counts from the full source data, not the capped entries_list,
     // so the filter toolbar is shown even when the list is truncated.

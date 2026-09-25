@@ -9,7 +9,7 @@
 //!
 //! Search takes a row of its own above the toolbar; select-all sits on the
 //! toolbar's left, in the rows' checkbox column; grouping and the facets are one
-//! right-hand group. Grouping and the facets are drawn. The other slots are left
+//! right-hand group. Search, grouping and the facets are drawn. The other slots are left
 //! absent rather than drawn inert — a control that does nothing is worse than
 //! one that is not there yet.
 //!
@@ -29,14 +29,19 @@
 //!   The box is the row's own until the selection slice gives the pane one.
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
+//! - **Search narrows what is shown.** A case-insensitive substring of the
+//!   whole path; headings are drawn from the rows it leaves, and a search that
+//!   leaves none says so.
+
+use std::collections::BTreeSet;
 
 use leptos::prelude::*;
 
-use crate::commands::{EntryCounts, EntryData, InstalledPackageData};
+use crate::commands::{EntryCounts, EntryData, EntryList, FilesData};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Card, EntryAction, EntryGroup, EntryRow, EntrySelection, ListToolbar, LoadFailure,
-    Naming, Segment, SegmentedControl, Select, SkeletonBox,
+    Naming, SearchInput, Segment, SegmentedControl, Select, SkeletonBox,
 };
 use crate::util::format_size;
 
@@ -219,6 +224,14 @@ pub fn group(paths: &[&str], grouping: Grouping) -> Vec<Item> {
         .collect()
 }
 
+/// Whether the search keeps a file: a case-insensitive substring of its whole
+/// logical path, so a folder's name finds the files under it. An empty search
+/// keeps everything.
+#[must_use]
+pub fn path_matches(path: &str, query: &str) -> bool {
+    path.to_lowercase().contains(&query.to_lowercase())
+}
+
 /// What the pane draws from: the page read's rows, and whether it cut them.
 #[derive(Clone, Debug)]
 pub struct FileList {
@@ -232,23 +245,34 @@ pub struct FileList {
     pub truncated: bool,
 }
 
-impl From<InstalledPackageData> for FileList {
-    fn from(data: InstalledPackageData) -> Self {
+impl From<EntryList> for FileList {
+    fn from(list: EntryList) -> Self {
         Self {
-            entries: data.entries,
-            counts: data.counts,
-            total: data.total,
-            truncated: data.truncated,
+            entries: list.entries,
+            counts: list.counts,
+            total: list.total,
+            truncated: list.truncated,
         }
     }
 }
 
-/// Where the pane's read stands.
+/// Where the pane's list stands.
 #[derive(Clone, Debug)]
 pub enum Listing {
     Loading,
-    Failed,
+    /// The page read sent no list, and why: not even a local status could be
+    /// computed, so there is nothing honest to classify the rows by.
+    Unlisted(String),
     Ready(FileList),
+}
+
+impl From<FilesData> for Listing {
+    fn from(files: FilesData) -> Self {
+        match files {
+            FilesData::Listed(list) => Self::Ready(list.into()),
+            FilesData::Unlisted { reason } => Self::Unlisted(reason),
+        }
+    }
 }
 
 /// Where a file is, which decides its words and its click.
@@ -325,7 +349,7 @@ fn CapNotice(total: usize, shown: usize) -> impl IntoView {
 }
 
 /// One file, reduced to what drawing it needs.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Row {
     path: String,
     size: String,
@@ -378,8 +402,15 @@ fn row(r: &Row, name: String, on_open: Callback<String>) -> AnyView {
     }
 }
 
-/// The rows, grouped as the select says.
-fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> AnyView {
+/// The rows, grouped as the select says. `collapsed` names the headings the
+/// reader closed; it is the page's, so a re-read that rebuilds these views
+/// finds each folder as the reader left it.
+fn rows_view(
+    rows: &[Row],
+    grouping: Grouping,
+    collapsed: RwSignal<BTreeSet<String>>,
+    on_open: Callback<String>,
+) -> AnyView {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let items = group(&paths, grouping);
     // A list with no heading at all has no disclosure to align to, so the
@@ -401,11 +432,23 @@ fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> Any
                     .map(|(index, name)| (rows[index].clone(), name))
                     .collect();
                 let members = StoredValue::new(members);
+                let open = RwSignal::new(!collapsed.with_untracked(|c| c.contains(&heading)));
+                let folder = heading.clone();
+                Effect::new(move |_| {
+                    let open = open.get();
+                    collapsed.update(|c| {
+                        if open {
+                            c.remove(&folder);
+                        } else {
+                            c.insert(folder.clone());
+                        }
+                    });
+                });
                 view! {
                     <EntryGroup
                         name=heading
                         count=Signal::stored(count)
-                        open=RwSignal::new(true)
+                        open=open
                     >
                         {move || {
                             members
@@ -432,14 +475,27 @@ fn rows_view(rows: &[Row], grouping: Grouping, on_open: Callback<String>) -> Any
     .into_any()
 }
 
-/// The rows the facet leaves, in path order. The one place the pane narrows
-/// its rows, so what the list draws and what select-all ticks cannot disagree:
-/// the search adds its test here.
-fn shown_rows(rows: &[Row], facet: Facet) -> Vec<Row> {
+/// The rows the facet and the search leave, in path order. The one place the
+/// pane narrows its rows, so what the list draws and what select-all ticks
+/// cannot disagree.
+fn shown_rows(rows: &[Row], query: &str, facet: Facet) -> Vec<Row> {
     rows.iter()
-        .filter(|r| facet.admits(r.place, r.ignored))
+        .filter(|r| facet.admits(r.place, r.ignored) && path_matches(&r.path, query))
         .cloned()
         .collect()
+}
+
+/// The search, alone on the row above the toolbar and the pane's full width.
+///
+/// The `display:flex` row is load-bearing: `SearchInput` grows along its
+/// parent's main axis, and dropped straight into the pane's column it would
+/// grow tall rather than wide (the gallery's file-pane scene has the story).
+fn search_row(search: RwSignal<String>) -> impl IntoView {
+    view! {
+        <div class=style::search>
+            <SearchInput value=search aria_label="Search files" placeholder="Search files…" />
+        </div>
+    }
 }
 
 /// The four facets, each carrying the package's count.
@@ -501,6 +557,10 @@ pub fn FilePane(
     /// The `Group:` select's value. The page owns it, so a re-read does not
     /// reset it; a visit to another package does.
     grouping: RwSignal<String>,
+    /// The folder headings the reader collapsed. The page's, like `grouping`.
+    collapsed: RwSignal<BTreeSet<String>>,
+    /// The search field's text. The page's, like `grouping`.
+    search: RwSignal<String>,
     /// The chosen [`Facet`], as its [`Facet::key`]. The page owns it, for the
     /// grouping's reason.
     facet: RwSignal<String>,
@@ -511,26 +571,30 @@ pub fn FilePane(
 ) -> impl IntoView {
     move || match listing.get() {
         Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
-        Listing::Failed => view! {
+        Listing::Unlisted(reason) => view! {
             <section class=style::root aria-label="Files">
+                {search_row(search)}
                 {toolbar(grouping, None)}
                 <Card flush=true label="Files" fill=true>
                     <LoadFailure
                         centred=true
-                        words="Could not read this package's files."
+                        words="Could not list this package's files."
+                        detail=reason
                         on_retry=on_retry
                     />
                 </Card>
             </section>
         }
         .into_any(),
-        Listing::Ready(list) => ready(list, grouping, facet, on_open),
+        Listing::Ready(list) => ready(list, grouping, collapsed, search, facet, on_open),
     }
 }
 
 fn ready(
     list: FileList,
     grouping: RwSignal<String>,
+    collapsed: RwSignal<BTreeSet<String>>,
+    search: RwSignal<String>,
     facet: RwSignal<String>,
     on_open: Callback<String>,
 ) -> AnyView {
@@ -551,9 +615,11 @@ fn ready(
         })
         .collect();
     let rows = StoredValue::new(rows);
-    let shown = Signal::derive(move || {
+    // A memo, so a keystroke that leaves the same rows standing — the first
+    // letters typed into a big package — rebuilds nothing.
+    let shown = Memo::new(move |_| {
         let f = Facet::from_key(&facet.get());
-        rows.with_value(|rs| shown_rows(rs, f))
+        search.with(|q| rows.with_value(|rs| shown_rows(rs, q, f)))
     });
 
     let body = move || {
@@ -561,7 +627,7 @@ fn ready(
             return view! {
                 <Blankslate
                     heading="Nothing in this package"
-                    description="The published revision has no files in it yet."
+                    description="This package has no files yet."
                 />
             }
             .into_any();
@@ -569,12 +635,25 @@ fn ready(
         let g = Grouping::from_label(&grouping.get());
         shown.with(|rs| {
             if !rs.is_empty() {
-                return rows_view(rs, g, on_open);
+                return rows_view(rs, g, collapsed, on_open);
             }
-            // Empty, and never zero-count unless it is `All`: an inert facet
-            // cannot be chosen. So `All` at zero is a package all ignored,
-            // and any other empty view counts files the cap left out.
-            if Facet::from_key(&facet.get()) == Facet::All && counts.all == 0 {
+            let f = Facet::from_key(&facet.get());
+            // Compact: `Blankslate`'s own padding is taller than this box at
+            // the height floor. No action yet — see `Blankslate`.
+            if rows.with_value(|rs| !shown_rows(rs, "", f).is_empty()) {
+                // The facet has rows here; the search left none of them.
+                view! {
+                    <Blankslate
+                        compact=true
+                        heading="No files match"
+                        description="Nothing in this view matches what you are looking for."
+                    />
+                }
+                .into_any()
+            } else if f == Facet::All && counts.all == 0 {
+                // Never zero-count unless it is `All`: an inert facet cannot
+                // be chosen. So `All` at zero is a package all ignored, and
+                // any other empty facet counts files the cap left out.
                 view! {
                     <Blankslate
                         compact=true
@@ -598,6 +677,7 @@ fn ready(
 
     view! {
         <section class=style::root aria-label="Files">
+            {search_row(search)}
             {toolbar(grouping, Some(facets(&counts, facet).into_any()))}
             <Card flush=true label="Files" fill=true>
                 {truncated.then(|| view! { <CapNotice total=total shown=loaded /> })}
@@ -614,6 +694,8 @@ fn ready(
 pub fn FilePaneSkeleton() -> impl IntoView {
     view! {
         <section class=style::root aria-label="Files">
+            // The search field: full width, one control high.
+            <SkeletonBox width="100%" height="32px" />
             <div class=style::skeletonbar>
                 // The `Group:` select's width, then the facets'.
                 <SkeletonBox width="166px" height="32px" />
@@ -728,8 +810,59 @@ mod grouping_tests {
 }
 
 #[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_search_matches_every_file() {
+        assert!(path_matches("raw/2026/plate-01.csv", ""));
+    }
+
+    #[test]
+    fn search_ignores_case_on_both_sides() {
+        assert!(path_matches("raw/Plate-01.CSV", "plate-01.csv"));
+        assert!(path_matches("raw/plate-01.csv", "PLATE"));
+    }
+
+    /// The whole logical path, not only the name: a folder finds its files.
+    #[test]
+    fn search_matches_a_substring_anywhere_in_the_path() {
+        assert!(path_matches("raw/2026/plate-01.csv", "2026/pla"));
+        assert!(path_matches("raw/2026/plate-01.csv", "w/20"));
+        assert!(!path_matches("raw/2026/plate-01.csv", "2027"));
+    }
+}
+
+#[cfg(test)]
 mod facet_tests {
     use super::*;
+
+    /// The facet and the search narrow together, in the one hook both the list
+    /// and select-all read.
+    #[test]
+    fn shown_rows_takes_the_facet_and_the_search_together() {
+        let row = |path: &str, status: &str| Row {
+            path: path.to_string(),
+            size: String::new(),
+            place: Place::of(status),
+            ignored: false,
+        };
+        let rows = [
+            row("raw/a.csv", "modified"),
+            row("raw/b.csv", "pristine"),
+            row("notes/a.md", "modified"),
+        ];
+        let paths = |query: &str, facet: Facet| {
+            shown_rows(&rows, query, facet)
+                .into_iter()
+                .map(|r| r.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths("raw/", Facet::Changed), ["raw/a.csv"]);
+        assert_eq!(paths("", Facet::Changed), ["raw/a.csv", "notes/a.md"]);
+        assert_eq!(paths("raw/", Facet::All), ["raw/a.csv", "raw/b.csv"]);
+        assert!(paths("raw/", Facet::NotDownloaded).is_empty());
+    }
 
     /// The backend's own rule (`EntryCounts::of`), so a facet shows the rows
     /// its count counted.
@@ -837,6 +970,8 @@ mod pane_tests {
                 <FilePane
                     listing=Signal::stored(listing)
                     grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
                     facet=facet
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
@@ -1061,6 +1196,8 @@ mod pane_tests {
                 <FilePane
                     listing=Signal::stored(listing)
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
                     facet=RwSignal::new(Facet::All.key().to_string())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
@@ -1179,6 +1316,8 @@ mod pane_tests {
                         false,
                     )))
                     grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
                     facet=RwSignal::new(Facet::All.key().to_string())
                     on_open=Callback::new(move |path: String| opened.update(|o| o.push(path)))
                     on_retry=Callback::new(|()| ())
@@ -1230,6 +1369,8 @@ mod pane_tests {
                         false,
                     )))
                     grouping=grouping
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
                     facet=RwSignal::new(Facet::All.key().to_string())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
@@ -1272,13 +1413,339 @@ mod pane_tests {
             loading.inner_html()
         );
 
-        let failed = pane(Listing::Failed);
-        element_saying(&failed, "Could not read this package's files.");
+        let unlisted = pane(Listing::Unlisted("Access denied".to_string()));
+        element_saying(&unlisted, "Could not list this package's files.");
+        assert!(
+            text(&unlisted).contains("Access denied"),
+            "the reason is stated; markup was {}",
+            unlisted.inner_html()
+        );
+        assert!(
+            unlisted.query_selector("[title]").unwrap().is_none(),
+            "and no row is drawn without a status"
+        );
     }
 
     #[wasm_bindgen_test]
     fn an_empty_package_says_so() {
         let el = pane(Listing::Ready(list(Vec::new(), 0, false)));
         element_saying(&el, "Nothing in this package");
+        assert!(
+            text(&el).contains("This package has no files yet."),
+            "worded for a local-only package too; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Over the cap, only the loaded rows are known to be ignored: the counts,
+    /// being the whole package's, say the rest are not.
+    #[wasm_bindgen_test]
+    fn a_cut_list_all_ignored_speaks_of_the_loaded_files_only() {
+        let cut = pane(Listing::Ready(FileList {
+            counts: EntryCounts {
+                all: 4_311,
+                ignored: 1,
+                ..EntryCounts::default()
+            },
+            ..list(vec![ignored(".DS_Store")], 4_312, true)
+        }));
+        element_saying(&cut, "None of the loaded files are in this view");
+        assert!(
+            !text(&cut).contains("Every file in this package is ignored."),
+            "markup was {}",
+            cut.inner_html()
+        );
+
+        let whole = pane(Listing::Ready(list(vec![ignored(".DS_Store")], 1, false)));
+        assert!(
+            text(&whole).contains("Every file in this package is ignored."),
+            "markup was {}",
+            whole.inner_html()
+        );
+    }
+
+    /// A re-read rebuilds the rows; a folder the reader closed stays closed.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_folder_stays_collapsed_across_a_re_read() {
+        let files = || {
+            Listing::Ready(list(
+                vec![
+                    entry("notes/a.md", "pristine"),
+                    entry("notes/b.md", "pristine"),
+                ],
+                2,
+                false,
+            ))
+        };
+        let listing = RwSignal::new(files());
+        let collapsed = RwSignal::new(BTreeSet::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::from(listing)
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=collapsed
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        let disclosure = || {
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .expect("the folder's disclosure")
+        };
+        disclosure()
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        crate::test_support::sleep_ms(10).await;
+        assert_eq!(
+            disclosure().get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        assert!(
+            collapsed.get_untracked().contains("notes/"),
+            "recorded on the page"
+        );
+
+        listing.set(files());
+        leptos::task::tick().await;
+
+        assert_eq!(
+            disclosure().get_attribute("aria-expanded").as_deref(),
+            Some("false"),
+            "still collapsed; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            el.query_selector("[title='notes/a.md']").unwrap().is_none(),
+            "its rows stay hidden"
+        );
+        assert!(collapsed.get_untracked().contains("notes/"));
+    }
+
+    /// Type into the search field as a reader would.
+    async fn type_search(el: &web_sys::Element, query: &str) {
+        let field: web_sys::HtmlInputElement = el
+            .query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field")
+            .unchecked_into();
+        field.set_value(query);
+        field
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        leptos::task::tick().await;
+    }
+
+    fn searchable(search: RwSignal<String>, entries: Vec<EntryData>) -> web_sys::Element {
+        let total = entries.len();
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        })
+    }
+
+    fn titled(el: &web_sys::Element, path: &str) -> bool {
+        el.query_selector(&format!("[title='{path}']"))
+            .unwrap()
+            .is_some()
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_search_field_is_named_and_writes_the_pages_query() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        let field = el
+            .query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field");
+        assert_eq!(
+            field.get_attribute("aria-label").as_deref(),
+            Some("Search files")
+        );
+        type_search(&el, "a.c").await;
+        assert_eq!(search.get_untracked(), "a.c");
+    }
+
+    /// Case-insensitive, over the whole path: `RAW` finds everything under
+    /// `raw/`, including a file whose own name does not say it.
+    #[wasm_bindgen_test]
+    async fn the_search_narrows_the_rows_to_paths_containing_it() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("README.md", "pristine"),
+                entry("raw/2026/plate-01.csv", "remote"),
+                entry("raw/2026/plate-02.csv", "pristine"),
+                entry("notes/raw-data.md", "pristine"),
+            ],
+        );
+        type_search(&el, "RAW/").await;
+        assert!(titled(&el, "raw/2026/plate-01.csv"), "{}", el.inner_html());
+        assert!(titled(&el, "raw/2026/plate-02.csv"));
+        assert!(!titled(&el, "README.md"), "{}", el.inner_html());
+        assert!(!titled(&el, "notes/raw-data.md"));
+
+        type_search(&el, "").await;
+        for path in ["README.md", "raw/2026/plate-01.csv", "notes/raw-data.md"] {
+            assert!(titled(&el, path), "cleared, {path} is back");
+        }
+    }
+
+    /// Headings are drawn from the rows the search leaves: a folder with no
+    /// match has no heading, and one left with a single file loses its heading
+    /// and shows the row's whole path, as any group of one does.
+    #[wasm_bindgen_test]
+    async fn group_headings_follow_the_rows_the_search_leaves() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("notes/a.md", "pristine"),
+                entry("notes/b.md", "pristine"),
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        element_saying(&el, "notes/");
+        element_saying(&el, "raw/");
+
+        type_search(&el, "plate").await;
+        element_saying(&el, "raw/");
+        assert!(
+            !text(&el).contains("notes/"),
+            "no match, no heading: {}",
+            el.inner_html()
+        );
+
+        type_search(&el, "plate-01").await;
+        assert!(
+            el.query_selector("[aria-expanded]").unwrap().is_none(),
+            "a group of one has no heading: {}",
+            el.inner_html()
+        );
+        element_saying(&el, "raw/plate-01.csv");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_search_matching_nothing_says_so() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        type_search(&el, "zzz").await;
+        element_saying(&el, "No files match");
+        assert!(!titled(&el, "a.csv"));
+        assert!(
+            el.query_selector("input[type=search]").unwrap().is_some(),
+            "the field stays, so the reader can change the search"
+        );
+    }
+
+    /// Ignored files stay hidden whatever the search: only their facet shows
+    /// them.
+    #[wasm_bindgen_test]
+    async fn the_search_does_not_find_ignored_files() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![entry("a.csv", "pristine"), ignored(".DS_Store")],
+        );
+        type_search(&el, "DS_Store").await;
+        assert!(!text(&el).contains(".DS_Store"), "{}", el.inner_html());
+        element_saying(&el, "No files match");
+    }
+
+    /// A folder the reader closed is still closed when a search hides it and
+    /// then brings it back: the headings are rebuilt, the page's record is not.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_folder_stays_collapsed_through_a_search() {
+        let search = RwSignal::new(String::new());
+        let collapsed = RwSignal::new(BTreeSet::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(
+                        vec![
+                            entry("notes/a.md", "pristine"),
+                            entry("notes/b.md", "pristine"),
+                            entry("raw/plate-01.csv", "pristine"),
+                            entry("raw/plate-02.csv", "pristine"),
+                        ],
+                        4,
+                        false,
+                    )))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=collapsed
+                    search=search
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        // `notes/` sorts first, so its disclosure is the first one drawn.
+        let notes = || {
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .expect("the notes/ disclosure")
+        };
+        notes().unchecked_into::<web_sys::HtmlElement>().click();
+        crate::test_support::sleep_ms(10).await;
+        assert!(collapsed.get_untracked().contains("notes/"));
+
+        type_search(&el, "plate").await;
+        assert!(!text(&el).contains("notes/"), "{}", el.inner_html());
+        assert!(
+            collapsed.get_untracked().contains("notes/"),
+            "hiding a folder does not open it"
+        );
+
+        type_search(&el, "").await;
+        crate::test_support::sleep_ms(10).await;
+        assert_eq!(
+            notes().get_attribute("aria-expanded").as_deref(),
+            Some("false"),
+            "back, and still collapsed: {}",
+            el.inner_html()
+        );
+        assert!(el.query_selector("[title='notes/a.md']").unwrap().is_none());
+        assert!(titled(&el, "raw/plate-01.csv"));
+    }
+
+    /// A keystroke that leaves the same rows standing rebuilds nothing: the
+    /// rows on screen are the very nodes that were there before it.
+    #[wasm_bindgen_test]
+    async fn a_search_that_keeps_every_row_rebuilds_none() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        let before = el
+            .query_selector("[title='raw/plate-01.csv']")
+            .unwrap()
+            .expect("the row");
+        type_search(&el, "pla").await;
+        type_search(&el, "plat").await;
+        let after = el
+            .query_selector("[title='raw/plate-01.csv']")
+            .unwrap()
+            .expect("the row");
+        assert!(before.is_same_node(Some(&after)), "the row was rebuilt");
     }
 }
