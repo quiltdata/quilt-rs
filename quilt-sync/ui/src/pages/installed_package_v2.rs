@@ -250,9 +250,6 @@ struct Files {
     retry: Callback<()>,
     /// The ticked paths, which a re-read keeps and another package clears.
     ticked: RwSignal<BTreeSet<String>>,
-    /// The package the page shows now. A download that settles after the reader
-    /// moved on is not this set's, so it must not clear it.
-    showing: Memo<String>,
     /// The footer's `[Download]` is running. Here for `Wiring::downloading`'s
     /// reason: the rebuilt button must keep its spinner.
     downloading: RwSignal<bool>,
@@ -400,15 +397,15 @@ fn package_body(
 /// A success clears the ticks it sent, and the re-read turns the rows `Downloaded`. A
 /// file the remote no longer holds stays `Not downloaded`, and the band says
 /// which ([`download_outcome`]). A failure keeps the ticks, so a retry is one
-/// press.
+/// press. While it runs every box is disabled, as every other command is, so
+/// the ticks it clears are the ones it sent.
 fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<String>> {
     Callback::new(move |paths: Vec<String>| {
-        let (ns, outcome, downloading, ticked, showing) = (
+        let (ns, outcome, downloading, ticked) = (
             namespace.clone(),
             w.outcome,
             files.downloading,
             files.ticked,
-            files.showing,
         );
         let task = async move {
             let asked = paths.len();
@@ -416,7 +413,10 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
             let answer = commands::package_download_backlog(ns.clone(), paths.clone()).await;
             downloading.try_set(false);
             answer.map(|skipped| {
-                clear_sent(ticked, showing.try_get_untracked().as_deref(), &ns, &paths);
+                // Safe on any package: every box is disabled while the page's
+                // lock is held, so nothing was ticked since this was sent, and
+                // moving on only took ticks away.
+                ticked.try_update(|t| file_pane::selection::tick_all(t, &paths, false));
                 if let Some(said) = download_outcome(ns, asked, &skipped) {
                     outcome.try_set(Some(said));
                 }
@@ -432,20 +432,6 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
             task,
         );
     })
-}
-
-/// Clear the ticks a download sent, and only on the package it was sent for:
-/// moving on cleared that package's ticks, and the set is now the next one's,
-/// which may tick the same paths.
-fn clear_sent(
-    ticked: RwSignal<BTreeSet<String>>,
-    showing: Option<&str>,
-    sent_for: &str,
-    paths: &[String],
-) {
-    if showing == Some(sent_for) {
-        ticked.try_update(|t| file_pane::selection::tick_all(t, paths, false));
-    }
 }
 
 /// What the band says after a download: nothing when every file came down,
@@ -631,7 +617,6 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         facet,
         retry: Callback::new(move |()| reload.notify()),
         ticked,
-        showing: ns,
         downloading: RwSignal::new(false),
     };
 
@@ -973,21 +958,8 @@ mod tests {
             facet: RwSignal::new(Facet::All.key().to_string()),
             retry: Callback::new(|()| ()),
             ticked: RwSignal::new(BTreeSet::new()),
-            showing: Memo::new(|_| String::new()),
             downloading: RwSignal::new(false),
         }
-    }
-
-    /// A download that settles after the reader moved to another package
-    /// leaves that package's ticks alone, even on the same path.
-    #[test]
-    fn a_late_download_does_not_clear_another_package_s_ticks() {
-        let ticked = RwSignal::new(BTreeSet::from(["raw/a.csv".to_string()]));
-        let sent = ["raw/a.csv".to_string()];
-        clear_sent(ticked, Some("team/b"), "team/a", &sent);
-        assert!(ticked.get_untracked().contains("raw/a.csv"));
-        clear_sent(ticked, Some("team/b"), "team/b", &sent);
-        assert!(ticked.get_untracked().is_empty());
     }
 
     fn body(data: commands::PackagePageData) -> web_sys::Element {

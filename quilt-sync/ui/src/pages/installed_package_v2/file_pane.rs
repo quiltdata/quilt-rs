@@ -399,12 +399,15 @@ fn row(r: &Row, name: String, on_open: Callback<String>, picking: Picking) -> An
         Place::Missing if r.selectable() && !picking.whole_package => {
             let ticked = picking.ticked;
             let (is, set) = (r.path.clone(), r.path.clone());
-            Some(EntryAction::Select(EntrySelection::new(
-                Signal::derive(move || ticked.with(|t| t.contains(&is))),
-                Callback::new(move |next| {
-                    ticked.update(|t| selection::tick_all(t, std::slice::from_ref(&set), next));
-                }),
-            )))
+            Some(EntryAction::Select(
+                EntrySelection::new(
+                    Signal::derive(move || ticked.with(|t| t.contains(&is))),
+                    Callback::new(move |next| {
+                        ticked.update(|t| selection::tick_all(t, std::slice::from_ref(&set), next));
+                    }),
+                )
+                .disabled(picking.busy),
+            ))
         }
         // Nothing to open, and nothing to tick: ignored, or the whole package
         // is kept and the scope fetches it.
@@ -578,14 +581,17 @@ fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelec
     }
     let ticked = picking.ticked;
     let members = StoredValue::new(pickable);
-    Some(GroupSelection::new(
-        Signal::derive(move || {
-            ticked.with(|t| members.with_value(|ms| selection::group_state(t, ms)))
-        }),
-        Callback::new(move |next| {
-            members.with_value(|ms| ticked.update(|t| selection::tick_all(t, ms, next)));
-        }),
-    ))
+    Some(
+        GroupSelection::new(
+            Signal::derive(move || {
+                ticked.with(|t| members.with_value(|ms| selection::group_state(t, ms)))
+            }),
+            Callback::new(move |next| {
+                members.with_value(|ms| ticked.update(|t| selection::tick_all(t, ms, next)));
+            }),
+        )
+        .disabled(picking.busy),
+    )
 }
 
 /// Select-all, in the rows' checkbox column: the list box's `space-3` plus
@@ -616,6 +622,7 @@ fn select_all(
                     selected=selected
                     total=total
                     narrowed=narrowed
+                    disabled=picking.busy
                     on_toggle=move |next| {
                         shown.with_untracked(|s| ticked.update(|t| selection::tick_all(t, s, next)));
                     }
@@ -1746,6 +1753,28 @@ mod pane_tests {
             asked.get_untracked(),
             vec![vec!["remote-a.csv".to_string(), "remote-b.csv".to_string()]]
         );
+    }
+
+    /// While the page runs a command, a download included, no box moves:
+    /// rows, group headings and select-all are all disabled. So a download
+    /// that settles clears only the ticks it sent.
+    #[wasm_bindgen_test]
+    fn every_box_is_disabled_while_the_page_is_busy() {
+        let picking = Picking {
+            busy: Signal::stored(true),
+            ..Picking::default()
+        };
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+        let all = el.query_selector_all("input[type=checkbox]").unwrap();
+        assert!(all.length() > 0, "markup was {}", el.inner_html());
+        for i in 0..all.length() {
+            let input: web_sys::HtmlInputElement = all.item(i).unwrap().unchecked_into();
+            assert!(
+                input.disabled(),
+                "box {i} is live; markup was {}",
+                el.inner_html()
+            );
+        }
     }
 
     #[wasm_bindgen_test]
