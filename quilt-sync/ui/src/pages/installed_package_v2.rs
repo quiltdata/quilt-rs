@@ -36,7 +36,7 @@ mod revision_history;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
-use file_pane::{FilePane, FilePaneSkeleton, Grouping, Listing};
+use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing};
 pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 use resolve::{ResolveCommands, ResolvePane};
@@ -239,13 +239,14 @@ impl Default for Wiring {
 /// The file pane's inputs that outlive a re-read of the page.
 ///
 /// The body is rebuilt on every re-read, so the `Group:` choice, the
-/// collapsed folders and the search live with the page: the watcher's news
+/// collapsed folders, the search and the facet live with the page: the watcher's news
 /// must not reset them. The list itself is the answer's, drawn with its header.
 #[derive(Clone, Copy)]
 struct Files {
     grouping: RwSignal<String>,
     collapsed: RwSignal<BTreeSet<String>>,
     search: RwSignal<String>,
+    facet: RwSignal<String>,
     retry: Callback<()>,
 }
 
@@ -367,6 +368,7 @@ fn package_body(
                     grouping=files.grouping
                     collapsed=files.collapsed
                     search=files.search
+                    facet=files.facet
                     on_open=open_file
                     on_retry=files.retry
                 />
@@ -523,22 +525,26 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     });
 
     // Not remembered: another package, or another visit, starts at the
-    // default with every folder open and no search. `ns` is a memo on the namespace alone,
-    // so the rest of the address — Resolve's `resolve=1` — is not a new package.
+    // default with every folder open, no search and the `All` facet. `ns` is a memo on
+    // the namespace alone, so the rest of the address — Resolve's `resolve=1` — is not
+    // a new package.
     let grouping = RwSignal::new(Grouping::BaseFolder.label().to_string());
     let collapsed = RwSignal::new(BTreeSet::new());
     let search = RwSignal::new(String::new());
+    let facet = RwSignal::new(Facet::All.key().to_string());
     Effect::new(move |_| {
         ns.track();
         grouping.set(Grouping::BaseFolder.label().to_string());
         collapsed.set(BTreeSet::new());
         search.set(String::new());
+        facet.set(Facet::All.key().to_string());
     });
     // The list comes with the page read, so trying again is reading the page.
     let files = Files {
         grouping,
         collapsed,
         search,
+        facet,
         retry: Callback::new(move |()| reload.notify()),
     };
 
@@ -861,6 +867,7 @@ mod tests {
             grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
             collapsed: RwSignal::new(BTreeSet::new()),
             search: RwSignal::new(String::new()),
+            facet: RwSignal::new(Facet::All.key().to_string()),
             retry: Callback::new(|()| ()),
         }
     }
