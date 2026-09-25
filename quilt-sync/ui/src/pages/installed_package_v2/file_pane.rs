@@ -631,9 +631,10 @@ fn select_all(
 /// loaded tick, hidden ones included, so it can exceed select-all's `1 of 1
 /// selected` under a search (owner, 2026-09-25).
 ///
-/// Slides 4px and fades in over 160ms and has no exit (`g-fp-footer`, the
-/// gallery's, which copies the Banner's carve-out): unticking the last row
-/// grows the list back, and animating that would move rows under the pointer.
+/// Slides 4px and fades in over 160ms and has no exit (`.footer`, which copies
+/// the Banner's carve-out): unticking the last row grows the list back, and
+/// animating that would move rows under the pointer. Not the gallery's
+/// `g-fp-footer`: that is gallery chrome, which the app does not load.
 fn footer(picking: Picking, loaded: StoredValue<Vec<String>>) -> AnyView {
     if picking.whole_package {
         return ().into_any();
@@ -645,7 +646,7 @@ fn footer(picking: Picking, loaded: StoredValue<Vec<String>>) -> AnyView {
         Memo::new(move |_| ticked.with(|t| loaded.with_value(|l| selection::ticked_among(t, l))));
     view! {
         <Show when=move || chosen.with(|c| !c.is_empty())>
-            <div class="g-fp-footer">
+            <div class=style::footer>
                 <Button
                     variant=ButtonVariant::Primary
                     loading=picking.downloading

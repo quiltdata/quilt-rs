@@ -262,9 +262,9 @@ body {
 .g-strip > * { flex: 1 1 300px; min-width: 0; }
 
 
-/* The installed package's file-pane footer. Page-local, not kit: it is a spacer
- * and a Button inside the list `Card`, whose own rule draws the hairline above
- * it. It lives here until the page's region is built, and moves with it.
+/* The gallery scene's file-pane footer. The page's own pane styles its footer in
+ * `file_pane.module.scss` (`.footer`), since this chrome is gallery-only and the
+ * app's stylesheet does not load it; keep the two in step.
  *
  * The one carve-out from the Never Move Geometry Rule, copied from the Banner:
  * 4px and a fade, 160ms, and no exit animation — unticking the last row grows
