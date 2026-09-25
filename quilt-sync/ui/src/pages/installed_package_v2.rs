@@ -2,10 +2,12 @@
 //!
 //! The header and the context pane are drawn from one authoritative read. The
 //! pane has two modes: the ordinary one, and Resolve, which `resolve=1` asks
-//! for and a diverged package's comparison makes real. The file pane has not
-//! landed yet, so the shell deliberately leaves its growing left side empty
-//! rather than drawing provisional content; the differing set it will mark is
-//! already derived here, as [`FileMarks`].
+//! for and a diverged package's comparison makes real. The file pane, the
+//! shell's growing left side, comes after the context pane in the DOM, so
+//! reading and focus order is context first; the stylesheet places it. Its
+//! list arrives with the same read, classified by the status the header's
+//! state comes from, so the two cannot disagree and the tree is walked once.
+//! The differing set it will mark is already derived here, as [`FileMarks`].
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -26,6 +28,7 @@ use crate::components::appbar::appbar_actions;
 
 mod bucket_form;
 pub(crate) mod context_pane;
+pub(crate) mod file_pane;
 mod header;
 pub(crate) mod keeping;
 pub(crate) mod resolve;
@@ -33,6 +36,7 @@ mod revision_history;
 mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
+use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 use resolve::{ResolveCommands, ResolvePane};
@@ -232,6 +236,25 @@ impl Default for Wiring {
     }
 }
 
+/// The file pane's inputs that outlive a re-read of the page.
+///
+/// The body is rebuilt on every re-read, so the `Group:` choice, the
+/// collapsed folders, the search and the facet live with the page: the watcher's news
+/// must not reset them. The list itself is the answer's, drawn with its header.
+#[derive(Clone, Copy)]
+struct Files {
+    grouping: RwSignal<String>,
+    collapsed: RwSignal<BTreeSet<String>>,
+    search: RwSignal<String>,
+    facet: RwSignal<String>,
+    retry: Callback<()>,
+    /// The ticked paths, which a re-read keeps and another package clears.
+    ticked: RwSignal<BTreeSet<String>>,
+    /// The footer's `[Download]` is running. Here for `Wiring::downloading`'s
+    /// reason: the rebuilt button must keep its spinner.
+    downloading: RwSignal<bool>,
+}
+
 /// What the file pane will read. Built by `package_body`; the pane counts
 /// `differing` today, and the file pane marks rows by it later.
 #[derive(Clone, Copy)]
@@ -280,15 +303,28 @@ fn package_body(
     w: Wiring,
     asked: Signal<bool>,
     resolving: ResolveCommands,
+    files: Files,
 ) -> AnyView {
     let commands::PackagePageData {
-        header, context, ..
+        header,
+        context,
+        files: listed,
+        ..
     } = data;
+    // From the same answer as the header, so it is always this package's.
+    let listing = Signal::stored(Listing::from(listed));
     let diverged = context.resolve.is_some();
     let open = Memo::new(move |_| asked.get() && diverged);
     let marks = FileMarks {
         differing: differing_marks(open.into(), context.resolve.as_ref()),
         scope: context.keeping.scope,
+    };
+    let picking = Picking {
+        ticked: files.ticked,
+        downloading: files.downloading.into(),
+        busy: w.busy.into(),
+        on_download: file_downloader(header.namespace.to_string(), w, files),
+        whole_package: marks.scope == commands::KeepingScope::EntirePackage,
     };
     // The confirmation's flag is the page's, so it outlives the mode unless
     // closed here: a mode that reopens must not find it already open.
@@ -303,6 +339,7 @@ fn package_body(
     let uri = header.uri.clone();
     let namespace = ns.to_string();
     let open_catalog = catalog_opener(namespace.clone(), w.outcome);
+    let open_file = file_opener(namespace.clone(), uri.clone(), w.outcome);
     let context = StoredValue::new(context);
     let pane = move || {
         let context = context.get_value();
@@ -336,10 +373,76 @@ fn package_body(
     view! {
         <div class=style::page>
             <PageHeader data=header w=w resolving=open />
-            <div class=style::shell>{pane}</div>
+            <div class=style::shell>
+                {pane}
+                <FilePane
+                    listing=listing
+                    grouping=files.grouping
+                    collapsed=files.collapsed
+                    search=files.search
+                    facet=files.facet
+                    on_open=open_file
+                    on_retry=files.retry
+                    picking=picking
+                />
+            </div>
         </div>
     }
     .into_any()
+}
+
+/// The file pane's `[Download]`: `package_download_backlog` over the ticked
+/// paths, under the page's one-command lock.
+///
+/// A success clears the ticks it sent, and the re-read turns the rows `Downloaded`. A
+/// file the remote no longer holds stays `Not downloaded`, and the band says
+/// which ([`download_outcome`]). A failure keeps the ticks, so a retry is one
+/// press. While it runs every box is disabled, as every other command is, so
+/// the ticks it clears are the ones it sent.
+fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<String>> {
+    Callback::new(move |paths: Vec<String>| {
+        let (ns, outcome, downloading, ticked) = (
+            namespace.clone(),
+            w.outcome,
+            files.downloading,
+            files.ticked,
+        );
+        let task = async move {
+            let asked = paths.len();
+            downloading.set(true);
+            let answer = commands::package_download_backlog(ns.clone(), paths.clone()).await;
+            downloading.try_set(false);
+            answer.map(|skipped| {
+                // Safe on any package: every box is disabled while the page's
+                // lock is held, so nothing was ticked since this was sent, and
+                // moving on only took ticks away.
+                ticked.try_update(|t| file_pane::selection::tick_all(t, &paths, false));
+                if let Some(said) = download_outcome(ns, asked, &skipped) {
+                    outcome.try_set(Some(said));
+                }
+                String::new()
+            })
+        };
+        run(
+            w.busy,
+            w.outcome,
+            namespace.clone(),
+            "Could not download the files.",
+            Some(w.reload),
+            task,
+        );
+    })
+}
+
+/// What the band says after a download: nothing when every file came down,
+/// and a warning naming the files the remote no longer holds when some did not.
+fn download_outcome(namespace: String, asked: usize, skipped: &[String]) -> Option<Outcome> {
+    file_pane::selection::unavailable(asked, skipped).map(|(lead, paths)| Outcome {
+        namespace,
+        variant: BannerVariant::Warning,
+        lead,
+        detail: Some(paths),
+    })
 }
 
 /// Opens a revision's catalog page, reporting a failure on the keyed band.
@@ -363,12 +466,50 @@ fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Call
     })
 }
 
+/// The latest answer, when it was read for the package on screen.
+///
+/// `LocalResource::get` keeps the last answer while a re-read is out. For the
+/// same package that is the point — a re-read keeps the page on screen rather
+/// than flashing its skeleton. For another package it would draw the last
+/// package under this one's address, so an answer read for a different
+/// namespace is not yet an answer.
+fn answer_for<T>(answer: Option<(String, T)>, showing: &str) -> Option<T> {
+    answer.and_then(|(read_for, answer)| (read_for == showing).then_some(answer))
+}
+
+/// Opens a downloaded file in its default application, reporting a failure on
+/// the keyed band. Not `run`, for `catalog_opener`'s reason: opening a file
+/// writes nothing, so it neither takes `busy` nor clears the band.
+fn file_opener(
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    outcome: RwSignal<Option<Outcome>>,
+) -> Callback<String> {
+    Callback::new(move |path: String| {
+        let namespace = namespace.clone();
+        let uri = uri.clone();
+        leptos::task::spawn_local(async move {
+            if let Err(detail) =
+                commands::open_in_default_application(namespace.clone(), path, uri).await
+            {
+                outcome.try_set(Some(Outcome {
+                    namespace,
+                    variant: BannerVariant::Critical,
+                    lead: "Could not open this file.".to_string(),
+                    detail: Some(detail),
+                }));
+            }
+        });
+    })
+}
+
 fn package_skeleton() -> AnyView {
     view! {
         <div class=style::page>
             <PageHeaderSkeleton />
             <div class=style::shell>
                 <CurrentRevisionPaneSkeleton />
+                <FilePaneSkeleton />
             </div>
         </div>
     }
@@ -437,17 +578,47 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     let in_flight = RwSignal::new(false);
     // One read for the whole page. Re-runs when the namespace changes, and
     // whenever `reload` fires — the watcher reporting news about this package,
-    // or the failure arm's way out.
+    // or the failure arm's way out. Each answer carries the package it was
+    // read for; see `answer_for`.
     let data = LocalResource::new(move || {
         reload.track();
         let namespace = ns.get();
         async move {
             in_flight.set(true);
-            let answer = read(namespace).await;
+            let answer = read(namespace.clone()).await;
             in_flight.set(false);
-            answer
+            (namespace, answer)
         }
     });
+
+    // Not remembered: another package, or another visit, starts at the
+    // default with every folder open, no search and the `All` facet. `ns` is a memo on
+    // the namespace alone, so the rest of the address — Resolve's `resolve=1` — is not
+    // a new package.
+    let grouping = RwSignal::new(Grouping::BaseFolder.label().to_string());
+    let collapsed = RwSignal::new(BTreeSet::new());
+    let search = RwSignal::new(String::new());
+    let facet = RwSignal::new(Facet::All.key().to_string());
+    // Ticks name paths in one package, so another package starts with none.
+    let ticked = RwSignal::new(BTreeSet::new());
+    Effect::new(move |_| {
+        ns.track();
+        grouping.set(Grouping::BaseFolder.label().to_string());
+        collapsed.set(BTreeSet::new());
+        search.set(String::new());
+        facet.set(Facet::All.key().to_string());
+        ticked.set(BTreeSet::new());
+    });
+    // The list comes with the page read, so trying again is reading the page.
+    let files = Files {
+        grouping,
+        collapsed,
+        search,
+        facet,
+        retry: Callback::new(move |()| reload.notify()),
+        ticked,
+        downloading: RwSignal::new(false),
+    };
 
     // A `resolve=1` the package cannot honour is replaced by the plain address,
     // so *Back* never re-enters a mode that does not exist. The resource keeps
@@ -456,7 +627,7 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         if in_flight.get() {
             return;
         }
-        let Some(Ok(answered)) = data.get() else {
+        let Some((_, Ok(answered))) = data.get() else {
             return;
         };
         if let Some(to) = normalized_address(asked.get(), &ns.get(), &answered) {
@@ -473,41 +644,36 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         <PackageEventListener reload=reload />
         <PageLayout
             heading="Package"
-            // Its own `Suspense`, so the band can sit in the frame's slot —
-            // directly under the appbar, pushing the page down — while the data
-            // it needs arrives with the body's read. An empty fallback: a
-            // skeleton here would reserve a band for news that usually is not
-            // there, and the page would settle by collapsing it.
+            // In the frame's slot — directly under the appbar, pushing the page
+            // down — drawn from the same keyed answer as the body. Nothing
+            // before the first answer: a skeleton here would reserve a band
+            // for news that usually is not there, and the page would settle
+            // by collapsing it.
             banner=view! {
                 {outcome_band(outcome, ns.into())}
-                <Suspense fallback=|| ()>
-                    {move || Suspend::new(async move {
-                        match data.await {
-                            Ok(d) => pause_banner(d.sync_paused.clone(), dismissed),
-                            // A failed read still says nothing about a command that ran
-                            // before it; the outcome band above is outside this Suspense
-                            // for exactly that reason.
-                            Err(_) => ().into_any(),
-                        }
-                    })}
-                </Suspense>
+                {move || match answer_for(data.get(), &ns.get()) {
+                    Some(Ok(d)) => pause_banner(d.sync_paused, dismissed),
+                    // A failed read still says nothing about a command that ran
+                    // before it; the outcome band above is outside this arm for
+                    // exactly that reason.
+                    Some(Err(_)) | None => ().into_any(),
+                }}
             }
                 .into_any()
             actions=appbar_actions(move || reload.notify(), in_flight.into())
         >
-            <Suspense fallback=package_skeleton>
-                {move || Suspend::new(async move {
-                    match data.await {
-                        Ok(d) => package_body(d, w, asked.into(), resolving),
-                        // The page keeps its frame and states the failure in
-                        // place. A read that failed for a reason the header
-                        // could have worded — no session, a refused role —
-                        // never reaches here: the command resolves those to a
-                        // state, and the header draws them.
-                        Err(_) => package_failure(ns.get(), reload),
-                    }
-                })}
-            </Suspense>
+            // Not a `Suspense`, which draws its fallback again for every
+            // re-read: the watcher's news would blank the header and the list
+            // each time. The last answer for this package stays up instead.
+            {move || match answer_for(data.get(), &ns.get()) {
+                None => package_skeleton(),
+                Some(Ok(d)) => package_body(d, w, asked.into(), resolving, files),
+                // The page keeps its frame and states the failure in place. A
+                // read that failed for a reason the header could have worded —
+                // no session, a refused role — never reaches here: the command
+                // resolves those to a state, and the header draws them.
+                Some(Err(_)) => package_failure(ns.get(), reload),
+            }}
         </PageLayout>
     }
 }
@@ -738,7 +904,104 @@ mod tests {
                 resolve: None,
             },
             sync_paused: None,
+            files: commands::FilesData::Listed(commands::EntryList {
+                entries: vec![commands::EntryData {
+                    filename: "a.csv".to_string(),
+                    size: 7,
+                    status: "pristine".to_string(),
+                    junky_pattern: None,
+                    ignored_by: None,
+                    namespace: "team/dataset".try_into().unwrap(),
+                }],
+                counts: commands::EntryCounts {
+                    all: 1,
+                    ..commands::EntryCounts::default()
+                },
+                total: 1,
+                truncated: false,
+            }),
         }
+    }
+
+    /// An answer read for package A is not drawn at package B's address while
+    /// B's read is out; a re-read of the same package keeps the one it has.
+    #[test]
+    fn an_answer_read_for_another_package_is_not_yet_an_answer() {
+        let answer = |ns: &str| Some((ns.to_string(), 1));
+        assert_eq!(answer_for(answer("team/a"), "team/b"), None);
+        assert_eq!(answer_for(answer("team/b"), "team/b"), Some(1));
+        assert_eq!(answer_for(None::<(String, u8)>, "team/b"), None);
+    }
+
+    /// A download the remote could not finish is a warning that names the
+    /// files left behind; one it finished says nothing, as success does here.
+    #[test]
+    fn a_download_that_left_files_behind_warns_and_names_them() {
+        assert_eq!(download_outcome("team/a".to_string(), 3, &[]), None);
+        assert_eq!(
+            download_outcome("team/a".to_string(), 3, &["raw/b.csv".to_string()]),
+            Some(said(
+                "team/a",
+                BannerVariant::Warning,
+                "Downloaded 2 of 3. 1 file is no longer on the remote at this revision.",
+                Some("raw/b.csv"),
+            ))
+        );
+    }
+
+    /// The pane's page-owned state at rest, which is all these tests need of it.
+    fn idle_files() -> Files {
+        Files {
+            grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
+            collapsed: RwSignal::new(BTreeSet::new()),
+            search: RwSignal::new(String::new()),
+            facet: RwSignal::new(Facet::All.key().to_string()),
+            retry: Callback::new(|()| ()),
+            ticked: RwSignal::new(BTreeSet::new()),
+            downloading: RwSignal::new(false),
+        }
+    }
+
+    fn body(data: commands::PackagePageData) -> web_sys::Element {
+        mount(move || {
+            let w = Wiring::new();
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(data, w, Signal::stored(false), resolving, idle_files())}</Router>
+            }
+        })
+    }
+
+    /// The list is the answer's, drawn with its header: package B's body can
+    /// only ever hold package B's files.
+    #[wasm_bindgen_test]
+    fn the_body_draws_the_file_list_its_own_answer_carries() {
+        let el = body(page_data());
+        assert!(
+            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+                .unwrap()
+                .is_some(),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// No status, no list: the pane states why and draws no row.
+    #[wasm_bindgen_test]
+    fn an_answer_without_a_list_draws_the_pane_s_failure() {
+        let mut data = page_data();
+        data.files = commands::FilesData::Unlisted {
+            reason: "Access denied".to_string(),
+        };
+        let el = body(data);
+        element_saying(&el, "Could not list this package's files.");
+        assert!(
+            el.query_selector("section[aria-label='Files'] [title]")
+                .unwrap()
+                .is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
     }
 
     fn said(namespace: &str, variant: BannerVariant, lead: &str, detail: Option<&str>) -> Outcome {
@@ -939,7 +1202,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
             }
         });
         let aside = el
@@ -964,6 +1227,34 @@ mod tests {
         );
     }
 
+    /// Reading and focus order is context first, files second: the context
+    /// pane precedes the file pane in the DOM, whatever the stylesheet draws.
+    #[wasm_bindgen_test]
+    fn the_context_pane_precedes_the_file_pane_in_document_order() {
+        let el = mount(|| {
+            let w = Wiring::new();
+            let resolving = ResolveCommands::app();
+            view! {
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
+            }
+        });
+        let context = el
+            .query_selector("aside[aria-label='About this package']")
+            .unwrap()
+            .expect("the context pane");
+        let files = el
+            .query_selector("section[aria-label='Files']")
+            .unwrap()
+            .expect("the file pane");
+        let following = context.compare_document_position(&files);
+        assert_ne!(
+            following & web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+            0,
+            "the file pane follows the context pane; markup was {}",
+            el.inner_html()
+        );
+    }
+
     /// The live pane's trigger arrives with the body, stating the page read's
     /// count, and nothing opens until it is pressed: the list is lazy.
     #[wasm_bindgen_test]
@@ -972,7 +1263,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
             }
         });
         let trigger = element_saying(&el, "Revisions you have (1)")
@@ -998,7 +1289,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving)}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
             }
         });
         let group = el
@@ -1045,7 +1336,7 @@ mod tests {
                 <Router>
                     {move || {
                         reads.track();
-                        package_body(page_data(), w, Signal::stored(false), ResolveCommands::app())
+                        package_body(page_data(), w, Signal::stored(false), ResolveCommands::app(), idle_files())
                     }}
                 </Router>
             }
@@ -1075,14 +1366,22 @@ mod tests {
     }
 
     /// The pane's fixed measure is a wide-layout decision, and the page's own
-    /// inline container releases it when that shell narrows.
+    /// inline container releases it — and stacks the shell — when it narrows.
     #[test]
     fn the_shell_and_pane_styles_own_the_responsive_width() {
         const PAGE: &str = include_str!("installed_package_v2.module.scss");
         const PANE: &str = include_str!("installed_package_v2/context_pane.module.scss");
 
         assert!(PAGE.contains("container-type: inline-size"));
-        assert!(PAGE.contains("justify-content: flex-end"));
+        assert!(PAGE.contains("@container (max-width: 800px)"));
+        assert!(
+            PAGE.contains(".shell > aside {\n  order: 1;"),
+            "files on the leading side while the two share a row"
+        );
+        assert!(
+            PAGE.contains("order: 0"),
+            "context above files, in DOM order, when stacked"
+        );
         assert!(PANE.contains("width: 280px"));
         assert!(PANE.contains("@container (max-width: 800px)"));
         assert!(PANE.contains("width: 100%"));
@@ -1339,6 +1638,15 @@ mod tests {
         counted(page_data())
     }
 
+    /// Answers the first read, then never answers again: a re-read in flight.
+    fn answers_once(_: String) -> Read {
+        if READS.with(std::cell::Cell::get) == 0 {
+            counted(page_data())
+        } else {
+            pending_read(String::new())
+        }
+    }
+
     fn pending_read(_: String) -> Read {
         READS.with(|r| r.set(r.get() + 1));
         Box::pin(std::future::pending())
@@ -1411,6 +1719,192 @@ mod tests {
         assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
         assert_eq!(history_length(), before, "replaced, not pushed");
         element_saying(&el, "Revisions you have (1)");
+    }
+
+    /// The watcher's re-read, or Refresh, must not blank the list while it is
+    /// out: the list is on screen before and still there during it.
+    #[wasm_bindgen_test]
+    async fn a_re_read_in_flight_keeps_the_file_list() {
+        let el = screen_at(PLAIN, answers_once).await;
+        let row = || {
+            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+                .unwrap()
+                .is_some()
+        };
+        assert!(row(), "listed; markup was {}", el.inner_html());
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert!(row(), "still listed; markup was {}", el.inner_html());
+    }
+
+    /// Every package answered as the namespace asked, with one folder of two.
+    fn a_folder_as_asked(namespace: String) -> Read {
+        let namespace: quilt_uri::Namespace = namespace.try_into().unwrap();
+        let mut data = page_data();
+        data.header.namespace = namespace.clone();
+        let entry = |path: &str| commands::EntryData {
+            filename: path.to_string(),
+            size: 7,
+            status: "pristine".to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            namespace: namespace.clone(),
+        };
+        data.files = commands::FilesData::Listed(commands::EntryList {
+            entries: vec![entry("notes/a.md"), entry("notes/b.md")],
+            counts: commands::EntryCounts {
+                all: 2,
+                ..commands::EntryCounts::default()
+            },
+            total: 2,
+            truncated: false,
+        });
+        counted(data)
+    }
+
+    /// A collapsed folder is the page's: a re-read keeps it, and another
+    /// package starts with every folder open.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_folder_survives_a_re_read_but_not_another_package() {
+        let el = screen_at(PLAIN, a_folder_as_asked).await;
+        let expanded = || {
+            el.query_selector("section[aria-label='Files'] [aria-expanded]")
+                .unwrap()
+                .expect("the folder's disclosure")
+                .get_attribute("aria-expanded")
+        };
+        el.query_selector("section[aria-label='Files'] [aria-expanded]")
+            .unwrap()
+            .expect("the folder's disclosure")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        sleep_ms(10).await;
+        assert_eq!(expanded().as_deref(), Some("false"));
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert_eq!(
+            expanded().as_deref(),
+            Some("false"),
+            "kept across the re-read"
+        );
+
+        move_to("/installed-package?namespace=team%2Fother");
+        sleep_ms(50).await;
+        assert_eq!(
+            expanded().as_deref(),
+            Some("true"),
+            "open again on another package; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The search is the page's, like the folders: a re-read keeps it, and
+    /// another package starts with none.
+    #[wasm_bindgen_test]
+    async fn the_search_survives_a_re_read_but_not_another_package() {
+        let el = screen_at(PLAIN, a_folder_as_asked).await;
+        let field = || -> web_sys::HtmlInputElement {
+            el.query_selector("section[aria-label='Files'] input[type=search]")
+                .unwrap()
+                .expect("the search field")
+                .unchecked_into()
+        };
+        field().set_value("b.md");
+        field()
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        sleep_ms(40).await;
+        let shown = |path: &str| {
+            el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
+                .unwrap()
+                .is_some()
+        };
+        assert!(
+            !shown("notes/a.md"),
+            "narrowed; markup was {}",
+            el.inner_html()
+        );
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert_eq!(field().value(), "b.md", "kept across the re-read");
+        assert!(!shown("notes/a.md"), "still narrowed");
+
+        move_to("/installed-package?namespace=team%2Fother");
+        sleep_ms(50).await;
+        assert_eq!(field().value(), "", "cleared on another package");
+        assert!(
+            shown("notes/a.md"),
+            "every row again; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Typing never reads the page: search narrows the rows the last read
+    /// sent, so no keystroke asks for the package's status again.
+    #[wasm_bindgen_test]
+    async fn typing_a_search_never_reads_the_page() {
+        let el = screen_at(PLAIN, a_folder_as_asked).await;
+        assert_eq!(READS.with(std::cell::Cell::get), 1, "the page's one read");
+        let field: web_sys::HtmlInputElement = el
+            .query_selector("section[aria-label='Files'] input[type=search]")
+            .unwrap()
+            .expect("the search field")
+            .unchecked_into();
+        for query in ["n", "no", "not", "notes/", "notes/b", "", "a"] {
+            field.set_value(query);
+            field
+                .dispatch_event(&web_sys::Event::new("input").unwrap())
+                .unwrap();
+            sleep_ms(5).await;
+        }
+        sleep_ms(40).await;
+        assert_eq!(
+            READS.with(std::cell::Cell::get),
+            1,
+            "no keystroke reads the page again"
+        );
+    }
+
+    /// Answers for `team/dataset` only; every other package's read is out.
+    fn answers_dataset_only(namespace: String) -> Read {
+        if namespace == "team/dataset" {
+            counted(page_data())
+        } else {
+            pending_read(namespace)
+        }
+    }
+
+    /// Moving on, the last package's files are not drawn at the new address.
+    #[wasm_bindgen_test]
+    async fn another_package_s_read_in_flight_draws_no_stale_files() {
+        let el = screen_at(PLAIN, answers_dataset_only).await;
+        let row = || {
+            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+                .unwrap()
+                .is_some()
+        };
+        assert!(row(), "listed; markup was {}", el.inner_html());
+
+        move_to("/installed-package?namespace=team%2Fother");
+        sleep_ms(50).await;
+
+        assert!(
+            !row(),
+            "not under another package; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            el.query_selector("[aria-busy=true]").unwrap().is_some(),
+            "the skeleton instead; markup was {}",
+            el.inner_html()
+        );
     }
 
     #[wasm_bindgen_test]

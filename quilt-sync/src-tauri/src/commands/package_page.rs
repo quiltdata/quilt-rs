@@ -18,6 +18,7 @@ use crate::commands::main_page::PackageStateDto;
 use crate::commands::main_page::{
     conflict_files, misconfigured_remote, resolve_state, unexplained_pause,
 };
+use crate::commands::package_entries::{EntryList, entry_list};
 use crate::error::Error;
 use crate::model;
 use crate::notify::Notify;
@@ -48,6 +49,27 @@ pub struct PackagePageData {
     /// the surface writes the sentence and renders this as its detail — but the
     /// detail is the engine's own refusal text and nothing else knows it.
     pub sync_paused: Option<String>,
+    /// The file pane's list, classified by the same status the header's state
+    /// comes from.
+    pub files: FilesData,
+}
+
+/// The file pane's list, or why there is none.
+#[derive(Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FilesData {
+    Listed(EntryList),
+    /// Not even a local status could be computed, or the manifest's rows
+    /// could not be read. No list is sent rather than one classified without
+    /// a status: every row would read as pristine or not downloaded, whatever
+    /// is on disk.
+    Unlisted {
+        reason: String,
+    },
 }
 
 /// The read-only facts shown beside the v2 package page.
@@ -349,6 +371,45 @@ async fn resolve_for_page(
     }
 }
 
+/// The file pane's list from the page's own status: no second walk.
+///
+/// Which files are here and whether they changed does not depend on the
+/// remote, so a blocked or skipped remote status does not hide them. A blocked
+/// status stopped before its walk — the refusal came from refreshing the
+/// latest hash — and a misconfigured remote never asked, so either way the
+/// tree is walked once, here, against the cached manifest (v1 does the same
+/// after a denial). Only what needs the remote degrades, and the header says
+/// so. The manifest's rows are read only once there is a status.
+async fn files_data(
+    m: &impl model::QuiltModel,
+    installed: &quilt::InstalledPackage,
+    namespace: &quilt_uri::Namespace,
+    lineage: &quilt::lineage::PackageLineage,
+    status_read: Option<&Result<quilt::lineage::InstalledPackageStatus, String>>,
+) -> FilesData {
+    let local;
+    let status = match status_read {
+        Some(Ok(status)) => status,
+        Some(Err(_)) | None => match m.recompute_local_status(installed, None).await {
+            Ok(status) => {
+                local = status;
+                &local
+            }
+            Err(err) => {
+                return FilesData::Unlisted {
+                    reason: err.to_frontend_string(),
+                };
+            }
+        },
+    };
+    match m.get_installed_package_records(installed).await {
+        Ok(records) => FilesData::Listed(entry_list(namespace, status, &lineage.paths, &records)),
+        Err(err) => FilesData::Unlisted {
+            reason: err.to_frontend_string(),
+        },
+    }
+}
+
 /// Untracked files are not counted: reset's touch set is `lineage.paths`
 /// (`flow/reset_to_latest.rs:56`), and a file it does not track stays.
 fn resolve_data(
@@ -529,6 +590,7 @@ async fn get_package_page_data_from_model(
         status.map(|s| &s.changes),
     );
     let resolve = resolve_for_page(m, &installed, &lineage, status_read.as_ref()).await;
+    let files = files_data(m, &installed, namespace, &lineage, status_read.as_ref()).await;
     let context = package_context_data(
         namespace,
         &lineage,
@@ -540,6 +602,7 @@ async fn get_package_page_data_from_model(
 
     Ok(PackagePageData {
         context,
+        files,
         // The residue only. `unexplained_pause` is `Other` and nothing else, so
         // a pause with a state of its own is reported once, by the header.
         sync_paused: unexplained_pause(paused)
@@ -690,10 +753,12 @@ async fn download_backlog_from_model(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::str::FromStr;
 
     use super::*;
     use crate::commands::RoleCache;
+    use crate::commands::package_entries::EntryCounts;
     use crate::commands::test_support::{
         access_denied_error, access_denied_error_on, make_installed_package, make_manifest_uri,
         make_manifest_uri_no_origin,
@@ -706,7 +771,44 @@ mod tests {
     fn mock_one_package(
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
     ) -> crate::model::MockQuiltModel {
+        mock_one_package_reading_records(status, None)
+    }
+
+    /// The manifest's rows at `paths`, each 7 bytes.
+    fn records(paths: &[&str]) -> BTreeMap<PathBuf, quilt::manifest::ManifestRow> {
+        paths
+            .iter()
+            .map(|path| {
+                (
+                    PathBuf::from(path),
+                    quilt::manifest::ManifestRow {
+                        logical_key: PathBuf::from(path),
+                        size: 7,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// [`mock_one_package`], asserting how many times the manifest's rows are
+    /// read when `reads` is given.
+    fn mock_one_package_reading_records(
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+        reads: Option<usize>,
+    ) -> crate::model::MockQuiltModel {
         let mut model = crate::model::mocks::create();
+        let rows = model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(records(&["a.csv", "b.csv", "c.csv"])));
+        if let Some(n) = reads {
+            rows.times(n);
+        }
+        // Only a blocked status asks for the local one, and never twice.
+        model
+            .expect_recompute_local_status()
+            .times(..=1)
+            .returning(|_, _| Ok(settled()));
         model
             .expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
@@ -784,6 +886,13 @@ mod tests {
         model
             .expect_get_installed_package_keys()
             .returning(|_, _| Ok(keys(&["a.csv"])));
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(records(&["a.csv"])));
+        model
+            .expect_recompute_local_status()
+            .times(..=1)
+            .returning(|_, _| Ok(settled()));
         model
             .expect_get_installed_package_status()
             .times(1)
@@ -1275,6 +1384,263 @@ mod tests {
         assert_eq!(
             page.context.keeping.remote_only,
             vec!["a.csv", "b.csv", "c.csv"]
+        );
+    }
+
+    fn listed(files: FilesData) -> EntryList {
+        match files {
+            FilesData::Listed(list) => list,
+            FilesData::Unlisted { reason } => panic!("no list: {reason}"),
+        }
+    }
+
+    /// The file pane's rows come with the page, classified by the header's own
+    /// status: `mock_one_package` expects exactly one status call.
+    #[tokio::test]
+    async fn the_page_read_carries_the_file_list_from_its_one_status() {
+        let status =
+            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, modified("b.csv"));
+        let m = mock_one_package_reading_records(Ok(status), Some(1));
+        let list = listed(read(&m).await.expect("a page").files);
+
+        let rows: Vec<(&str, &str)> = list
+            .entries
+            .iter()
+            .map(|e| (e.filename.as_str(), e.status.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("a.csv", "remote"),
+                ("b.csv", "modified"),
+                ("c.csv", "remote")
+            ]
+        );
+        assert_eq!(
+            list.counts,
+            EntryCounts {
+                all: 3,
+                changed: 1,
+                not_downloaded: 2,
+                ignored: 0,
+            }
+        );
+        assert_eq!(list.total, 3);
+        assert!(!list.truncated);
+    }
+
+    /// One package on `uri` whose remote-aware status answers `status`, whose
+    /// local status answers `local`, and whose manifest rows answer `rows`.
+    /// `None` asserts the call is never made, and `Some` that it is made once.
+    fn mock_rows(
+        uri: quilt_uri::ManifestUri,
+        status: Option<Result<quilt::lineage::InstalledPackageStatus, Error>>,
+        local: Option<Result<quilt::lineage::InstalledPackageStatus, Error>>,
+        rows: Option<Result<BTreeMap<PathBuf, quilt::manifest::ManifestRow>, Error>>,
+    ) -> crate::model::MockQuiltModel {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    uri.clone(),
+                    "abcdef".to_string(),
+                ))
+            });
+        m.expect_get_installed_package_current_revision()
+            .returning(|_, _| Ok(Some(revision("Initial upload"))));
+        m.expect_get_installed_package_revision_count()
+            .returning(|_| Ok(1));
+        m.expect_get_installed_package_keys()
+            .returning(|_, _| Ok(keys(&["a.csv"])));
+        match status {
+            Some(status) => {
+                m.expect_get_installed_package_status()
+                    .times(1)
+                    .return_once(move |_, _| status);
+            }
+            None => {
+                m.expect_get_installed_package_status().times(0);
+            }
+        }
+        match local {
+            Some(local) => {
+                m.expect_recompute_local_status()
+                    .times(1)
+                    .return_once(move |_, _| local);
+            }
+            None => {
+                m.expect_recompute_local_status().times(0);
+            }
+        }
+        match rows {
+            Some(rows) => {
+                m.expect_get_installed_package_records()
+                    .times(1)
+                    .return_once(move |_| rows);
+            }
+            None => {
+                m.expect_get_installed_package_records().times(0);
+            }
+        }
+        m
+    }
+
+    #[tokio::test]
+    async fn the_page_read_caps_the_file_list_and_says_so() {
+        let paths: Vec<String> = (0..1001).map(|i| format!("f{i:04}")).collect();
+        let many: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let m = mock_rows(
+            make_manifest_uri(NS),
+            Some(Ok(settled())),
+            None,
+            Some(Ok(records(&many))),
+        );
+
+        let list = listed(read(&m).await.expect("a page").files);
+
+        assert_eq!(list.entries.len(), 1000);
+        assert_eq!(
+            list.entries.last().map(|e| e.filename.as_str()),
+            Some("f0999")
+        );
+        assert_eq!(list.total, 1001);
+        assert!(list.truncated);
+        assert_eq!(list.counts.not_downloaded, 1001);
+    }
+
+    /// A local change, as the local walk sees it.
+    fn changed_here(path: &str) -> quilt::lineage::InstalledPackageStatus {
+        quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, modified(path))
+    }
+
+    fn rows_of(list: &EntryList) -> Vec<(&str, &str)> {
+        list.entries
+            .iter()
+            .map(|e| (e.filename.as_str(), e.status.as_str()))
+            .collect()
+    }
+
+    /// A denial refuses the remote, not the tree: the files are still listed,
+    /// from one local walk. The remote status stopped before walking.
+    #[tokio::test]
+    async fn a_denied_package_still_lists_its_local_files() {
+        let m = mock_rows(
+            make_manifest_uri(NS),
+            Some(Err(access_denied_error())),
+            Some(Ok(changed_here("b.csv"))),
+            Some(Ok(records(&["a.csv", "b.csv"]))),
+        );
+        let page = read(&m).await.expect("a blocked read is a state");
+
+        assert_eq!(
+            page.header.state,
+            PackageStateDto::RoleDenied { role: None }
+        );
+        let list = listed(page.files);
+        assert_eq!(
+            rows_of(&list),
+            vec![("a.csv", "remote"), ("b.csv", "modified")]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_package_with_no_session_still_lists_its_local_files() {
+        let no_session = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(None)));
+        let m = mock_rows(
+            make_manifest_uri(NS),
+            Some(Err(no_session)),
+            Some(Ok(changed_here("a.csv"))),
+            Some(Ok(records(&["a.csv"]))),
+        );
+        let page = read(&m).await.expect("a blocked read is a state");
+
+        assert!(
+            matches!(page.header.state, PackageStateDto::NoSession { .. }),
+            "state was {:?}",
+            page.header.state
+        );
+        let list = listed(page.files);
+        assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+    }
+
+    /// A misconfigured remote never asks for the remote status; the local
+    /// walk still lists the files.
+    #[tokio::test]
+    async fn a_misconfigured_remote_still_lists_its_local_files() {
+        let m = mock_rows(
+            make_manifest_uri_no_origin(NS),
+            None,
+            Some(Ok(changed_here("a.csv"))),
+            Some(Ok(records(&["a.csv"]))),
+        );
+        let page = read(&m).await.expect("a page");
+
+        assert_eq!(page.header.state, PackageStateDto::Unknown);
+        let list = listed(page.files);
+        assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+    }
+
+    /// With no status at all, no list: never one classified without a status,
+    /// and the manifest's rows are not read.
+    #[tokio::test]
+    async fn no_local_status_sends_no_list_and_says_why() {
+        let m = mock_rows(
+            make_manifest_uri(NS),
+            Some(Err(access_denied_error())),
+            Some(Err(Error::General("tree unreadable".to_string()))),
+            None,
+        );
+        let page = read(&m).await.expect("a blocked read is a state");
+
+        match page.files {
+            FilesData::Unlisted { reason } => {
+                assert!(reason.contains("tree unreadable"), "reason was {reason}");
+            }
+            FilesData::Listed(_) => panic!("a list without a status"),
+        }
+    }
+
+    /// A manifest that cannot be read leaves the header standing.
+    #[tokio::test]
+    async fn unreadable_rows_send_no_list_and_the_page_still_draws() {
+        let m = mock_rows(
+            make_manifest_uri(NS),
+            Some(Ok(settled())),
+            None,
+            Some(Err(Error::General("manifest gone".to_string()))),
+        );
+
+        let page = read(&m).await.expect("a page");
+
+        match page.files {
+            FilesData::Unlisted { reason } => {
+                assert!(reason.contains("manifest gone"), "reason was {reason}");
+            }
+            FilesData::Listed(_) => panic!("a list from rows that were not read"),
+        }
+    }
+
+    /// Anchored identically in the UI's `files_data_wire_form_is_verbatim`.
+    #[test]
+    fn files_data_wire_form_is_verbatim() {
+        let unlisted = FilesData::Unlisted {
+            reason: "denied".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&unlisted).unwrap(),
+            r#"{"kind":"unlisted","reason":"denied"}"#,
+        );
+        let listed = FilesData::Listed(EntryList {
+            entries: Vec::new(),
+            counts: EntryCounts::default(),
+            total: 0,
+            truncated: false,
+        });
+        assert_eq!(
+            serde_json::to_string(&listed).unwrap(),
+            r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0},"total":0,"truncated":false}"#,
         );
     }
 

@@ -18,6 +18,7 @@ mod auth;
 mod commit_data;
 mod main_page;
 mod package_data;
+mod package_entries;
 mod package_list;
 mod package_ops;
 mod package_page;

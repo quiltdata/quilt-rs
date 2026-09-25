@@ -31,7 +31,15 @@ pub struct InstalledPackageData {
     /// "unable to check remote status" copy, and must not offer Login: the
     /// session is healthy, so signing in again re-vends the same role.
     pub no_access_reason: Option<String>,
+    /// Sorted by path, then capped at 1000.
     pub entries: Vec<EntryData>,
+    /// Whole-package facet counts for the v2 file pane.
+    pub counts: EntryCounts,
+    /// Every entry the package has, ignored ones included, before the cap.
+    pub total: usize,
+    /// The cap dropped entries. Set by the backend; never infer it from
+    /// `entries.len()`.
+    pub truncated: bool,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -41,6 +49,18 @@ pub struct InstalledPackageData {
     pub syncs_entire_package: bool,
     /// Whether the experiment that offers the scope control is on.
     pub entire_package_sync_enabled: bool,
+}
+
+/// The v2 file pane's facet counts, over the whole package. The facets are
+/// disjoint apart from `all`, which excludes only the ignored entries.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryCounts {
+    pub all: usize,
+    /// Added, modified and deleted.
+    pub changed: usize,
+    pub not_downloaded: usize,
+    pub ignored: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -366,6 +386,35 @@ pub struct PackagePageData {
     /// Why autosync stopped, when the reason is one no state covers. `None` for
     /// every other pause, because those resolve into `header.state`.
     pub sync_paused: Option<String>,
+    /// The file pane's list, classified by the header's own status.
+    pub files: FilesData,
+}
+
+/// The package's entries, sorted by path and capped, with the whole-package
+/// facts the cap would otherwise hide.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryList {
+    pub entries: Vec<EntryData>,
+    pub counts: EntryCounts,
+    /// Every entry, ignored ones included, before the cap.
+    pub total: usize,
+    /// The cap dropped entries. Never inferred from `entries.len()`.
+    pub truncated: bool,
+}
+
+/// The file pane's list, or why there is none. A blocked remote status still
+/// lists the files from a local one; no list is sent only when not even that
+/// could be computed, rather than one classified without a status.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FilesData {
+    Listed(EntryList),
+    Unlisted { reason: String },
 }
 
 /// The read-only facts shown beside the v2 package page.
@@ -537,20 +586,22 @@ pub async fn get_revision_history(namespace: String) -> Result<Vec<RevisionHisto
     tauri::invoke("get_revision_history", &Args { namespace }).await
 }
 
-/// Install the backlog the page read listed. Keeping's download action.
+/// Install these paths of an installed package: Keeping's backlog, and the
+/// file pane's `[Download]`.
 ///
-/// The command returns the paths it skipped because the remote no longer holds
-/// their bytes. Dropped here until the v2 files pane has a place to show them.
-pub async fn package_download_backlog(namespace: String, paths: Vec<String>) -> Result<(), String> {
+/// Answers with the paths it skipped because the remote no longer holds their
+/// bytes (an unversioned bucket, overwritten since); empty when all came down.
+pub async fn package_download_backlog(
+    namespace: String,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
         paths: Vec<String>,
     }
-    tauri::invoke::<_, Vec<String>>("package_download_backlog", &Args { namespace, paths })
-        .await
-        .map(|_skipped| ())
+    tauri::invoke("package_download_backlog", &Args { namespace, paths }).await
 }
 
 pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
@@ -1673,11 +1724,53 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, KeepingScope, PackageContextData, PackageItemData,
-        PullOutcome, ResolveData, RevisionHistoryRow, RolesData, ViolationField, WorkflowInfo,
-        WorkflowIntent,
+        CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
+        PackageContextData, PackageItemData, PullOutcome, ResolveData, RevisionHistoryRow,
+        RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
+
+    /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
+    #[test]
+    fn files_data_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<FilesData>(r#"{"kind":"unlisted","reason":"denied"}"#).unwrap(),
+            FilesData::Unlisted {
+                reason: "denied".to_string()
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<FilesData>(
+                r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0},"total":0,"truncated":false}"#
+            )
+            .unwrap(),
+            FilesData::Listed(EntryList {
+                entries: Vec::new(),
+                counts: EntryCounts::default(),
+                total: 0,
+                truncated: false,
+            })
+        );
+    }
+
+    /// Anchored identically in the backend's `entry_counts_wire_form_is_verbatim`.
+    #[test]
+    fn entry_counts_wire_form_is_verbatim() {
+        let counts = serde_json::from_str::<EntryCounts>(
+            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            counts,
+            EntryCounts {
+                all: 1410,
+                changed: 700,
+                not_downloaded: 700,
+                ignored: 10,
+            }
+        );
+    }
 
     /// Anchored identically in the backend's
     /// `current_revision_context_wire_form_is_verbatim` test, `keeping` included.

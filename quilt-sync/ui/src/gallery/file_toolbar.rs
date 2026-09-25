@@ -58,10 +58,10 @@
 //! they exist to be counted, because a toolbar's numbers are the only thing it
 //! says.
 //!
-//! The counts are over the whole fixture and do not move when the search does —
-//! which is also what keeps this control correct. `SegmentedControl` selects by
-//! the option's own string, so a label carrying a count that changed under the
-//! user would leave the selection matching no option at all.
+//! The counts are over the whole fixture and do not move when the search does.
+//! On the page they do move, when the package does, so the page's facets are
+//! `Segment::valued`: the choice is held as the facet's name, and the count is
+//! only in the words.
 //!
 //! # Left, then right — and upwards when it stacks
 //!

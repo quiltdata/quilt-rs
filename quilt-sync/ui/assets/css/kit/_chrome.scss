@@ -262,9 +262,9 @@ body {
 .g-strip > * { flex: 1 1 300px; min-width: 0; }
 
 
-/* The installed package's file-pane footer. Page-local, not kit: it is a spacer
- * and a Button inside the list `Card`, whose own rule draws the hairline above
- * it. It lives here until the page's region is built, and moves with it.
+/* The gallery scene's file-pane footer. The page's own pane styles its footer in
+ * `file_pane.module.scss` (`.footer`), since this chrome is gallery-only and the
+ * app's stylesheet does not load it; keep the two in step.
  *
  * The one carve-out from the Never Move Geometry Rule, copied from the Banner:
  * 4px and a fade, 160ms, and no exit animation — unticking the last row grows
@@ -331,26 +331,28 @@ body {
   width: 280px;
 }
 
+/* The context pane comes first in the DOM, so reading and focus order is
+ * context, then files. While the two share a row, `order` draws the files on
+ * the leading side. */
+.g-ip-shell > aside {
+  order: 1;
+}
+
 /* §1: below ~800 the panes stack, context above files — the region with no upper
- * bound on its length goes last.
+ * bound on its length goes last. That is DOM order, so `order` resets.
  *
- * `order`, and NOT `column-reverse`, which was drawn first and had to be thrown
- * away: a reversed column starts at the bottom, so content taller than the box
+ * NOT `column-reverse`, which was drawn first and had to be thrown away: a
+ * reversed column starts at the bottom, so content taller than the box
  * overflows *upward*. Measured at 760x560 — the aside laid out 54px above the
  * window's own top edge, over the appbar, with no scroll position that could
- * reach it. `order` puts the same pane first and leaves the overflow going the
- * way a scrollbar can follow.
- *
- * Both leave the DOM alone, so at narrow the focus order still reaches the file
- * pane before the context pane above it. That one a stylesheet cannot fix; the
- * page should render the two in the other order behind a media query. */
+ * reach it. */
 @container (max-width: 800px) {
   .g-ip-shell {
     flex-direction: column;
   }
 
   .g-ip-shell > aside {
-    order: -1;
+    order: 0;
   }
 
   /* The list keeps a floor and the PAGE scrolls, rather than the list taking
