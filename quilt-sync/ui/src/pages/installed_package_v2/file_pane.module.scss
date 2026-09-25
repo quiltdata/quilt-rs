@@ -68,10 +68,20 @@
   display: flex;
 }
 
-/* Select-all's box in the rows' checkbox column: the list box's inset plus the
- * disclosure gutter, which the pane sets to 0 when the list has no heading. */
+/* Select-all's box in the rows' checkbox column. Built as a row is, not
+ * computed: the Card's 1px border stands in for the list box's own edge, then a
+ * row's `space-3` inset, the gutter spacer (`--q-entry-gutter`, set by the pane,
+ * `0px` when the list has no heading) and a row's `space-2` gap before its box.
+ * So the two boxes share one x with or without headings. */
 .selectall {
-  padding-left: calc(var(--q-space-3) + var(--q-entry-gutter, 16px));
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding-left: calc(1px + var(--q-space-3));
+}
+
+.gutter {
+  flex: 0 0 var(--q-entry-gutter, 16px);
 }
 
 /* The list box's footer: a spacer and the `[Download]` primary, flush right on

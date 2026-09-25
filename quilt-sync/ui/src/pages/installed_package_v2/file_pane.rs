@@ -509,7 +509,7 @@ fn rows_view(
     view! {
         <div
             class=style::list
-            style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0" })
+            style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0px" })
         >
             {drawn}
         </div>
@@ -616,8 +616,9 @@ fn select_all(
         <Show when=move || any.get()>
             <div
                 class=style::selectall
-                style=move || format!("--q-entry-gutter:{}", if headed.get() { "16px" } else { "0" })
+                style=move || format!("--q-entry-gutter:{}", if headed.get() { "16px" } else { "0px" })
             >
+                <span class=style::gutter />
                 <SelectAll
                     selected=selected
                     total=total
