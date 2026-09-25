@@ -38,7 +38,9 @@
 
 .skeletonbar {
   display: flex;
+  flex-wrap: wrap-reverse;
   justify-content: flex-end;
+  gap: var(--q-space-2);
   padding-bottom: var(--q-space-2);
 }
 
@@ -59,6 +61,11 @@
   .root {
     min-height: 269px;
   }
+}
+
+/* The search row. A row, because `SearchInput` fills its parent's main axis. */
+.search {
+  display: flex;
 }
 
 /* Select-all's box in the rows' checkbox column: the list box's inset plus the

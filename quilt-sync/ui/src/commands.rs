@@ -386,6 +386,35 @@ pub struct PackagePageData {
     /// Why autosync stopped, when the reason is one no state covers. `None` for
     /// every other pause, because those resolve into `header.state`.
     pub sync_paused: Option<String>,
+    /// The file pane's list, classified by the header's own status.
+    pub files: FilesData,
+}
+
+/// The package's entries, sorted by path and capped, with the whole-package
+/// facts the cap would otherwise hide.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryList {
+    pub entries: Vec<EntryData>,
+    pub counts: EntryCounts,
+    /// Every entry, ignored ones included, before the cap.
+    pub total: usize,
+    /// The cap dropped entries. Never inferred from `entries.len()`.
+    pub truncated: bool,
+}
+
+/// The file pane's list, or why there is none. A blocked remote status still
+/// lists the files from a local one; no list is sent only when not even that
+/// could be computed, rather than one classified without a status.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FilesData {
+    Listed(EntryList),
+    Unlisted { reason: String },
 }
 
 /// The read-only facts shown beside the v2 package page.
@@ -1695,11 +1724,34 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitViolation, CommitWorkflows, EntryCounts, KeepingScope, PackageContextData,
-        PackageItemData, PullOutcome, ResolveData, RevisionHistoryRow, RolesData, ViolationField,
-        WorkflowInfo, WorkflowIntent,
+        CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
+        PackageContextData, PackageItemData, PullOutcome, ResolveData, RevisionHistoryRow,
+        RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
+
+    /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
+    #[test]
+    fn files_data_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<FilesData>(r#"{"kind":"unlisted","reason":"denied"}"#).unwrap(),
+            FilesData::Unlisted {
+                reason: "denied".to_string()
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<FilesData>(
+                r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0},"total":0,"truncated":false}"#
+            )
+            .unwrap(),
+            FilesData::Listed(EntryList {
+                entries: Vec::new(),
+                counts: EntryCounts::default(),
+                total: 0,
+                truncated: false,
+            })
+        );
+    }
 
     /// Anchored identically in the backend's `entry_counts_wire_form_is_verbatim`.
     #[test]
