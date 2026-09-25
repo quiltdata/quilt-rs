@@ -411,9 +411,8 @@ pub(crate) const SEARCH_SETTLE: Duration = Duration::from_millis(25);
 /// The query the list is drawn for: the field's text once typing pauses.
 ///
 /// The field itself stays instant; only the list trails it. An empty field
-/// applies at once — clearing, by Escape, the clear control, or the page on
-/// another package, is never left waiting. A pending timer is dropped with
-/// the pane.
+/// applies at once, whether the clear control, a deleted query or the page on
+/// another package emptied it. A pending timer is dropped with the pane.
 fn settled(search: RwSignal<String>) -> Signal<String> {
     let query = RwSignal::new(search.get_untracked());
     let timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
