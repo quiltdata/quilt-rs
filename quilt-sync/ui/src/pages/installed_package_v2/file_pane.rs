@@ -34,8 +34,14 @@
 //! - **Search narrows what is shown.** A case-insensitive substring of the
 //!   whole path; headings are drawn from the rows it leaves, and a search that
 //!   leaves none says so.
+//! - **Resolve mode marks the rows that differ.** The page's one differing set
+//!   (`FileMarks.differing`) marks each drawn row whose path is in it, through
+//!   `EntryRow`'s `differs`. A mark describes a row and never chooses one: the
+//!   facet and the search decide what is drawn, and a row past the cap, hidden,
+//!   or in a collapsed folder is not marked.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -384,8 +390,15 @@ fn offered(rows: &[Row]) -> Vec<String> {
 }
 
 /// One row. `name` is what the list shows — the whole path, or the part under
-/// a heading — and the whole path is always the `title`.
-fn row(r: &Row, name: String, on_open: Callback<String>, picking: Picking) -> AnyView {
+/// a heading — and the whole path is always the `title`. `differs` marks it as
+/// one of resolve mode's differing files.
+fn row(
+    r: &Row,
+    name: String,
+    on_open: Callback<String>,
+    picking: Picking,
+    differs: bool,
+) -> AnyView {
     let state = if r.ignored { None } else { r.place.state() };
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
@@ -423,25 +436,44 @@ fn row(r: &Row, name: String, on_open: Callback<String>, picking: Picking) -> An
                 tone=tone
                 size=r.size.clone()
                 action=action
+                differs=differs
             />
         }
         .into_any(),
         None => view! {
-            <EntryRow name=name path=r.path.clone() state=words tone=tone size=r.size.clone() />
+            <EntryRow
+                name=name
+                path=r.path.clone()
+                state=words
+                tone=tone
+                size=r.size.clone()
+                differs=differs
+            />
         }
         .into_any(),
     }
 }
 
+/// Resolve mode's differing set, keyed as `EntryData.filename` is; absent
+/// outside the mode.
+type Differing = Option<Arc<BTreeSet<String>>>;
+
+/// Whether resolve mode marks the row drawing `path`.
+fn differs(differing: &Differing, path: &str) -> bool {
+    differing.as_ref().is_some_and(|set| set.contains(path))
+}
+
 /// The rows, grouped as the select says. `collapsed` names the headings the
 /// reader closed; it is the page's, so a re-read that rebuilds these views
-/// finds each folder as the reader left it.
+/// finds each folder as the reader left it. `differing` marks rows only; it
+/// never decides which are drawn.
 fn rows_view(
     rows: &[Row],
     grouping: Grouping,
     collapsed: RwSignal<BTreeSet<String>>,
     on_open: Callback<String>,
     picking: Picking,
+    differing: &Differing,
 ) -> AnyView {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let items = group(&paths, grouping);
@@ -451,7 +483,10 @@ fn rows_view(
     let drawn = items
         .into_iter()
         .map(|item| match item {
-            Item::Row { index, name } => row(&rows[index], name, on_open, picking),
+            Item::Row { index, name } => {
+                let r = &rows[index];
+                row(r, name, on_open, picking, differs(differing, &r.path))
+            }
             Item::Group {
                 heading,
                 rows: members,
@@ -478,10 +513,15 @@ fn rows_view(
                         }
                     });
                 });
+                // Stored, so `children` stays `Copy` as the heading needs it.
+                let differing = StoredValue::new(differing.clone());
                 let children = move || {
                     members.with_value(|ms| {
                         ms.iter()
-                            .map(|(r, name)| row(r, name.clone(), on_open, picking))
+                            .map(|(r, name)| {
+                                let marked = differing.with_value(|d| differs(d, &r.path));
+                                row(r, name.clone(), on_open, picking, marked)
+                            })
                             .collect_view()
                     })
                 };
@@ -761,6 +801,10 @@ pub fn FilePane(
     /// a re-read.
     #[prop(optional)]
     picking: Picking,
+    /// Resolve mode's differing set (`FileMarks.differing`): the drawn rows
+    /// whose path is in it are marked. Absent outside the mode, and by default.
+    #[prop(optional, into)]
+    differing: Signal<Differing>,
 ) -> impl IntoView {
     // Outside the match, so a re-read that redraws the list keeps the query.
     let query = settled(search);
@@ -792,10 +836,13 @@ pub fn FilePane(
             facet,
             on_open,
             picking,
+            differing,
         ),
     }
 }
 
+// Each is one of the page's own values, which `FilePane` hands on whole.
+#[allow(clippy::too_many_arguments)]
 fn ready(
     list: FileList,
     grouping: RwSignal<String>,
@@ -804,6 +851,7 @@ fn ready(
     facet: RwSignal<String>,
     on_open: Callback<String>,
     picking: Picking,
+    differing: Signal<Differing>,
 ) -> AnyView {
     let query = search.settled;
     let FileList {
@@ -862,7 +910,7 @@ fn ready(
         let g = Grouping::from_label(&grouping.get());
         shown.with(|rs| {
             if !rs.is_empty() {
-                return rows_view(rs, g, collapsed, on_open, picking);
+                return rows_view(rs, g, collapsed, on_open, picking, &differing.get());
             }
             let f = Facet::from_key(&facet.get());
             // Compact: `Blankslate`'s own padding is taller than this box at
@@ -2382,5 +2430,277 @@ mod pane_tests {
             .unwrap()
             .unchecked_into();
         assert!(input.checked(), "drawn ticked after the search settles");
+    }
+}
+
+#[cfg(test)]
+mod marks_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::commands::{EntryCounts, EntryData};
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn entry(path: &str, status: &str) -> EntryData {
+        EntryData {
+            filename: path.to_string(),
+            size: 4_100,
+            status: status.to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            namespace: "team/dataset".try_into().unwrap(),
+        }
+    }
+
+    fn listed(entries: Vec<EntryData>) -> Listing {
+        let total = entries.len();
+        Listing::Ready(FileList {
+            counts: EntryCounts {
+                all: total,
+                ..EntryCounts::default()
+            },
+            entries,
+            total,
+            truncated: false,
+        })
+    }
+
+    fn marks(keys: &[&str]) -> Arc<BTreeSet<String>> {
+        Arc::new(keys.iter().map(|k| (*k).to_string()).collect())
+    }
+
+    /// A pane in `Group: None` whose marks the test moves.
+    fn marked_pane(
+        entries: Vec<EntryData>,
+        differing: RwSignal<Option<Arc<BTreeSet<String>>>>,
+    ) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(entries))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=differing
+                />
+            }
+        })
+    }
+
+    /// The row drawing `path`, if it is drawn and marked.
+    fn is_marked(el: &web_sys::Element, path: &str) -> bool {
+        let name = el
+            .query_selector(&format!("[title='{path}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("{path} is drawn; markup was {}", el.inner_html()));
+        name.closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .is_some()
+    }
+
+    /// Each drawn row whose path is in the set is marked, and no other.
+    #[wasm_bindgen_test]
+    fn a_row_in_the_differing_set_is_marked_and_the_rest_are_not() {
+        let el = marked_pane(
+            vec![
+                entry("plate/a.csv", "pristine"),
+                entry("plate/b.csv", "remote"),
+                entry("plate/c.csv", "pristine"),
+            ],
+            RwSignal::new(Some(marks(&[
+                "plate/a.csv",
+                "plate/b.csv",
+                "past/the-cap.csv",
+            ]))),
+        );
+        assert!(is_marked(&el, "plate/a.csv"));
+        assert!(is_marked(&el, "plate/b.csv"));
+        assert!(!is_marked(&el, "plate/c.csv"));
+    }
+
+    /// Opening and leaving the mode marks and clears the rows in place, and a
+    /// tick survives both.
+    #[wasm_bindgen_test]
+    async fn marks_follow_the_mode_without_resetting_the_ticks() {
+        let differing = RwSignal::new(None);
+        let picking = Picking::default();
+        let ticked = picking.ticked;
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(vec![
+                        entry("plate/a.csv", "remote"),
+                        entry("plate/b.csv", "remote"),
+                    ]))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                    differing=differing
+                />
+            }
+        });
+        ticked.set(BTreeSet::from(["plate/b.csv".to_string()]));
+        assert!(
+            !is_marked(&el, "plate/a.csv"),
+            "nothing is marked outside the mode"
+        );
+
+        differing.set(Some(marks(&["plate/a.csv"])));
+        leptos::task::tick().await;
+        assert!(is_marked(&el, "plate/a.csv"), "opening the mode marks it");
+        assert!(!is_marked(&el, "plate/b.csv"));
+
+        differing.set(None);
+        leptos::task::tick().await;
+        assert!(!is_marked(&el, "plate/a.csv"), "leaving the mode clears it");
+        assert_eq!(
+            ticked.get_untracked(),
+            BTreeSet::from(["plate/b.csv".to_string()]),
+            "the ticks are the page's, untouched by the marks"
+        );
+    }
+
+    /// A mark describes a row; the search still decides whether it is drawn,
+    /// and a marked row keeps its box.
+    #[wasm_bindgen_test]
+    async fn a_mark_never_narrows_the_view_or_takes_the_box() {
+        let search = RwSignal::new(String::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(vec![
+                        entry("plate/a.csv", "remote"),
+                        entry("plate/b.csv", "pristine"),
+                    ]))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=RwSignal::new(Some(marks(&["plate/a.csv"])))
+                />
+            }
+        });
+        assert!(is_marked(&el, "plate/a.csv"));
+        assert!(
+            el.query_selector("[title='plate/b.csv']")
+                .unwrap()
+                .is_some(),
+            "an unmarked row is still drawn"
+        );
+        let row = el
+            .query_selector("[title='plate/a.csv']")
+            .unwrap()
+            .unwrap()
+            .closest("label")
+            .unwrap()
+            .expect("a marked, not-downloaded row is still a selectable label");
+        assert!(
+            row.query_selector("input[type=checkbox]")
+                .unwrap()
+                .is_some()
+        );
+
+        search.set("b.csv".to_string());
+        crate::test_support::sleep_ms(40).await;
+        assert!(
+            el.query_selector("[title='plate/a.csv']")
+                .unwrap()
+                .is_none(),
+            "a search hides a marked row like any other"
+        );
+        search.set(String::new());
+        leptos::task::tick().await;
+        assert!(is_marked(&el, "plate/a.csv"), "and it is marked once shown");
+    }
+
+    /// A collapsed folder draws no rows, so neither its heading nor anything
+    /// else shows the mark until it opens.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_folder_shows_no_mark_until_it_opens() {
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(vec![
+                        entry("plate/a.csv", "pristine"),
+                        entry("plate/b.csv", "pristine"),
+                    ]))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::from(["plate/".to_string()]))
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=RwSignal::new(Some(marks(&["plate/a.csv"])))
+                />
+            }
+        });
+        let described = format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID);
+        assert!(
+            el.query_selector(&described).unwrap().is_none(),
+            "no mark while collapsed; markup was {}",
+            el.inner_html()
+        );
+        let disclosure: web_sys::HtmlElement = el
+            .query_selector("[aria-expanded]")
+            .unwrap()
+            .expect("the folder's disclosure")
+            .unchecked_into();
+        disclosure.click();
+        crate::test_support::sleep_ms(10).await;
+        assert!(is_marked(&el, "plate/a.csv"), "opened, its row is marked");
+        assert!(!is_marked(&el, "plate/b.csv"));
+    }
+
+    /// A path with two rows is one key: each row is marked where it is drawn.
+    #[wasm_bindgen_test]
+    async fn both_rows_of_an_ignored_tracked_path_are_marked() {
+        let facet = RwSignal::new(Facet::All.key().to_string());
+        let ignored = EntryData {
+            ignored_by: Some("plate/".to_string()),
+            ..entry("plate/a.csv", "pristine")
+        };
+        let listing = Listing::Ready(FileList {
+            entries: vec![entry("plate/a.csv", "deleted"), ignored],
+            counts: EntryCounts {
+                all: 1,
+                changed: 1,
+                not_downloaded: 0,
+                ignored: 1,
+            },
+            total: 2,
+            truncated: false,
+        });
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listing.clone())
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=RwSignal::new(Some(marks(&["plate/a.csv"])))
+                />
+            }
+        });
+        assert!(is_marked(&el, "plate/a.csv"), "the Deleted row, under All");
+        facet.set(Facet::Ignored.key().to_string());
+        leptos::task::tick().await;
+        assert!(
+            is_marked(&el, "plate/a.csv"),
+            "the ignored row, under Ignored"
+        );
     }
 }
