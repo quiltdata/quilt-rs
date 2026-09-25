@@ -962,7 +962,8 @@ mod tests {
 
     /// A hand-pressed pull and a download each read the package's lineage,
     /// await, and write the whole entry back, so an overlap loses one of the
-    /// writes (qhq-a4za). A pull pressed mid-download waits for it to finish.
+    /// writes, and a file nobody touched reads Modified. A pull pressed
+    /// mid-download waits for it to finish.
     #[tokio::test]
     async fn a_hand_pull_started_during_a_download_waits_for_it() {
         let ns: quilt_uri::Namespace = ("acme", "demo").into();

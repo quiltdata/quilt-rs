@@ -166,8 +166,9 @@ impl Watcher {
     }
 
     /// Hold for the length of a user's download or pull of this package, so no
-    /// two lineage writers the desktop drives overlap (qhq-a4za). Waits out one
-    /// already in flight.
+    /// two lineage writers the desktop drives overlap. An overlap lets the later
+    /// write drop what the earlier one recorded, so an untouched file reads
+    /// Modified. Waits out one already in flight.
     pub async fn lock_lineage_writer(
         &self,
         namespace: &Namespace,

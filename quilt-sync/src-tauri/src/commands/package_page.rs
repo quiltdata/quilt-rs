@@ -1816,8 +1816,9 @@ mod tests {
 
     /// The tick's pull and a download each read the package's lineage, await,
     /// and write the whole entry back, so an overlap loses one of the writes
-    /// (qhq-a4za). A download that starts mid-pull waits the pull out, and it
-    /// is the download that waits: the user asked for it, the pull did not.
+    /// and a file nobody touched reads Modified. A download that starts mid-pull
+    /// waits the pull out, and it is the download that waits: the user asked
+    /// for it, the pull did not.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_download_started_during_the_ticks_pull_waits_for_the_pull_to_finish() {
         use std::sync::atomic::{AtomicBool, Ordering};

@@ -443,8 +443,9 @@ pub(crate) async fn refresh_then_maybe_sync(
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
                 // A download or hand pull of this package is writing its lineage, and the
-                // pull's write would drop what it records (qhq-a4za). Leave the
-                // package `Behind`, with no pause and no backoff, for the next tick.
+                // pull's write would drop what it records, so an untouched file would read
+                // Modified. Leave the package `Behind`, with no pause and no backoff, for
+                // the next tick.
                 let Some(_ordered) = aggregator.try_lock_lineage_writer(namespace) else {
                     info!("autosync: namespace={namespace} is being written, pulling next tick");
                     return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));

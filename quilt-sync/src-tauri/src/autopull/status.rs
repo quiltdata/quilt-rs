@@ -89,8 +89,8 @@ pub struct SyncTrayAggregator {
     /// One lock per namespace, ordering the pulls (the tick's and a hand-pressed
     /// one) against a download of the same package. Each reads the package's
     /// lineage, awaits, and writes the whole entry back, so an overlap loses
-    /// whichever wrote first (qhq-a4za). A stopgap until quilt-rs orders its own
-    /// lineage writers.
+    /// whichever wrote first, and a file nobody touched reads Modified. A
+    /// stopgap until quilt-rs orders its own lineage writers.
     ///
     /// Not the apply guard: that is a counter two readers poll, it cannot be
     /// waited on, and v1's picked-file download deliberately does not raise it.

@@ -1831,7 +1831,7 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
 // `pull` and `install_paths` each read the package's lineage, await, and write
 // the whole entry back, so whichever writes last wins. With the pull last, the
 // package names the newer revision with the downloaded paths gone, and an
-// untouched file reads Modified (qhq-a4za). Until quilt-rs orders lineage
+// untouched file reads Modified. Until quilt-rs orders lineage
 // writers itself, the tick stays out of the way of a download.
 
 #[tokio::test]
