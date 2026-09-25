@@ -627,7 +627,9 @@ fn select_all(
 }
 
 /// The list box's last child while something is ticked: a right-aligned
-/// primary, with no count — select-all already says `3 of 17 selected`.
+/// primary that counts what it will fetch, `Download 3`. The count is every
+/// loaded tick, hidden ones included, so it can exceed select-all's `1 of 1
+/// selected` under a search (owner, 2026-09-25).
 ///
 /// Slides 4px and fades in over 160ms and has no exit (`g-fp-footer`, the
 /// gallery's, which copies the Banner's carve-out): unticking the last row
@@ -650,7 +652,7 @@ fn footer(picking: Picking, loaded: StoredValue<Vec<String>>) -> AnyView {
                     disabled=picking.busy
                     on_click=move |_| picking.on_download.run(chosen.get_untracked())
                 >
-                    "Download"
+                    {move || format!("Download {}", thousands(chosen.with(Vec::len)))}
                 </Button>
             </div>
         </Show>
@@ -1605,6 +1607,7 @@ mod pane_tests {
         facet.set(Facet::NotDownloaded.key().to_string());
         let entries = mixed_package();
         let total = entries.len();
+        let picking = Picking::default();
         let el = mount(move || {
             view! {
                 <FilePane
@@ -1615,7 +1618,7 @@ mod pane_tests {
                     facet=facet
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
-                    picking=Picking::default()
+                    picking=picking
                 />
             }
         });
@@ -1623,11 +1626,19 @@ mod pane_tests {
         search.set("remote-a".to_string());
         leptos::task::tick().await;
         element_saying(&el, "Select all 1 shown");
+        // A search hides a tick without undoing it: `[Download]` counts both.
+        picking
+            .ticked
+            .set(["remote-a.csv".to_string(), "remote-b.csv".to_string()].into());
+        leptos::task::tick().await;
+        element_saying(&el, "1 of 1 selected");
+        button_saying(&el, "Download 2");
         search.set(String::new());
         facet.set(Facet::Ignored.key().to_string());
         leptos::task::tick().await;
         assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
         assert!(!text(&el).contains("Select all"));
+        button_saying(&el, "Download 2");
     }
 
     /// Only a not-downloaded, non-ignored row carries a box — here two of
@@ -1712,14 +1723,24 @@ mod pane_tests {
                         .unwrap()
                         .unchecked_into::<web_sys::HtmlElement>()
                 })
-                .find(|b| b.text_content().unwrap_or_default().trim() == "Download")
+                .find(|b| {
+                    b.text_content()
+                        .unwrap_or_default()
+                        .trim()
+                        .starts_with("Download")
+                })
         };
         assert!(download(&el).is_none(), "no footer with nothing ticked");
 
         tick(&el, "remote-b.csv");
         tick(&el, "remote-a.csv");
         leptos::task::tick().await;
-        download(&el).expect("the footer's Download").click();
+        let button = download(&el).expect("the footer's Download");
+        assert_eq!(
+            button.text_content().unwrap_or_default().trim(),
+            "Download 2"
+        );
+        button.click();
         assert_eq!(
             asked.get_untracked(),
             vec![vec!["remote-a.csv".to_string(), "remote-b.csv".to_string()]]
@@ -1734,7 +1755,7 @@ mod pane_tests {
         };
         picking.ticked.set(["remote-a.csv".to_string()].into());
         let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
-        let button = button_saying(&el, "Download");
+        let button = button_saying(&el, "Download 1");
         assert_eq!(button.get_attribute("aria-busy").as_deref(), Some("true"));
         assert!(button.disabled());
     }
