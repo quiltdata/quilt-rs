@@ -1721,7 +1721,7 @@ mod tests {
         field()
             .dispatch_event(&web_sys::Event::new("input").unwrap())
             .unwrap();
-        sleep_ms(10).await;
+        sleep_ms(40).await;
         let shown = |path: &str| {
             el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
                 .unwrap()
@@ -1746,6 +1746,32 @@ mod tests {
             shown("notes/a.md"),
             "every row again; markup was {}",
             el.inner_html()
+        );
+    }
+
+    /// Typing never reads the page: search narrows the rows the last read
+    /// sent, so no keystroke asks for the package's status again.
+    #[wasm_bindgen_test]
+    async fn typing_a_search_never_reads_the_page() {
+        let el = screen_at(PLAIN, a_folder_as_asked).await;
+        assert_eq!(READS.with(std::cell::Cell::get), 1, "the page's one read");
+        let field: web_sys::HtmlInputElement = el
+            .query_selector("section[aria-label='Files'] input[type=search]")
+            .unwrap()
+            .expect("the search field")
+            .unchecked_into();
+        for query in ["n", "no", "not", "notes/", "notes/b", "", "a"] {
+            field.set_value(query);
+            field
+                .dispatch_event(&web_sys::Event::new("input").unwrap())
+                .unwrap();
+            sleep_ms(5).await;
+        }
+        sleep_ms(40).await;
+        assert_eq!(
+            READS.with(std::cell::Cell::get),
+            1,
+            "no keystroke reads the page again"
         );
     }
 

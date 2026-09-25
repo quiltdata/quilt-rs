@@ -29,6 +29,7 @@
 //!   leaves none says so.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use leptos::prelude::*;
 
@@ -399,6 +400,44 @@ fn shown_rows(rows: &[Row], query: &str) -> Vec<Row> {
         .collect()
 }
 
+/// How long the query waits after the last keystroke before the list
+/// follows it, so a burst of typing costs one rebuild.
+#[cfg(not(test))]
+const SEARCH_SETTLE: Duration = Duration::from_millis(150);
+/// Short under test: the frontend suite runs against the runner's 20s budget.
+#[cfg(test)]
+pub(crate) const SEARCH_SETTLE: Duration = Duration::from_millis(25);
+
+/// The query the list is drawn for: the field's text once typing pauses.
+///
+/// The field itself stays instant; only the list trails it. An empty field
+/// applies at once — clearing, by Escape, the clear control, or the page on
+/// another package, is never left waiting. A pending timer is dropped with
+/// the pane.
+fn settled(search: RwSignal<String>) -> Signal<String> {
+    let query = RwSignal::new(search.get_untracked());
+    let timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    Effect::new(move |_| {
+        let typed = search.get();
+        if let Some(handle) = timer.get_value() {
+            handle.clear();
+        }
+        timer.set_value(None);
+        if typed.is_empty() || query.with_untracked(|q| *q == typed) {
+            query.set(typed);
+        } else if let Ok(handle) = set_timeout_with_handle(move || query.set(typed), SEARCH_SETTLE)
+        {
+            timer.set_value(Some(handle));
+        }
+    });
+    on_cleanup(move || {
+        if let Some(Some(handle)) = timer.try_get_value() {
+            handle.clear();
+        }
+    });
+    query.into()
+}
+
 /// The search, alone on the row above the toolbar and the pane's full width.
 ///
 /// The `display:flex` row is load-bearing: `SearchInput` grows along its
@@ -447,6 +486,8 @@ pub fn FilePane(
     /// Read the list again after a failure.
     on_retry: Callback<()>,
 ) -> impl IntoView {
+    // Outside the match, so a re-read that redraws the list keeps the query.
+    let query = settled(search);
     move || match listing.get() {
         Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
         Listing::Unlisted(reason) => view! {
@@ -464,7 +505,7 @@ pub fn FilePane(
             </section>
         }
         .into_any(),
-        Listing::Ready(list) => ready(list, grouping, collapsed, search, on_open),
+        Listing::Ready(list) => ready(list, grouping, collapsed, search, query, on_open),
     }
 }
 
@@ -473,6 +514,7 @@ fn ready(
     grouping: RwSignal<String>,
     collapsed: RwSignal<BTreeSet<String>>,
     search: RwSignal<String>,
+    query: Signal<String>,
     on_open: Callback<String>,
 ) -> AnyView {
     let FileList {
@@ -522,9 +564,10 @@ fn ready(
             .into_any()
         }
     } else {
-        // A memo, so a keystroke that leaves the same rows standing — the
-        // first letters typed into a big package — rebuilds nothing.
-        let shown = Memo::new(move |_| search.with(|q| shown_rows(&rows, q)));
+        // A memo over the settled query, so a pause that leaves the same rows
+        // standing — the first letters typed into a big package — rebuilds
+        // nothing.
+        let shown = Memo::new(move |_| query.with(|q| shown_rows(&rows, q)));
         (move || {
             let g = Grouping::from_label(&grouping.get());
             shown.with(|rows| {
@@ -1065,8 +1108,15 @@ mod pane_tests {
         assert!(collapsed.get_untracked().contains("notes/"));
     }
 
-    /// Type into the search field as a reader would.
+    /// Type into the search field as a reader would, and wait for the list to
+    /// settle on it.
     async fn type_search(el: &web_sys::Element, query: &str) {
+        type_key(el, query).await;
+        crate::test_support::sleep_ms(40).await;
+    }
+
+    /// Type into the search field, one keystroke of a burst: no pause after.
+    async fn type_key(el: &web_sys::Element, query: &str) {
         let field: web_sys::HtmlInputElement = el
             .query_selector("input[type=search]")
             .unwrap()
@@ -1284,5 +1334,45 @@ mod pane_tests {
             .unwrap()
             .expect("the row");
         assert!(before.is_same_node(Some(&after)), "the row was rebuilt");
+    }
+
+    /// A burst of typing costs one rebuild: while the keys come, the list
+    /// stays as it was, and it follows the last query once typing pauses.
+    #[wasm_bindgen_test]
+    async fn a_burst_of_typing_draws_only_its_final_query() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("notes/raw.md", "pristine"),
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        for key in ["r", "ra", "raw/", "raw/plate-0", "raw/plate-01"] {
+            type_key(&el, key).await;
+            assert_eq!(search.get_untracked(), key, "the field is instant");
+            for path in ["notes/raw.md", "raw/plate-01.csv", "raw/plate-02.csv"] {
+                assert!(
+                    titled(&el, path),
+                    "mid-burst at {key:?}, {path} is still drawn"
+                );
+            }
+        }
+        crate::test_support::sleep_ms(40).await;
+        assert!(titled(&el, "raw/plate-01.csv"), "{}", el.inner_html());
+        assert!(!titled(&el, "raw/plate-02.csv"));
+        assert!(!titled(&el, "notes/raw.md"));
+    }
+
+    /// Clearing is never left waiting: the rows come back on the keystroke.
+    #[wasm_bindgen_test]
+    async fn clearing_the_search_applies_at_once() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        type_search(&el, "zzz").await;
+        element_saying(&el, "No files match");
+        type_key(&el, "").await;
+        assert!(titled(&el, "a.csv"), "{}", el.inner_html());
     }
 }
