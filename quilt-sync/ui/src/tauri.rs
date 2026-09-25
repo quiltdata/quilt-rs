@@ -112,7 +112,20 @@ enum ListenerState {
 /// before registration completes still detaches the listener.
 pub fn listen<T: DeserializeOwned + 'static>(
     event: &str,
+    callback: impl FnMut(T) + 'static,
+) -> EventListener {
+    listen_then(event, callback, || ())
+}
+
+/// [`listen`], then `on_registered` once the listener is live — not if it was
+/// dropped first, nor without a bridge.
+///
+/// For a caller that hydrates a state: a read taken before the listener is live
+/// can miss a change made between the read and the registration.
+pub fn listen_then<T: DeserializeOwned + 'static>(
+    event: &str,
     mut callback: impl FnMut(T) + 'static,
+    on_registered: impl FnOnce() + 'static,
 ) -> EventListener {
     let event_name = event.to_string();
     let event_name_for_closure = event_name.clone();
@@ -163,6 +176,8 @@ pub fn listen<T: DeserializeOwned + 'static>(
                         if let Some(f) = func {
                             *s = ListenerState::Resolved(f);
                         }
+                        drop(s);
+                        on_registered();
                     }
                     ListenerState::Resolved(_) | ListenerState::Done => {}
                 }
@@ -225,5 +240,22 @@ mod tests {
             "package-status-changed",
             |_| (),
         ));
+    }
+
+    /// Without a bridge nothing is registered, so `on_registered` must never
+    /// run — a caller would read a state it then gets no events for — and the
+    /// handle must still be safe to drop.
+    #[wasm_bindgen_test]
+    async fn listening_without_a_tauri_bridge_never_reports_registered() {
+        let registered = std::rc::Rc::new(std::cell::Cell::new(false));
+        let flag = std::rc::Rc::clone(&registered);
+        let listener = super::listen_then::<serde_json::Value>(
+            "package-status-changed",
+            |_| (),
+            move || flag.set(true),
+        );
+        leptos::task::tick().await;
+        drop(listener);
+        assert!(!registered.get());
     }
 }

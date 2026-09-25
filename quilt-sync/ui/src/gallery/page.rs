@@ -16,12 +16,16 @@
 //! worst case — 19 things needing decisions — and the calm page is the common one,
 //! where `ZeroLine` collapses the whole region to a line.
 
+use leptos::context::Provider;
 use leptos::prelude::*;
 
 use crate::Scene;
 use crate::gallery::packages::PackagesRegion;
 use crate::gallery::queue::QueueRegion;
 use crate::gallery::state_strip::StateStripRegion;
+use crate::kit::Activities;
+use crate::kit::Activity;
+use crate::kit::ActivityKind;
 use crate::kit::Button;
 use crate::kit::Card;
 use crate::kit::PageLayout;
@@ -40,6 +44,16 @@ fn appbar_actions() -> AnyView {
         </Button>
     }
     .into_any()
+}
+
+/// One autopull activity, for a bar of its own.
+fn activities(label: &str) -> Activities {
+    let activities = Activities::new();
+    activities.set(vec![Activity {
+        kind: ActivityKind::Autopull,
+        label: label.to_owned(),
+    }]);
+    activities
 }
 
 #[component]
@@ -99,6 +113,28 @@ pub fn PageScene() -> impl IntoView {
         >
             <div class="g-window g-window--bar">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
+            </div>
+        </Scene>
+        <Scene
+            title="Scene · the appbar while autopull moves files"
+            note="The activity line, centered on the bar between the logo and the controls, \
+                  in the on-brand ink at reduced strength on a faint amber tint with the kit \
+                  radius. It fades in after about 400ms, so reload to watch it arrive. Each \
+                  bar has its own Activities; without one, as in the scene above, the bar \
+                  draws no line at all. The second label is long enough to wrap: it grows \
+                  the bar, and is never cut."
+        >
+            <div class="g-window g-window--bar">
+                <Provider value=activities("Getting latest for team/pkg\u{2026}")>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
+                </Provider>
+            </div>
+            <div class="g-window g-window--bar">
+                <Provider value=activities(
+                    "Getting latest for a-team-with-a-long-name/an-analysis-package-whose-name-goes-on\u{2026}",
+                )>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
+                </Provider>
             </div>
         </Scene>
         <Scene

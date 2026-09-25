@@ -32,6 +32,7 @@ pub(crate) fn unique_id(prefix: &str) -> String {
 }
 
 pub mod action_menu;
+pub mod activity_line;
 pub mod anchored_overlay;
 pub mod appbar;
 pub mod back_link;
@@ -80,6 +81,10 @@ pub mod zero_line;
 pub use action_menu::ActionMenu;
 pub use action_menu::ActionTone;
 pub use action_menu::MenuAction;
+pub use activity_line::Activities;
+pub use activity_line::Activity;
+pub use activity_line::ActivityKind;
+pub use activity_line::ActivityLine;
 pub use anchored_overlay::Align;
 pub use anchored_overlay::AnchoredOverlay;
 pub use appbar::Appbar;

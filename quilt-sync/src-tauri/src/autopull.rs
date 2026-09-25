@@ -18,6 +18,7 @@ use crate::model::Model;
 use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
 
+pub mod activity;
 pub mod pull_toast;
 pub mod reporter;
 pub mod settings;
@@ -182,6 +183,18 @@ impl Watcher {
     #[must_use]
     pub fn apply_in_progress(&self) -> bool {
         self.inner.aggregator.apply_in_progress()
+    }
+
+    /// The transfer autopull is running now, if any.
+    #[must_use]
+    pub fn activity(&self) -> Option<activity::AutopullActivity> {
+        self.inner.aggregator.activity()
+    }
+
+    /// Follow the transfer autopull is running: every set and every clear.
+    #[must_use]
+    pub fn subscribe_activity(&self) -> watch::Receiver<Option<activity::AutopullActivity>> {
+        self.inner.aggregator.subscribe_activity()
     }
 
     /// Spawn the background tick task and return a handle.
@@ -693,6 +706,43 @@ mod tests {
         assert!(
             !aggregator.apply_in_progress(),
             "and drop it when the pull returns"
+        );
+    }
+
+    // The window's activity line reads the watcher it already holds, both to
+    // hydrate and to follow, so the aggregator's value has to be reachable there.
+    #[tokio::test]
+    async fn the_watcher_reads_the_aggregators_activity() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let mut following = watcher.subscribe_activity();
+
+        assert_eq!(watcher.activity(), None, "nothing running yet");
+        {
+            let _pulling = watcher
+                .inner
+                .aggregator
+                .activity_guard(activity::ActivityOp::Pull, &ns);
+            assert_eq!(
+                watcher.activity(),
+                Some(activity::AutopullActivity {
+                    op: activity::ActivityOp::Pull,
+                    namespace: ns.clone(),
+                })
+            );
+            assert!(
+                following.has_changed().unwrap(),
+                "the follower sees the set"
+            );
+            assert_eq!(
+                following.borrow_and_update().as_ref().map(|a| a.op),
+                Some(activity::ActivityOp::Pull)
+            );
+        }
+        assert_eq!(watcher.activity(), None, "cleared when the transfer ends");
+        assert!(
+            following.has_changed().unwrap(),
+            "the follower sees the clear"
         );
     }
 

@@ -1,0 +1,43 @@
+/* The activity line: text on a faint attention tint with the kit radius, over
+ * the brand ground, the same in both themes because both are. Still no border,
+ * icon or close: it is not a card or a notification. The fade covers the tint
+ * too, so an idle line shows no pill.
+ *
+ * Kept flat (no nesting) so a test can load it as plain CSS.
+ *
+ * 14px is the kit's floor and there is no smaller token, so the line is the
+ * body size; it reads as faint by colour alone. */
+.line {
+  margin: 0;
+  /* A measure, so a long line wraps into a centered block rather than filling
+   * the bar edge to edge. */
+  max-width: 48ch;
+  padding: var(--q-space-1) var(--q-space-3);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-attention-onBrand);
+  color: var(--q-fgColor-onBrand-muted);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-tight);
+  text-align: center;
+  /* Never cut: a namespace has no spaces, so it may break anywhere. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  /* Leaving: quick, at once. */
+  transition: opacity 120ms ease;
+}
+
+/* Arriving: only once the work has run for a moment, so a transfer that ends
+ * at once never flickers the bar. The text is in the DOM regardless, so the
+ * region still announces it. */
+.line:not(:empty) {
+  opacity: 1;
+  transition: opacity 200ms ease 400ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line,
+  .line:not(:empty) {
+    transition: none;
+  }
+}

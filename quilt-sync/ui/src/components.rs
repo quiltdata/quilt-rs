@@ -1,4 +1,5 @@
 pub mod appbar;
+pub mod autopull_activity;
 pub mod buttons;
 pub mod ignore_popup;
 pub mod layout;
@@ -10,6 +11,7 @@ pub mod toasts;
 pub mod update_checker;
 pub mod workflow_select;
 
+pub use autopull_activity::AutopullActivityFeed;
 pub use ignore_popup::{IgnorePopup, IgnorePopupData, UnignorePopup, UnignorePopupData};
 pub use layout::{Layout, Notification, ToolbarActions};
 pub use popover::with_popover;

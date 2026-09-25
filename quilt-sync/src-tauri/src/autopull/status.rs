@@ -13,6 +13,9 @@ use serde::Serialize;
 use tokio::sync::OwnedMutexGuard;
 use tokio::sync::watch;
 
+use crate::autopull::activity::ActivityOp;
+use crate::autopull::activity::AutopullActivity;
+
 /// App-wide autosync state, folded across namespaces. Pushed to the
 /// tray via a `tokio::sync::watch` channel owned by the watcher.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +102,8 @@ pub struct SyncTrayAggregator {
     /// would let the next caller lock a fresh mutex beside it, and the map only
     /// grows by the packages downloaded or pulled in this session.
     lineage_writers: Mutex<BTreeMap<Namespace, Arc<tokio::sync::Mutex<()>>>>,
+    /// The tick's transfer, if any; its own channel so it never touches the tray mode.
+    activity: watch::Sender<Option<AutopullActivity>>,
 }
 
 /// Marks a namespace as being written until dropped — on return, on `?`, or on
@@ -106,6 +111,21 @@ pub struct SyncTrayAggregator {
 pub struct ApplyGuard<'a> {
     applying: &'a Mutex<BTreeMap<Namespace, ApplyState>>,
     namespace: Namespace,
+}
+
+/// Names the transfer in flight until dropped — on return, on `?`, or on
+/// unwind.
+///
+/// One slot, cleared on drop: safe because only the tick takes it, and the tick
+/// runs one package at a time.
+pub struct ActivityGuard<'a> {
+    activity: &'a watch::Sender<Option<AutopullActivity>>,
+}
+
+impl Drop for ActivityGuard<'_> {
+    fn drop(&mut self) {
+        self.activity.send_replace(None);
+    }
 }
 
 impl Drop for ApplyGuard<'_> {
@@ -145,6 +165,7 @@ impl SyncTrayAggregator {
             tick_in_progress: AtomicBool::new(false),
             applying: Mutex::new(BTreeMap::new()),
             lineage_writers: Mutex::new(BTreeMap::new()),
+            activity: watch::channel(None).0,
         }
     }
 
@@ -221,6 +242,28 @@ impl SyncTrayAggregator {
             applying: &self.applying,
             namespace: namespace.clone(),
         }
+    }
+
+    /// Name the transfer while the guard lives, so the clear survives `?`, early
+    /// return and unwind.
+    pub fn activity_guard(&self, op: ActivityOp, namespace: &Namespace) -> ActivityGuard<'_> {
+        self.activity.send_replace(Some(AutopullActivity {
+            op,
+            namespace: namespace.clone(),
+        }));
+        ActivityGuard {
+            activity: &self.activity,
+        }
+    }
+
+    /// The transfer running now, for a reader that mounts mid-transfer.
+    pub fn activity(&self) -> Option<AutopullActivity> {
+        self.activity.borrow().clone()
+    }
+
+    /// Follow the activity: every set and every clear.
+    pub fn subscribe_activity(&self) -> watch::Receiver<Option<AutopullActivity>> {
+        self.activity.subscribe()
     }
 
     pub fn note_tick_started(&self) {
@@ -581,5 +624,71 @@ mod tests {
             after.pending_changes, 1,
             "orphan dirty entries must be dropped on reconciliation",
         );
+    }
+
+    #[test]
+    fn the_activity_guard_holds_the_activity_until_dropped() {
+        let (agg, _rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+        assert_eq!(agg.activity(), None);
+
+        let guard = agg.activity_guard(ActivityOp::Pull, &ns);
+        assert_eq!(
+            agg.activity(),
+            Some(AutopullActivity {
+                op: ActivityOp::Pull,
+                namespace: ns.clone(),
+            })
+        );
+
+        drop(guard);
+        assert_eq!(agg.activity(), None);
+    }
+
+    #[test]
+    fn a_subscriber_sees_the_set_and_the_clear() {
+        let (agg, _rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+        let mut activity = agg.subscribe_activity();
+
+        let guard = agg.activity_guard(ActivityOp::Publish, &ns);
+        assert!(activity.has_changed().unwrap(), "the set is seen");
+        assert_eq!(
+            activity.borrow_and_update().as_ref().map(|a| a.op),
+            Some(ActivityOp::Publish)
+        );
+
+        drop(guard);
+        assert!(activity.has_changed().unwrap(), "the clear is seen");
+        assert_eq!(*activity.borrow_and_update(), None);
+    }
+
+    #[test]
+    fn the_activity_is_not_part_of_the_tray_mode() {
+        let (agg, mut rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+        rx.borrow_and_update();
+
+        let _guard = agg.activity_guard(ActivityOp::Pull, &ns);
+
+        assert!(
+            !rx.has_changed().unwrap(),
+            "taking the guard must not publish the tray status"
+        );
+        assert_eq!(rx.borrow().mode, TrayMode::Idle);
+    }
+
+    #[test]
+    fn the_activity_clears_on_unwind() {
+        let (agg, _rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = agg.activity_guard(ActivityOp::Pull, &ns);
+            panic!("the transfer blew up");
+        }));
+
+        assert!(unwound.is_err());
+        assert_eq!(agg.activity(), None);
     }
 }

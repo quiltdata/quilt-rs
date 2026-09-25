@@ -10,6 +10,7 @@ use quilt_uri::Namespace;
 use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
+use crate::autopull::activity::ActivityOp;
 use crate::autopull::pull_toast;
 use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
@@ -457,6 +458,8 @@ pub(crate) async fn refresh_then_maybe_sync(
                 // routine enough to dismiss unread.
                 let applied = {
                     let _applying = aggregator.apply_guard(namespace);
+                    // The activity line spans the transfer and nothing else: the check never shows.
+                    let _activity = aggregator.activity_guard(ActivityOp::Pull, namespace);
                     model.package_pull(&installed, None, scope).await
                 };
                 return match applied {
@@ -514,7 +517,12 @@ pub(crate) async fn refresh_then_maybe_sync(
         // Publish command in `commands.rs`, so a change to publish
         // settings (new placeholder, new field) applies identically
         // regardless of who triggered the publish.
-        return match model::publish_with_settings(model, namespace, publish, status).await {
+        let published = {
+            // The activity line spans the transfer and nothing else: the check never shows.
+            let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
+            model::publish_with_settings(model, namespace, publish, status).await
+        };
+        return match published {
             Ok((_, message)) => {
                 info!("autosync: published namespace={namespace}");
                 Ok(RefreshOutcome {

@@ -1,10 +1,13 @@
-//! The appbar: the home logo, and a slot for controls on the right.
+//! The appbar: the home logo on the left, the [`ActivityLine`] centered, and a
+//! slot for controls on the right.
 //!
 //! Drawn by both the v2 frame and the v1 `Layout`, so it must never carry
 //! `data-v2-page`: that marker darkens the surface it is on, and v1 pages sit
 //! under this bar.
 
 use leptos::prelude::*;
+
+use crate::kit::ActivityLine;
 
 stylance::import_crate_style!(style, "src/kit/appbar.module.scss");
 
@@ -22,6 +25,7 @@ pub fn Appbar(
                     // The only logo asset with an alpha channel (qhq-8mgw.22).
                     <img src="/assets/img/quilt.png" alt="QuiltSync home" />
                 </a>
+                <ActivityLine />
                 {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}
             </div>
         </header>
@@ -31,7 +35,9 @@ pub fn Appbar(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kit::Activities;
     use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// qhq-8mgw.22: `quilt-mark.png` has no alpha and shows an opaque square
@@ -71,5 +77,40 @@ mod tests {
             .unwrap()
             .expect("the slot is drawn");
         assert_eq!(button.text_content().as_deref(), Some("Refresh"));
+    }
+
+    /// The gallery and every test mount the bar with no `Activities` above it.
+    #[wasm_bindgen_test]
+    fn without_activities_nothing_is_drawn() {
+        let el = mount(
+            || view! { <Appbar actions=Some(view! { <button>"Refresh"</button> }.into_any()) /> },
+        );
+        assert!(
+            el.query_selector("[role=status]").unwrap().is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_line_sits_between_the_logo_and_the_controls() {
+        let el = mount(|| {
+            provide_context(Activities::new());
+            view! { <Appbar actions=Some(view! { <button>"Refresh"</button> }.into_any()) /> }
+        });
+        let all = el
+            .query_selector_all("header img, header [role=status], header button")
+            .unwrap();
+        let order: Vec<String> = (0..all.length())
+            .map(|i| {
+                let node: web_sys::Element = all.item(i).unwrap().unchecked_into();
+                if node.get_attribute("role").as_deref() == Some("status") {
+                    "line".to_owned()
+                } else {
+                    node.tag_name().to_lowercase()
+                }
+            })
+            .collect();
+        assert_eq!(order, ["img", "line", "button"]);
     }
 }

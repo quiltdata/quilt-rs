@@ -31,9 +31,13 @@ fn main() {
 
 #[component]
 fn App() -> impl IntoView {
+    // Before the singletons, so the appbar's activity line and its producer
+    // below both find it. Without it the line draws nothing.
+    provide_context(kit::Activities::new());
     view! {
         <components::UpdateChecker />
         <components::ToastStack />
+        <components::AutopullActivityFeed />
         <components::QuitPrompt />
         <Router>
             <Routes fallback=|| view! { <pages::NotFound /> }>

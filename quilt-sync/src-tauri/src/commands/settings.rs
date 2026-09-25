@@ -350,6 +350,15 @@ pub async fn get_autosync_snapshot(
     Ok(watcher.snapshot().await)
 }
 
+/// The transfer autopull is running now, for a window that mounts
+/// mid-transfer; it then follows the `autopull-activity` event.
+#[tauri::command]
+pub async fn get_autopull_activity(
+    watcher: tauri::State<'_, Watcher>,
+) -> Result<Option<crate::autopull::activity::AutopullActivity>, String> {
+    Ok(watcher.activity())
+}
+
 #[tauri::command]
 pub async fn update_fswatcher_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,

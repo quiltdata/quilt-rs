@@ -169,6 +169,7 @@ fn main() {
                 window_mode.clone(),
                 &reporter,
             );
+            autopull::activity::spawn_forwarder(app.handle().clone(), watcher.subscribe_activity());
             app.manage(publish_settings);
             app.manage(autosync_settings);
             app.manage(fswatcher_settings);
@@ -256,6 +257,7 @@ fn main() {
             commands::update_autosync_settings,
             commands::set_autosync_direction,
             commands::get_autosync_snapshot,
+            commands::get_autopull_activity,
             commands::get_toasts,
             commands::dismiss_toast,
             commands::update_fswatcher_settings,

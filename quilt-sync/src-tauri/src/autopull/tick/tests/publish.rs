@@ -1117,3 +1117,83 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
     assert_eq!(rx.borrow().pending_changes, 1);
     Ok(())
 }
+
+fn publishing(ns: &Namespace) -> AutopullActivity {
+    AutopullActivity {
+        op: ActivityOp::Publish,
+        namespace: ns.clone(),
+    }
+}
+
+#[tokio::test]
+async fn the_publish_holds_its_activity_while_it_runs() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+    let (mut model, _) =
+        fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+
+    let agg = test_aggregator();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    let ns_for_push = ns.clone();
+    model
+        .expect_package_publish()
+        .times(1)
+        .returning(move |_, _, _, _, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.activity());
+            Ok(quilt::PublishOutcome::CommittedAndPushed(
+                fake_push_outcome(&ns_for_push),
+            ))
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(Some(publishing(&ns))),
+        "the publish moves files — the line must name it while it runs"
+    );
+    assert_eq!(agg.activity(), None, "and clear once it returns");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_publish_clears_its_activity() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+    let (mut model, _) =
+        fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+
+    let agg = test_aggregator();
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_package_publish()
+        .times(1)
+        .returning(move |_, _, _, _, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.activity());
+            Err(Error::from(quilt::Error::PackageOp(
+                quilt::PackageOpError::Push("workflow rejected".to_string()),
+            )))
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(*seen.lock().unwrap(), Some(Some(publishing(&ns))));
+    assert_eq!(
+        agg.activity(),
+        None,
+        "a line left set would say a publish is running after it failed"
+    );
+    Ok(())
+}

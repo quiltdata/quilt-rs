@@ -404,6 +404,11 @@
    * drawn in. Measured, not assumed. */
   --q-bgColor-brand: #2d306d;
   --q-fgColor-onBrand: #fff;
+  /* The activity line's ink: faint but still text, 7.0:1 over the brand ground. */
+  --q-fgColor-onBrand-muted: rgb(255 255 255 / 0.72);
+  /* The activity line's ground: amber-9 (the same in both themes) faintly over
+   * the brand ground; the muted ink above reads 5.4:1 over it, composited. */
+  --q-bgColor-attention-onBrand: rgb(255 197 61 / 0.16);
 
   /* Overlays for controls sitting on the brand ground. The grey alphas above
    * are dark ink and vanish on it; these cannot simply be the dark theme's
