@@ -646,44 +646,38 @@ mod tests {
         }
     }
 
+    /// The page's fixture, published to `team-bucket`.
     fn page_data() -> commands::PackagePageData {
-        commands::PackagePageData {
-            header: published(),
-            context: commands::PackageContextData {
-                revision: commands::CurrentRevisionData {
-                    hash: "0123456789abcdef".to_string(),
-                    message: None,
-                    obtained_at: 1_758_500_000_000.0,
-                },
-                bucket: Some("team-bucket".to_string()),
-                revision_count: 1,
-                keeping: commands::KeepingData {
-                    scope: commands::KeepingScope::IndividualFiles,
-                    total: 0,
-                    remote_only: Vec::new(),
-                },
-                resolve: None,
-            },
-            sync_paused: None,
-            // Not what these tests are about; the pane draws its failure.
-            files: commands::FilesData::Unlisted {
-                reason: String::new(),
-            },
+        let mut page = super::super::tests::page_data();
+        page.header = published();
+        page.context.revision.message = None;
+        page
+    }
+
+    /// Another package on another remote, for a rebuild that changes package.
+    fn other_package() -> commands::PackageHeaderData {
+        let uri: quilt_uri::S3PackageUri =
+            "quilt+s3://other-bucket#package=team/other&catalog=other.quiltdata.com"
+                .parse()
+                .unwrap();
+        commands::PackageHeaderData {
+            namespace: "team/other".try_into().unwrap(),
+            uri: Some(uri),
+            ..published()
         }
     }
 
     /// The dialog as the header mounts it, under the page's flag, built again
-    /// from a fresh payload whenever `reads` moves — which is what a re-read
+    /// from the payload whenever `header` is set — which is what a re-read
     /// does to it.
-    fn mount_rebuilt(w: Wiring, reads: RwSignal<u32>) -> web_sys::Element {
+    fn mount_rebuilt(w: Wiring, header: RwSignal<commands::PackageHeaderData>) -> web_sys::Element {
         mount(move || {
             view! {
                 {move || {
-                    reads.track();
                     view! {
                         <BucketDialog
                             open=w.dialogs.bucket
-                            data=published()
+                            data=header.get()
                             w=w
                             workflows=governed
                         />
@@ -719,6 +713,11 @@ mod tests {
     /// re-reads the page mid-form and the re-read rebuilds the header, so this
     /// drives the page's own body: the rebuilt dialog must not put the
     /// package's remote back over the draft.
+    ///
+    /// Host and bucket are what it checks. The page mounts the dialog with the
+    /// real workflow read, which has no Tauri host here, so the workflow is
+    /// left to `a_rebuilt_dialog_keeps_the_reader_s_workflow`, which answers
+    /// the read itself; this one asserts before the debounce would fire it.
     #[wasm_bindgen_test]
     async fn a_re_read_keeps_what_the_reader_typed() {
         let w = Wiring::new();
@@ -769,8 +768,8 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_rebuilt_dialog_keeps_the_reader_s_workflow() {
         let w = Wiring::new();
-        let reads = RwSignal::new(0_u32);
-        let el = mount_rebuilt(w, reads);
+        let header = RwSignal::new(published());
+        let el = mount_rebuilt(w, header);
         w.dialogs.bucket.set(true);
         leptos::task::tick().await;
         type_into(&el, "Host", "example.quiltdata.com");
@@ -784,7 +783,7 @@ mod tests {
         choose(&el, "Workflow", "Beta");
         leptos::task::tick().await;
 
-        reads.update(|n| *n += 1);
+        header.set(published());
         leptos::task::tick().await;
         sleep_ms(50).await;
 
@@ -800,8 +799,8 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_reopened_dialog_starts_from_the_remote() {
         let w = Wiring::new();
-        let reads = RwSignal::new(0_u32);
-        let el = mount_rebuilt(w, reads);
+        let header = RwSignal::new(published());
+        let el = mount_rebuilt(w, header);
         w.dialogs.bucket.set(true);
         leptos::task::tick().await;
         sleep_ms(SETTLED_MS).await;
@@ -810,6 +809,7 @@ mod tests {
         leptos::task::tick().await;
 
         w.dialogs.bucket.set(false);
+        leptos::task::tick().await;
         // The native `close` event lands a task later and writes the flag too.
         sleep_ms(50).await;
         w.dialogs.bucket.set(true);
@@ -819,5 +819,34 @@ mod tests {
         assert_eq!(value_of(&el, "Host"), "open.quiltdata.com");
         assert_eq!(value_of(&el, "Bucket"), "team-bucket");
         assert_eq!(value_of(&el, "Workflow"), "Alpha (default)");
+    }
+
+    /// A draft is one package's. A re-read that rebuilds the dialog, still
+    /// open, for another package — the page followed the reader to it — fills
+    /// the fields from that package's remote rather than carrying the first
+    /// one's typing over. The same package rebuilt keeps its draft, which is
+    /// `a_rebuilt_dialog_keeps_the_reader_s_workflow`.
+    #[wasm_bindgen_test]
+    async fn a_rebuild_for_another_package_starts_from_its_remote() {
+        let w = Wiring::new();
+        let header = RwSignal::new(published());
+        let el = mount_rebuilt(w, header);
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        type_into(&el, "Host", "example.quiltdata.com");
+        type_into(&el, "Bucket", "typed-bucket");
+        leptos::task::tick().await;
+
+        header.set(other_package());
+        leptos::task::tick().await;
+        sleep_ms(50).await;
+
+        assert!(
+            el.query_selector("dialog[open]").unwrap().is_some(),
+            "still open; markup was {}",
+            el.inner_html()
+        );
+        assert_eq!(value_of(&el, "Host"), "other.quiltdata.com");
+        assert_eq!(value_of(&el, "Bucket"), "other-bucket");
     }
 }

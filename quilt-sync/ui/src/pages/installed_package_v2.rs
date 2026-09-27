@@ -945,7 +945,9 @@ mod tests {
             .unwrap();
     }
 
-    fn page_data() -> commands::PackagePageData {
+    /// A settled page for `team/dataset` at its latest revision. The child
+    /// modules' tests start from it and change only what they are about.
+    pub(super) fn page_data() -> commands::PackagePageData {
         commands::PackagePageData {
             header: commands::PackageHeaderData {
                 namespace: "team/dataset".try_into().unwrap(),

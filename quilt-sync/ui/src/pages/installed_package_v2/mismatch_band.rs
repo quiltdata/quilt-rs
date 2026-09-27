@@ -24,21 +24,19 @@ use crate::kit::{Banner, BannerVariant, PackageState};
 use crate::routes::{self, RevisionMismatch};
 
 /// The requested revision's commit message, looked up by hash on its own
-/// remote: bucket, namespace, hash, catalog origin.
+/// remote, for the package at `namespace`.
 pub(crate) type RevisionMessage =
-    fn(
-        String,
-        String,
-        String,
-        Option<String>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>>;
+    fn(RevisionMismatch, String) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>>;
 
 pub(super) fn app_revision_message(
-    bucket: String,
+    mismatch: RevisionMismatch,
     namespace: String,
-    hash: String,
-    catalog: Option<String>,
 ) -> Pin<Box<dyn Future<Output = Result<Option<String>, String>>>> {
+    let RevisionMismatch {
+        hash,
+        bucket,
+        catalog,
+    } = mismatch;
     Box::pin(commands::get_revision_message(
         bucket, namespace, hash, catalog,
     ))
@@ -75,12 +73,7 @@ pub(super) fn requested_message(
             return;
         };
         leptos::task::spawn_local(async move {
-            let RevisionMismatch {
-                hash,
-                bucket,
-                catalog,
-            } = mismatch.clone();
-            let answer = lookup(bucket, ns.clone(), hash, catalog).await;
+            let answer = lookup(mismatch.clone(), ns.clone()).await;
             let current = asked.try_get_untracked().flatten().as_ref() == Some(&mismatch)
                 && namespace.try_get_untracked().as_ref() == Some(&ns);
             if current {
@@ -193,6 +186,7 @@ mod tests {
     use crate::test_support::{button_saying, element_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     const INSTALLED: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -203,45 +197,20 @@ mod tests {
         format!("&mismatch={REQUESTED}&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio")
     }
 
+    /// The page's fixture at `INSTALLED`, in `state`, with `message`.
     fn data(state: PackageState, message: Option<&str>) -> commands::PackagePageData {
-        commands::PackagePageData {
-            header: commands::PackageHeaderData {
-                namespace: "team/dataset".try_into().unwrap(),
-                uri: None,
-                state,
-                remote_locked: false,
-                has_local_commit: false,
-                commit_has_parent: false,
-                role_switch: None,
-            },
-            context: commands::PackageContextData {
-                revision: commands::CurrentRevisionData {
-                    hash: INSTALLED.to_string(),
-                    message: message.map(ToString::to_string),
-                    obtained_at: 1_758_500_000_000.0,
-                },
-                bucket: Some("quilt-lab".to_string()),
-                revision_count: 1,
-                keeping: commands::KeepingData {
-                    scope: commands::KeepingScope::IndividualFiles,
-                    total: 1,
-                    remote_only: Vec::new(),
-                },
-                resolve: None,
-            },
-            sync_paused: None,
-            // Not what these tests are about; the pane draws its failure.
-            files: commands::FilesData::Unlisted {
-                reason: String::new(),
-            },
-        }
+        let mut page = super::super::tests::page_data();
+        page.header.state = state;
+        page.context.revision.hash = INSTALLED.to_string();
+        page.context.revision.message = message.map(ToString::to_string);
+        page
     }
 
     type Read = Pin<Box<dyn Future<Output = Result<commands::PackagePageData, String>>>>;
     type Lookup = Pin<Box<dyn Future<Output = Result<Option<String>, String>>>>;
 
-    /// What a lookup was asked: bucket, namespace, hash, catalog.
-    type Asked = (String, String, String, Option<String>);
+    /// What a lookup was asked: the mismatch, and the package's namespace.
+    type Asked = (RevisionMismatch, String);
 
     thread_local! {
         static READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -273,9 +242,9 @@ mod tests {
     }
 
     /// Answers once the test releases it, recording what it was asked.
-    fn held(bucket: String, namespace: String, hash: String, catalog: Option<String>) -> Lookup {
+    fn held(mismatch: RevisionMismatch, namespace: String) -> Lookup {
         LOOKUPS.set(LOOKUPS.get() + 1);
-        ASKED.set(Some((bucket, namespace, hash, catalog)));
+        ASKED.set(Some((mismatch, namespace)));
         Box::pin(async {
             while !RELEASED.get() {
                 sleep_ms(5).await;
@@ -284,7 +253,7 @@ mod tests {
         })
     }
 
-    fn refused(_: String, _: String, _: String, _: Option<String>) -> Lookup {
+    fn refused(_: RevisionMismatch, _: String) -> Lookup {
         LOOKUPS.set(LOOKUPS.get() + 1);
         Box::pin(async { Err("NoSuchKey".to_string()) })
     }
@@ -363,10 +332,12 @@ mod tests {
         assert_eq!(
             ASKED.take(),
             Some((
-                "quilt-lab".to_string(),
+                RevisionMismatch {
+                    hash: REQUESTED.to_string(),
+                    bucket: "quilt-lab".to_string(),
+                    catalog: Some("https://open.quilt.bio".to_string()),
+                },
                 "team/dataset".to_string(),
-                REQUESTED.to_string(),
-                Some("https://open.quilt.bio".to_string()),
             )),
             "looked up on the requested revision's own remote"
         );
@@ -429,8 +400,8 @@ mod tests {
         assert_eq!(LOOKUPS.get(), 1, "looked up once per address");
     }
 
-    /// Entering the mode and leaving it keep the query: a mode entered on the
-    /// page must not end the band.
+    /// Entering the mode and leaving it keep the query, and the band with it:
+    /// a mode entered on the page must not end the band.
     #[wasm_bindgen_test]
     async fn entering_and_leaving_resolve_keep_the_mismatch() {
         let plain = format!("{PLAIN}{}", mismatch_query());
@@ -445,14 +416,22 @@ mod tests {
                 mismatch_query()
             )
         );
+        element_saying(&el, "Requested version:");
 
-        assert!(
-            el.query_selector(&format!("a[href='{plain}']"))
-                .unwrap()
-                .is_some(),
-            "the back link keeps it; markup was {}",
-            el.inner_html()
+        let back = el
+            .query_selector(&format!("a[href='{plain}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("the back link keeps it; markup was {}", el.inner_html()));
+        back.unchecked_into::<web_sys::HtmlElement>().click();
+        sleep_ms(50).await;
+        assert_eq!(
+            search(),
+            format!(
+                "?namespace=team%2Fdataset&filter=unmodified{}",
+                mismatch_query()
+            )
         );
+        element_saying(&el, "Requested version:");
     }
 
     /// A `resolve=1` the package cannot honour is replaced, and the
