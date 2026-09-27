@@ -1018,7 +1018,7 @@ mod tests {
     }
 
     /// The pane's page-owned state at rest, which is all these tests need of it.
-    fn idle_files() -> Files {
+    pub(super) fn idle_files() -> Files {
         Files {
             grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
             collapsed: RwSignal::new(BTreeSet::new()),

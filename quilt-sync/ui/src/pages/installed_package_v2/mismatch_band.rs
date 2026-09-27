@@ -230,6 +230,10 @@ mod tests {
                 resolve: None,
             },
             sync_paused: None,
+            // Not what these tests are about; the pane draws its failure.
+            files: commands::FilesData::Unlisted {
+                reason: String::new(),
+            },
         }
     }
 

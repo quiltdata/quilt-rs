@@ -651,6 +651,7 @@ mod tests {
             header: published(),
             context: commands::PackageContextData {
                 revision: commands::CurrentRevisionData {
+                    hash: "0123456789abcdef".to_string(),
                     message: None,
                     obtained_at: 1_758_500_000_000.0,
                 },
@@ -664,6 +665,10 @@ mod tests {
                 resolve: None,
             },
             sync_paused: None,
+            // Not what these tests are about; the pane draws its failure.
+            files: commands::FilesData::Unlisted {
+                reason: String::new(),
+            },
         }
     }
 
@@ -728,6 +733,7 @@ mod tests {
                             w,
                             Signal::stored(false),
                             super::super::ResolveCommands::app(),
+                            super::super::tests::idle_files(),
                         )
                     }}
                 </Router>
