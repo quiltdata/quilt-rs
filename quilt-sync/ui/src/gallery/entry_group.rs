@@ -4,6 +4,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
+use crate::differs_caption;
 use crate::kit::CheckState;
 use crate::kit::EntryAction;
 use crate::kit::EntryGroup;
@@ -141,6 +142,7 @@ fn picks_group(
 pub fn EntryGroupStories() -> impl IntoView {
     let open = RwSignal::new(true);
     let shut = RwSignal::new(false);
+    let marked_shut = RwSignal::new(false);
     let scroller = RwSignal::new(true);
     let settled = RwSignal::new(true);
     let pending = RwSignal::new(false);
@@ -210,6 +212,18 @@ pub fn EntryGroupStories() -> impl IntoView {
                         )
                     />
                 </EntryGroup>
+            </Cell>
+            <Cell full=true label="collapsed, holding a file that differs — resolve mode marks the heading">
+                <EntryGroup
+                    name="plate/"
+                    count=Signal::derive(|| 2)
+                    open=marked_shut
+                    differs=true
+                >
+                    <EntryRow name="a.csv" size="4 KB" differs=true />
+                    <EntryRow name="b.csv" size="4 KB" />
+                </EntryGroup>
+                {differs_caption(1)}
             </Cell>
             <Cell full=true label="every file already here — nothing to select, so no box">
                 {settled_group(settled)}

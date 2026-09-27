@@ -70,6 +70,15 @@
   font-size: var(--q-text-body);
 }
 
+/* A closed group holding a row that differs. A dot in the rows' mark colour,
+ * small and quiet: information, never a control. */
+.differs {
+  flex: 0 0 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--q-fgColor-danger);
+}
+
 /* Neither upper-cased nor tracked — it is a number, and spacing digits apart
  * makes them read as separate figures. */
 .count {
