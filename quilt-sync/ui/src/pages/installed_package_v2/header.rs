@@ -427,6 +427,8 @@ pub fn PageHeader(
     } = w;
     let Dialogs {
         bucket: bucket_open,
+        // The bucket dialog's own.
+        bucket_draft: _,
         role: role_open,
         undo: undo_open,
         remove: remove_open,

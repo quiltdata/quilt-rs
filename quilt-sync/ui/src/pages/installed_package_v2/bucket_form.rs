@@ -17,6 +17,8 @@
 //! one `Close` and no form. The state's *Choose S3 bucket* opens the editable
 //! shape, same as the menu's *Change bucket*.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -79,6 +81,18 @@ fn initial_label(view: &WorkflowView) -> String {
         .unwrap_or_default()
 }
 
+/// The bucket's workflow read, as the dialog runs it. A parameter so a test
+/// can answer it without a Tauri host.
+pub(super) type WorkflowRead =
+    fn(String, String) -> Pin<Box<dyn Future<Output = Result<CommitWorkflows, String>>>>;
+
+fn read_workflows(
+    host: String,
+    bucket: String,
+) -> Pin<Box<dyn Future<Output = Result<CommitWorkflows, String>>>> {
+    Box::pin(commands::get_bucket_workflows(host, bucket))
+}
+
 /// The set-remote dialog, in both of its shapes.
 #[component]
 #[allow(
@@ -93,7 +107,11 @@ pub(super) fn BucketDialog(
     open: RwSignal<bool>,
     data: commands::PackageHeaderData,
     w: Wiring,
+    /// `get_bucket_workflows` unless a test says otherwise.
+    #[prop(optional)]
+    workflows: Option<WorkflowRead>,
 ) -> impl IntoView {
+    let read = workflows.unwrap_or(read_workflows);
     // The workflow read must not re-trigger the page's `<Suspense>`; see
     // `components/set_remote_popup.rs` for the full argument.
     #[allow(
@@ -110,8 +128,10 @@ pub(super) fn BucketDialog(
         busy,
         outcome,
         reload,
+        dialogs,
         ..
     } = w;
+    let draft = dialogs.bucket_draft;
     let locked = data.remote_locked;
     let ns = data.namespace.to_string();
     let current_host = data
@@ -125,22 +145,43 @@ pub(super) fn BucketDialog(
         .and_then(util::bucket_str)
         .unwrap_or_default();
 
-    let origin = RwSignal::new(current_host.clone());
-    let bucket = RwSignal::new(current_bucket.clone());
+    // The page's, so a re-read that rebuilds this dialog finds them as the
+    // reader left them. The field errors are this dialog's: the rebuilt one
+    // re-validates on Save.
+    let origin = draft.host;
+    let bucket = draft.bucket;
     let host_invalid: RwSignal<Option<&'static str>> = RwSignal::new(None);
     let bucket_invalid: RwSignal<Option<&'static str>> = RwSignal::new(None);
-    let selected_workflow = RwSignal::new(String::new());
 
     // Each opening starts from the package's remote, not from what was typed
-    // into the last one and cancelled. Only a real opening: the first run lands
-    // a tick after mount, when the fields already hold these values.
-    Effect::new(move |was_open: Option<bool>| {
-        let is_open = open.get();
-        if is_open && was_open == Some(false) {
+    // into the last one and cancelled.
+    let drafted_for = draft.namespace;
+    let fill = {
+        let ns = ns.clone();
+        move || {
             origin.set(current_host.clone());
             bucket.set(current_bucket.clone());
+            draft.workflow.set(String::new());
+            draft.workflow_for.set(None);
+            drafted_for.set(Some(ns.clone()));
             host_invalid.set(None);
             bucket_invalid.set(None);
+        }
+    };
+    // Built open, this is a re-read's rebuild, and the draft is the reader's
+    // work — unless it is another package's, or nobody's yet. Here rather than
+    // in the Effect, so the fields are drawn filled.
+    let built_open = open.get_untracked();
+    if built_open && drafted_for.get_untracked().as_deref() != Some(ns.as_str()) {
+        fill();
+    }
+    // Only a real opening, closed to open. The first run lands a tick after
+    // mount, so it compares against the flag as the dialog was built: an
+    // opening in that tick is still one, and a rebuild while open is not.
+    Effect::new(move |was_open: Option<bool>| {
+        let is_open = open.get();
+        if is_open && !was_open.unwrap_or(built_open) {
+            fill();
         }
         is_open
     });
@@ -190,7 +231,7 @@ pub(super) fn BucketDialog(
         let target = debounced_target.get();
         async move {
             let (host, name) = target?;
-            let answer = commands::get_bucket_workflows(host.clone(), name.clone()).await;
+            let answer = read(host.clone(), name.clone()).await;
             Some(((host, name), answer))
         }
     });
@@ -212,14 +253,21 @@ pub(super) fn BucketDialog(
     let workflow_loading =
         Memo::new(move |_| valid_target.get().is_some() && wf_view.get().is_none());
 
-    // Display and submit agree: a new view restarts at its preselection.
+    // Display and submit agree: a view for a new target restarts at its
+    // preselection. A view for the target the reader already chose on is the
+    // rebuilt dialog's second read of it, and keeps their choice.
     Effect::new(move |_| {
-        selected_workflow.set(match wf_view.get() {
-            Some(view) => initial_label(&view),
-            None if workflow_loading.get() => LOADING.to_string(),
-            // No bucket to read yet, so nothing to choose.
-            None => String::new(),
-        });
+        let Some(view) = wf_view.get() else {
+            return;
+        };
+        // `wf_view` is `Some` only for the typed target, so this is its target.
+        let target = valid_target.get_untracked();
+        let kept = draft.workflow_for.get_untracked() == target
+            && choosable(&view).contains(&draft.workflow.get_untracked());
+        if !kept {
+            draft.workflow.set(initial_label(&view));
+            draft.workflow_for.set(target);
+        }
     });
 
     let submit = (!locked).then(|| {
@@ -253,7 +301,7 @@ pub(super) fn BucketDialog(
                 let workflow = wf_view
                     .get_untracked()
                     .and_then(|view| {
-                        let label = selected_workflow.get_untracked();
+                        let label = draft.workflow.get_untracked();
                         view.options
                             .into_iter()
                             .find(|option| option.label == label)
@@ -370,24 +418,31 @@ pub(super) fn BucketDialog(
                 control=move |id| {
                     view! {
                         {move || {
-                            let (options, choosing) = match wf_view.get() {
+                            // Only a real view's label is the draft's: the
+                            // loading notice is shown, never chosen.
+                            let (options, choosing, selected) = match wf_view.get() {
                                 Some(view) => {
                                     let choosing = matches!(
                                         view.kind,
                                         WorkflowViewKind::Available { .. }
                                     );
-                                    (choosable(&view), choosing)
+                                    (choosable(&view), choosing, draft.workflow)
                                 }
                                 None if workflow_loading.get() => {
-                                    (vec![LOADING.to_string()], false)
+                                    (
+                                        vec![LOADING.to_string()],
+                                        false,
+                                        RwSignal::new(LOADING.to_string()),
+                                    )
                                 }
-                                None => (Vec::new(), false),
+                                // No bucket to read yet, so nothing to choose.
+                                None => (Vec::new(), false, RwSignal::new(String::new())),
                             };
                             view! {
                                 <Select
                                     naming=Naming::FormControl(id.clone())
                                     options=options
-                                    selected=selected_workflow
+                                    selected=selected
                                     disabled=locked || !choosing
                                 />
                             }
@@ -415,6 +470,7 @@ mod tests {
     use super::*;
     use crate::kit;
     use crate::test_support::{element_saying, mount, sleep_ms};
+    use leptos_router::components::Router;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -553,5 +609,209 @@ mod tests {
         sleep_ms(600).await;
 
         element_saying(&el, "Bucket default");
+    }
+
+    /// A governed bucket — `None`, `Alpha (default)`, `Beta` — for whatever
+    /// target is asked about. The runner has no Tauri host to answer instead.
+    fn governed(
+        _host: String,
+        _bucket: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CommitWorkflows, String>>>> {
+        let workflow = |id: &str, name: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        Box::pin(async move {
+            Ok(CommitWorkflows::Available {
+                workflows: vec![workflow("alpha", "Alpha"), workflow("beta", "Beta")],
+                default_workflow: Some("alpha".to_string()),
+                is_workflow_required: false,
+                config_url: None,
+            })
+        })
+    }
+
+    fn published() -> commands::PackageHeaderData {
+        let uri: quilt_uri::S3PackageUri =
+            "quilt+s3://team-bucket#package=team/dataset&catalog=open.quiltdata.com"
+                .parse()
+                .unwrap();
+        commands::PackageHeaderData {
+            uri: Some(uri),
+            state: kit::PackageState::Latest,
+            ..data()
+        }
+    }
+
+    fn page_data() -> commands::PackagePageData {
+        commands::PackagePageData {
+            header: published(),
+            context: commands::PackageContextData {
+                revision: commands::CurrentRevisionData {
+                    message: None,
+                    obtained_at: 1_758_500_000_000.0,
+                },
+                bucket: Some("team-bucket".to_string()),
+                revision_count: 1,
+                keeping: commands::KeepingData {
+                    scope: commands::KeepingScope::IndividualFiles,
+                    total: 0,
+                    remote_only: Vec::new(),
+                },
+                resolve: None,
+            },
+            sync_paused: None,
+        }
+    }
+
+    /// The dialog as the header mounts it, under the page's flag, built again
+    /// from a fresh payload whenever `reads` moves — which is what a re-read
+    /// does to it.
+    fn mount_rebuilt(w: Wiring, reads: RwSignal<u32>) -> web_sys::Element {
+        mount(move || {
+            view! {
+                {move || {
+                    reads.track();
+                    view! {
+                        <BucketDialog
+                            open=w.dialogs.bucket
+                            data=published()
+                            w=w
+                            workflows=governed
+                        />
+                    }
+                }}
+            }
+        })
+    }
+
+    /// Past the workflow read's 400ms debounce. Kept tight: the whole DOM suite
+    /// runs under the runner's one timeout.
+    const SETTLED_MS: i32 = 450;
+
+    fn value_of(el: &web_sys::Element, label: &str) -> String {
+        let control = field(el, label);
+        match control.dyn_ref::<web_sys::HtmlSelectElement>() {
+            Some(select) => select.value(),
+            None => control
+                .unchecked_into::<web_sys::HtmlInputElement>()
+                .value(),
+        }
+    }
+
+    fn choose(el: &web_sys::Element, label: &str, option: &str) {
+        let select: web_sys::HtmlSelectElement = field(el, label).unchecked_into();
+        select.set_value(option);
+        select
+            .dispatch_event(&web_sys::Event::new("change").unwrap())
+            .unwrap();
+    }
+
+    /// What the reader typed is theirs until they close the dialog. The watcher
+    /// re-reads the page mid-form and the re-read rebuilds the header, so this
+    /// drives the page's own body: the rebuilt dialog must not put the
+    /// package's remote back over the draft.
+    #[wasm_bindgen_test]
+    async fn a_re_read_keeps_what_the_reader_typed() {
+        let w = Wiring::new();
+        let reads = RwSignal::new(0_u32);
+        let el = mount(move || {
+            view! {
+                <Router>
+                    {move || {
+                        reads.track();
+                        super::super::package_body(
+                            page_data(),
+                            w,
+                            Signal::stored(false),
+                            super::super::ResolveCommands::app(),
+                        )
+                    }}
+                </Router>
+            }
+        });
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        assert_eq!(
+            value_of(&el, "Host"),
+            "open.quiltdata.com",
+            "opened on the remote"
+        );
+        type_into(&el, "Host", "example.quiltdata.com");
+        type_into(&el, "Bucket", "other-bucket");
+        leptos::task::tick().await;
+
+        reads.update(|n| *n += 1);
+        leptos::task::tick().await;
+        sleep_ms(50).await;
+
+        assert!(
+            el.query_selector("dialog[open]").unwrap().is_some(),
+            "still open; markup was {}",
+            el.inner_html()
+        );
+        assert_eq!(value_of(&el, "Host"), "example.quiltdata.com");
+        assert_eq!(value_of(&el, "Bucket"), "other-bucket");
+    }
+
+    /// The rebuilt dialog reads the same bucket's workflows again. That answer
+    /// is not news, so it must not reselect the bucket's default over the
+    /// reader's pick.
+    #[wasm_bindgen_test]
+    async fn a_rebuilt_dialog_keeps_the_reader_s_workflow() {
+        let w = Wiring::new();
+        let reads = RwSignal::new(0_u32);
+        let el = mount_rebuilt(w, reads);
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        type_into(&el, "Host", "example.quiltdata.com");
+        type_into(&el, "Bucket", "other-bucket");
+        sleep_ms(SETTLED_MS).await;
+        assert_eq!(
+            value_of(&el, "Workflow"),
+            "Alpha (default)",
+            "the bucket's own pick"
+        );
+        choose(&el, "Workflow", "Beta");
+        leptos::task::tick().await;
+
+        reads.update(|n| *n += 1);
+        leptos::task::tick().await;
+        sleep_ms(50).await;
+
+        assert_eq!(value_of(&el, "Host"), "example.quiltdata.com");
+        assert_eq!(value_of(&el, "Bucket"), "other-bucket");
+        assert_eq!(value_of(&el, "Workflow"), "Beta");
+    }
+
+    /// Closing drops the draft: each opening starts from the package's remote
+    /// and the bucket's own pick, not from what was typed into the last one and
+    /// cancelled. The workflow is picked on the remote's own bucket, so the
+    /// reopened read is of the same target: it is the opening that resets it.
+    #[wasm_bindgen_test]
+    async fn a_reopened_dialog_starts_from_the_remote() {
+        let w = Wiring::new();
+        let reads = RwSignal::new(0_u32);
+        let el = mount_rebuilt(w, reads);
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+        choose(&el, "Workflow", "Beta");
+        type_into(&el, "Host", "example.quiltdata.com");
+        leptos::task::tick().await;
+
+        w.dialogs.bucket.set(false);
+        // The native `close` event lands a task later and writes the flag too.
+        sleep_ms(50).await;
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+
+        assert_eq!(value_of(&el, "Host"), "open.quiltdata.com");
+        assert_eq!(value_of(&el, "Bucket"), "team-bucket");
+        assert_eq!(value_of(&el, "Workflow"), "Alpha (default)");
     }
 }

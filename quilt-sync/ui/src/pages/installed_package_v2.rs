@@ -170,6 +170,10 @@ pub struct Dialogs {
     /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
     /// one dialog: the state calls for it, or the reader chooses it.
     pub bucket: RwSignal<bool>,
+    /// What the reader has typed into that dialog. Here beside its flag, for
+    /// the flag's reason: a re-read rebuilds the dialog, and the rebuilt one
+    /// must not put the package's remote back over the draft.
+    pub bucket_draft: BucketDraft,
     /// Opened only by the row's `Switch role`, which exists only when the
     /// payload names somewhere to switch to.
     pub role: RwSignal<bool>,
@@ -179,6 +183,37 @@ pub struct Dialogs {
     pub remove: RwSignal<bool>,
     /// Resolve's *Replace mine*: here, so a re-read mid-reset keeps it open.
     pub replace: RwSignal<bool>,
+}
+
+/// The bucket dialog's fields, held by the page. Filled from the package's
+/// remote only when the dialog opens, going from closed to open; a dialog
+/// rebuilt while open finds them as the reader left them.
+#[derive(Clone, Copy)]
+pub struct BucketDraft {
+    pub host: RwSignal<String>,
+    pub bucket: RwSignal<String>,
+    /// The workflow's label, as the dialog's select names it.
+    pub workflow: RwSignal<String>,
+    /// The target — host and bucket — the workflow was chosen for. A read of
+    /// the same target keeps the choice, because the rebuilt dialog reads it
+    /// again; a different target, or a fresh opening, restarts at the
+    /// bucket's preselection.
+    pub workflow_for: RwSignal<Option<(String, String)>>,
+    /// The package the draft was filled for. One route serves every package,
+    /// so a draft left from another one is refilled rather than shown.
+    pub namespace: RwSignal<Option<String>>,
+}
+
+impl BucketDraft {
+    fn new() -> Self {
+        Self {
+            host: RwSignal::new(String::new()),
+            bucket: RwSignal::new(String::new()),
+            workflow: RwSignal::new(String::new()),
+            workflow_for: RwSignal::new(None),
+            namespace: RwSignal::new(None),
+        }
+    }
 }
 
 impl Wiring {
@@ -193,6 +228,7 @@ impl Wiring {
             replace_to: RwSignal::new(None),
             dialogs: Dialogs {
                 bucket: RwSignal::new(false),
+                bucket_draft: BucketDraft::new(),
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),
