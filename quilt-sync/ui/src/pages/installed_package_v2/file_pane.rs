@@ -38,7 +38,8 @@
 //!   (`FileMarks.differing`) marks each drawn row whose path is in it, through
 //!   `EntryRow`'s `differs`. A mark describes a row and never chooses one: the
 //!   facet and the search decide what is drawn, and a row past the cap, hidden,
-//!   or in a collapsed folder is not marked.
+//!   or in a collapsed folder is not marked, though a collapsed folder's
+//!   heading says it holds one.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -492,6 +493,10 @@ fn rows_view(
                 rows: members,
             } => {
                 let count = members.len();
+                // Collapsed, the heading is where a differing row shows.
+                let holds_marked = members
+                    .iter()
+                    .any(|(index, _)| differs(differing, &rows[*index].path));
                 // A collapsed group renders nothing, so the heading rebuilds its
                 // rows each time it opens: it keeps the rows, not their views.
                 let members: Vec<(Row, String)> = members
@@ -532,13 +537,19 @@ fn rows_view(
                             count=Signal::stored(count)
                             open=open
                             selection=selection
+                            differs=holds_marked
                         >
                             {children}
                         </EntryGroup>
                     }
                     .into_any(),
                     None => view! {
-                        <EntryGroup name=heading count=Signal::stored(count) open=open>
+                        <EntryGroup
+                            name=heading
+                            count=Signal::stored(count)
+                            open=open
+                            differs=holds_marked
+                        >
                             {children}
                         </EntryGroup>
                     }
@@ -2624,11 +2635,9 @@ mod marks_tests {
         assert!(is_marked(&el, "plate/a.csv"), "and it is marked once shown");
     }
 
-    /// A collapsed folder draws no rows, so neither its heading nor anything
-    /// else shows the mark until it opens.
-    #[wasm_bindgen_test]
-    async fn a_collapsed_folder_shows_no_mark_until_it_opens() {
-        let el = mount(move || {
+    /// A pane grouped by base folder, with `plate/` collapsed, over two rows.
+    fn folder_pane(differing: Option<Arc<BTreeSet<String>>>) -> web_sys::Element {
+        mount(move || {
             view! {
                 <FilePane
                     listing=Signal::stored(listed(vec![
@@ -2641,25 +2650,75 @@ mod marks_tests {
                     facet=RwSignal::new(Facet::All.key().to_string())
                     on_open=Callback::new(|_: String| ())
                     on_retry=Callback::new(|()| ())
-                    differing=RwSignal::new(Some(marks(&["plate/a.csv"])))
+                    differing=RwSignal::new(differing.clone())
                 />
             }
-        });
-        let described = format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID);
-        assert!(
-            el.query_selector(&described).unwrap().is_none(),
-            "no mark while collapsed; markup was {}",
-            el.inner_html()
-        );
-        let disclosure: web_sys::HtmlElement = el
-            .query_selector("[aria-expanded]")
+        })
+    }
+
+    /// The folder's disclosure.
+    fn disclosure(el: &web_sys::Element) -> web_sys::HtmlElement {
+        el.query_selector("[aria-expanded]")
             .unwrap()
             .expect("the folder's disclosure")
-            .unchecked_into();
-        disclosure.click();
+            .unchecked_into()
+    }
+
+    /// Whether the folder's heading says it holds a file that differs: its
+    /// disclosure names the resolve pane's sentence, and it says so in words.
+    fn heading_marked(el: &web_sys::Element) -> bool {
+        let described = disclosure(el).get_attribute("aria-describedby")
+            == Some(crate::kit::DIFFERS_ID.to_string());
+        let says = el
+            .text_content()
+            .unwrap_or_default()
+            .contains("Contains files that differ");
+        assert_eq!(
+            described,
+            says,
+            "the two cues agree; markup was {}",
+            el.inner_html()
+        );
+        described
+    }
+
+    /// Collapsing never hides a difference: a closed folder holding a marked
+    /// file says so on its heading, though none of its rows is drawn.
+    #[wasm_bindgen_test]
+    fn a_collapsed_folder_holding_a_marked_file_says_so() {
+        let el = folder_pane(Some(marks(&["plate/a.csv"])));
+        assert!(
+            el.query_selector("[title='plate/a.csv']")
+                .unwrap()
+                .is_none(),
+            "collapsed, the row is not drawn"
+        );
+        assert!(heading_marked(&el));
+    }
+
+    /// Open, the rows carry the mark themselves and the heading drops it.
+    #[wasm_bindgen_test]
+    async fn an_open_folder_leaves_the_mark_to_its_rows() {
+        let el = folder_pane(Some(marks(&["plate/a.csv"])));
+        disclosure(&el).click();
         crate::test_support::sleep_ms(10).await;
         assert!(is_marked(&el, "plate/a.csv"), "opened, its row is marked");
         assert!(!is_marked(&el, "plate/b.csv"));
+        assert!(!heading_marked(&el), "the rows say it now");
+    }
+
+    /// A folder whose files are all the same in both revisions has no mark.
+    #[wasm_bindgen_test]
+    fn a_collapsed_folder_with_no_marked_file_shows_no_mark() {
+        let el = folder_pane(Some(marks(&["elsewhere/c.csv"])));
+        assert!(!heading_marked(&el));
+    }
+
+    /// Outside resolve mode no heading is marked.
+    #[wasm_bindgen_test]
+    fn outside_resolve_mode_a_collapsed_folder_shows_no_mark() {
+        let el = folder_pane(None);
+        assert!(!heading_marked(&el));
     }
 
     /// A path with two rows is one key: each row is marked where it is drawn.

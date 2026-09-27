@@ -35,14 +35,27 @@
 //! [`Checkbox`](super::Checkbox)'s `aria_label` exists for, and the name has to
 //! say which group, because a list of them all reading `Select all` names
 //! nothing.
+//!
+//! # A closed group still says a row differs
+//!
+//! In resolve mode a row that differs is marked, and a collapsed group draws no
+//! rows, so `differs` puts a small mark on the heading instead: collapsing never
+//! hides a difference. Open, the rows carry it and the heading does not. It is
+//! said twice, as the rows' mark is: a hidden sentence for reading, and the
+//! disclosure naming [`DIFFERS_ID`], the pane's count, for focus.
 
 use leptos::prelude::*;
 
 use super::CheckState;
 use super::Checkbox;
+use super::DIFFERS_ID;
 use super::icons;
 
 stylance::import_crate_style!(style, "src/kit/entry_group.module.scss");
+
+/// What a closed heading holding a row that differs says, in words and as its
+/// mark's `title`.
+const DIFFERS_GROUP_TEXT: &str = "Contains files that differ";
 
 /// A group's tick: where its selectable rows stand, and what to do when the
 /// heading box moves.
@@ -92,10 +105,15 @@ pub fn EntryGroup(
     /// Absent draws no box at all.
     #[prop(optional)]
     selection: Option<GroupSelection>,
+    /// A row under this heading differs between the revisions. Marked on the
+    /// heading only while it is closed; open, the rows carry the mark.
+    #[prop(optional)]
+    differs: bool,
     children: ChildrenFn,
 ) -> impl IntoView {
     let full_name = name.clone();
     let box_label = format!("Select all in {name}");
+    let hides_difference = move || differs && !open.get();
 
     view! {
         <div class=style::root>
@@ -109,6 +127,7 @@ pub fn EntryGroup(
                     aria-label=move || {
                         if open.get() { "Collapse group" } else { "Expand group" }
                     }
+                    aria-describedby=move || hides_difference().then_some(DIFFERS_ID)
                     on:click=move |_| open.update(|o| *o = !*o)
                 >
                     {move || if open.get() { icons::chevron_down() } else { icons::chevron_right() }}
@@ -128,6 +147,11 @@ pub fn EntryGroup(
                     None => view! { <span class=style::nobox /> }.into_any(),
                 }}
                 <span class=style::name title=full_name>{name}</span>
+                <Show when=hides_difference>
+                    <span class=style::differs title=DIFFERS_GROUP_TEXT>
+                        <span data-sr-only>{DIFFERS_GROUP_TEXT}</span>
+                    </span>
+                </Show>
                 <span class=style::count>{move || count.get()}</span>
             </div>
             <Show when=move || open.get()>{children()}</Show>
