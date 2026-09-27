@@ -455,6 +455,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
+    use crate::gallery::entry_group::EntryGroupStories;
     use crate::gallery::entry_row::EntryRowStories;
     use crate::gallery::file_pane::FilePaneScene;
     use crate::gallery::installed_package::InstalledPackageScene;
@@ -493,6 +494,14 @@ mod tests {
     #[wasm_bindgen_test]
     fn every_description_the_entry_row_stories_name_is_drawn() {
         assert_eq!(dangling_descriptions(EntryRowStories), Vec::<String>::new());
+    }
+
+    #[wasm_bindgen_test]
+    fn every_description_the_entry_group_stories_name_is_drawn() {
+        assert_eq!(
+            dangling_descriptions(EntryGroupStories),
+            Vec::<String>::new()
+        );
     }
 
     #[wasm_bindgen_test]

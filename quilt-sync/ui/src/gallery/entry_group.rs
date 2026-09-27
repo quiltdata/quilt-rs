@@ -4,6 +4,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
+use crate::differs_caption;
 use crate::kit::CheckState;
 use crate::kit::EntryAction;
 use crate::kit::EntryGroup;
@@ -222,6 +223,7 @@ pub fn EntryGroupStories() -> impl IntoView {
                     <EntryRow name="a.csv" size="4 KB" differs=true />
                     <EntryRow name="b.csv" size="4 KB" />
                 </EntryGroup>
+                {differs_caption(1)}
             </Cell>
             <Cell full=true label="every file already here — nothing to select, so no box">
                 {settled_group(settled)}
