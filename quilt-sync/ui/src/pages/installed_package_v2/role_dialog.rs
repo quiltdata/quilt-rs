@@ -8,6 +8,10 @@
 //! The options are the alternatives the payload carried, which already
 //! exclude the refused role: a select whose current value is the thing that
 //! failed offers a no-op as its default.
+//!
+//! The refused role is named in the dialog, in one sentence before the select,
+//! and not in the header's chip: the chip is one state label read at a glance,
+//! and the dialog is where the reader chooses what replaces the role.
 
 use leptos::prelude::*;
 
@@ -16,7 +20,13 @@ use crate::kit::{FormControl, FormDialog, Naming, Select, Submit};
 
 use super::{Wiring, holding};
 
-/// The role switch, over the alternatives the payload offers.
+stylance::import_crate_style!(
+    style,
+    "src/pages/installed_package_v2/role_dialog.module.scss"
+);
+
+/// The role switch, over the alternatives the payload offers. `refused` is the
+/// role the denial named, `None` when the backend could not name one.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
@@ -25,6 +35,7 @@ use super::{Wiring, holding};
 pub(super) fn RoleDialog(
     open: RwSignal<bool>,
     switch: commands::RoleSwitch,
+    refused: Option<String>,
     w: Wiring,
 ) -> impl IntoView {
     // A refusal is the dialog's banner, and nothing goes to the band; starting
@@ -67,6 +78,7 @@ pub(super) fn RoleDialog(
 
     view! {
         <FormDialog open=open title="Switch role" submit=submit running=busy>
+            <p class=style::refusal>{refusal(refused)}</p>
             <FormControl
                 label="Role"
                 control=move |id| {
@@ -81,5 +93,17 @@ pub(super) fn RoleDialog(
                 }
             />
         </FormDialog>
+    }
+}
+
+/// Why the dialog is open, for the sentence before its select. A denial that
+/// could not name the role still has words, without inventing a name.
+fn refusal(refused: Option<String>) -> AnyView {
+    match refused {
+        Some(role) => view! {
+            "You're using " <strong>{role}</strong> ", which can't read this package."
+        }
+        .into_any(),
+        None => "Your current role can't read this package.".into_any(),
     }
 }

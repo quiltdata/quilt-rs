@@ -437,8 +437,14 @@ pub fn PageHeader(
     let action = rendered.action;
     let namespace = data.namespace.to_string();
     let publish_choice = RwSignal::new(0_usize);
+    // The role the denial named, for the dialog's sentence. The remedy is only
+    // carried with a denial, so any other state has no role to name.
+    let refused = match &data.state {
+        kit::PackageState::RoleDenied { role } => role.clone(),
+        _ => None,
+    };
     let role_dialog = data.role_switch.clone().map(|switch| {
-        view! { <RoleDialog open=role_open switch=switch w=w /> }
+        view! { <RoleDialog open=role_open switch=switch refused=refused w=w /> }
     });
 
     let ns_folder = data.namespace.to_string();
@@ -1091,17 +1097,74 @@ mod tests {
             .query_selector("dialog[open]")
             .unwrap()
             .expect("the role dialog");
-        assert!(
-            dialog.text_content().unwrap_or_default().contains("admin"),
-            "the alternatives are the options; markup was {}",
+        // The options, not the dialog's text: the dialog names the refused role
+        // in its sentence, and the rule here is only that it is not offered.
+        let options = dialog.query_selector_all("option").unwrap();
+        let offered: Vec<String> = (0..options.length())
+            .map(|i| options.item(i).unwrap().text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            offered,
+            vec!["admin".to_string()],
+            "the alternatives are the options, and the refused role is not one of them; \
+             markup was {}",
             dialog.inner_html()
         );
+    }
+
+    /// Open the role dialog over a denial of `role`, with one other role held.
+    async fn open_role_dialog(role: Option<&str>) -> web_sys::Element {
+        let mut d = data(kit::PackageState::RoleDenied {
+            role: role.map(str::to_string),
+        });
+        d.role_switch = Some(commands::RoleSwitch {
+            host: "demo.quiltdata.com".to_string(),
+            alternatives: vec!["admin".to_string()],
+        });
+        let el = mount_header(d);
+        button(&el, "Switch role").click();
+        // The dialog opens from an effect, on the next tick.
+        leptos::task::tick().await;
+        el
+    }
+
+    /// The dialog names the refusal before its select: the reader is choosing
+    /// what replaces a role, so the dialog says which one failed. The chip
+    /// stays one state label, and does not.
+    #[wasm_bindgen_test]
+    async fn the_role_dialog_names_the_refused_role() {
+        let el = open_role_dialog(Some("analyst")).await;
+
+        let sentence = element_saying(&el, "You're using analyst, which can't read this package.");
         assert!(
-            !dialog
-                .text_content()
-                .unwrap_or_default()
-                .contains("analyst"),
-            "and the refused role is not one of them"
+            sentence.closest("dialog[open]").unwrap().is_some(),
+            "the sentence is in the open dialog; markup was {}",
+            el.inner_html()
+        );
+        let strong = sentence
+            .query_selector("strong")
+            .unwrap()
+            .unwrap_or_else(|| panic!("the role, set apart; markup was {}", sentence.inner_html()));
+        assert_eq!(strong.text_content().unwrap_or_default(), "analyst");
+        element_saying(&el, "No access");
+    }
+
+    /// A denial that names no role still says why the dialog is open, without
+    /// inventing a name.
+    #[wasm_bindgen_test]
+    async fn a_denial_naming_no_role_says_your_current_role() {
+        let el = open_role_dialog(None).await;
+
+        let sentence = element_saying(&el, "Your current role can't read this package.");
+        assert!(
+            sentence.closest("dialog[open]").unwrap().is_some(),
+            "the sentence is in the open dialog; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            sentence.query_selector("strong").unwrap().is_none(),
+            "no name to set apart; markup was {}",
+            sentence.inner_html()
         );
     }
 
