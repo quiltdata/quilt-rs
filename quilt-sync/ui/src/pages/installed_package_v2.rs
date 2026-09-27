@@ -892,6 +892,7 @@ mod tests {
             },
             context: commands::PackageContextData {
                 revision: commands::CurrentRevisionData {
+                    hash: "0123456789abcdef".to_string(),
                     message: Some("Initial upload".to_string()),
                     obtained_at: 1_758_500_000_000.0,
                 },
