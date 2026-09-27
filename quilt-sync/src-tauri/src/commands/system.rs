@@ -363,6 +363,34 @@ pub async fn open_in_default_application(
         )
 }
 
+/// Where a package's file is on disk: the package's home joined with its
+/// path inside the package, as opening the file resolves it, so the two cannot
+/// disagree. Fails, as opening does, for a file that is not there.
+async fn package_file_path_command(
+    m: &impl QuiltModel,
+    namespace: &str,
+    path: &str,
+) -> Result<PathBuf, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    m.file_path(&namespace, &PathBuf::from(path)).await
+}
+
+/// The absolute path of one of a package's files, for the file pane's *Copy
+/// path*: a `New` file has no `quilt+s3` address that resolves, so the reader
+/// gets where it is on this computer instead. Reads nothing but the package's
+/// home, and reports nothing: the copy that follows is the event.
+#[tauri::command]
+pub async fn package_file_path(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    path: String,
+) -> Result<String, String> {
+    package_file_path_command(&*m, &namespace, &path)
+        .await
+        .map(|p| p.display().to_string())
+        .map_err(|err| err.to_string())
+}
+
 fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
     model::open_in_web_browser(url)?;
     Ok(())
@@ -528,6 +556,43 @@ pub fn report_ui_panic(message: String, tracing: tauri::State<'_, crate::telemet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// *Copy path* asks where the file is, and gets the path opening the file
+    /// would open: the package's home joined with its path inside it.
+    #[tokio::test]
+    async fn a_package_file_s_path_is_where_opening_it_would_look() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_file_path()
+            .withf(|ns, path| ns.to_string() == "team/plate" && path == &PathBuf::from("raw/a.csv"))
+            .returning(|_, path| Ok(PathBuf::from("/Users/me/QuiltSync/team/plate").join(path)));
+
+        let found = package_file_path_command(&m, "team/plate", "raw/a.csv")
+            .await
+            .expect("a file that is there has a path");
+
+        assert_eq!(
+            found,
+            PathBuf::from("/Users/me/QuiltSync/team/plate/raw/a.csv")
+        );
+    }
+
+    /// A file that is not there has no path to copy, and says why, as opening
+    /// it would.
+    #[tokio::test]
+    async fn a_missing_file_has_no_path_to_copy() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_file_path().returning(|_, path| {
+            Err(Error::FsOpen(crate::error::FsOpenError::PathNotFound(
+                path.clone(),
+            )))
+        });
+
+        assert!(
+            package_file_path_command(&m, "team/plate", "raw/gone.csv")
+                .await
+                .is_err()
+        );
+    }
 
     /// A short message is passed through untouched — the common case, and the one a
     /// reader of the issue title needs to be exact.

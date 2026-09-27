@@ -244,6 +244,7 @@ fn main() {
             commands::open_in_default_application,
             commands::open_in_file_browser,
             commands::copy_to_clipboard,
+            commands::package_file_path,
             commands::open_in_web_browser,
             commands::package_commit,
             commands::package_commit_and_push,

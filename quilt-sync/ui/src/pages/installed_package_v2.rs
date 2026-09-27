@@ -487,11 +487,15 @@ fn row_runner(
                 });
             }
             RowCommand::CopyUri(_) | RowCommand::CopyPath(_) => {
-                let Some((text, event)) = clip(&command, uri.as_ref()) else {
-                    return;
-                };
                 leptos::task::spawn_local(async move {
-                    let copied = commands::copy_to_clipboard(text, event).await.map(|_| ());
+                    let copied = match clipped(&command, &namespace, uri.as_ref(), local_path).await
+                    {
+                        Ok(None) => return,
+                        Ok(Some((text, event))) => {
+                            commands::copy_to_clipboard(text, event).await.map(|_| ())
+                        }
+                        Err(detail) => Err(detail),
+                    };
                     outcome.try_set(Some(copy_outcome(namespace, &command, copied)));
                 });
             }
@@ -512,19 +516,34 @@ fn row_runner(
     })
 }
 
+/// Where a package's file is on disk: `(namespace, path)` to the full path.
+/// A seam, like [`PageRead`], so a test can answer without a Tauri host.
+pub(crate) type LocalPath =
+    fn(String, String) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+fn local_path(
+    namespace: String,
+    path: String,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+    Box::pin(commands::package_file_path(namespace, path))
+}
+
 /// What a copy puts on the clipboard, and the address its event names: v1's
-/// `util::file_uri` for *Copy URI*, and for *Copy path* the path inside the
-/// package, which a `New` file has though no revision holds it. `None` for a
-/// command that copies nothing, or an address with no remote to build it from.
+/// `util::file_uri` for *Copy URI*, and for *Copy path* the file's full path on
+/// disk, which a `New` file has though no revision holds it. `Ok(None)` for a
+/// command that copies nothing, or an address with no remote to build it from;
+/// an error when the path cannot be found.
 ///
 /// The header's remote names the revision this copy holds; the address is
 /// built at `Latest` instead, as the recent-files list builds its own
 /// (`util::package_uri`), so a copied address points at the package rather
 /// than at the revision the copier happens to have.
-fn clip(
+async fn clipped(
     command: &RowCommand,
+    namespace: &str,
     uri: Option<&quilt_uri::S3PackageUri>,
-) -> Option<(String, Option<quilt_uri::S3PackageUri>)> {
+    local: LocalPath,
+) -> Result<Option<(String, Option<quilt_uri::S3PackageUri>)>, String> {
     let file = |path: &str| {
         uri.map(|u| {
             let latest = quilt_uri::S3PackageUri {
@@ -535,12 +554,12 @@ fn clip(
         })
     };
     match command {
-        RowCommand::CopyUri(path) => {
-            let file = file(path)?;
-            Some((file.display(), Some(file)))
+        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.display(), Some(f)))),
+        RowCommand::CopyPath(path) => {
+            let on_disk = local(namespace.to_string(), path.clone()).await?;
+            Ok(Some((on_disk, file(path))))
         }
-        RowCommand::CopyPath(path) => Some((path.clone(), file(path))),
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -1180,29 +1199,73 @@ mod tests {
         );
     }
 
-    /// Copy URI puts `util::file_uri`'s address on the clipboard; Copy path
-    /// puts the path inside the package, which needs no remote.
-    #[test]
-    fn copy_uri_copies_the_address_and_copy_path_the_path() {
+    /// Where this test's package is on disk, as the backend would answer.
+    fn at_home(
+        namespace: String,
+        path: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>>>> {
+        Box::pin(async move { Ok(format!("/Users/me/QuiltSync/{namespace}/{path}")) })
+    }
+
+    fn not_there(
+        _: String,
+        path: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>>>> {
+        Box::pin(async move { Err(format!("{path} is not there")) })
+    }
+
+    /// Copy URI puts `util::file_uri`'s address on the clipboard, at `Latest`;
+    /// Copy path puts the file's full path on disk, which needs no remote.
+    #[wasm_bindgen_test]
+    async fn copy_uri_copies_the_address_and_copy_path_the_full_path_on_disk() {
         let package = crate::util::package_uri(
             "team-bucket",
             &"user/plate-07".try_into().unwrap(),
             Some("example.quilt.dev"),
         );
-        let (text, event) = clip(
-            &RowCommand::CopyUri("runs/one.csv".to_string()),
-            Some(&package),
-        )
-        .unwrap();
-        assert_eq!(
-            text,
-            "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=example.quilt.dev"
-        );
+        let address = "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=example.quilt.dev";
+        let copy_uri = RowCommand::CopyUri("runs/one.csv".to_string());
+        let (text, event) = clipped(&copy_uri, "user/plate-07", Some(&package), at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, address);
         assert_eq!(event.map(|u| u.display()), Some(text));
-        let (text, _) = clip(&RowCommand::CopyPath("runs/new.csv".to_string()), None).unwrap();
-        assert_eq!(text, "runs/new.csv");
-        assert!(clip(&RowCommand::CopyUri("a.csv".to_string()), None).is_none());
-        assert!(clip(&RowCommand::Ignore("a.csv".to_string()), Some(&package)).is_none());
+
+        // A New row: the full path on disk, as opening the file resolves it.
+        let copy_path = RowCommand::CopyPath("runs/new.csv".to_string());
+        let (text, _) = clipped(&copy_path, "user/plate-07", None, at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "/Users/me/QuiltSync/user/plate-07/runs/new.csv");
+        assert_eq!(
+            clipped(&copy_path, "user/plate-07", None, not_there).await,
+            Err("runs/new.csv is not there".to_string()),
+            "a path that cannot be found is a failed copy, not an empty one",
+        );
+
+        assert_eq!(
+            clipped(
+                &RowCommand::CopyUri("a.csv".to_string()),
+                "user/plate-07",
+                None,
+                at_home
+            )
+            .await,
+            Ok(None),
+            "no remote, no address",
+        );
+        assert_eq!(
+            clipped(
+                &RowCommand::Ignore("a.csv".to_string()),
+                "user/plate-07",
+                Some(&package),
+                at_home
+            )
+            .await,
+            Ok(None),
+        );
 
         // The header's remote names the revision this copy holds; the address
         // names the package, as the recent-files list's does.
@@ -1210,15 +1273,11 @@ mod tests {
             revision: quilt_uri::RevisionPointer::Hash("abc123".to_string()),
             ..package.clone()
         };
-        let (text, _) = clip(
-            &RowCommand::CopyUri("runs/one.csv".to_string()),
-            Some(&pinned),
-        )
-        .unwrap();
-        assert_eq!(
-            text,
-            "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=example.quilt.dev"
-        );
+        let (text, _) = clipped(&copy_uri, "user/plate-07", Some(&pinned), at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, address);
     }
 
     /// A download the remote could not finish is a warning that names the
