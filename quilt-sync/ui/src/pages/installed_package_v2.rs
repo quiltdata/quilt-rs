@@ -1223,18 +1223,22 @@ mod tests {
     /// package, then shows it on neither the new package nor under its name.
     #[wasm_bindgen_test]
     async fn a_popup_s_failure_is_the_package_it_was_opened_for() {
+        // Scoped, not `set`: the wasm tests share one thread, and an owner left
+        // current would outlive this test and own the next one's reactive work.
         let owner = Owner::new();
-        owner.set();
-        let notice = RwSignal::new(None);
-        let opened_for = StoredValue::new("team/a".to_string());
-        let outcome = RwSignal::new(None);
-        report_popup(
-            notice,
-            opened_for,
-            "Could not ignore this file.",
-            None,
-            outcome,
-        );
+        let (notice, outcome) = owner.with(|| {
+            let notice = RwSignal::new(None);
+            let outcome = RwSignal::new(None);
+            let opened_for = StoredValue::new("team/a".to_string());
+            report_popup(
+                notice,
+                opened_for,
+                "Could not ignore this file.",
+                None,
+                outcome,
+            );
+            (notice, outcome)
+        });
 
         // The reader is on team/b by now; nothing the popup recorded moves.
         notice.set(Some(Notification::Error("denied".to_string())));
