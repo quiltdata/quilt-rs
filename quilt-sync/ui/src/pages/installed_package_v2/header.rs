@@ -261,7 +261,8 @@ fn primary_action(
     } = w;
     let ns = data.namespace.clone();
     let uri = data.uri.clone();
-    let resolve_to = crate::routes::resolve_href(&ns);
+    // Keeps a deep link's mismatch, so entering the mode does not end its band.
+    let resolve_to = super::mismatch_band::carrying(crate::routes::resolve_href(&ns));
     let publish_to = crate::routes::commit_href(&ns);
     let revision_to = publish_to.clone();
     // The deployment to sign in to, when the state names one. `None` for a bare

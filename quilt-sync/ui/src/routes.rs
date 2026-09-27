@@ -48,6 +48,54 @@ pub fn resolve_href(namespace: &Namespace) -> String {
     format!("{}&resolve=1", package_page_href(namespace))
 }
 
+/// A deep link that asked for a revision other than the installed one: the
+/// requested top hash and the remote it lives on. `pages/remote_package.rs`
+/// writes it into the package address and the package page reads it back.
+///
+/// It lives in the address rather than in page state because it is the
+/// address's news: it stands while the address carries it, so every address the
+/// page builds for the same package must carry it on — see [`keeping_mismatch`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevisionMismatch {
+    pub hash: String,
+    pub bucket: String,
+    /// The requested revision's catalog origin, when the link named one.
+    pub catalog: Option<String>,
+}
+
+impl RevisionMismatch {
+    /// `mismatch` alone decides. A missing `mrbucket` reads as empty, as v1
+    /// has always read it, so the lookup fails and the band shows the hash.
+    pub fn from_query(query: &leptos_router::params::ParamsMap) -> Option<Self> {
+        Some(Self {
+            hash: query.get("mismatch")?,
+            bucket: query.get("mrbucket").unwrap_or_default(),
+            catalog: query.get("mrcatalog"),
+        })
+    }
+}
+
+/// `href` with the deep link's mismatch parameters after it, or unchanged when
+/// there is none. The one place they are written, so a site that builds an
+/// address for the same package cannot drop the band by forgetting one.
+pub fn keeping_mismatch(href: String, mismatch: Option<&RevisionMismatch>) -> String {
+    let Some(RevisionMismatch {
+        hash,
+        bucket,
+        catalog,
+    }) = mismatch
+    else {
+        return href;
+    };
+    let hash = urlencoding::encode(hash);
+    let bucket = urlencoding::encode(bucket);
+    let href = format!("{href}&mismatch={hash}&mrbucket={bucket}");
+    match catalog {
+        Some(catalog) => format!("{href}&mrcatalog={}", urlencoding::encode(catalog)),
+        None => href,
+    }
+}
+
 /// Where the [Sign in] button goes. `pages/login.rs` reads both parameters from
 /// the query string; `back` is where login returns the user afterwards.
 ///
@@ -160,6 +208,57 @@ mod tests {
         assert_eq!(
             package_page_href(&ns("team/a&filter=all")),
             "/installed-package?namespace=team%2Fa%26filter%3Dall&filter=unmodified"
+        );
+    }
+
+    fn mismatch(catalog: Option<&str>) -> RevisionMismatch {
+        RevisionMismatch {
+            hash: "c41d8f02".to_string(),
+            bucket: "quilt-lab".to_string(),
+            catalog: catalog.map(ToString::to_string),
+        }
+    }
+
+    /// The deep link's three parameters ride after whatever the address
+    /// already says, encoded as the namespace is, and nothing is added for an
+    /// address that carried none.
+    #[test]
+    fn a_mismatch_rides_on_the_package_address() {
+        assert_eq!(
+            keeping_mismatch(
+                package_page_href(&ns("org/pkg")),
+                Some(&mismatch(Some("https://open.quilt.bio")))
+            ),
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified\
+             &mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio"
+        );
+        assert_eq!(
+            keeping_mismatch(resolve_href(&ns("org/pkg")), Some(&mismatch(None))),
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1\
+             &mismatch=c41d8f02&mrbucket=quilt-lab"
+        );
+        assert_eq!(
+            keeping_mismatch(package_page_href(&ns("org/pkg")), None),
+            package_page_href(&ns("org/pkg"))
+        );
+    }
+
+    /// What the router decodes is what was carried: `mismatch` alone decides,
+    /// and a missing bucket reads as empty, as v1 has always read it. In the
+    /// browser, because `ParamsMap` unescapes through JavaScript.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn the_query_reads_back_what_was_carried() {
+        let mut query = leptos_router::params::ParamsMap::new();
+        assert_eq!(RevisionMismatch::from_query(&query), None);
+
+        query.insert("mismatch", "c41d8f02".to_string());
+        query.insert("mrbucket", "quilt-lab".to_string());
+        assert_eq!(RevisionMismatch::from_query(&query), Some(mismatch(None)));
+
+        query.insert("mrcatalog", "https://open.quilt.bio".to_string());
+        assert_eq!(
+            RevisionMismatch::from_query(&query),
+            Some(mismatch(Some("https://open.quilt.bio")))
         );
     }
 }
