@@ -97,6 +97,12 @@ pub(super) fn requested_message(
 /// v1 keys its line on the upstream state, which cannot tell a conflict from a
 /// divergence. This page has resolved the state already, so the line reads the
 /// same answer the header draws.
+///
+/// # Nothing when the requested revision is installed
+///
+/// *Get latest* can install exactly the revision the link asked for, and the
+/// re-read that follows still has the query in the address, so the band
+/// compares hashes rather than trusting the address to say there is a mismatch.
 pub(super) fn mismatch_band(
     asked: Memo<Option<RevisionMismatch>>,
     requested: Signal<Option<String>>,
@@ -112,6 +118,9 @@ pub(super) fn mismatch_band(
             message: installed_message,
             ..
         } = installed.get_value();
+        if installed_hash == hash {
+            return None;
+        }
         Some(view! {
             <Banner variant=BannerVariant::Warning>
                 <strong>"Requested version:"</strong>
@@ -239,6 +248,24 @@ mod tests {
             uncommitted: 0,
         });
         Box::pin(async move { Ok(d) })
+    }
+
+    /// The requested revision itself is installed.
+    fn installed_as_asked(_: String) -> Read {
+        READS.set(READS.get() + 1);
+        let mut d = data(PackageState::Latest, Some("Re-run plate 7"));
+        d.context.revision.hash = REQUESTED.to_string();
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// The installed revision first, then the requested one, as *Get latest*
+    /// leaves it when the latest is the revision the link asked for.
+    fn then_as_asked(address: String) -> Read {
+        if READS.get() == 0 {
+            settled(address)
+        } else {
+            installed_as_asked(address)
+        }
     }
 
     /// Answers once the test releases it, recording what it was asked.
@@ -398,6 +425,51 @@ mod tests {
         element_saying(&el, "Re-run plate 7");
         element_saying(&el, "Initial upload");
         assert_eq!(LOOKUPS.get(), 1, "looked up once per address");
+    }
+
+    /// The address still asks for a revision, but it is the installed one:
+    /// there is no mismatch to report.
+    #[wasm_bindgen_test]
+    async fn no_band_when_the_requested_revision_is_installed() {
+        let el = screen(
+            &format!("{PLAIN}{}", mismatch_query()),
+            installed_as_asked,
+            held,
+        )
+        .await;
+
+        element_saying(&el, "Revisions you have (1)");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("Requested version"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// *Get latest* installs exactly the requested revision; the re-read that
+    /// follows keeps the query in the address, and the band goes.
+    #[wasm_bindgen_test]
+    async fn the_band_goes_when_a_re_read_installs_the_requested_revision() {
+        let el = screen(&format!("{PLAIN}{}", mismatch_query()), then_as_asked, held).await;
+        element_saying(&el, "Requested version:");
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+
+        assert_eq!(READS.get(), 2, "re-read");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("Requested version"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            search().contains(&format!("mismatch={REQUESTED}")),
+            "address left alone"
+        );
     }
 
     /// Entering the mode and leaving it keep the query, and the band with it:

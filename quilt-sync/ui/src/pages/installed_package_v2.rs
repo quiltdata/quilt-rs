@@ -172,8 +172,10 @@ pub struct Dialogs {
     pub bucket: RwSignal<bool>,
     /// What the reader has typed into that dialog. Here beside its flag, for
     /// the flag's reason: a re-read rebuilds the dialog, and the rebuilt one
-    /// must not put the package's remote back over the draft.
-    pub bucket_draft: BucketDraft,
+    /// must not put the package's remote back over the draft. One handle to
+    /// the draft's signals rather than the signals inline, because `Wiring`
+    /// is passed by value to every part of the header.
+    pub bucket_draft: StoredValue<BucketDraft>,
     /// Opened only by the row's `Switch role`, which exists only when the
     /// payload names somewhere to switch to.
     pub role: RwSignal<bool>,
@@ -185,6 +187,10 @@ pub struct Dialogs {
     pub replace: RwSignal<bool>,
 }
 
+/// A workflow read's answer, with the target — host and bucket — it was
+/// asked for.
+pub type WorkflowAnswer = ((String, String), Result<commands::CommitWorkflows, String>);
+
 /// The bucket dialog's fields, held by the page. Filled from the package's
 /// remote only when the dialog opens, going from closed to open; a dialog
 /// rebuilt while open finds them as the reader left them.
@@ -195,10 +201,15 @@ pub struct BucketDraft {
     /// The workflow's label, as the dialog's select names it.
     pub workflow: RwSignal<String>,
     /// The target — host and bucket — the workflow was chosen for. A read of
-    /// the same target keeps the choice, because the rebuilt dialog reads it
+    /// the same target keeps the choice, because the rebuilt dialog views it
     /// again; a different target, or a fresh opening, restarts at the
     /// bucket's preselection.
     pub workflow_for: RwSignal<Option<(String, String)>>,
+    /// The last answered workflow read, with the target it was for. The
+    /// rebuilt dialog takes it rather than asking again, because a second
+    /// answer could differ — a failure would reset the reader's choice to the
+    /// bucket default. A fresh opening clears it, so each opening reads anew.
+    pub workflows: RwSignal<Option<WorkflowAnswer>>,
     /// The package the draft was filled for. One route serves every package,
     /// so a draft left from another one is refilled rather than shown.
     pub namespace: RwSignal<Option<String>>,
@@ -211,6 +222,7 @@ impl BucketDraft {
             bucket: RwSignal::new(String::new()),
             workflow: RwSignal::new(String::new()),
             workflow_for: RwSignal::new(None),
+            workflows: RwSignal::new(None),
             namespace: RwSignal::new(None),
         }
     }
@@ -228,7 +240,7 @@ impl Wiring {
             replace_to: RwSignal::new(None),
             dialogs: Dialogs {
                 bucket: RwSignal::new(false),
-                bucket_draft: BucketDraft::new(),
+                bucket_draft: StoredValue::new(BucketDraft::new()),
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),

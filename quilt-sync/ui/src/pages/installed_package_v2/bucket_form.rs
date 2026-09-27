@@ -131,7 +131,7 @@ pub(super) fn BucketDialog(
         dialogs,
         ..
     } = w;
-    let draft = dialogs.bucket_draft;
+    let draft = dialogs.bucket_draft.get_value();
     let locked = data.remote_locked;
     let ns = data.namespace.to_string();
     let current_host = data
@@ -163,6 +163,7 @@ pub(super) fn BucketDialog(
             bucket.set(current_bucket.clone());
             draft.workflow.set(String::new());
             draft.workflow_for.set(None);
+            draft.workflows.set(None);
             drafted_for.set(Some(ns.clone()));
             host_invalid.set(None);
             bucket_invalid.set(None);
@@ -227,12 +228,26 @@ pub(super) fn BucketDialog(
         }
     });
 
+    // The page's last answer for this target stands in for the read, so the
+    // rebuilt dialog does not ask again: an answer that came back different —
+    // a failure, most likely — would reset the reader's workflow under them.
     let workflows = LocalResource::new(move || {
         let target = debounced_target.get();
+        let answered = draft.workflows.with_untracked(|last| {
+            last.as_ref()
+                .filter(|(asked, _)| Some(asked) == target.as_ref())
+                .cloned()
+        });
         async move {
+            if answered.is_some() {
+                return answered;
+            }
             let (host, name) = target?;
             let answer = read(host.clone(), name.clone()).await;
-            Some(((host, name), answer))
+            let answered = ((host, name), answer);
+            // `try_`: the draft is the page's, and the page can be gone by now.
+            draft.workflows.try_set(Some(answered.clone()));
+            Some(answered)
         }
     });
 
@@ -611,12 +626,17 @@ mod tests {
         element_saying(&el, "Bucket default");
     }
 
+    type Answer = Pin<Box<dyn Future<Output = Result<CommitWorkflows, String>>>>;
+
+    thread_local! {
+        /// How many times a test's workflow read was called.
+        static WORKFLOW_READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
     /// A governed bucket — `None`, `Alpha (default)`, `Beta` — for whatever
     /// target is asked about. The runner has no Tauri host to answer instead.
-    fn governed(
-        _host: String,
-        _bucket: String,
-    ) -> Pin<Box<dyn Future<Output = Result<CommitWorkflows, String>>>> {
+    fn governed(_host: String, _bucket: String) -> Answer {
+        WORKFLOW_READS.set(WORKFLOW_READS.get() + 1);
         let workflow = |id: &str, name: &str| commands::WorkflowInfo {
             id: id.to_string(),
             name: Some(name.to_string()),
@@ -632,6 +652,17 @@ mod tests {
                 config_url: None,
             })
         })
+    }
+
+    /// Governed the first time it is asked, and failing every time after, as
+    /// a remote that drops off mid-form does.
+    fn governed_once(host: String, bucket: String) -> Answer {
+        if WORKFLOW_READS.get() == 0 {
+            governed(host, bucket)
+        } else {
+            WORKFLOW_READS.set(WORKFLOW_READS.get() + 1);
+            Box::pin(async { Err("connection reset".to_string()) })
+        }
     }
 
     fn published() -> commands::PackageHeaderData {
@@ -671,6 +702,17 @@ mod tests {
     /// from the payload whenever `header` is set — which is what a re-read
     /// does to it.
     fn mount_rebuilt(w: Wiring, header: RwSignal<commands::PackageHeaderData>) -> web_sys::Element {
+        mount_rebuilt_reading(w, header, governed)
+    }
+
+    /// `mount_rebuilt`, with the workflow read answered by `read`. Resets the
+    /// read count.
+    fn mount_rebuilt_reading(
+        w: Wiring,
+        header: RwSignal<commands::PackageHeaderData>,
+        read: WorkflowRead,
+    ) -> web_sys::Element {
+        WORKFLOW_READS.set(0);
         mount(move || {
             view! {
                 {move || {
@@ -679,7 +721,7 @@ mod tests {
                             open=w.dialogs.bucket
                             data=header.get()
                             w=w
-                            workflows=governed
+                            workflows=read
                         />
                     }
                 }}
@@ -819,6 +861,30 @@ mod tests {
         assert_eq!(value_of(&el, "Host"), "open.quiltdata.com");
         assert_eq!(value_of(&el, "Bucket"), "team-bucket");
         assert_eq!(value_of(&el, "Workflow"), "Alpha (default)");
+        assert_eq!(WORKFLOW_READS.get(), 2, "each opening reads afresh");
+    }
+
+    /// The rebuilt dialog does not ask again for the target it already has an
+    /// answer for. Asked again, a failure would reset the workflow to the
+    /// bucket default, and Save would submit that without the reader seeing it
+    /// change.
+    #[wasm_bindgen_test]
+    async fn a_rebuilt_dialog_keeps_the_workflow_answer_it_had() {
+        let w = Wiring::new();
+        let header = RwSignal::new(published());
+        let el = mount_rebuilt_reading(w, header, governed_once);
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+        choose(&el, "Workflow", "Beta");
+        leptos::task::tick().await;
+
+        header.set(published());
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+
+        assert_eq!(value_of(&el, "Workflow"), "Beta");
+        assert_eq!(WORKFLOW_READS.get(), 1, "read once");
     }
 
     /// A draft is one package's. A re-read that rebuilds the dialog, still
