@@ -7,7 +7,7 @@
 //! reading and focus order is context first; the stylesheet places it. Its
 //! list arrives with the same read, classified by the status the header's
 //! state comes from, so the two cannot disagree and the tree is walked once.
-//! The differing set it will mark is already derived here, as [`FileMarks`].
+//! In resolve mode it marks the page's one differing set, [`FileMarks`].
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -255,8 +255,8 @@ struct Files {
     downloading: RwSignal<bool>,
 }
 
-/// What the file pane will read. Built by `package_body`; the pane counts
-/// `differing` today, and the file pane marks rows by it later.
+/// What the panes read. Built by `package_body`: the resolve pane counts
+/// `differing`, and the file pane marks its rows by it.
 #[derive(Clone, Copy)]
 pub struct FileMarks {
     /// Keys are `EntryData.filename`'s form: the logical key's `display()`.
@@ -384,6 +384,7 @@ fn package_body(
                     on_open=open_file
                     on_retry=files.retry
                     picking=picking
+                    differing=marks.differing
                 />
             </div>
         </div>
@@ -2041,5 +2042,68 @@ mod tests {
         let refused = refused();
         let marks = differing_marks(Signal::stored(true), Some(&refused));
         assert_eq!(marks.get_untracked(), None, "nothing to mark");
+    }
+
+    /// A diverged package whose list holds one differing file and one that
+    /// is the same in both revisions.
+    fn diverged_with_files(_: String) -> Read {
+        let mut data = diverged(compared());
+        let entry = |path: &str| commands::EntryData {
+            filename: path.to_string(),
+            size: 7,
+            status: "pristine".to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            namespace: "team/dataset".try_into().unwrap(),
+        };
+        data.files = commands::FilesData::Listed(commands::EntryList {
+            entries: vec![entry("plate/a.csv"), entry("plate/c.csv")],
+            counts: commands::EntryCounts {
+                all: 2,
+                ..commands::EntryCounts::default()
+            },
+            total: 2,
+            truncated: false,
+        });
+        counted(data)
+    }
+
+    /// Whether the file list marks the row drawing `path`.
+    fn row_marked(el: &web_sys::Element, path: &str) -> bool {
+        el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("{path} is listed; markup was {}", el.inner_html()))
+            .closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .is_some()
+    }
+
+    /// In resolve mode the list marks the rows in the page's one differing
+    /// set, and each names the resolve pane's sentence, which is on screen.
+    #[wasm_bindgen_test]
+    async fn resolve_mode_marks_the_differing_rows_in_the_file_list() {
+        let el = screen_at(RESOLVE, diverged_with_files).await;
+
+        assert!(row_marked(&el, "plate/a.csv"));
+        assert!(
+            !row_marked(&el, "plate/c.csv"),
+            "the same in both revisions"
+        );
+        assert!(
+            el.query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+                .unwrap()
+                .is_some(),
+            "the description a marked row names is the resolve pane's sentence"
+        );
+        assert_eq!(READS.with(std::cell::Cell::get), 1, "no read of its own");
+    }
+
+    /// The same diverged package outside the mode marks nothing.
+    #[wasm_bindgen_test]
+    async fn outside_resolve_mode_no_row_is_marked() {
+        let el = screen_at(PLAIN, diverged_with_files).await;
+
+        assert!(!row_marked(&el, "plate/a.csv"));
+        assert!(!row_marked(&el, "plate/c.csv"));
     }
 }
