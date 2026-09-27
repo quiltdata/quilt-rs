@@ -203,18 +203,38 @@ pub fn UnignorePopup(
     data: UnignorePopupData,
     notification: RwSignal<Option<Notification>>,
     on_close: impl Fn() + Clone + 'static,
+    /// A page's one-command lock, as [`IgnorePopup`] takes it: given one, the
+    /// popup does not open `.quiltignore` while another command holds it, and
+    /// holds it until the editor has opened, so an answer that lands late
+    /// cannot meet another popup the page opened meanwhile. v1 and the commit
+    /// page pass none.
+    #[prop(optional)]
+    lock: Option<RwSignal<bool>>,
 ) -> impl IntoView {
+    let held = move || lock.is_some_and(|l| l.get());
     let ns = data.namespace.clone();
     let pattern_display = data.pattern.clone();
     let uri = data.uri.clone();
 
     let on_close_for_edit = on_close.clone();
     let on_edit = move |_| {
+        if lock.is_some_and(|l| l.get_untracked()) {
+            return;
+        }
+        if let Some(lock) = lock {
+            lock.set(true);
+        }
         let ns = ns.clone();
         let uri = uri.clone();
         let on_close = on_close_for_edit.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, ".quiltignore".to_string(), uri).await {
+            let answer =
+                commands::open_in_default_application(ns, ".quiltignore".to_string(), uri).await;
+            // `try_`: the lock is a page's, and the page can be gone by now.
+            if let Some(lock) = lock {
+                lock.try_set(false);
+            }
+            match answer {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -231,7 +251,7 @@ pub fn UnignorePopup(
                 <div class="unignore-popup">
                     <span>"Ignored by: "<span class="pattern-display">{pattern_display}</span></span>
                     <div>
-                        <buttons::FormPrimary on_click=on_edit>
+                        <buttons::FormPrimary on_click=on_edit disabled=Signal::derive(held)>
                             "Edit .quiltignore"
                         </buttons::FormPrimary>
                     </div>
@@ -295,6 +315,49 @@ mod tests {
         lock.set(false);
         leptos::task::tick().await;
         assert!(!submit(&el).disabled());
+    }
+
+    fn unignore(lock: Option<RwSignal<bool>>) -> web_sys::Element {
+        let data = UnignorePopupData {
+            namespace: "team/dataset".to_string(),
+            pattern: "*.log".to_string(),
+            uri: None,
+        };
+        mount(move || match lock {
+            Some(lock) => view! {
+                <UnignorePopup
+                    data=data.clone()
+                    notification=RwSignal::new(None)
+                    on_close=|| ()
+                    lock=lock
+                />
+            }
+            .into_any(),
+            None => view! {
+                <UnignorePopup data=data.clone() notification=RwSignal::new(None) on_close=|| () />
+            }
+            .into_any(),
+        })
+    }
+
+    fn edit(el: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        el.query_selector(".unignore-popup button")
+            .unwrap()
+            .expect("the edit button")
+            .unchecked_into()
+    }
+
+    /// Given the page's lock, *Edit .quiltignore* waits while another command
+    /// holds it, as the ignore popup's submit does; without one it is live.
+    #[wasm_bindgen_test]
+    async fn a_held_lock_holds_the_edit() {
+        let lock = RwSignal::new(true);
+        let el = unignore(Some(lock));
+        assert!(edit(&el).disabled(), "markup was {}", el.inner_html());
+        lock.set(false);
+        leptos::task::tick().await;
+        assert!(!edit(&el).disabled());
+        assert!(!edit(&unignore(None)).disabled());
     }
 
     /// The pattern starts as the one the caller suggested: the v2 pane's path.

@@ -597,49 +597,57 @@ fn copy_outcome(namespace: String, command: &RowCommand, copied: Result<(), Stri
 /// them.
 ///
 /// They are v1's, which report through a `Notification`; this page reports on
-/// its band instead, so a failure becomes the band's, keyed to the package on
-/// screen, and a success says nothing there: the re-read is the report. Adding
-/// a pattern re-reads the page itself, and holds the page's lock while it
-/// writes. *Stop ignoring* opens `.quiltignore` in the reader's editor; the
-/// page re-reads once it opened, and the watcher, which never screens
+/// its band instead, so a failure becomes the band's, keyed to the package the
+/// popup was opened for ([`report_popup`]), and a success says nothing there:
+/// the re-read is the report. Adding a pattern re-reads the page itself.
+/// *Stop ignoring* opens `.quiltignore` in the reader's editor; the page
+/// re-reads once it opened, and the watcher, which never screens
 /// `.quiltignore` out, re-reads again when the edit is saved.
-fn row_popups(files: Files, w: Wiring, showing: Signal<String>) -> impl IntoView {
+///
+/// The page survives a switch of package, so an answer can land after the
+/// reader moved on. Both popups hold the page's lock while they wait, so no
+/// other `.quiltignore` popup opens before the answer lands, and an answer
+/// closes only its own popup ([`close_own`]).
+fn row_popups(files: Files, w: Wiring) -> impl IntoView {
     let said = RwSignal::new(None::<Notification>);
     let unignore_said = RwSignal::new(None::<Notification>);
-    // `then` is what a success does besides saying nothing: the ignore popup
-    // re-reads the page itself, the unignore popup does not.
-    let report =
-        move |notice: RwSignal<Option<Notification>>, lead: &'static str, then: Option<Trigger>| {
-            Effect::new(move |_| {
-                let Some(n) = notice.get() else { return };
-                notice.set(None);
-                if let Notification::Error(detail) = n {
-                    w.outcome.set(Some(Outcome {
-                        namespace: showing.get_untracked(),
-                        variant: BannerVariant::Critical,
-                        lead: lead.to_string(),
-                        detail: Some(detail),
-                    }));
-                } else if let Some(reload) = then {
-                    reload.notify();
-                }
-            });
-        };
-    report(said, "Could not ignore this file.", None);
-    report(
+    // The package each popup was opened for, so its answer is that package's
+    // news even if it lands after the reader moved on (the band drops it
+    // then). Sound because both popups hold the page's lock while they wait,
+    // so no other `.quiltignore` popup can open before the answer lands.
+    let ignore_for = StoredValue::new(String::new());
+    let unignore_for = StoredValue::new(String::new());
+    report_popup(
+        said,
+        ignore_for,
+        "Could not ignore this file.",
+        None,
+        w.outcome,
+    );
+    report_popup(
         unignore_said,
+        unignore_for,
         "Could not open .quiltignore.",
         Some(w.reload),
+        w.outcome,
     );
     view! {
         {move || {
             files.ignoring.get().map(|data| {
+                ignore_for.set_value(data.namespace.clone());
+                let (ns, path) = (data.namespace.clone(), data.path.clone());
                 view! {
                     <IgnorePopup
                         data=data
                         notification=said
                         refetch=w.reload
-                        on_close=move || files.ignoring.set(None)
+                        on_close=move || {
+                            files
+                                .ignoring
+                                .update(|open| {
+                                    close_own(open, |d| d.namespace == ns && d.path == path);
+                                });
+                        }
                         lock=w.busy
                     />
                 }
@@ -647,15 +655,60 @@ fn row_popups(files: Files, w: Wiring, showing: Signal<String>) -> impl IntoView
         }}
         {move || {
             files.unignoring.get().map(|data| {
+                unignore_for.set_value(data.namespace.clone());
+                let (ns, pattern) = (data.namespace.clone(), data.pattern.clone());
                 view! {
                     <UnignorePopup
                         data=data
                         notification=unignore_said
-                        on_close=move || files.unignoring.set(None)
+                        on_close=move || {
+                            files
+                                .unignoring
+                                .update(|open| {
+                                    close_own(open, |d| d.namespace == ns && d.pattern == pattern);
+                                });
+                        }
+                        lock=w.busy
                     />
                 }
             })
         }}
+    }
+}
+
+/// Turn a v1 popup's `Notification` into this page's band: a failure is news
+/// about `opened_for`, the package the popup was opened for, whichever package
+/// is on screen when it lands (the band drops it if that is another one). A
+/// success says nothing; `then` is what it does besides, since the ignore popup
+/// re-reads the page itself and the unignore popup does not.
+fn report_popup(
+    notice: RwSignal<Option<Notification>>,
+    opened_for: StoredValue<String>,
+    lead: &'static str,
+    then: Option<Trigger>,
+    outcome: RwSignal<Option<Outcome>>,
+) {
+    Effect::new(move |_| {
+        let Some(n) = notice.get() else { return };
+        notice.set(None);
+        if let Notification::Error(detail) = n {
+            outcome.set(Some(Outcome {
+                namespace: opened_for.get_value(),
+                variant: BannerVariant::Critical,
+                lead: lead.to_string(),
+                detail: Some(detail),
+            }));
+        } else if let Some(reload) = then {
+            reload.notify();
+        }
+    });
+}
+
+/// Close the popup `open` holds only if it is the one `mine` names: an answer
+/// that lands after the reader moved on must not close a popup opened since.
+fn close_own<T>(open: &mut Option<T>, mine: impl Fn(&T) -> bool) {
+    if open.as_ref().is_some_and(mine) {
+        *open = None;
     }
 }
 
@@ -873,7 +926,7 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     // the page rather than the package; the package's own name is on screen.
     view! {
         <PackageEventListener reload=reload />
-        {row_popups(files, w, ns.into())}
+        {row_popups(files, w)}
         <PageLayout
             heading="Package"
             // In the frame's slot — directly under the appbar, pushing the page
@@ -1163,6 +1216,63 @@ mod tests {
         assert_eq!(answer_for(answer("team/a"), "team/b"), None);
         assert_eq!(answer_for(answer("team/b"), "team/b"), Some(1));
         assert_eq!(answer_for(None::<(String, u8)>, "team/b"), None);
+    }
+
+    /// A popup's failure is news about the package it was opened for, even
+    /// when it lands after the reader moved to another: the band, keyed by
+    /// package, then shows it on neither the new package nor under its name.
+    #[wasm_bindgen_test]
+    async fn a_popup_s_failure_is_the_package_it_was_opened_for() {
+        let owner = Owner::new();
+        owner.set();
+        let notice = RwSignal::new(None);
+        let opened_for = StoredValue::new("team/a".to_string());
+        let outcome = RwSignal::new(None);
+        report_popup(
+            notice,
+            opened_for,
+            "Could not ignore this file.",
+            None,
+            outcome,
+        );
+
+        // The reader is on team/b by now; nothing the popup recorded moves.
+        notice.set(Some(Notification::Error("denied".to_string())));
+        leptos::task::tick().await;
+        assert_eq!(
+            outcome.get_untracked(),
+            Some(said(
+                "team/a",
+                BannerVariant::Critical,
+                "Could not ignore this file.",
+                Some("denied"),
+            ))
+        );
+        assert!(notice.get_untracked().is_none(), "the notice is consumed");
+
+        let el = mount(move || outcome_band(outcome, Signal::stored("team/b".to_string())));
+        assert!(
+            !el.inner_html().contains("Could not ignore"),
+            "team/b's band does not carry team/a's failure",
+        );
+    }
+
+    /// A popup's answer closes that popup only: one that lands after the
+    /// reader moved on, and opened another, leaves the other one open.
+    #[test]
+    fn a_popup_s_answer_closes_only_that_popup() {
+        let theirs = |ns: &str| UnignorePopupData {
+            namespace: ns.to_string(),
+            pattern: "*.log".to_string(),
+            uri: None,
+        };
+        let mut open = Some(theirs("team/b"));
+        close_own(&mut open, |d| d.namespace == "team/a");
+        assert_eq!(open.map(|d| d.namespace), Some("team/b".to_string()));
+
+        let mut open = Some(theirs("team/a"));
+        close_own(&mut open, |d| d.namespace == "team/a");
+        assert!(open.is_none());
     }
 
     /// The clipboard shows nothing, so a copy says what it copied, in the
