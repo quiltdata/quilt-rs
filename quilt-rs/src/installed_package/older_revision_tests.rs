@@ -200,6 +200,24 @@ impl Rev1Installed {
         Ok(rev3)
     }
 
+    /// Publishes a revision that changes both files, `changes.txt` to
+    /// "three" and `same.txt` to "same again", and moves `latest` to it.
+    /// Returns its hash.
+    pub(super) async fn publish_rev_changing_both(&self) -> Res<String> {
+        let scratch = self.dirs[0].path();
+        let changes = publish_row(self.remote(), scratch, "changes.txt", "c3", b"three").await?;
+        let same = publish_row(self.remote(), scratch, "same.txt", "s2", b"same again").await?;
+        let rev = publish_manifest(self.remote(), vec![changes, same]).await?;
+        self.remote()
+            .put_object(
+                None,
+                &S3Uri::from_str(&format!("s3://{BUCKET}/.quilt/named_packages/f/a/latest"))?,
+                rev.as_bytes().to_vec(),
+            )
+            .await?;
+        Ok(rev)
+    }
+
     /// A domain on this package's directory, sharing its storage and remote.
     pub(super) fn domain(&self) -> crate::LocalDomain<LocalStorage, MockRemote> {
         crate::LocalDomain::with_parts(
@@ -1106,5 +1124,46 @@ async fn a_pull_redo_whose_latest_bytes_do_not_verify_refuses() -> Res {
         )
     );
     assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
+
+/// A download's redo replaces one file, then finds the next edited and
+/// refuses. It removes the file it replaced too, whichever revision's bytes
+/// it holds, and leaves the edited one: downloading the first again works.
+#[test(tokio::test)]
+async fn a_download_redo_that_fails_partway_removes_what_it_replaced() -> Res {
+    let t = Rev1Installed::new().await?;
+    let home = t.package.package_home().await?;
+    // Latest changes both files; the download starts on revision 1 as ever.
+    t.publish_rev_changing_both().await?;
+    // Armed after publishing, which puts these very objects.
+    let rev1_fetch = t.park_object("changes.txt", "c1");
+    let staging_same = t.park_object("same.txt", "s2");
+
+    let (download, control) = tokio::join!(t.download(), async {
+        arrives(&rev1_fetch, "the download's fetch").await;
+        let pulled = t.pull().await;
+        rev1_fetch.release();
+        pulled?;
+        // Staged after `changes.txt`, and every check before a rename comes
+        // after staging: the edit lands between the redo's two renames.
+        arrives(&staging_same, "the redo's second fetch").await;
+        let edited = tokio::fs::write(home.join("same.txt"), b"mine").await;
+        staging_same.release();
+        Res::Ok(edited?)
+    });
+    control?;
+    let err = download.expect_err("the download must refuse");
+    assert!(is_changed_underneath(&err, "downloading"), "{err}");
+
+    assert!(
+        !home.join("changes.txt").exists(),
+        "the file the redo replaced is removed"
+    );
+    assert_eq!(tokio::fs::read(home.join("same.txt")).await?, b"mine");
+    t.package
+        .install_paths(&[PathBuf::from("changes.txt")])
+        .await?;
+    assert_eq!(tokio::fs::read(home.join("changes.txt")).await?, b"three");
     Ok(())
 }

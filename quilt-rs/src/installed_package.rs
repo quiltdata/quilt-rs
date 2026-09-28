@@ -448,7 +448,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                         // file another writer replaced meanwhile. Theirs
                         // stands; what this one placed goes.
                         Err(Error::PackageOp(PackageOpError::PullConflict(_))) => {
-                            self.remove_placed_untracked(&placed, &package_home).await?;
+                            self.remove_placed_untracked(&placed, &current, &package_home)
+                                .await?;
                             return Err(write_step::changed_underneath(
                                 &self.namespace,
                                 "downloading",
@@ -493,17 +494,30 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         ))
     }
 
-    /// Removes the files in `placed` that still hold what this writer placed
-    /// and that the entry, read now, does not track: a path it tracks is
-    /// another writer's.
-    async fn remove_placed_untracked(&self, placed: &LineagePaths, package_home: &Path) -> Res {
+    /// Removes the files in `placed` that the entry, read now, does not track
+    /// (a path it tracks is another writer's) and that still hold what this
+    /// writer placed: the bytes of its first round, or those of `current`'s
+    /// revision, which a redo that failed partway had already renamed in.
+    async fn remove_placed_untracked(
+        &self,
+        placed: &LineagePaths,
+        current: &lineage::PackageLineage,
+        package_home: &Path,
+    ) -> Res {
         let (_, now) = self.lineage.read(&self.storage).await?;
-        let untracked: LineagePaths = placed
-            .iter()
-            .filter(|(path, _)| !now.paths.contains_key(*path))
-            .map(|(path, state)| (path.clone(), state.clone()))
-            .collect();
-        write_step::remove_placed(&self.storage, package_home, &untracked).await;
+        let redone = self.manifest_from_lineage(current).await?;
+        let (mut first, mut again) = (BTreeMap::new(), BTreeMap::new());
+        for (path, state) in placed {
+            if now.paths.contains_key(path) {
+                continue;
+            }
+            first.insert(path.clone(), state.hash);
+            if let Some(row) = redone.get_record(path) {
+                again.insert(path.clone(), Multihash::from(row.hash.clone()));
+            }
+        }
+        write_step::remove_if_unchanged(&self.storage, package_home, &first).await;
+        write_step::remove_if_unchanged(&self.storage, package_home, &again).await;
         Ok(())
     }
 
