@@ -1079,8 +1079,12 @@ mod tests {
     /// Answer every connection with the same canned HTTP response, so an
     /// `aws_sdk_s3::Client` pointed at the returned address gets a real S3
     /// error document off the wire instead of a hand-built `SdkError`.
+    ///
+    /// The whole request is read before answering. Answering after the first
+    /// `read` raced the client: when the body had not arrived yet, the socket
+    /// closed under the client's body write, and the client saw a broken pipe
+    /// instead of the response.
     async fn spawn_canned_s3_endpoint(response: Vec<u8>) -> std::net::SocketAddr {
-        use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1089,14 +1093,51 @@ mod tests {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let response = response.clone();
                 tokio::spawn(async move {
-                    let mut buf = [0u8; 8192];
-                    let _ = stream.read(&mut buf).await;
+                    if read_http_request(&mut stream).await.is_err() {
+                        return;
+                    }
                     let _ = stream.write_all(&response).await;
                     let _ = stream.shutdown().await;
                 });
             }
         });
         addr
+    }
+
+    /// Read one HTTP/1.1 request: the headers, then `Content-Length` bytes of
+    /// body. The SDK frames every request the stub sees that way, a bodiless
+    /// one included.
+    async fn read_http_request(stream: &mut tokio::net::TcpStream) -> std::io::Result<()> {
+        use tokio::io::AsyncReadExt;
+
+        let mut request = Vec::new();
+        let mut buf = [0u8; 8192];
+        let header_end = loop {
+            if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+            let n = stream.read(&mut buf).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            request.extend_from_slice(&buf[..n]);
+        };
+        let body_len = String::from_utf8_lossy(&request[..header_end])
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+        while request.len() < header_end + body_len {
+            let n = stream.read(&mut buf).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            request.extend_from_slice(&buf[..n]);
+        }
+        Ok(())
     }
 
     /// The bucket every access-denied test addresses; the stub endpoint
