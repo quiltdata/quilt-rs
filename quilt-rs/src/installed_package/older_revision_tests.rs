@@ -174,6 +174,23 @@ impl Rev1Installed {
         Ok(())
     }
 
+    /// Publishes revision 3, which modifies `changes.txt` again and keeps
+    /// `same.txt`, and moves `latest` to it. Returns its hash.
+    pub(super) async fn publish_rev3(&self) -> Res<String> {
+        let scratch = self._dirs[0].path();
+        let same = publish_row(self.remote(), scratch, "same.txt", "s1", b"same").await?;
+        let three = publish_row(self.remote(), scratch, "changes.txt", "c3", b"three").await?;
+        let rev3 = publish_manifest(self.remote(), vec![three, same]).await?;
+        self.remote()
+            .put_object(
+                None,
+                &S3Uri::from_str(&format!("s3://{BUCKET}/.quilt/named_packages/f/a/latest"))?,
+                rev3.as_bytes().to_vec(),
+            )
+            .await?;
+        Ok(rev3)
+    }
+
     /// A domain on this package's directory, sharing its storage and remote.
     pub(super) fn domain(&self) -> crate::LocalDomain<LocalStorage, MockRemote> {
         crate::LocalDomain::with_parts(
@@ -581,6 +598,53 @@ async fn a_pull_that_keeps_being_crossed_refuses_after_one_redo() -> Res {
             Rev1Installed::all_paths(),
             b"one".to_vec()
         )
+    );
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
+
+/// A download whose redo is crossed again refuses, and removes the files it
+/// placed, so pressing Download again works.
+#[test(tokio::test)]
+async fn a_download_that_keeps_being_crossed_refuses_and_can_be_retried() -> Res {
+    let t = Rev1Installed::new().await?;
+    let fetching_changes = t.park_object("changes.txt", "c1");
+    let redoing = t.park_object("changes.txt", "c2");
+
+    let (downloaded, pulls) = tokio::join!(t.download(), async {
+        arrives(&fetching_changes, "the download's fetch").await;
+        let first = t.pull().await;
+        fetching_changes.release();
+        first?;
+        arrives(&redoing, "the download's redo").await;
+        // A reset, not a pull: the download's files are on disk untracked,
+        // and a pull would refuse over them.
+        let second = async {
+            t.publish_rev3().await?;
+            t.package.reset_to_latest().await
+        }
+        .await;
+        redoing.release();
+        second?;
+        Res::Ok(())
+    });
+    pulls?;
+    let err = downloaded.expect_err("the download must refuse");
+    assert!(is_changed_underneath(&err, "downloading"), "{err}");
+    let home = t.package.package_home().await?;
+    assert!(!home.join("changes.txt").exists());
+    assert!(!home.join("same.txt").exists());
+
+    t.download().await?;
+    let rev3 = t
+        .package
+        .lineage()
+        .await?
+        .current_hash()
+        .map(str::to_string);
+    assert_eq!(
+        t.outcome().await?,
+        (rev3, Rev1Installed::all_paths(), b"three".to_vec())
     );
     assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
     Ok(())

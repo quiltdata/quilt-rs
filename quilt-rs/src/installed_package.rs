@@ -442,7 +442,18 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                     skipped.extend(also_skipped);
                     started = *current;
                 }
-                Verdict::Redo(_) | Verdict::Refused => break,
+                // Refused: what it placed goes, as when the package is gone,
+                // so the files are not left untracked in the way of a retry.
+                // A path the entry now tracks is someone else's.
+                Verdict::Redo(current) => {
+                    let placed: LineagePaths = write_step::placed(&started, &next)
+                        .into_iter()
+                        .filter(|(path, _)| !current.paths.contains_key(path))
+                        .collect();
+                    write_step::remove_placed(&self.storage, &package_home, &placed).await;
+                    break;
+                }
+                Verdict::Refused => break,
             }
         }
         Err(write_step::changed_underneath(
