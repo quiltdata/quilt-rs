@@ -85,6 +85,16 @@ pub struct SetRemoteOutcome {
     pub resolution_warning: Option<String>,
 }
 
+/// What a pull's redo did to the working tree, kept across its rounds.
+#[derive(Default)]
+struct Redone {
+    /// Crossed paths latest lacks: their files go once the write lands.
+    retired: BTreeMap<PathBuf, Multihash<256>>,
+    /// Crossed files the redo replaced: what it put, and what was there. Put
+    /// back if the pull refuses.
+    overwritten: BTreeMap<PathBuf, (Multihash<256>, Multihash<256>)>,
+}
+
 /// Similar to `LocalDomain` because it has access to the same lineage file and remote/storage
 /// traits.
 /// But it only manages one particular installed package.
@@ -878,6 +888,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     ///   way a pull treats any tracked path, then try again, once.
     /// - A path was uninstalled: the uninstall wins. The path stays out, and
     ///   its file goes if it still holds what this writer placed.
+    ///
+    /// A refusal after a redo puts back the download's files the redo
+    /// overwrote, so it never leaves another writer's paths changed.
     async fn write_latest(
         &self,
         mut started: lineage::PackageLineage,
@@ -885,6 +898,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         package_home: &Path,
         verb: &'static str,
     ) -> Res<lineage::PackageLineage> {
+        // Uninstalled while this worked: their files go whether it writes or
+        // refuses, if they still hold what it placed.
+        let mut uninstalled = BTreeMap::new();
+        let mut redo = Redone::default();
         for round in 0..=write_step::MAX_REDO {
             let verdict = self
                 .lineage
@@ -894,27 +911,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                     };
                     if !write_step::same_revision(current, &started) {
                         return Ok(if write_step::same_revision(current, &next) {
-                            Verdict::Written((current.clone(), BTreeMap::new()))
+                            Verdict::Written(current.clone())
                         } else {
                             Verdict::Refused
                         });
                     }
+                    // Before the redo check, so a redo carries it: `next`
+                    // no longer tracks it, whatever `started` becomes.
+                    for path in write_step::paths_removed(&started, current) {
+                        if let Some(state) = next.paths.remove(&path) {
+                            uninstalled.insert(path, state.hash);
+                        }
+                    }
                     if !write_step::paths_added(&started, current).is_empty() {
                         return Ok(Verdict::Redo(Box::new(current.clone())));
                     }
-                    let mut dropped = BTreeMap::new();
-                    for path in write_step::paths_removed(&started, current) {
-                        if let Some(state) = next.paths.remove(&path) {
-                            dropped.insert(path, state.hash);
-                        }
-                    }
                     *current = write_step::own_change(&started, &next, current);
-                    Ok(Verdict::Written((current.clone(), dropped)))
+                    Ok(Verdict::Written(current.clone()))
                 })
                 .await?;
             match verdict {
-                Verdict::Written((lineage, dropped)) => {
-                    write_step::remove_if_unchanged(&self.storage, package_home, &dropped).await;
+                Verdict::Written(lineage) => {
+                    write_step::remove_if_unchanged(&self.storage, package_home, &uninstalled)
+                        .await;
+                    write_step::remove_if_unchanged(&self.storage, package_home, &redo.retired)
+                        .await;
                     return Ok(lineage);
                 }
                 Verdict::Gone => {
@@ -923,52 +944,73 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                     return Err(write_step::not_installed(&self.namespace));
                 }
                 Verdict::Redo(current) if round < write_step::MAX_REDO => {
-                    next = self
-                        .reconcile_to_latest(&started, &current, next, package_home)
-                        .await?;
+                    match self
+                        .reconcile_to_latest(
+                            &started,
+                            &current,
+                            next,
+                            package_home,
+                            verb,
+                            &mut redo,
+                        )
+                        .await
+                    {
+                        Ok(reconciled) => next = reconciled,
+                        Err(err) => {
+                            self.put_back(package_home, &redo.overwritten).await;
+                            return Err(err);
+                        }
+                    }
                     started = *current;
                 }
                 Verdict::Redo(_) | Verdict::Refused => break,
             }
         }
+        write_step::remove_if_unchanged(&self.storage, package_home, &uninstalled).await;
+        self.put_back(package_home, &redo.overwritten).await;
         Err(write_step::changed_underneath(&self.namespace, verb))
     }
 
     /// The pull's redo: `current` tracks paths `started` did not, placed by a
     /// download at the revision the pull started from. Each goes to latest's
     /// row in `next`: kept where latest has the same bytes, replaced where it
-    /// has others and the file still holds what the download placed, dropped
-    /// with its file where latest lacks it. A file edited since the download
-    /// keeps its row, and reads as the local change it is.
+    /// has others, and dropped where latest lacks it (its file goes once the
+    /// write lands). A file edited since the download, where latest changes
+    /// it too, is a conflict: the redo refuses, as a pull would, before it
+    /// overwrites anything.
     async fn reconcile_to_latest(
         &self,
         started: &lineage::PackageLineage,
         current: &lineage::PackageLineage,
         mut next: lineage::PackageLineage,
         package_home: &Path,
+        verb: &'static str,
+        redo: &mut Redone,
     ) -> Res<lineage::PackageLineage> {
         let mut latest = self.manifest_from_lineage(&next).await?;
-        let mut gone = BTreeMap::new();
         let mut install = Vec::new();
         let mut protect = BTreeMap::new();
         for path in write_step::paths_added(started, current) {
             let state = &current.paths[&path];
-            let file = package_home.join(&path);
             let Some(row) = latest.get_record(&path) else {
                 next.paths.remove(&path);
-                gone.insert(path, state.hash);
+                redo.retired.insert(path, state.hash);
                 continue;
             };
-            if Multihash::from(row.hash.clone()) != state.hash
-                && write_step::holds(&self.storage, &file, &state.hash).await
-                && let Some(placed_row) = write_step::row_of(&path, &state.hash)
-            {
-                install.push(path.clone());
-                protect.insert(path.clone(), placed_row);
+            let latest_hash = Multihash::from(row.hash.clone());
+            if latest_hash != state.hash {
+                if !write_step::holds(&self.storage, &package_home.join(&path), &state.hash).await {
+                    return Err(write_step::changed_underneath(&self.namespace, verb));
+                }
+                if let Some(placed_row) = write_step::row_of(&path, &state.hash) {
+                    install.push(path.clone());
+                    protect.insert(path.clone(), placed_row);
+                    redo.overwritten
+                        .insert(path.clone(), (latest_hash, state.hash));
+                }
             }
             next.paths.insert(path, state.clone());
         }
-        write_step::remove_if_unchanged(&self.storage, package_home, &gone).await;
         let (next, _) = flow::install_paths_over(
             next,
             &mut latest,
@@ -983,6 +1025,37 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         Ok(next)
+    }
+
+    /// Puts back the bytes another writer placed, over each file a refused
+    /// redo overwrote: from the object store, where they are by hash, and by
+    /// rename, so the file holds one or the other. A file that no longer holds
+    /// what the redo put there is someone's edit since, and stays.
+    async fn put_back(
+        &self,
+        package_home: &Path,
+        overwritten: &BTreeMap<PathBuf, (Multihash<256>, Multihash<256>)>,
+    ) {
+        for (path, (put, original)) in overwritten {
+            let file = package_home.join(path);
+            if !write_step::holds(&self.storage, &file, put).await {
+                continue;
+            }
+            let object = self.paths.object(original.digest());
+            let staged = self
+                .paths
+                .staging_dir()
+                .join(uuid::Uuid::new_v4().to_string());
+            let restored = async {
+                self.storage.copy(&object, &staged).await?;
+                self.storage.rename(&staged, &file).await
+            }
+            .await;
+            if let Err(err) = restored {
+                log::warn!("Could not put back {}: {err}", file.display());
+                let _ = self.storage.remove_file(&staged).await;
+            }
+        }
     }
 
     /// Dry-run: what would `pull` do right now, without mutating anything?

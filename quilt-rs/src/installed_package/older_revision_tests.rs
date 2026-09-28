@@ -486,13 +486,7 @@ async fn an_uninstall_crossed_by_a_pull_wins_and_keeps_the_pull() -> Res {
     let home = t.package.package_home().await?;
     let changes = home.join("changes.txt");
     let parked = ParkedStorage::new(&changes);
-    let parked_package = InstalledPackage {
-        lineage: t.package.lineage.clone(),
-        paths: t.package.paths.clone(),
-        remote: Arc::clone(&t.package.remote),
-        storage: parked.clone(),
-        namespace: t.package.namespace.clone(),
-    };
+    let parked_package = parked.package(&t);
 
     let to_remove = vec![PathBuf::from("changes.txt")];
     let (uninstalled, pulled) = tokio::join!(parked_package.uninstall_paths(&to_remove), async {
@@ -578,31 +572,154 @@ async fn a_pull_that_keeps_being_crossed_refuses_after_one_redo() -> Res {
     let err = pulled.expect_err("the pull must refuse");
     assert!(is_changed_underneath(&err, "pulling"), "{err}");
 
-    let lineage = t.package.lineage().await?;
-    assert_eq!(lineage.current_hash(), Some(t.rev1.as_str()));
+    // The refusal leaves the downloads as they landed: its redo had put
+    // revision 2's bytes over `changes.txt`, and it puts the download's back.
     assert_eq!(
-        lineage.paths.keys().cloned().collect::<Vec<_>>(),
-        Rev1Installed::all_paths()
+        t.outcome().await?,
+        (
+            Some(t.rev1.clone()),
+            Rev1Installed::all_paths(),
+            b"one".to_vec()
+        )
     );
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
     Ok(())
 }
 
-/// [`LocalStorage`], except that removing one file parks until the gate is
-/// released: the only way to land another writer inside `uninstall_paths`,
-/// which never touches the remote.
+/// A pull's redo that finds a crossed file edited since the download, where
+/// latest changes it too, refuses like a pull that finds any conflict: it
+/// writes nothing and overwrites nothing. The next tick sees it as blocked.
+#[test(tokio::test)]
+async fn a_pull_whose_redo_finds_an_edited_download_refuses() -> Res {
+    let t = Rev1Installed::new().await?;
+    let home = t.package.package_home().await?;
+    // Parked once its work is done: an edit that landed before its walk
+    // would be an ordinary pull conflict, not the redo's.
+    let parked = ParkedStorage::at_the_write_step();
+    let parked_puller = parked.package(&t);
+
+    let (pulled, downloaded) = tokio::join!(
+        parked_puller.pull(Some(HostConfig::default()), SyncScope::IndividualFiles),
+        async {
+            arrives(&parked.gate, "the pull's write step").await;
+            let edited = async {
+                t.download().await?;
+                tokio::fs::write(home.join("changes.txt"), b"edited").await?;
+                Res::Ok(())
+            }
+            .await;
+            parked.gate.release();
+            edited
+        }
+    );
+    downloaded?;
+    let err = pulled.expect_err("the pull must refuse");
+    assert!(is_changed_underneath(&err, "pulling"), "{err}");
+
+    assert_eq!(
+        t.outcome().await?,
+        (
+            Some(t.rev1.clone()),
+            Rev1Installed::all_paths(),
+            b"edited".to_vec()
+        )
+    );
+    assert_eq!(t.changed().await?, vec![PathBuf::from("changes.txt")]);
+    Ok(())
+}
+
+/// An uninstall and a download both land while a pull works. The pull's redo
+/// for the download must still leave the uninstalled path out.
+#[test(tokio::test)]
+async fn a_pull_crossed_by_an_uninstall_and_a_download_keeps_both() -> Res {
+    let t = Rev1Installed::new().await?;
+    t.package
+        .install_paths(&[PathBuf::from("same.txt")])
+        .await?;
+    let home = t.package.package_home().await?;
+    let fetching_rev2 = t.park_manifest(&t.rev2);
+
+    let (pulled, others) = tokio::join!(t.pull(), async {
+        arrives(&fetching_rev2, "the pull's fetch").await;
+        t.package
+            .uninstall_paths(&vec![PathBuf::from("same.txt")])
+            .await?;
+        t.package
+            .install_paths(&[PathBuf::from("changes.txt")])
+            .await?;
+        fetching_rev2.release();
+        Res::Ok(())
+    });
+    others?;
+    pulled?;
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.current_hash(), Some(t.rev2.as_str()));
+    assert_eq!(
+        lineage.paths.keys().cloned().collect::<Vec<_>>(),
+        vec![PathBuf::from("changes.txt")]
+    );
+    assert_eq!(tokio::fs::read(home.join("changes.txt")).await?, b"two");
+    assert!(!home.join("same.txt").exists());
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
+
+/// [`LocalStorage`], except that one operation parks until the gate is
+/// released, once: removing one file (the only way to land another writer
+/// inside `uninstall_paths`, which never touches the remote), or taking the
+/// lineage lock (the moment a writer's work is done and its write step starts).
 #[derive(Clone)]
 struct ParkedStorage {
     inner: LocalStorage,
-    path: PathBuf,
+    park: Park,
+    armed: Arc<std::sync::atomic::AtomicBool>,
     gate: Arc<crate::io::remote::mocks::Gate>,
+}
+
+#[derive(Clone)]
+enum Park {
+    Remove(PathBuf),
+    Lock,
 }
 
 impl ParkedStorage {
     fn new(path: &Path) -> Self {
+        Self::parking(Park::Remove(path.to_path_buf()))
+    }
+
+    fn at_the_write_step() -> Self {
+        Self::parking(Park::Lock)
+    }
+
+    fn parking(park: Park) -> Self {
         Self {
             inner: LocalStorage::new(),
-            path: path.to_path_buf(),
+            park,
+            armed: Arc::new(true.into()),
             gate: Arc::default(),
+        }
+    }
+
+    async fn maybe_park(&self, now: &Park, path: &Path) {
+        let hit = match (&self.park, now) {
+            (Park::Remove(target), Park::Remove(_)) => target == path,
+            (Park::Lock, Park::Lock) => true,
+            _ => false,
+        };
+        if hit && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.gate.hold().await;
+        }
+    }
+
+    /// A second handle on `t`'s package that goes through this storage.
+    fn package(&self, t: &Rev1Installed) -> InstalledPackage<ParkedStorage, MockRemote> {
+        InstalledPackage {
+            lineage: t.package.lineage.clone(),
+            paths: t.package.paths.clone(),
+            remote: Arc::clone(&t.package.remote),
+            storage: self.clone(),
+            namespace: t.package.namespace.clone(),
         }
     }
 }
@@ -648,9 +765,8 @@ impl Storage for ParkedStorage {
     }
 
     async fn remove_file(&self, path: impl AsRef<Path> + Send) -> std::io::Result<()> {
-        if path.as_ref() == self.path {
-            self.gate.hold().await;
-        }
+        self.maybe_park(&Park::Remove(PathBuf::new()), path.as_ref())
+            .await;
         self.inner.remove_file(path).await
     }
 
@@ -670,6 +786,7 @@ impl Storage for ParkedStorage {
         &self,
         path: impl AsRef<Path> + Send,
     ) -> Res<crate::io::storage::LockGuard> {
+        self.maybe_park(&Park::Lock, path.as_ref()).await;
         self.inner.lock_exclusive(path).await
     }
 }
