@@ -62,7 +62,10 @@ fn s3_client_with_timeout(config: &SdkConfig, timeout: Duration) -> aws_sdk_s3::
 
 /// The client the SDK builds when none is given: hyper 1 over rustls with
 /// aws-lc, proxies read from the environment. `aws-smithy-runtime` keeps its
-/// own constructor private, so this repeats it.
+/// own constructor private, so this repeats it: `default_https_client` in
+/// `src/client/http.rs` of aws-smithy-runtime 1.15.0, for a behavior version
+/// of 2025-08-07 or later. Recheck it against that function when the SDK is
+/// bumped.
 fn default_https_client() -> SharedHttpClient {
     aws_smithy_http_client::Builder::new().build_with_connector_fn(|settings, components| {
         let mut builder = ConnectorBuilder::default().tls_provider(tls::Provider::Rustls(
