@@ -712,12 +712,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// choice and acting on it are different decisions, made by different
     /// callers. Nothing in this crate reads the stored value back.
     ///
-    /// Goes through
-    /// [`PackageLineageIo::edit`](lineage::PackageLineageIo::edit)
-    /// rather than read-then-write, because this writer is user-triggered and
-    /// can land at any moment — including mid-pull on the autosync tick, which
-    /// is doing its own read-modify-write of the same entry. Reading here and
-    /// writing later would clobber whatever that pull had recorded.
+    /// Like every writer here it holds the package's lock, so a choice made
+    /// while the autosync tick pulls waits for the pull and then lands on the
+    /// entry the pull wrote.
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
         self.lock().await?.set_sync_scope(scope).await
     }
