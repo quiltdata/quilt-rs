@@ -21,7 +21,7 @@ use leptos::prelude::*;
 
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, PackageState};
-use crate::routes::{self, RevisionMismatch};
+use crate::routes::{self, DeepLinkNews, RevisionMismatch};
 
 /// The requested revision's commit message, looked up by hash on its own
 /// remote, for the package at `namespace`.
@@ -42,14 +42,18 @@ pub(super) fn app_revision_message(
     ))
 }
 
-/// The address's mismatch, provided by the page for the addresses it builds.
+/// The address's news — this mismatch, or the local-only flag its band in
+/// `local_only_band` reads — provided by the page for the addresses it builds.
+///
+/// One carry for both, not one beside the other: the address holds one or
+/// the other, and a site that carried one could drop the other.
 #[derive(Clone, Copy)]
-pub(super) struct Carried(pub Memo<Option<RevisionMismatch>>);
+pub(super) struct Carried(pub Memo<Option<DeepLinkNews>>);
 
-/// `href` with the page's mismatch after it.
+/// `href` with the page's news after it.
 pub(super) fn carrying(href: String) -> String {
-    let mismatch = use_context::<Carried>().and_then(|Carried(m)| m.get_untracked());
-    routes::keeping_mismatch(href, mismatch.as_ref())
+    let news = use_context::<Carried>().and_then(|Carried(n)| n.get_untracked());
+    routes::keeping_news(href, news.as_ref())
 }
 
 /// The requested side's message, looked up once per address.

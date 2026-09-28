@@ -48,13 +48,48 @@ pub fn resolve_href(namespace: &Namespace) -> String {
     format!("{}&resolve=1", package_page_href(namespace))
 }
 
-/// A deep link that asked for a revision other than the installed one: the
-/// requested top hash and the remote it lives on. `pages/remote_package.rs`
-/// writes it into the package address and the package page reads it back.
+/// What a deep link found out about the package it landed on, when it found
+/// anything. `pages/remote_package.rs` writes it into the package address and
+/// the package page reads it back.
 ///
 /// It lives in the address rather than in page state because it is the
 /// address's news: it stands while the address carries it, so every address the
-/// page builds for the same package must carry it on — see [`keeping_mismatch`].
+/// page builds for the same package must carry it on — see [`keeping_news`].
+///
+/// # One or the other
+///
+/// An install answers either a different revision or a package with no
+/// remote, never both, so one value holds whichever it was. An address that
+/// somehow says both reads as [`DeepLinkNews::LocalOnly`]: with no remote there
+/// is nothing to compare the requested revision against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeepLinkNews {
+    /// The link asked for a revision other than the installed one.
+    Mismatch(RevisionMismatch),
+    /// The package is installed with no remote, so the link's revision could
+    /// not be checked.
+    LocalOnly,
+}
+
+impl DeepLinkNews {
+    /// `localOnly` decides first, then `mismatch` — see [`RevisionMismatch`].
+    pub fn from_query(query: &leptos_router::params::ParamsMap) -> Option<Self> {
+        if query.get("localOnly").is_some() {
+            return Some(Self::LocalOnly);
+        }
+        RevisionMismatch::from_query(query).map(Self::Mismatch)
+    }
+
+    /// The mismatch, when that is the news.
+    pub fn mismatch(&self) -> Option<&RevisionMismatch> {
+        match self {
+            Self::Mismatch(mismatch) => Some(mismatch),
+            Self::LocalOnly => None,
+        }
+    }
+}
+
+/// The requested top hash and the remote it lives on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RevisionMismatch {
     pub hash: String,
@@ -66,7 +101,7 @@ pub struct RevisionMismatch {
 impl RevisionMismatch {
     /// `mismatch` alone decides. A missing `mrbucket` reads as empty, as v1
     /// has always read it, so the lookup fails and the band shows the hash.
-    pub fn from_query(query: &leptos_router::params::ParamsMap) -> Option<Self> {
+    fn from_query(query: &leptos_router::params::ParamsMap) -> Option<Self> {
         Some(Self {
             hash: query.get("mismatch")?,
             bucket: query.get("mrbucket").unwrap_or_default(),
@@ -75,18 +110,20 @@ impl RevisionMismatch {
     }
 }
 
-/// `href` with the deep link's mismatch parameters after it, or unchanged when
-/// there is none. The one place they are written, so a site that builds an
-/// address for the same package cannot drop the band by forgetting one.
-pub fn keeping_mismatch(href: String, mismatch: Option<&RevisionMismatch>) -> String {
-    let Some(RevisionMismatch {
+/// `href` with the deep link's news after it, or unchanged when there is none.
+/// The one place its parameters are written, so a site that builds an address
+/// for the same package cannot drop the band by forgetting one.
+pub fn keeping_news(href: String, news: Option<&DeepLinkNews>) -> String {
+    let mismatch = match news {
+        None => return href,
+        Some(DeepLinkNews::LocalOnly) => return format!("{href}&localOnly=1"),
+        Some(DeepLinkNews::Mismatch(mismatch)) => mismatch,
+    };
+    let RevisionMismatch {
         hash,
         bucket,
         catalog,
-    }) = mismatch
-    else {
-        return href;
-    };
+    } = mismatch;
     let hash = urlencoding::encode(hash);
     let bucket = urlencoding::encode(bucket);
     let href = format!("{href}&mismatch={hash}&mrbucket={bucket}");
@@ -211,12 +248,12 @@ mod tests {
         );
     }
 
-    fn mismatch(catalog: Option<&str>) -> RevisionMismatch {
-        RevisionMismatch {
+    fn mismatch(catalog: Option<&str>) -> DeepLinkNews {
+        DeepLinkNews::Mismatch(RevisionMismatch {
             hash: "c41d8f02".to_string(),
             bucket: "quilt-lab".to_string(),
             catalog: catalog.map(ToString::to_string),
-        }
+        })
     }
 
     /// The deep link's three parameters ride after whatever the address
@@ -225,7 +262,7 @@ mod tests {
     #[test]
     fn a_mismatch_rides_on_the_package_address() {
         assert_eq!(
-            keeping_mismatch(
+            keeping_news(
                 package_page_href(&ns("org/pkg")),
                 Some(&mismatch(Some("https://open.quilt.bio")))
             ),
@@ -233,13 +270,30 @@ mod tests {
              &mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio"
         );
         assert_eq!(
-            keeping_mismatch(resolve_href(&ns("org/pkg")), Some(&mismatch(None))),
+            keeping_news(resolve_href(&ns("org/pkg")), Some(&mismatch(None))),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1\
              &mismatch=c41d8f02&mrbucket=quilt-lab"
         );
         assert_eq!(
-            keeping_mismatch(package_page_href(&ns("org/pkg")), None),
+            keeping_news(package_page_href(&ns("org/pkg")), None),
             package_page_href(&ns("org/pkg"))
+        );
+    }
+
+    /// A package with no remote gets one flag, after whatever the address
+    /// already says, as the mismatch does.
+    #[test]
+    fn local_only_rides_on_the_package_address() {
+        assert_eq!(
+            keeping_news(
+                package_page_href(&ns("org/pkg")),
+                Some(&DeepLinkNews::LocalOnly)
+            ),
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified&localOnly=1"
+        );
+        assert_eq!(
+            keeping_news(resolve_href(&ns("org/pkg")), Some(&DeepLinkNews::LocalOnly)),
+            "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1&localOnly=1"
         );
     }
 
@@ -249,16 +303,35 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn the_query_reads_back_what_was_carried() {
         let mut query = leptos_router::params::ParamsMap::new();
-        assert_eq!(RevisionMismatch::from_query(&query), None);
+        assert_eq!(DeepLinkNews::from_query(&query), None);
 
         query.insert("mismatch", "c41d8f02".to_string());
         query.insert("mrbucket", "quilt-lab".to_string());
-        assert_eq!(RevisionMismatch::from_query(&query), Some(mismatch(None)));
+        assert_eq!(DeepLinkNews::from_query(&query), Some(mismatch(None)));
 
         query.insert("mrcatalog", "https://open.quilt.bio".to_string());
         assert_eq!(
-            RevisionMismatch::from_query(&query),
+            DeepLinkNews::from_query(&query),
             Some(mismatch(Some("https://open.quilt.bio")))
+        );
+    }
+
+    /// The flag alone is the news, and it wins over a mismatch in the same
+    /// address: with no remote there is nothing to compare against.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn local_only_reads_back_and_wins_over_a_mismatch() {
+        let mut query = leptos_router::params::ParamsMap::new();
+        query.insert("localOnly", "1".to_string());
+        assert_eq!(
+            DeepLinkNews::from_query(&query),
+            Some(DeepLinkNews::LocalOnly)
+        );
+
+        query.insert("mismatch", "c41d8f02".to_string());
+        query.insert("mrbucket", "quilt-lab".to_string());
+        assert_eq!(
+            DeepLinkNews::from_query(&query),
+            Some(DeepLinkNews::LocalOnly)
         );
     }
 }
