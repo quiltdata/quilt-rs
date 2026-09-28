@@ -20,13 +20,13 @@ pub fn RemotePackage() -> impl IntoView {
             // Navigate to the installed package page
             let ns = &result.namespace;
             let base = crate::routes::package_page_href(ns);
-            let news = match &result.banner {
+            let outcome = match &result.banner {
                 Some(commands::RemoteBanner::DifferentVersion {
                     requested_hash,
                     requested_bucket,
                     requested_origin,
                     ..
-                }) => Some(crate::routes::DeepLinkNews::Mismatch(
+                }) => Some(crate::routes::DeepLinkOutcome::Mismatch(
                     crate::routes::RevisionMismatch {
                         hash: requested_hash.clone(),
                         bucket: requested_bucket.clone(),
@@ -34,11 +34,11 @@ pub fn RemotePackage() -> impl IntoView {
                     },
                 )),
                 Some(commands::RemoteBanner::LocalOnly) => {
-                    Some(crate::routes::DeepLinkNews::LocalOnly)
+                    Some(crate::routes::DeepLinkOutcome::LocalOnly)
                 }
                 None => None,
             };
-            let path = crate::routes::keeping_news(base, news.as_ref());
+            let path = crate::routes::keeping_outcome(base, outcome.as_ref());
             // Replace, so Back from the package page cannot land here and re-run it.
             navigate(
                 &path,

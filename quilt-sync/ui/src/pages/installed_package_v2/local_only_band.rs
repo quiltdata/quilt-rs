@@ -4,7 +4,7 @@
 //! The link names a revision on an S3 bucket, and the package here is linked to
 //! none, so there is nothing to check the link's revision against. The install
 //! answers local-only, the deep link lands here with `localOnly=1` in the address
-//! (`routes::DeepLinkNews::LocalOnly`), and the band says why the reader sees
+//! (`routes::DeepLinkOutcome::LocalOnly`), and the band says why the reader sees
 //! what they have rather than what they asked for.
 //!
 //! # Explains only
@@ -15,14 +15,13 @@
 //!
 //! # Carried as the mismatch is
 //!
-//! The flag is the address's news, as a mismatch is, and goes through the same
-//! carry (`mismatch_band::carrying`), so entering Resolve, leaving it and the
-//! normalised address all keep it.
+//! The flag is one of the deep link's outcomes, as a mismatch is, and goes
+//! through the same carry (the page's `carrying`), so entering Resolve, leaving
+//! it and the normalised address all keep it.
 
 use leptos::prelude::*;
 
 use crate::kit::{Banner, BannerVariant, PackageState};
-use crate::routes::DeepLinkNews;
 
 /// The band itself, drawn in the mismatch band's place.
 ///
@@ -36,12 +35,12 @@ use crate::routes::DeepLinkNews;
 /// Choosing a bucket re-reads the page with the flag still in the address. The
 /// band follows the page's own state rather than the address, so the reason it
 /// gives is gone once the state is no longer [`PackageState::NoRemote`].
-pub(super) fn local_only_band(news: Memo<Option<DeepLinkNews>>, state: &PackageState) -> AnyView {
+pub(super) fn local_only_band(local_only: Memo<bool>, state: &PackageState) -> AnyView {
     if *state != PackageState::NoRemote {
         return ().into_any();
     }
     (move || {
-        (news.get()? == DeepLinkNews::LocalOnly).then(|| {
+        local_only.get().then(|| {
             view! {
                 <Banner variant=BannerVariant::Warning>
                     "Your copy of this package isn't linked to an S3 bucket, so the link's \
@@ -173,6 +172,24 @@ mod tests {
             band.query_selector("button").unwrap().is_none(),
             "markup was {}",
             band.inner_html()
+        );
+    }
+
+    /// A warning, not a success or a failure: the page shows the reader's
+    /// own copy, and nothing went wrong. Stylance hashes the class, so the
+    /// test reads its stem.
+    #[wasm_bindgen_test]
+    async fn the_band_is_a_warning() {
+        let el = screen(&format!("{PLAIN}&localOnly=1"), no_remote).await;
+
+        let band = element_saying(&el, LINE)
+            .closest("[role=status]")
+            .unwrap()
+            .expect("the band");
+        let class = band.get_attribute("class").unwrap_or_default();
+        assert!(
+            class.split_whitespace().any(|c| c.starts_with("warning-")),
+            "class was {class}"
         );
     }
 
