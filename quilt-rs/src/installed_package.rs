@@ -1041,7 +1041,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// has others, and dropped where latest lacks it (its file goes once the
     /// write lands). A file edited since the download, where latest changes
     /// it too, is a conflict: the redo refuses, as a pull would, before it
-    /// overwrites anything.
+    /// overwrites anything. So does a row whose fetched bytes do not verify
+    /// (an unversioned bucket no longer holding latest's bytes), with
+    /// `ContentMismatch` as the pull's own reconcile: tracking the download's
+    /// row under latest would leave the file reading Modified.
     async fn reconcile_to_latest(
         &self,
         started: &lineage::PackageLineage,
@@ -1099,7 +1102,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &*self.remote,
             &install.iter().collect::<Vec<&PathBuf>>(),
             &flow::Protect::BaseContent(&protect),
-            flow::OnMismatch::Skip,
+            flow::OnMismatch::Refuse,
         )
         .await?;
         Ok(next)

@@ -1060,3 +1060,51 @@ async fn a_download_redo_crossed_by_a_commit_puts_the_committed_bytes_back() -> 
     assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
     Ok(())
 }
+
+/// The remote no longer holds latest's bytes for a path a download crossed
+/// in: an unversioned bucket, where a later put replaced them. The pull's
+/// redo refuses, as the pull itself does, rather than track the download's
+/// row under latest; nothing reads Modified.
+#[test(tokio::test)]
+async fn a_pull_redo_whose_latest_bytes_do_not_verify_refuses() -> Res {
+    let t = Rev1Installed::new().await?;
+    let fetching_rev2 = t.park_manifest(&t.rev2);
+
+    let (pulled, downloaded) = tokio::join!(t.pull(), async {
+        arrives(&fetching_rev2, "the pull's fetch").await;
+        let downloaded = async {
+            t.download().await?;
+            // What the bucket now serves at revision 2's key.
+            t.remote()
+                .put_object(
+                    None,
+                    &S3Uri::from_str(&format!("s3://{BUCKET}/f/a/changes.txt?versionId=c2"))?,
+                    b"replaced".to_vec(),
+                )
+                .await
+        }
+        .await;
+        fetching_rev2.release();
+        downloaded
+    });
+    downloaded?;
+    let err = pulled.expect_err("the pull must refuse");
+    assert!(
+        matches!(
+            err,
+            Error::InstallPath(crate::InstallPathError::ContentMismatch(_))
+        ),
+        "{err}"
+    );
+
+    assert_eq!(
+        t.outcome().await?,
+        (
+            Some(t.rev1.clone()),
+            Rev1Installed::all_paths(),
+            b"one".to_vec()
+        )
+    );
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
