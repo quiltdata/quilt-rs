@@ -908,3 +908,114 @@ async fn a_pull_beaten_to_latest_removes_a_file_uninstalled_meanwhile() -> Res {
     );
     Ok(())
 }
+
+/// A whole-package pull places a file over one a download placed, and the
+/// download writes first. The pull's redo finds the file holding latest's
+/// bytes, its own, and tracks it there: no refusal, nothing Modified.
+#[test(tokio::test)]
+async fn a_whole_package_pull_over_a_download_tracks_its_own_bytes() -> Res {
+    let t = Rev1Installed::new().await?;
+    let rev1_fetch = t.park_object("changes.txt", "c1");
+    let start_pull = tokio::sync::Notify::new();
+    let downloaded = tokio::sync::Notify::new();
+
+    let (download, pull, control) = tokio::join!(
+        async {
+            let done = t.download().await;
+            downloaded.notify_one();
+            done
+        },
+        async {
+            start_pull.notified().await;
+            t.pull_entire().await
+        },
+        async {
+            arrives(&rev1_fetch, "the download's fetch").await;
+            let moved = async {
+                t.pull().await?;
+                t.publish_rev3().await
+            }
+            .await;
+            // Armed after publishing: the publish puts this very object.
+            let rev3_fetch = t.park_object("changes.txt", "c3");
+            start_pull.notify_one();
+            arrives(&rev3_fetch, "the whole-package pull's fetch").await;
+            rev1_fetch.release();
+            downloaded.notified().await;
+            rev3_fetch.release();
+            moved
+        },
+    );
+    let rev3 = control?;
+    download?;
+    pull?;
+
+    assert_eq!(
+        t.outcome().await?,
+        (Some(rev3), Rev1Installed::all_paths(), b"three".to_vec())
+    );
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
+
+/// The other order: the whole-package pull places its file and writes before
+/// the download's redo renames over it. The redo's check before the rename
+/// refuses, so the pull's file and row stand, and the download removes the
+/// other file it placed, so it can be downloaded again.
+#[test(tokio::test)]
+async fn a_download_redo_beaten_to_its_file_refuses_and_cleans_up() -> Res {
+    let t = Rev1Installed::new().await?;
+    let home = t.package.package_home().await?;
+    let rev1_fetch = t.park_object("changes.txt", "c1");
+    let redo_fetch = t.park_object("changes.txt", "c2");
+    let start_pull = tokio::sync::Notify::new();
+    let pulled = tokio::sync::Notify::new();
+
+    let (download, pull, control) = tokio::join!(
+        t.download(),
+        async {
+            start_pull.notified().await;
+            let done = t.pull_entire().await;
+            pulled.notify_one();
+            done
+        },
+        async {
+            arrives(&rev1_fetch, "the download's fetch").await;
+            let moved = async {
+                t.pull().await?;
+                t.publish_rev3().await
+            }
+            .await;
+            // Armed after publishing: the publish puts this very object.
+            let rev3_fetch = t.park_object("changes.txt", "c3");
+            start_pull.notify_one();
+            arrives(&rev3_fetch, "the whole-package pull's fetch").await;
+            rev1_fetch.release();
+            arrives(&redo_fetch, "the download's redo").await;
+            rev3_fetch.release();
+            pulled.notified().await;
+            redo_fetch.release();
+            moved
+        },
+    );
+    let rev3 = control?;
+    pull?;
+    let err = download.expect_err("the download must refuse");
+    assert!(is_changed_underneath(&err, "downloading"), "{err}");
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.current_hash(), Some(rev3.as_str()));
+    assert_eq!(
+        lineage.paths.keys().cloned().collect::<Vec<_>>(),
+        vec![PathBuf::from("changes.txt")]
+    );
+    assert_eq!(tokio::fs::read(home.join("changes.txt")).await?, b"three");
+    assert!(!home.join("same.txt").exists());
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+
+    t.package
+        .install_paths(&[PathBuf::from("same.txt")])
+        .await?;
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}

@@ -437,7 +437,20 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 Verdict::Redo(current) if round < write_step::MAX_REDO => {
                     let placed = write_step::placed(&started, &next);
                     let (redone, also_skipped) =
-                        self.install_again(&current, &placed, &package_home).await?;
+                        match self.install_again(&current, &placed, &package_home).await {
+                            Ok(redone) => redone,
+                            // The redo's check before each rename found a
+                            // file another writer replaced meanwhile. Theirs
+                            // stands; what this one placed goes.
+                            Err(Error::PackageOp(PackageOpError::PullConflict(_))) => {
+                                self.remove_placed_untracked(&placed, &package_home).await?;
+                                return Err(write_step::changed_underneath(
+                                    &self.namespace,
+                                    "downloading",
+                                ));
+                            }
+                            Err(err) => return Err(err),
+                        };
                     next = redone;
                     skipped.extend(also_skipped);
                     started = *current;
@@ -460,6 +473,20 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &self.namespace,
             "downloading",
         ))
+    }
+
+    /// Removes the files in `placed` that still hold what this writer placed
+    /// and that the entry, read now, does not track: a path it tracks is
+    /// another writer's.
+    async fn remove_placed_untracked(&self, placed: &LineagePaths, package_home: &Path) -> Res {
+        let (_, now) = self.lineage.read(&self.storage).await?;
+        let untracked: LineagePaths = placed
+            .iter()
+            .filter(|(path, _)| !now.paths.contains_key(*path))
+            .map(|(path, state)| (path.clone(), state.clone()))
+            .collect();
+        write_step::remove_placed(&self.storage, package_home, &untracked).await;
+        Ok(())
     }
 
     /// The download's redo: the revision moved to `current`'s while it placed
@@ -1016,8 +1043,22 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 continue;
             };
             let latest_hash = Multihash::from(row.hash.clone());
+            let file = package_home.join(&path);
             if latest_hash != state.hash {
-                if !write_step::holds(&self.storage, &package_home.join(&path), &state.hash).await {
+                // This pull may have placed latest's bytes there itself,
+                // over the download's: then the path is already at latest.
+                if write_step::holds(&self.storage, &file, &latest_hash).await {
+                    let at_latest = match next.paths.get(&path) {
+                        Some(placed) if placed.hash == latest_hash => placed.clone(),
+                        _ => lineage::PathState {
+                            timestamp: self.storage.modified_timestamp(&file).await?,
+                            hash: latest_hash,
+                        },
+                    };
+                    next.paths.insert(path, at_latest);
+                    continue;
+                }
+                if !write_step::holds(&self.storage, &file, &state.hash).await {
                     return Err(write_step::changed_underneath(&self.namespace, verb));
                 }
                 if let Some(placed_row) = write_step::row_of(&path, &state.hash) {
