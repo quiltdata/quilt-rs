@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.0-dev]
+
+### Changed
+
+- A command that changes a package another quilt process is changing, such as QuiltSync downloading its files, waits for it and prints `waiting for another quilt process…` to stderr, then runs. It used to run at once, and one of the two could drop what the other recorded (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.41.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.33.0] - 2026-09-28
 
 ### Changed

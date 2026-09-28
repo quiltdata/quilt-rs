@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.5-dev]
+
+### Fixed
+
+- Two changes to one package no longer drop each other's work, whatever makes them: a download, **Pull**, **Commit**, background updates, or the `quilt` CLI in a terminal. An action on a package that is busy waits behind its spinner, and background updates skip the package until its next round. Other packages are never held up (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.41.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.22.4] - 2026-09-28
 
 ### Changed

@@ -19,6 +19,23 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.41.0-dev]
+
+### Added
+
+- `InstalledPackage::lock` and `InstalledPackage::try_lock` take the package's lock, `.quilt/locks/<owner>/<name>.lock`, and return a `LockedPackage` whose writers run under it without locking again. `lock` waits for another writer, in this process or another; `try_lock` returns `None` while one holds it (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- `on_package_lock_wait` sets a hook that runs once each time a writer has to wait for its package's lock (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+
+### Changed
+
+- **Breaking:** `Storage` has two new required methods, `lock_exclusive(path)` and `try_lock_exclusive(path)`, which lock a path against every other holder in this process and in any other until the returned `LockGuard` drops. `LocalStorage` and `MockStorage` have them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `InstalledPackage::publish` no longer takes a status. It walks the working tree under the package's lock; `LockedPackage::publish` accepts a status walked on the same handle (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `DomainLineageIo::write_package_lineage` is gone. `DomainLineageIo::update` and `update_package_lineage` re-read, change and write `data.json` under a short lock, and `PackageLineageIo::write` splices one entry through them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+
+### Fixed
+
+- Operations on one package no longer drop each other's changes to its entry in `.quilt/data.json`. Each writer of a package holds the package's lock from its first read to its write, in one process and across processes (the `quilt` CLI and QuiltSync share the file), so a pull and a download of one package run one after the other and no file nobody touched reads Modified. Writers of different packages still run in parallel. Installing, creating or uninstalling a package no longer writes back the other packages' entries as it read them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+
 ## [v0.40.0] - 2026-09-28
 
 ### Added
