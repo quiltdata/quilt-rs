@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- On the new main page, the package list no longer jumps down when **Everything is Latest** appears (PRLINK)
+- On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
 
 ## [v0.22.4] - 2026-09-28
 
