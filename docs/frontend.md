@@ -214,7 +214,7 @@ Routes are defined in `main.rs` using leptos\_router:
 | `/` | `Home` | |
 | `/main` | `MainPage` | |
 | `/installed-packages-list` | `InstalledPackagesList` | |
-| `/installed-package` | `InstalledPackage` | `namespace`, `filter`, `resolve` (`1` opens the v2 page's resolve mode) |
+| `/installed-package` | `InstalledPackage` | `namespace`, `filter`, `resolve` (`1` opens the v2 page's resolve mode); from a deep link, `mismatch`, `mrbucket`, `mrcatalog` (another revision was asked for) or `localOnly` (the package has no remote) |
 | `/commit` | `Commit` | `namespace` |
 | `/merge` | `Merge` | `namespace` |
 | `/login` | `Login` | `host`, `back` |
@@ -225,6 +225,12 @@ Routes are defined in `main.rs` using leptos\_router:
 
 Query parameters are read via `use_query_map()`. Navigation uses
 `use_navigate()` for client-side transitions.
+
+A deep link's parameters on `/installed-package` are its outcome
+(`routes::DeepLinkOutcome`): `pages/remote_package.rs` writes one or the other,
+and the package page carries it through every address it builds for the same
+package — entering and leaving Resolve, and a replaced address — so switching
+mode does not end the band that reports it.
 
 `/` is not a redirect. `Home` reads the reader's **New design preview** opt-in
 (Settings → Experimental) and renders `MainPage` or `InstalledPackagesList` in

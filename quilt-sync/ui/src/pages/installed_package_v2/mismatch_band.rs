@@ -9,10 +9,12 @@
 //!
 //! # The address carries it, so every address the page builds keeps it
 //!
-//! The band stands while the address carries the mismatch. Entering Resolve,
-//! leaving it, and the replacement a success or a normalised address makes are
-//! all addresses for the same package, so each goes through [`carrying`]: a
-//! mode entered on the page must not end the band.
+//! The band stands while the address carries the mismatch. The mismatch is one
+//! of the deep link's outcomes (`routes::DeepLinkOutcome`), and the page's
+//! `carrying` keeps whichever outcome the address has on every address it
+//! builds for the same package — entering Resolve, leaving it, and the
+//! replacement a success or a normalised address makes — so a mode entered on
+//! the page must not end the band.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -21,7 +23,7 @@ use leptos::prelude::*;
 
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, PackageState};
-use crate::routes::{self, RevisionMismatch};
+use crate::routes::RevisionMismatch;
 
 /// The requested revision's commit message, looked up by hash on its own
 /// remote, for the package at `namespace`.
@@ -40,16 +42,6 @@ pub(super) fn app_revision_message(
     Box::pin(commands::get_revision_message(
         bucket, namespace, hash, catalog,
     ))
-}
-
-/// The address's mismatch, provided by the page for the addresses it builds.
-#[derive(Clone, Copy)]
-pub(super) struct Carried(pub Memo<Option<RevisionMismatch>>);
-
-/// `href` with the page's mismatch after it.
-pub(super) fn carrying(href: String) -> String {
-    let mismatch = use_context::<Carried>().and_then(|Carried(m)| m.get_untracked());
-    routes::keeping_mismatch(href, mismatch.as_ref())
 }
 
 /// The requested side's message, looked up once per address.

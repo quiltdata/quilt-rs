@@ -34,6 +34,7 @@ pub(crate) mod context_pane;
 pub(crate) mod file_pane;
 mod header;
 pub(crate) mod keeping;
+mod local_only_band;
 mod mismatch_band;
 pub(crate) mod resolve;
 mod revision_history;
@@ -342,18 +343,33 @@ pub fn differing_marks(
     Memo::new(move |_| if open.get() { set.clone() } else { None })
 }
 
+/// The address's deep-link outcome — a mismatch or the local-only flag —
+/// provided by the page for the addresses it builds.
+///
+/// One carry for both, not one beside the other: the address holds one or
+/// the other, and a site that carried one could drop the other.
+#[derive(Clone, Copy)]
+struct Carried(Memo<Option<routes::DeepLinkOutcome>>);
+
+/// `href` with the page's deep-link outcome after it, so entering Resolve,
+/// leaving it, or replacing the address does not end that outcome's band.
+fn carrying(href: String) -> String {
+    let outcome = use_context::<Carried>().and_then(|Carried(o)| o.get_untracked());
+    routes::keeping_outcome(href, outcome.as_ref())
+}
+
 /// Where this page should be instead, when it was asked for a mode the
 /// package does not have: only an answered read about the package on screen decides.
-/// A deep link's mismatch stays on the address, so the band does not end with the mode.
+/// A deep link's outcome stays on the address, so its band does not end with the mode.
 fn normalized_address(
     asked: bool,
     showing: &str,
     answered: &commands::PackagePageData,
-    mismatch: Option<&routes::RevisionMismatch>,
+    outcome: Option<&routes::DeepLinkOutcome>,
 ) -> Option<String> {
     let namespace = &answered.header.namespace;
     (asked && namespace.to_string() == showing && answered.context.resolve.is_none())
-        .then(|| routes::keeping_mismatch(routes::package_page_href(namespace), mismatch))
+        .then(|| routes::keeping_outcome(routes::package_page_href(namespace), outcome))
 }
 
 /// Render one successful page payload. Kept pure so its atomic shape can be
@@ -423,7 +439,7 @@ fn package_body(
                     revision=context.revision
                     resolve=resolve
                     marks=marks.differing
-                    back_href=mismatch_band::carrying(routes::package_page_href(&ns))
+                    back_href=carrying(routes::package_page_href(&ns))
                     w=w
                     commands=resolving
                 />
@@ -901,11 +917,20 @@ fn PackageScreen(
     // Memos, so only `namespace` re-runs the read: the mode opens with no loading state.
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
     let asked = Memo::new(move |_| query.read().get("resolve").as_deref() == Some("1"));
-    // A deep link's other revision. Given to every address the page builds for
-    // this package, and looked up here rather than by the band, which every
-    // re-read rebuilds.
-    let mismatch = Memo::new(move |_| routes::RevisionMismatch::from_query(&query.read()));
-    provide_context(mismatch_band::Carried(mismatch));
+    // What a deep link found: another revision, or no remote to check it on.
+    // Given to every address the page builds for this package; the other
+    // revision is looked up here rather than by the band, which every re-read
+    // rebuilds. `link_outcome`, not `outcome`, which is the last command's.
+    let link_outcome = Memo::new(move |_| routes::DeepLinkOutcome::from_query(&query.read()));
+    provide_context(Carried(link_outcome));
+    let mismatch = Memo::new(move |_| {
+        link_outcome
+            .get()
+            .as_ref()
+            .and_then(|o| o.mismatch().cloned())
+    });
+    let local_only =
+        Memo::new(move |_| link_outcome.get() == Some(routes::DeepLinkOutcome::LocalOnly));
     let requested = mismatch_band::requested_message(mismatch, ns, revision_message);
 
     // What the reader has already read and closed. Keyed on the message, so a
@@ -985,9 +1010,12 @@ fn PackageScreen(
         let Some((_, Ok(answered))) = data.get() else {
             return;
         };
-        if let Some(to) =
-            normalized_address(asked.get(), &ns.get(), &answered, mismatch.get().as_ref())
-        {
+        if let Some(to) = normalized_address(
+            asked.get(),
+            &ns.get(),
+            &answered,
+            link_outcome.get().as_ref(),
+        ) {
             w.replace_to.set(Some(Replace {
                 namespace: ns.get(),
                 to,
@@ -1012,6 +1040,7 @@ fn PackageScreen(
                 {move || match answer_for(data.get(), &ns.get()) {
                     Some(Ok(d)) => view! {
                         {pause_banner(d.sync_paused.clone(), dismissed)}
+                        {local_only_band::local_only_band(local_only, &d.header.state)}
                         {mismatch_band::mismatch_band(
                             mismatch,
                             requested.into(),
@@ -2169,16 +2198,30 @@ mod tests {
     /// the package cannot have does not end the band.
     #[test]
     fn the_normalised_address_keeps_the_mismatch() {
-        let mismatch = routes::RevisionMismatch {
+        let mismatch = routes::DeepLinkOutcome::Mismatch(routes::RevisionMismatch {
             hash: "c41d8f02".to_string(),
             bucket: "quilt-lab".to_string(),
             catalog: Some("https://open.quilt.bio".to_string()),
-        };
+        });
         assert_eq!(
             normalized_address(true, "team/dataset", &page_data(), Some(&mismatch)),
             Some(format!(
                 "{PLAIN}&mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio"
             ))
+        );
+    }
+
+    /// The local-only flag survives the replacement the same way.
+    #[test]
+    fn the_normalised_address_keeps_local_only() {
+        assert_eq!(
+            normalized_address(
+                true,
+                "team/dataset",
+                &page_data(),
+                Some(&routes::DeepLinkOutcome::LocalOnly)
+            ),
+            Some(format!("{PLAIN}&localOnly=1"))
         );
     }
 
