@@ -88,7 +88,6 @@ impl LocalDomain {
             remote,
         }
     }
-
 }
 
 impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
@@ -159,8 +158,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
-        let _held =
-            package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
+        let _held = package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
 
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)

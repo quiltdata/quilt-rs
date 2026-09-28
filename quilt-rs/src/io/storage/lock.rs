@@ -119,7 +119,7 @@ pub(crate) async fn try_lock_exclusive(path: &Path) -> Res<Option<LockGuard>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use std::time::Duration;
@@ -152,10 +152,16 @@ mod tests {
         let path = dir.path().join("demo.lock");
 
         let first = lock_exclusive(&path).await?;
-        assert!(try_lock_exclusive(&path).await?.is_none(), "held in this process");
+        assert!(
+            try_lock_exclusive(&path).await?.is_none(),
+            "held in this process"
+        );
 
         drop(first);
-        assert!(try_lock_exclusive(&path).await?.is_some(), "free once dropped");
+        assert!(
+            try_lock_exclusive(&path).await?.is_some(),
+            "free once dropped"
+        );
         Ok(())
     }
 
@@ -173,27 +179,69 @@ mod tests {
         Ok(())
     }
 
-    const CHILD_LOCK: &str = "QUILT_RS_TEST_CHILD_LOCK";
+    const CHILD_SIGNALS: &str = "QUILT_RS_TEST_CHILD_SIGNALS";
+    const CHILD_LOCK_FILE: &str = "QUILT_RS_TEST_CHILD_LOCK_FILE";
 
-    /// Not a test on its own: the child half of
-    /// [`another_process_waits_for_the_lock`]. It takes the lock, says so, and
-    /// holds it until the parent removes the `hold` file.
+    /// Not a test on its own: the child half of [`OtherProcess`]. It takes the
+    /// lock, says so, and holds it until the parent removes the `hold` file.
     #[test]
-    #[ignore = "run only as the child of another_process_waits_for_the_lock"]
+    #[ignore = "run only as the child of OtherProcess::holding"]
     fn child_holds_the_lock() -> Res {
-        let Ok(dir) = std::env::var(CHILD_LOCK) else {
+        let (Ok(signals), Ok(lock_file)) =
+            (std::env::var(CHILD_SIGNALS), std::env::var(CHILD_LOCK_FILE))
+        else {
             return Ok(());
         };
-        let dir = PathBuf::from(dir);
+        let signals = PathBuf::from(signals);
         let runtime = tokio::runtime::Runtime::new()?;
         runtime.block_on(async {
-            let _held = lock_exclusive(&dir.join("data.json.lock")).await?;
-            fs::write(dir.join("locked"), b"")?;
-            while dir.join("hold").exists() {
+            let _held = lock_exclusive(Path::new(&lock_file)).await?;
+            fs::write(signals.join("locked"), b"")?;
+            while signals.join("hold").exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             Ok(())
         })
+    }
+
+    /// Another process holding a lock until [`Self::release`].
+    pub(crate) struct OtherProcess {
+        child: std::process::Child,
+        signals: tempfile::TempDir,
+    }
+
+    impl OtherProcess {
+        /// Starts a child process and returns once it holds `lock_file`.
+        pub(crate) async fn holding(lock_file: &Path) -> Res<Self> {
+            let signals = tempfile::TempDir::new()?;
+            fs::write(signals.path().join("hold"), b"")?;
+            let child = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "io::storage::lock::tests::child_holds_the_lock",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(CHILD_SIGNALS, signals.path())
+                .env(CHILD_LOCK_FILE, lock_file)
+                .spawn()?;
+            let deadline = std::time::Instant::now() + Duration::from_secs(30);
+            while !signals.path().join("locked").exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the child never took the lock"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok(Self { child, signals })
+        }
+
+        /// Lets the lock go and waits for the child to exit.
+        pub(crate) fn release(mut self) -> Res {
+            fs::remove_file(self.signals.path().join("hold"))?;
+            assert!(self.child.wait()?.success());
+            Ok(())
+        }
     }
 
     /// The cross-process layer: while another process holds the lock, this one
@@ -201,26 +249,9 @@ mod tests {
     #[test(tokio::test)]
     async fn another_process_waits_for_the_lock() -> Res {
         let dir = tempfile::TempDir::new()?;
-        fs::write(dir.path().join("hold"), b"")?;
-        let mut child = std::process::Command::new(std::env::current_exe()?)
-            .args([
-                "--exact",
-                "io::storage::lock::tests::child_holds_the_lock",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env(CHILD_LOCK, dir.path())
-            .spawn()?;
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while !dir.path().join("locked").exists() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the child never took the lock"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-
         let lock_path = dir.path().join("data.json.lock");
+        let other = OtherProcess::holding(&lock_path).await?;
+
         let waiting = tokio::time::timeout(Duration::from_millis(300), lock_exclusive(&lock_path));
         assert!(waiting.await.is_err(), "the other process holds the lock");
 
@@ -229,11 +260,10 @@ mod tests {
             "a try sees the other process too"
         );
 
-        fs::remove_file(dir.path().join("hold"))?;
+        other.release()?;
         tokio::time::timeout(Duration::from_secs(30), lock_exclusive(&lock_path))
             .await
             .expect("the lock is free once the other process lets go")?;
-        assert!(child.wait()?.success());
         Ok(())
     }
 }

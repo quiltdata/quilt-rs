@@ -506,13 +506,18 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
     // MockRemote returns HostConfig::default() (SHA256 chunked), same as the
     // initial commit, so the row hashes stay the same. But the manifest is
     // rebuilt (e.g. workflow may change), and the lineage prev_hashes are updated.
-    package
-        .set_remote(
+    // The recommit runs under the lock set_remote already holds, so it must
+    // not wait on it.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        package.set_remote(
             "my-bucket".to_string(),
             Some("example.com".parse()?),
             WorkflowIntent::BucketDefault,
-        )
-        .await?;
+        ),
+    )
+    .await
+    .expect("set_remote must not wait on its own lock")?;
 
     let lineage = package.lineage().await?;
 

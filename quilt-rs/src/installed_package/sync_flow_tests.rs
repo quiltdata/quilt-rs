@@ -208,7 +208,11 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
         namespace,
     };
 
-    package.certify_latest().await?;
+    // Certify pushes the pending commit under the lock it already holds; a
+    // push that took the package's lock again would wait on itself forever.
+    tokio::time::timeout(std::time::Duration::from_secs(30), package.certify_latest())
+        .await
+        .expect("certify must not wait on its own lock")?;
 
     // Remote `latest` now points at the user's revision (L), not the
     // teammate's (N) and not the install-time hash (I).

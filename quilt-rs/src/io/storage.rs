@@ -16,7 +16,7 @@ use crate::Res;
 
 pub mod auth;
 mod local;
-mod lock;
+pub(crate) mod lock;
 
 pub use local::LocalStorage;
 pub use lock::LockGuard;

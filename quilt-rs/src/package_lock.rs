@@ -71,3 +71,46 @@ pub(crate) async fn try_lock(
         .try_lock_exclusive(paths.package_lock(namespace))
         .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use test_log::test;
+
+    use crate::io::storage::LocalStorage;
+
+    /// A free lock says nothing; a held one fires the notice once, then
+    /// waits, and is taken once the holder lets go.
+    #[test(tokio::test)]
+    async fn a_writer_waiting_on_a_held_package_fires_the_notice_once() -> Res {
+        static WAITS: AtomicUsize = AtomicUsize::new(0);
+        on_package_lock_wait(|| {
+            WAITS.fetch_add(1, Ordering::SeqCst);
+        });
+        let dir = tempfile::TempDir::new()?;
+        let paths = DomainPaths::new(dir.path().to_path_buf());
+        let storage = LocalStorage::new();
+        let namespace: Namespace = ("acme", "demo").into();
+
+        let held = lock(&storage, &paths, &namespace).await?;
+        assert_eq!(WAITS.load(Ordering::SeqCst), 0, "a free lock says nothing");
+        assert!(try_lock(&storage, &paths, &namespace).await?.is_none());
+
+        let mut waiting = std::pin::pin!(lock(&storage, &paths, &namespace));
+        let early = tokio::time::timeout(Duration::from_millis(200), &mut waiting).await;
+        assert!(early.is_err(), "the second writer waits");
+        assert_eq!(WAITS.load(Ordering::SeqCst), 1);
+
+        drop(held);
+        tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("taken once the holder lets go")?;
+        assert_eq!(WAITS.load(Ordering::SeqCst), 1, "once per wait");
+        Ok(())
+    }
+}

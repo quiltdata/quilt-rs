@@ -169,11 +169,7 @@ impl Rev1Installed {
     pub(super) async fn assert_clean_at_rev2(&self) -> Res {
         assert_eq!(
             self.outcome().await?,
-            (
-                Some(self.rev2.clone()),
-                Self::all_paths(),
-                b"two".to_vec()
-            )
+            (Some(self.rev2.clone()), Self::all_paths(), b"two".to_vec())
         );
         assert_eq!(self.changed().await?, Vec::<PathBuf>::new());
         Ok(())
@@ -226,6 +222,12 @@ impl Rev1Installed {
     pub(super) fn park_manifest(&self, hash: &str) -> Arc<Gate> {
         self.remote()
             .park(&format!("s3://{BUCKET}/.quilt/packages/{hash}"))
+    }
+    /// Parks the next fetch of `logical_key` at S3 `version`.
+    pub(super) fn park_object(&self, logical_key: &str, version: &str) -> Arc<Gate> {
+        self.remote().park(&format!(
+            "s3://{BUCKET}/f/a/{logical_key}?versionId={version}"
+        ))
     }
 }
 
@@ -340,7 +342,10 @@ async fn a_pull_of_one_package_does_not_hold_up_a_download_of_another() -> Res {
     );
     pulled?;
     downloaded?;
-    assert!(finished_inside, "the other package's download must not wait");
+    assert!(
+        finished_inside,
+        "the other package's download must not wait"
+    );
 
     let lineage = domain.get_lineage().await?;
     assert_eq!(
@@ -377,7 +382,10 @@ async fn installing_another_package_during_a_pull_keeps_the_pull() -> Res {
     );
     pulled?;
     installed?;
-    assert!(finished_inside, "the pull must not wait for another package");
+    assert!(
+        finished_inside,
+        "the pull must not wait for another package"
+    );
 
     let lineage = domain.get_lineage().await?;
     assert_eq!(
