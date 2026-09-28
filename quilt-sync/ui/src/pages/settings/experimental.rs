@@ -38,11 +38,9 @@ impl Flag {
 /// setting.
 ///
 /// Every row here is a reader's to find, so work with nothing to show them yet
-/// gets no row at all. The rebuilt package screen is the case today: it is
-/// switched by an in-code flag (`routes.rs`'s `UNFINISHED_PACKAGE_PAGE`), which a
-/// developer flips in the source and no build carries on. A row — even a
-/// disabled one — would tell a reader the unfinished page exists and invite the
-/// question.
+/// gets no row at all. A page of the redesign gets none of its own either: it
+/// arrives under *New design preview*, the switch a reader has already turned
+/// on, rather than as one more row to find.
 #[component]
 pub(super) fn ExperimentalSection(
     entire_package_sync: bool,

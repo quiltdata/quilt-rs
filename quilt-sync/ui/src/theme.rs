@@ -72,8 +72,11 @@ pub const V2_CLASS: &str = "qui-v2";
 /// outside every page and therefore cannot ask.
 ///
 /// The reader's preview preference and nothing else — `main.rs`'s
-/// `design_preview` is the one question the design is switched by, and `/` asks
-/// it on every visit, so this is set before any other route can be reached.
+/// `design_preview` is the one question the design is switched by, and `/` and
+/// `/installed-package` ask it on every visit, so this is set before any other
+/// route can be reached. The exception is a launch by deep link, whose relay
+/// page wears the marker `index.html` restored until the package page it hands
+/// over to asks again.
 ///
 /// v1's stylesheets read only their own `--q-ui-*` tokens, which no theme
 /// switches, so v1 stays light whatever the OS says. Anything shared between

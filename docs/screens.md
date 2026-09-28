@@ -195,6 +195,10 @@ without a page reload. Status changes propagate via
 Shows contents of a single installed package: file entries
 with checkboxes, status indicator, and a toolbar.
 
+This is the page when Settings → Experimental → **New design preview** is off.
+On, `/installed-package` renders the redesigned package page instead, with a
+header, a context pane and a file pane; it has no address of its own.
+
 ```text
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |

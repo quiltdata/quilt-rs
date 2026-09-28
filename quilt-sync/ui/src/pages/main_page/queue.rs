@@ -419,22 +419,15 @@ fn zero_line_text(total: usize) -> String {
 /// the same rows — without this it would need a second copy of the map, and a copy
 /// that drifts points the gallery's rows at pages the app does not use.
 pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
-    href_for(action, namespace, crate::routes::UNFINISHED_PACKAGE_PAGE)
-}
-
-/// [`action_href`] with the package route's flag as a parameter, so one test
-/// covers both of its values whatever the constant is set to.
-fn href_for(action: PackageAction, namespace: &Namespace, package_page_v2: bool) -> String {
     match action {
         PackageAction::Publish => crate::routes::commit_href(namespace),
-        // v1's package page ignores `resolve=1`, so under v1 Resolve keeps `/merge`.
-        PackageAction::Resolve => {
-            if package_page_v2 {
-                crate::routes::resolve_href(namespace)
-            } else {
-                crate::routes::merge_href(namespace)
-            }
-        }
+        // The package page's own resolve mode, not `/merge`: this queue is drawn
+        // only by the main page, which is v2's, and `/installed-package` renders
+        // v2 exactly when the main page does. The one exception is `/main`
+        // opened with the preview off, which lands this on v1's package page;
+        // that page ignores `resolve=1` and offers `[Merge]` in its status
+        // banner, so the reader is one click from where v1 would have sent them.
+        PackageAction::Resolve => crate::routes::resolve_href(namespace),
         // Shared with the list row's own link — `super::package_page_href`.
         //
         // `SignIn` joins them, and does NOT go to `/login`: a sign-in is scoped
@@ -1319,50 +1312,30 @@ mod tests {
     fn action_href_names_the_right_page_and_carries_the_namespace() {
         use PackageAction::{ChooseS3Bucket, GetLatest, Publish, Resolve, SignIn, SwitchRole};
         // Every verb, guarded by an exhaustive match: a verb added to the
-        // vocabulary stops this test's build, as `href_for`'s own match does.
+        // vocabulary stops this test's build, as `action_href`'s own match does.
         let _ = |a: PackageAction| match a {
             Publish | Resolve | GetLatest | ChooseS3Bucket | SignIn | SwitchRole => (),
         };
-        let every = [
-            Publish,
-            Resolve,
-            GetLatest,
-            ChooseS3Bucket,
-            SignIn,
-            SwitchRole,
-        ];
         let org_pkg = ns("org/pkg");
         // Asserted as the whole string, since a substring match cannot tell a
         // missing namespace from a present one.
         let package_page = "/installed-package?namespace=org%2Fpkg&filter=unmodified";
-        for package_page_v2 in [true, false] {
-            let href = |a| href_for(a, &org_pkg, package_page_v2);
-            assert_eq!(href(Publish), "/commit?namespace=org%2Fpkg");
-            assert_eq!(href(GetLatest), package_page);
-            assert_eq!(href(ChooseS3Bucket), package_page);
-            // A row's `SignIn` has no host to sign in to, so it lands on the
-            // package's page rather than inventing one.
-            assert_eq!(href(SignIn), package_page);
-            // Never produced by `action`, and mapped anyway so the vocabulary can
-            // gain a verb without this match going stale.
-            assert_eq!(href(SwitchRole), package_page);
-        }
-        // Resolve alone follows which page `/installed-package` renders.
+        let href = |a| action_href(a, &org_pkg);
+        assert_eq!(href(Publish), "/commit?namespace=org%2Fpkg");
+        assert_eq!(href(GetLatest), package_page);
+        assert_eq!(href(ChooseS3Bucket), package_page);
+        // A row's `SignIn` has no host to sign in to, so it lands on the
+        // package's page rather than inventing one.
+        assert_eq!(href(SignIn), package_page);
+        // Never produced by `action`, and mapped anyway so the vocabulary can
+        // gain a verb without this match going stale.
+        assert_eq!(href(SwitchRole), package_page);
+        // Resolve opens the package page's resolve mode — the page the main
+        // page's own generation renders there — rather than `/merge`.
         assert_eq!(
-            href_for(Resolve, &org_pkg, true),
+            href(Resolve),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified&resolve=1"
         );
-        assert_eq!(
-            href_for(Resolve, &org_pkg, false),
-            "/merge?namespace=org%2Fpkg"
-        );
-        for action in every {
-            assert_eq!(
-                action_href(action, &org_pkg),
-                href_for(action, &org_pkg, crate::routes::UNFINISHED_PACKAGE_PAGE),
-                "action_href reads the route's constant for {action:?}"
-            );
-        }
         // The fifth label ruling 5 names: a cause's `[Sign in]`, which
         // `cause_trailing` builds from `sign_in_href` directly rather than
         // through this match — that one HAS a host.

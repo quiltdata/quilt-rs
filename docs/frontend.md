@@ -214,7 +214,7 @@ Routes are defined in `main.rs` using leptos\_router:
 | `/` | `Home` | |
 | `/main` | `MainPage` | |
 | `/installed-packages-list` | `InstalledPackagesList` | |
-| `/installed-package` | `InstalledPackage` | `namespace`, `filter`, `resolve` (`1` opens the v2 page's resolve mode); from a deep link, `mismatch`, `mrbucket`, `mrcatalog` (another revision was asked for) or `localOnly` (the package has no remote) |
+| `/installed-package` | `PackagePage` | `namespace`, `filter`, `resolve` (`1` opens the v2 page's resolve mode); from a deep link, `mismatch`, `mrbucket`, `mrcatalog` (another revision was asked for) or `localOnly` (the package has no remote) |
 | `/commit` | `Commit` | `namespace` |
 | `/merge` | `Merge` | `namespace` |
 | `/login` | `Login` | `host`, `back` |
@@ -239,6 +239,14 @@ way home — the logo, a breadcrumb, a Cancel — lands on the page the reader c
 rather than on whichever page the link was written against. `/main` and
 `/installed-packages-list` stay addressable for looking at one specific page
 while both exist.
+
+`/installed-package` works the same way: `PackagePage` reads the same opt-in and
+renders `InstalledPackageV2` or `InstalledPackage` in place, with the same
+fallback to the latter, so every link to a package lands on the page of the
+generation the reader chose. It has no second address for either page. The main
+page's queue links a diverged package to the v2 page's resolve mode; opened at
+`/main` with the preview off, that lands on v1's package page, whose status
+banner offers **Merge**.
 
 A `back` handed to `/login` has to be a route `routes::Paths` can parse, not just
 one the client router knows. Code login navigates in the client and never asks,
