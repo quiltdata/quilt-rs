@@ -1,5 +1,9 @@
+use std::collections::BTreeMap;
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
+
+use multihash::Multihash;
 
 use tracing::log;
 
@@ -40,6 +44,9 @@ use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 use quilt_uri::UriError;
+
+mod write_step;
+use write_step::Verdict;
 
 /// Result of a push operation visible to callers outside `quilt-rs`.
 pub struct PushOutcome {
@@ -365,6 +372,10 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// Downloads `paths` and starts tracking them. A path whose bytes the
     /// remote no longer holds is skipped, not an error: see
     /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped).
+    ///
+    /// Installs from the revision the entry named when it started. If a pull
+    /// or a reset moved the revision meanwhile, it installs the same paths
+    /// again from the new one before it writes.
     pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
         if paths.is_empty() {
             return Ok(flow::InstallPathsReport::default());
@@ -372,35 +383,154 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths().await?;
 
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let remote_uri = lineage.remote()?;
+        let (package_home, mut started) = self.lineage.read(&self.storage).await?;
+        let remote_uri = started.remote()?;
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
-        let (lineage, skipped) = flow::install_paths(
-            lineage,
+        let mut manifest = self.manifest_from_lineage(&started).await?;
+        let (mut next, mut skipped) = flow::install_paths(
+            started.clone(),
             &mut manifest,
             &self.paths,
-            package_home,
+            package_home.clone(),
             self.namespace.clone(),
             &self.storage,
             &*self.remote,
             &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(flow::InstallPathsReport {
-            paths: lineage.paths,
-            skipped,
-        })
+
+        for round in 0..=write_step::MAX_REDO {
+            let verdict = self
+                .lineage
+                .update(&self.storage, |entry| {
+                    let Some(current) = entry.as_mut() else {
+                        return Ok(Verdict::Gone);
+                    };
+                    if !write_step::same_revision(current, &started) {
+                        return Ok(Verdict::Redo(current.clone()));
+                    }
+                    *current = write_step::own_change(&started, &next, current);
+                    Ok(Verdict::Written(current.paths.clone()))
+                })
+                .await?;
+            match verdict {
+                Verdict::Written(paths) => {
+                    return Ok(flow::InstallPathsReport { paths, skipped });
+                }
+                Verdict::Gone => {
+                    let placed = write_step::placed(&started, &next);
+                    write_step::remove_placed(&self.storage, &package_home, &placed).await;
+                    return Err(write_step::not_installed(&self.namespace));
+                }
+                Verdict::Redo(current) if round < write_step::MAX_REDO => {
+                    let placed = write_step::placed(&started, &next);
+                    let (redone, also_skipped) =
+                        self.install_again(&current, &placed, &package_home).await?;
+                    next = redone;
+                    skipped.extend(also_skipped);
+                    started = current;
+                }
+                Verdict::Redo(_) | Verdict::Refused => break,
+            }
+        }
+        Err(write_step::changed_underneath(
+            &self.namespace,
+            "downloading",
+        ))
     }
 
+    /// The download's redo: the revision moved to `current`'s while it placed
+    /// `placed`, so it installs the same paths again from there. A file that
+    /// no longer holds what it placed is someone's edit, and is left alone; a
+    /// path the new revision lacks is removed and reported as skipped; one
+    /// someone else now tracks is theirs.
+    async fn install_again(
+        &self,
+        current: &lineage::PackageLineage,
+        placed: &LineagePaths,
+        package_home: &Path,
+    ) -> Res<(lineage::PackageLineage, Vec<PathBuf>)> {
+        let mut manifest = self.manifest_from_lineage(current).await?;
+        let mut next = current.clone();
+        let mut skipped = Vec::new();
+        let mut gone = BTreeMap::new();
+        let mut install = Vec::new();
+        let mut protect = BTreeMap::new();
+        for (path, state) in placed {
+            if current.paths.contains_key(path) {
+                continue;
+            }
+            let file = package_home.join(path);
+            let Some(row) = manifest.get_record(path) else {
+                gone.insert(path.clone(), state.hash);
+                skipped.push(path.clone());
+                continue;
+            };
+            if Multihash::from(row.hash.clone()) == state.hash {
+                next.paths.insert(path.clone(), state.clone());
+            } else if write_step::holds(&self.storage, &file, &state.hash).await
+                && let Some(placed_row) = write_step::row_of(path, &state.hash)
+            {
+                install.push(path.clone());
+                protect.insert(path.clone(), placed_row);
+            }
+        }
+        let (next, also_skipped) = flow::install_paths_over(
+            next,
+            &mut manifest,
+            &self.paths,
+            package_home.to_path_buf(),
+            self.namespace.clone(),
+            &self.storage,
+            &*self.remote,
+            &install.iter().collect::<Vec<&PathBuf>>(),
+            &flow::Protect::BaseContent(&protect),
+            flow::OnMismatch::Skip,
+        )
+        .await?;
+        for path in also_skipped {
+            gone.insert(path.clone(), placed[&path].hash);
+            skipped.push(path);
+        }
+        write_step::remove_if_unchanged(&self.storage, package_home, &gone).await;
+        Ok((next, skipped))
+    }
+
+    /// Stops tracking `paths` and removes their files. The uninstall wins
+    /// over a pull that crossed it: a path the pull re-placed meanwhile is
+    /// removed too, and its file deleted if it still holds what the pull put
+    /// there.
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let lineage = flow::uninstall_paths(lineage, package_home, &self.storage, paths).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.paths)
+        let (package_home, started) = self.lineage.read(&self.storage).await?;
+        let next =
+            flow::uninstall_paths(started.clone(), package_home.clone(), &self.storage, paths)
+                .await?;
+        let (tracked, replaced) = self
+            .lineage
+            .update(&self.storage, |entry| {
+                let Some(current) = entry.as_mut() else {
+                    return Err(write_step::not_installed(&self.namespace));
+                };
+                let replaced: BTreeMap<PathBuf, Multihash<256>> = paths
+                    .iter()
+                    .filter_map(|path| {
+                        let now = current.paths.get(path)?;
+                        let was = started.paths.get(path);
+                        was.is_none_or(|was| was.hash != now.hash)
+                            .then(|| (path.clone(), now.hash))
+                    })
+                    .collect();
+                *current = write_step::own_change(&started, &next, current);
+                for path in paths {
+                    current.paths.remove(path);
+                }
+                Ok((current.paths.clone(), replaced))
+            })
+            .await?;
+        write_step::remove_if_unchanged(&self.storage, &package_home, &replaced).await;
+        Ok(tracked)
     }
 
     pub async fn revert_paths(&self, paths: &Vec<String>) -> Res {
@@ -422,50 +552,76 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     ) -> Res<CommitState> {
         self.scaffold_paths().await?;
 
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let mut manifest = self.manifest().await?;
+        // A commit is local work only, so one that finds the entry moved
+        // under it does it again from the entry it found.
+        for _ in 0..=write_step::MAX_REDO {
+            let (package_home, started) = self.lineage.read(&self.storage).await?;
+            let mut manifest = self.manifest_from_lineage(&started).await?;
 
-        let host_config = match host_config_opt {
-            Some(hc) => hc,
-            None => match lineage.remote_uri.as_ref() {
-                Some(remote_uri) if !remote_uri.bucket.is_empty() => {
-                    self.remote.host_config(remote_uri.origin.as_ref()).await?
-                }
-                _ => HostConfig::default(),
-            },
-        };
+            let host_config = match host_config_opt.clone() {
+                Some(hc) => hc,
+                None => match started.remote_uri.as_ref() {
+                    Some(remote_uri) if !remote_uri.bucket.is_empty() => {
+                        self.remote.host_config(remote_uri.origin.as_ref()).await?
+                    }
+                    _ => HostConfig::default(),
+                },
+            };
 
-        // Captured before `host_config` moves into `flow::status`: the commit
-        // gate fetches the workflow's config + schemas from the same origin the
-        // workflow was resolved against.
-        let host = host_config.host.clone();
+            // Captured before `host_config` moves into `flow::status`: the commit
+            // gate fetches the workflow's config + schemas from the same origin the
+            // workflow was resolved against.
+            let host = host_config.host.clone();
 
-        let (lineage, status) = flow::status(
-            lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config,
-        )
-        .await?;
+            let (lineage, status) = flow::status(
+                started.clone(),
+                &self.storage,
+                &manifest,
+                &package_home,
+                host_config,
+            )
+            .await?;
 
-        let (lineage, commit) = flow::commit(
-            lineage,
-            &mut manifest,
-            &self.paths,
-            &self.storage,
-            &*self.remote,
-            host.as_ref(),
-            package_home,
-            status,
-            self.namespace.clone(),
-            message,
-            user_meta,
-            workflow,
-        )
-        .await?;
-        self.lineage.write(&self.storage, lineage).await?;
-        Ok(commit)
+            let (next, commit) = flow::commit(
+                lineage,
+                &mut manifest,
+                &self.paths,
+                &self.storage,
+                &*self.remote,
+                host.as_ref(),
+                package_home,
+                status,
+                self.namespace.clone(),
+                message.clone(),
+                user_meta.clone(),
+                workflow.clone(),
+            )
+            .await?;
+            let verdict = self
+                .lineage
+                .update(&self.storage, |entry| {
+                    let Some(current) = entry.as_mut() else {
+                        return Ok(Verdict::Gone);
+                    };
+                    if !write_step::same_revision(current, &started)
+                        || !write_step::same_rows(&current.paths, &started.paths)
+                    {
+                        return Ok(Verdict::Redo(current.clone()));
+                    }
+                    *current = write_step::own_change(&started, &next, current);
+                    Ok(Verdict::Written(()))
+                })
+                .await?;
+            match verdict {
+                Verdict::Written(()) => return Ok(commit),
+                Verdict::Gone => return Err(write_step::not_installed(&self.namespace)),
+                Verdict::Redo(_) | Verdict::Refused => {}
+            }
+        }
+        Err(write_step::changed_underneath(
+            &self.namespace,
+            "committing",
+        ))
     }
 
     /// Commit any working-directory changes (if any) and push the revision to
@@ -489,7 +645,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     ) -> Res<PublishOutcome> {
         self.scaffold_paths().await?;
 
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let (package_home, started) = self.lineage.read(&self.storage).await?;
+        let lineage = started.clone();
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
             Some(_) => {
@@ -506,7 +663,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
+        let mut manifest = self.manifest_from_lineage(&started).await?;
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
@@ -547,10 +704,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             flow::PublishOutcome::PushedOnly(p) => (false, p),
         };
         let certified_latest = push_result.certified_latest;
-        let lineage = self
-            .lineage
-            .write(&self.storage, push_result.lineage)
-            .await?;
+        let lineage = self.write_pushed(&started, &push_result.lineage).await?;
         let push = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
@@ -567,6 +721,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths().await?;
 
         let (_, lineage) = self.lineage.read(&self.storage).await?;
+        let started = lineage.clone();
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
             Some(_) => {
@@ -589,7 +744,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let manifest = self.manifest().await?;
+        let manifest = self.manifest_from_lineage(&started).await?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
@@ -605,11 +760,37 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         let certified_latest = result.certified_latest;
-        let lineage = self.lineage.write(&self.storage, result.lineage).await?;
+        let lineage = self.write_pushed(&started, &result.lineage).await?;
         Ok(PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
         })
+    }
+
+    /// The write step of a push, and of publish's push. By now the upload and
+    /// the tag have happened, so the remote fields are facts and always land.
+    /// A commit made on top of the pushed one while the push ran stays
+    /// pending; its chain now starts at the pushed hash.
+    async fn write_pushed(
+        &self,
+        started: &lineage::PackageLineage,
+        next: &lineage::PackageLineage,
+    ) -> Res<lineage::PackageLineage> {
+        self.lineage
+            .update(&self.storage, |entry| {
+                let current = entry
+                    .as_mut()
+                    .ok_or_else(|| write_step::not_installed(&self.namespace))?;
+                let newer_commit = (current.commit != started.commit)
+                    .then(|| current.commit.clone())
+                    .flatten();
+                *current = write_step::own_change(started, next, current);
+                if newer_commit.is_some() {
+                    current.commit = newer_commit;
+                }
+                Ok(current.clone())
+            })
+            .await
     }
 
     /// Record this package's standing [`SyncScope`].
@@ -643,12 +824,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     ) -> Res<flow::PullReport> {
         self.scaffold_paths().await?;
 
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let (package_home, started) = self.lineage.read(&self.storage).await?;
+        let lineage = started.clone();
         let remote_uri = lineage.remote()?.clone();
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
+        let mut manifest = self.manifest_from_lineage(&started).await?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
@@ -665,20 +847,140 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        let (lineage, report) = flow::pull(
+        let (next, report) = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
             &*self.remote,
-            package_home,
+            package_home.clone(),
             snapshot,
             self.namespace.clone(),
             scope,
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.write_latest(started, next, &package_home, "pulling")
+            .await?;
         Ok(report)
+    }
+
+    /// The write step of a pull or a reset, which moved the package from
+    /// `started` to latest as `next`.
+    ///
+    /// - The entry is already where `next` is (another pull got there first):
+    ///   nothing to write.
+    /// - Its revision moved anywhere else (a commit, push or reset landed):
+    ///   refuse and write nothing. The files this one placed stay, as local
+    ///   changes against the revision that landed.
+    /// - Paths were added (a download landed): reconcile them to latest the
+    ///   way a pull treats any tracked path, then try again, once.
+    /// - A path was uninstalled: the uninstall wins. The path stays out, and
+    ///   its file goes if it still holds what this writer placed.
+    async fn write_latest(
+        &self,
+        mut started: lineage::PackageLineage,
+        mut next: lineage::PackageLineage,
+        package_home: &Path,
+        verb: &'static str,
+    ) -> Res<lineage::PackageLineage> {
+        for round in 0..=write_step::MAX_REDO {
+            let verdict = self
+                .lineage
+                .update(&self.storage, |entry| {
+                    let Some(current) = entry.as_mut() else {
+                        return Ok(Verdict::Gone);
+                    };
+                    if !write_step::same_revision(current, &started) {
+                        return Ok(if write_step::same_revision(current, &next) {
+                            Verdict::Written((current.clone(), BTreeMap::new()))
+                        } else {
+                            Verdict::Refused
+                        });
+                    }
+                    if !write_step::paths_added(&started, current).is_empty() {
+                        return Ok(Verdict::Redo(current.clone()));
+                    }
+                    let mut dropped = BTreeMap::new();
+                    for path in write_step::paths_removed(&started, current) {
+                        if let Some(state) = next.paths.remove(&path) {
+                            dropped.insert(path, state.hash);
+                        }
+                    }
+                    *current = write_step::own_change(&started, &next, current);
+                    Ok(Verdict::Written((current.clone(), dropped)))
+                })
+                .await?;
+            match verdict {
+                Verdict::Written((lineage, dropped)) => {
+                    write_step::remove_if_unchanged(&self.storage, package_home, &dropped).await;
+                    return Ok(lineage);
+                }
+                Verdict::Gone => {
+                    let placed = write_step::placed(&started, &next);
+                    write_step::remove_placed(&self.storage, package_home, &placed).await;
+                    return Err(write_step::not_installed(&self.namespace));
+                }
+                Verdict::Redo(current) if round < write_step::MAX_REDO => {
+                    next = self
+                        .reconcile_to_latest(&started, &current, next, package_home)
+                        .await?;
+                    started = current;
+                }
+                Verdict::Redo(_) | Verdict::Refused => break,
+            }
+        }
+        Err(write_step::changed_underneath(&self.namespace, verb))
+    }
+
+    /// The pull's redo: `current` tracks paths `started` did not, placed by a
+    /// download at the revision the pull started from. Each goes to latest's
+    /// row in `next`: kept where latest has the same bytes, replaced where it
+    /// has others and the file still holds what the download placed, dropped
+    /// with its file where latest lacks it. A file edited since the download
+    /// keeps its row, and reads as the local change it is.
+    async fn reconcile_to_latest(
+        &self,
+        started: &lineage::PackageLineage,
+        current: &lineage::PackageLineage,
+        mut next: lineage::PackageLineage,
+        package_home: &Path,
+    ) -> Res<lineage::PackageLineage> {
+        let mut latest = self.manifest_from_lineage(&next).await?;
+        let mut gone = BTreeMap::new();
+        let mut install = Vec::new();
+        let mut protect = BTreeMap::new();
+        for path in write_step::paths_added(started, current) {
+            let state = &current.paths[&path];
+            let file = package_home.join(&path);
+            let Some(row) = latest.get_record(&path) else {
+                next.paths.remove(&path);
+                gone.insert(path, state.hash);
+                continue;
+            };
+            if Multihash::from(row.hash.clone()) != state.hash
+                && write_step::holds(&self.storage, &file, &state.hash).await
+                && let Some(placed_row) = write_step::row_of(&path, &state.hash)
+            {
+                install.push(path.clone());
+                protect.insert(path.clone(), placed_row);
+            }
+            next.paths.insert(path, state.clone());
+        }
+        write_step::remove_if_unchanged(&self.storage, package_home, &gone).await;
+        let (next, _) = flow::install_paths_over(
+            next,
+            &mut latest,
+            &self.paths,
+            package_home.to_path_buf(),
+            self.namespace.clone(),
+            &self.storage,
+            &*self.remote,
+            &install.iter().collect::<Vec<&PathBuf>>(),
+            &flow::Protect::BaseContent(&protect),
+            flow::OnMismatch::Skip,
+        )
+        .await?;
+        Ok(next)
     }
 
     /// Dry-run: what would `pull` do right now, without mutating anything?
@@ -804,19 +1106,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
 
-        // Push first so the hash we tag exists on remote. Push mutates
-        // lineage on disk, so re-read to pick up the new remote hash.
-        let lineage = if lineage.commit.is_some() {
+        // Push first so the hash we tag exists on remote. The push writes the
+        // entry, so certify starts afresh from what it wrote.
+        if lineage.commit.is_some() {
             self.push(None).await?;
-            self.lineage.read(&self.storage).await?.1
-        } else {
-            lineage
-        };
+        }
+        let (_, started) = self.lineage.read(&self.storage).await?;
 
-        let pushed_manifest_uri = lineage.remote()?.clone();
-        let lineage = flow::certify_latest(lineage, &*self.remote, pushed_manifest_uri).await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote()?.clone())
+        let pushed_manifest_uri = started.remote()?.clone();
+        let next =
+            flow::certify_latest(started.clone(), &*self.remote, pushed_manifest_uri.clone())
+                .await?;
+        // The tag moved, so `latest_hash` is a fact and always lands;
+        // `base_hash` only while the entry still names the hash it tagged.
+        self.lineage
+            .update(&self.storage, |entry| {
+                let current = entry
+                    .as_mut()
+                    .ok_or_else(|| write_step::not_installed(&self.namespace))?;
+                current.latest_hash.clone_from(&next.latest_hash);
+                if current.remote_uri.as_ref() == Some(&pushed_manifest_uri) {
+                    current.base_hash.clone_from(&next.base_hash);
+                }
+                Ok(current.remote()?.clone())
+            })
+            .await
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
@@ -827,18 +1141,21 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
-        let lineage = flow::reset_to_latest(
+        let mut manifest = self.manifest_from_lineage(&lineage).await?;
+        let started = lineage.clone();
+        let next = flow::reset_to_latest(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
             &*self.remote,
-            package_home,
+            package_home.clone(),
             self.namespace.clone(),
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        let lineage = self
+            .write_latest(started, next, &package_home, "resetting")
+            .await?;
         Ok(lineage.remote()?.clone())
     }
 
@@ -860,7 +1177,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             )));
         }
 
-        let (lineage, commit) = flow::undo_commit(
+        let started = lineage.clone();
+        let (next, commit) = flow::undo_commit(
             lineage,
             &self.paths,
             &self.storage,
@@ -868,8 +1186,32 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             self.namespace.clone(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
+        self.write_local(&started, &next, "undoing the commit")
+            .await?;
         Ok(commit)
+    }
+
+    /// The write step of a writer that changed only local state: undo commit,
+    /// set remote and its recommit. If the revision moved meanwhile it
+    /// refuses: nothing remote happened, and the user can press again.
+    async fn write_local(
+        &self,
+        started: &lineage::PackageLineage,
+        next: &lineage::PackageLineage,
+        verb: &'static str,
+    ) -> Res {
+        self.lineage
+            .update(&self.storage, |entry| {
+                let current = entry
+                    .as_mut()
+                    .ok_or_else(|| write_step::not_installed(&self.namespace))?;
+                if !write_step::same_revision(current, started) {
+                    return Err(write_step::changed_underneath(&self.namespace, verb));
+                }
+                *current = write_step::own_change(started, next, current);
+                Ok(())
+            })
+            .await
     }
 
     pub async fn set_remote(
@@ -884,6 +1226,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             )));
         }
         let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        let started = lineage.clone();
         if let Some(existing) = &lineage.remote_uri
             && !existing.hash.is_empty()
         {
@@ -922,7 +1265,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             && lineage.commit.is_some()
         {
             return match self
-                .recommit_for_remote(lineage.clone(), origin, bucket, workflow)
+                .recommit_for_remote(&started, lineage.clone(), origin, bucket, workflow)
                 .await
             {
                 Ok(()) => Ok(SetRemoteOutcome::default()),
@@ -935,7 +1278,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                     // A resolution or transient failure (e.g. not logged in
                     // yet, or an unknown workflow id): persist the remote so
                     // the user can fix the problem and retry.
-                    self.lineage.write(&self.storage, lineage).await?;
+                    self.write_local(&started, &lineage, "setting the remote")
+                        .await?;
                     if explicit_workflow {
                         // The remote is persisted, but the chosen workflow
                         // could not be applied. Fail loudly so the user can
@@ -967,13 +1311,15 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         }
 
         // No origin or no local commit — nothing to recommit or validate.
-        self.lineage.write(&self.storage, lineage).await?;
+        self.write_local(&started, &lineage, "setting the remote")
+            .await?;
 
         Ok(SetRemoteOutcome::default())
     }
 
     async fn recommit_for_remote(
         &self,
+        started: &lineage::PackageLineage,
         lineage: lineage::PackageLineage,
         origin: Host,
         bucket: String,
@@ -1005,8 +1351,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             workflows_config.as_ref(),
         )
         .await?;
-        let manifest = self.manifest().await?;
-        let lineage = flow::recommit(
+        let manifest = self.manifest_from_lineage(started).await?;
+        let next = flow::recommit(
             lineage,
             &manifest,
             &self.paths,
@@ -1019,8 +1365,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             workflows_config.as_ref(),
         )
         .await?;
-        self.lineage.write(&self.storage, lineage).await?;
-        Ok(())
+        self.write_local(started, &next, "setting the remote").await
     }
 
     /// The remote host and the `.quilt/workflows/config.yml` address for this

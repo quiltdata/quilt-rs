@@ -190,8 +190,9 @@ impl Rev1Installed {
         logical_key: &str,
         version: &str,
     ) -> Arc<crate::io::remote::mocks::Gate> {
-        self.remote()
-            .park(&format!("s3://{BUCKET}/f/a/{logical_key}?versionId={version}"))
+        self.remote().park(&format!(
+            "s3://{BUCKET}/f/a/{logical_key}?versionId={version}"
+        ))
     }
 }
 

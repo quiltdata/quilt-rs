@@ -145,6 +145,10 @@ impl Storage for LocalStorage {
             })
         })
     }
+
+    async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<super::LockGuard> {
+        super::lock::lock_exclusive(path.as_ref()).await
+    }
 }
 
 impl Default for LocalStorage {

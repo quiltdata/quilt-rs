@@ -138,49 +138,73 @@ impl DomainLineageIo {
         }
     }
 
-    /// Write a specific package lineage to the domain lineage
-    pub async fn write_package_lineage(
+    /// `data.json.lock`, beside the file it guards. `data.json` itself is
+    /// replaced by rename, and a lock on the old file would guard nothing.
+    fn lock_path(&self) -> PathBuf {
+        let mut path = self.path.clone().into_os_string();
+        path.push(".lock");
+        PathBuf::from(path)
+    }
+
+    /// **The write step.** Under the lock: re-read the whole record, let
+    /// `step` change it, and write it back if it changed. An error from `step`
+    /// writes nothing.
+    ///
+    /// Every write of `data.json` goes through here, so the lock is held for
+    /// a re-read, a splice and a write, never for a writer's slow work. A
+    /// writer that started from an older copy compares it inside `step` with
+    /// what it finds, and applies only its own change.
+    pub async fn update<T>(
+        &self,
+        storage: &(impl Storage + Sync),
+        step: impl FnOnce(&mut DomainLineage) -> Res<T>,
+    ) -> Res<T> {
+        let _locked = storage.lock_exclusive(self.lock_path()).await?;
+        let mut lineage = self.read(storage).await?;
+        let before = lineage.clone();
+        let out = step(&mut lineage)?;
+        if lineage != before {
+            self.write_unlocked(storage, &lineage).await?;
+        }
+        Ok(out)
+    }
+
+    /// [`Self::update`] for one package's entry: `step` sees `None` when the
+    /// package is not installed, and setting it to `None` removes the entry.
+    pub async fn update_package_lineage<T>(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
-        package_lineage: PackageLineage,
-    ) -> Res<PackageLineage> {
-        let mut domain_lineage = self.read(storage).await?;
-        domain_lineage
-            .packages
-            .insert(namespace.clone(), package_lineage.clone());
-        self.write(storage, domain_lineage).await?;
-        Ok(package_lineage)
+        step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
+    ) -> Res<T> {
+        self.update(storage, |lineage| {
+            let mut entry = lineage.packages.remove(namespace);
+            let out = step(&mut entry);
+            if let Some(entry) = entry {
+                lineage.packages.insert(namespace.clone(), entry);
+            }
+            out
+        })
+        .await
     }
 
-    /// Apply `edit` to one package's entry within a **single** read of the
-    /// domain, then write.
-    ///
-    /// Every lineage mutation here is a read-modify-write over the whole file
-    /// with no cross-operation lock, so concurrent writers are last-writer-wins
-    /// on a package's entry. This does not fix that — it narrows it. A caller
-    /// that reads the entry, does other work, then writes it back holds a stale
-    /// copy for the whole of that work and clobbers anything that landed
-    /// meanwhile; going through here the stale window is the two local file
-    /// operations below.
-    ///
-    /// Use it for a field update that does not depend on other work. A caller
-    /// that must compute from the entry and then write it (pull, commit) cannot
-    /// use this and keeps the wider window.
+    /// Apply `edit` to one package's entry under the lock and write it: a
+    /// field update that does not depend on other work. A package that is not
+    /// installed is an error.
     pub async fn edit_package_lineage(
         &self,
         storage: &(impl Storage + Sync),
         namespace: &Namespace,
         edit: impl FnOnce(&mut PackageLineage),
     ) -> Res<PackageLineage> {
-        let mut domain_lineage = self.read(storage).await?;
-        let package = domain_lineage.packages.get_mut(namespace).ok_or_else(|| {
-            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
-        })?;
-        edit(package);
-        let updated = package.clone();
-        self.write(storage, domain_lineage).await?;
-        Ok(updated)
+        self.update_package_lineage(storage, namespace, |entry| {
+            let package = entry.as_mut().ok_or_else(|| {
+                Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
+            })?;
+            edit(package);
+            Ok(package.clone())
+        })
+        .await
     }
 
     pub async fn set_home(
@@ -188,7 +212,8 @@ impl DomainLineageIo {
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
     ) -> Res<DomainLineage> {
-        match storage.read_bytes(&self.path).await {
+        let _locked = storage.lock_exclusive(self.lock_path()).await?;
+        let lineage = match storage.read_bytes(&self.path).await {
             Ok(bytes) => {
                 let mut lineage = match DomainLineage::from_slice(&bytes) {
                     Ok(lineage) => lineage,
@@ -198,25 +223,37 @@ impl DomainLineageIo {
                     Err(err) => return Err(err),
                 };
                 lineage.home = home.into();
-                self.write(storage, lineage).await
+                lineage
             }
-            Err(_) if !storage.exists(&self.path).await => {
-                self.write(storage, DomainLineage::new(home)).await
-            }
-            Err(e) => Err(e),
-        }
+            Err(_) if !storage.exists(&self.path).await => DomainLineage::new(home),
+            Err(e) => return Err(e),
+        };
+        self.write_unlocked(storage, &lineage).await?;
+        Ok(lineage)
     }
 
+    /// Replace the whole record, under the lock. For setting a domain up; a
+    /// writer of one package goes through [`Self::update_package_lineage`], or
+    /// it writes back every other package's entry as it read them.
     pub async fn write(
         &self,
         storage: &(impl Storage + Sync),
         lineage: DomainLineage,
     ) -> Res<DomainLineage> {
-        let contents = serde_json::to_string_pretty(&lineage)?;
+        let _locked = storage.lock_exclusive(self.lock_path()).await?;
+        self.write_unlocked(storage, &lineage).await?;
+        Ok(lineage)
+    }
+
+    async fn write_unlocked(
+        &self,
+        storage: &(impl Storage + Sync),
+        lineage: &DomainLineage,
+    ) -> Res {
+        let contents = serde_json::to_string_pretty(lineage)?;
         storage
             .write_byte_stream(self.path.clone(), contents.into_bytes().into())
-            .await?;
-        Ok(lineage)
+            .await
     }
 
     #[must_use]
@@ -234,9 +271,8 @@ pub struct PackageLineageIo {
 }
 
 impl PackageLineageIo {
-    /// See [`DomainLineageIo::edit_package_lineage`] — a field update inside a
-    /// single read, for callers that do not need to compute from the entry
-    /// first.
+    /// See [`DomainLineageIo::edit_package_lineage`]: a field update under the
+    /// lock, for callers that do not need to compute from the entry first.
     pub async fn edit(
         &self,
         storage: &(impl Storage + Sync),
@@ -273,13 +309,15 @@ impl PackageLineageIo {
         Ok(domain_lineage.home)
     }
 
-    pub async fn write(
+    /// The write step for this package's entry; see
+    /// [`DomainLineageIo::update_package_lineage`].
+    pub async fn update<T>(
         &self,
         storage: &(impl Storage + Sync),
-        lineage: PackageLineage,
-    ) -> Res<PackageLineage> {
+        step: impl FnOnce(&mut Option<PackageLineage>) -> Res<T>,
+    ) -> Res<T> {
         self.domain_lineage
-            .write_package_lineage(storage, &self.namespace, lineage)
+            .update_package_lineage(storage, &self.namespace, step)
             .await
     }
 }
@@ -602,7 +640,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn test_write_package_lineage() -> Res {
+    async fn test_update_package_lineage() -> Res {
         let storage = MockStorage::default();
         let file_path = PathBuf::from("lineage.json");
         let lineage_io = DomainLineageIo::new(file_path.clone());
@@ -634,7 +672,10 @@ mod tests {
 
         // Write the package lineage
         let written_lineage = lineage_io
-            .write_package_lineage(&storage, &namespace, package_lineage.clone())
+            .update_package_lineage(&storage, &namespace, |entry| {
+                *entry = Some(package_lineage.clone());
+                Ok(package_lineage.clone())
+            })
             .await?;
 
         // Verify the written lineage matches what we provided
@@ -661,7 +702,10 @@ mod tests {
 
         // Write the updated package lineage
         lineage_io
-            .write_package_lineage(&storage, &namespace, updated_package_lineage.clone())
+            .update_package_lineage(&storage, &namespace, |entry| {
+                *entry = Some(updated_package_lineage.clone());
+                Ok(())
+            })
             .await?;
 
         // Read the domain lineage again to verify the update

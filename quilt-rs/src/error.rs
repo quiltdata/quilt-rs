@@ -315,6 +315,15 @@ pub enum PackageOpError {
 
     #[error("package is already up-to-date")]
     AlreadyUpToDate,
+
+    /// The package's entry moved while this operation worked, in a way the
+    /// operation could not fold in, so it wrote nothing. `verb` names the
+    /// operation: "pulling", "downloading".
+    #[error("{namespace} changed while {verb}; try again")]
+    ChangedUnderneath {
+        namespace: Namespace,
+        verb: &'static str,
+    },
 }
 
 /// The error type for this library

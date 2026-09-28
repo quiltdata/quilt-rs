@@ -16,8 +16,10 @@ use crate::Res;
 
 pub mod auth;
 mod local;
+mod lock;
 
 pub use local::LocalStorage;
+pub use lock::LockGuard;
 
 // Mock storage is available during testing, or to downstream crates via the
 // `testing` feature.
@@ -89,6 +91,17 @@ pub trait Storage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
+
+    /// Locks `path` exclusively until the guard drops: against every other
+    /// holder in this process, through any handle on the same file, and in any
+    /// other process. Creates the file if it is missing.
+    ///
+    /// Hold it for local file operations only. A holder that awaits the
+    /// network keeps every other writer waiting for as long.
+    fn lock_exclusive(
+        &self,
+        path: impl AsRef<Path> + Send,
+    ) -> impl Future<Output = Res<LockGuard>> + Send;
 }
 
 impl<S: Storage + Send + Sync> Storage for Arc<S> {
@@ -142,6 +155,10 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         body: ByteStream,
     ) -> Res {
         (**self).write_byte_stream(path, body).await
+    }
+
+    async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<LockGuard> {
+        (**self).lock_exclusive(path).await
     }
 }
 
