@@ -1,6 +1,8 @@
 use leptos::prelude::*;
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
+use std::future::Future;
+use std::pin::Pin;
 
 #[cfg(test)]
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -13,7 +15,6 @@ use quilt_sync_ui::components;
 use quilt_sync_ui::kit;
 use quilt_sync_ui::pages;
 use quilt_sync_ui::panic_report;
-use quilt_sync_ui::routes::UNFINISHED_PACKAGE_PAGE;
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -43,7 +44,7 @@ fn App() -> impl IntoView {
             <Routes fallback=|| view! { <pages::NotFound /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=pages::Commit />
-                <Route path=path!("/installed-package") view=|| view! { <PackagePage /> } />
+                <Route path=path!("/installed-package") view=|| view! { <PackagePage read=read_settings /> } />
                 <Route path=path!("/installed-packages-list") view=pages::InstalledPackagesList />
                 <Route path=path!("/login") view=pages::Login />
                 <Route path=path!("/main") view=pages::MainPage />
@@ -57,81 +58,111 @@ fn App() -> impl IntoView {
     }
 }
 
-/// `/` is the main page, and the flag decides which one it is.
+/// `/` is the main page, and the design preview decides which one it is.
 ///
 /// Rendered here rather than redirected to: one route means every way home —
 /// the logo, a breadcrumb, a Cancel — arrives at the page the reader has switched
 /// on, instead of at whichever page the link was written against. `/main` and
 /// `/installed-packages-list` stay reachable on purpose, for looking at one
 /// specific page while both exist.
+#[component]
+fn Home() -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read_settings
+            v2=|| view! { <pages::MainPage /> }.into_any()
+            v1=|| view! { <pages::InstalledPackagesList /> }.into_any()
+            loading="Loading QuiltSync"
+        />
+    }
+}
+
+/// `/installed-package` is one package's screen, and the design preview decides
+/// which one — the same answer, read the same way, as [`Home`].
+///
+/// One route, the answer read in place, for the reason [`Home`] has it: every
+/// link to a package (a roster row, a queue remedy, a deep link, a post-commit
+/// return) lands on the page the reader has switched on rather than on whichever
+/// one the link was written against. There is no second address for either page.
+///
+/// `read` is a parameter so a test can answer the settings read without a Tauri
+/// host; the route passes [`read_settings`].
+#[component]
+fn PackagePage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::InstalledPackageV2 /> }.into_any()
+            v1=|| view! { <pages::InstalledPackage /> }.into_any()
+            loading="Loading package"
+        />
+    }
+}
+
+/// The settings read a route decides its generation from.
+type SettingsRead = fn() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData, String>>>>;
+
+fn read_settings() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData, String>>>> {
+    Box::pin(commands::get_settings_data())
+}
+
+/// One route that is two pages: `v2` when [`design_preview`] says so, `v1`
+/// otherwise, asked afresh on every visit.
 ///
 /// A fetch, so there is one frame with nothing on it. That is deliberate over
 /// guessing: showing v1 and then swapping it for v2 is worse than a blank frame.
+/// Asked per visit rather than once for the session, because saving the
+/// preference in Settings has to take effect on the next page the reader opens,
+/// and a cached answer would need a second path to hear about that.
+///
+/// Recorded on the root here rather than fetched again out in `App`: this is the
+/// one read of the preference the app already makes, and `/` is where every
+/// session starts, so the marker is set before any other route can be reached
+/// and updated whenever the reader comes back having changed it. A launch by
+/// deep link starts on `/remote-package` instead, and hands over to
+/// `/installed-package`, which sets it there.
 #[component]
-fn Home() -> impl IntoView {
-    let settings = LocalResource::new(|| async move { commands::get_settings_data().await });
+fn ByDesign(
+    read: SettingsRead,
+    v2: fn() -> AnyView,
+    v1: fn() -> AnyView,
+    /// What the loading frame's spinner announces.
+    loading: &'static str,
+) -> impl IntoView {
+    let settings = LocalResource::new(read);
 
     view! {
-        <Suspense fallback=home_loading>
+        <Suspense fallback=move || design_loading(loading)>
             {move || Suspend::new(async move {
                 let settings = settings.await;
-                let v2 = design_preview(settings.as_ref().map_err(String::as_str));
-                // Recorded on the root here rather than fetched again out in
-                // `App`: this is the one read of the flag the app already makes,
-                // and `/` is where every session starts, so the marker is set
-                // before any other route can be reached and updated whenever the
-                // reader comes back having changed it.
-                quilt_sync_ui::theme::set_v2(v2);
-                if v2 {
-                    view! { <pages::MainPage /> }.into_any()
-                } else {
-                    view! { <pages::InstalledPackagesList /> }.into_any()
-                }
+                let on = design_preview(settings.as_ref().map_err(String::as_str));
+                quilt_sync_ui::theme::set_v2(on);
+                if on { v2() } else { v1() }
             })}
         </Suspense>
     }
 }
 
-/// `/installed-package` is one package's screen, and [`UNFINISHED_PACKAGE_PAGE`]
-/// decides which one.
-///
-/// One route, the answer read in place — the shape [`Home`] has, for the reason
-/// [`Home`] has it: every link to a package (a roster row, a queue remedy, a deep
-/// link, a post-commit return) lands on the page that is switched on rather than
-/// on whichever one the link was written against. There is no second address for
-/// either page.
-///
-/// No fetch and no loading frame, unlike [`Home`]: the answer is compiled in, so
-/// there is nothing to wait for and no frame to fill while waiting.
-#[component]
-fn PackagePage() -> impl IntoView {
-    if package_page_v2() {
-        view! { <pages::InstalledPackageV2 /> }.into_any()
-    } else {
-        view! { <pages::InstalledPackage /> }.into_any()
-    }
-}
-
-/// What `/` shows while it works out which page it is.
+/// What a [`ByDesign`] route shows while it works out which page it is.
 ///
 /// A spinner, which `kit::Spinner`'s own doc reserves for two jobs — this is the
 /// second, "filling a region that cannot be skeletonised because its contents are
 /// not a list of rows". A skeleton is the right loading state for a list, because
 /// it holds the shape the content will take; here not even the page is decided
 /// yet, so there is no shape to hold. No appbar around it either: drawing one
-/// page's chrome and then swapping it for the other's is the flicker this route
-/// exists to avoid.
+/// page's chrome and then swapping it for the other's is the flicker these routes
+/// exist to avoid.
 ///
-/// The ground is `/`'s alone. `data-home-frame` is styled off `theme::set_v2`'s
-/// root marker (`_base.scss`), which records the reader's design preview — see
-/// [`design_preview`] — and a frame may paint from that marker only where it
-/// predicts what is coming. That is here and nowhere else: `/` renders v2 on
-/// exactly the value the marker is set from, so the ground it paints is the
-/// ground the page then keeps.
-fn home_loading() -> AnyView {
+/// The ground is these routes' alone. `data-home-frame` is styled off
+/// `theme::set_v2`'s root marker (`_base.scss`), which records the reader's
+/// design preview — see [`design_preview`] — and a frame may paint from that
+/// marker only where it predicts what is coming. That is here and nowhere else:
+/// `/` and `/installed-package` render v2 on exactly the value the marker is set
+/// from, so the ground the frame paints is the ground the page then keeps.
+fn design_loading(label: &'static str) -> AnyView {
     view! {
         <div data-home-frame>
-            <kit::Spinner variant=kit::SpinnerVariant::Region aria_label="Loading QuiltSync" />
+            <kit::Spinner variant=kit::SpinnerVariant::Region aria_label=label />
         </div>
     }
     .into_any()
@@ -144,15 +175,6 @@ fn home_loading() -> AnyView {
 /// v1 is the generation that has always worked.
 fn design_preview(settings: Result<&commands::SettingsData, &str>) -> bool {
     settings.is_ok_and(|data| data.experimental.main_page_v2)
-}
-
-/// Whether `/installed-package` renders v2.
-///
-/// The constant and nothing else. A developer working on the rebuilt screen flips
-/// it and ticks *New design preview* the way any reader would — the two answers
-/// are asked separately, and neither is inferred from the other.
-fn package_page_v2() -> bool {
-    UNFINISHED_PACKAGE_PAGE
 }
 
 #[cfg(test)]
@@ -196,12 +218,7 @@ mod tests {
         //
         // This pins that the frame is not empty and that it speaks. It cannot
         // pin what it looks like: no stylesheet is loaded here.
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&host).unwrap();
-        leptos::mount::mount_to(host.clone(), home_loading).forget();
-
-        let el: web_sys::Element = host.into();
+        let el = Mounted::new(|| design_loading("Loading QuiltSync"));
         // Inside the frame `_base.scss` grounds for a v2 reader — the two are
         // pinned together because the frame is what a stylesheet can see.
         let status = el
@@ -215,15 +232,124 @@ mod tests {
         );
     }
 
-    /// The one real cost of an in-code flag: it can be committed on by accident,
-    /// which would ship the unfinished package page to every reader. Flip it
-    /// locally to work on that screen; this is what stops it reaching a release.
+    fn settings_on() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
+        Box::pin(async { Ok(settings_stub(true)) })
+    }
+
+    fn settings_off() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
+        Box::pin(async { Ok(settings_stub(false)) })
+    }
+
+    fn settings_fail() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
+        Box::pin(async { Err("no settings".to_string()) })
+    }
+
+    async fn sleep_ms(ms: i32) {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            web_sys::window()
+                .unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+                .unwrap();
+        });
+        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    }
+
+    /// A view mounted under `<body>`, torn down when this is dropped — after the
+    /// test's assertions, and on a failing one too.
+    ///
+    /// `test_support::mount` is the library's and `#[cfg(test)]`, so this binary
+    /// cannot reach it; this is the same shape, but owning its teardown: a
+    /// `Router` left mounted keeps listening for clicks on the window, and the
+    /// first one registered takes them from every later test's.
+    struct Mounted {
+        el: web_sys::Element,
+        owner: Owner,
+        handle: Option<Box<dyn std::any::Any>>,
+    }
+
+    impl Mounted {
+        fn new<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> Self {
+            let doc = web_sys::window().unwrap().document().unwrap();
+            let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
+            doc.body().unwrap().append_child(&host).unwrap();
+            let owner = Owner::new();
+            let handle = owner.with(|| leptos::mount::mount_to(host.clone(), f));
+            Self {
+                el: host.into(),
+                owner,
+                handle: Some(Box::new(handle)),
+            }
+        }
+    }
+
+    impl std::ops::Deref for Mounted {
+        type Target = web_sys::Element;
+        fn deref(&self) -> &web_sys::Element {
+            &self.el
+        }
+    }
+
+    impl Drop for Mounted {
+        fn drop(&mut self) {
+            // The route tests set the root marker. Put back here, after the
+            // assertions, so the next test starts from v1's.
+            quilt_sync_ui::theme::set_v2(false);
+            drop(self.handle.take());
+            self.owner.cleanup();
+            self.el.remove();
+        }
+    }
+
+    /// `/installed-package` as the router draws it, over a stubbed settings read.
+    ///
+    /// Neither page has a Tauri host here, so each draws its own failure — inside
+    /// its own frame, which is what tells them apart: v2's `PageLayout` carries
+    /// `data-v2-page`, v1's `Layout` is `#layout`. The route sets the marker;
+    /// [`Mounted`]'s drop puts it back.
+    async fn package_route(read: SettingsRead) -> Mounted {
+        let el = Mounted::new(move || {
+            view! {
+                <Router>
+                    <PackagePage read=read />
+                </Router>
+            }
+        });
+        sleep_ms(100).await;
+        el
+    }
+
+    fn draws_v2(el: &web_sys::Element) -> bool {
+        el.query_selector("[data-v2-page]").unwrap().is_some()
+    }
+
+    fn draws_v1(el: &web_sys::Element) -> bool {
+        el.query_selector("#layout").unwrap().is_some()
+    }
+
     #[wasm_bindgen_test]
-    fn the_unfinished_package_page_is_off() {
+    async fn the_package_route_is_v2_with_the_preview_on() {
+        let el = package_route(settings_on).await;
+        assert!(draws_v2(&el), "markup was {}", el.inner_html());
         assert!(
-            !package_page_v2(),
-            "UNFINISHED_PACKAGE_PAGE is flipped locally and never committed true"
+            !draws_v1(&el),
+            "one page, not two; markup was {}",
+            el.inner_html()
         );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_package_route_is_v1_with_the_preview_off() {
+        let el = package_route(settings_off).await;
+        assert!(draws_v1(&el), "markup was {}", el.inner_html());
+        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
+    }
+
+    /// A failed read is v1 here too, as it is on `/`.
+    #[wasm_bindgen_test]
+    async fn the_package_route_is_v1_when_settings_cannot_be_read() {
+        let el = package_route(settings_fail).await;
+        assert!(draws_v1(&el), "markup was {}", el.inner_html());
+        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
     }
 
     #[wasm_bindgen_test]
