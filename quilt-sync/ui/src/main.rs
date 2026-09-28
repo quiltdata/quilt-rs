@@ -218,12 +218,7 @@ mod tests {
         //
         // This pins that the frame is not empty and that it speaks. It cannot
         // pin what it looks like: no stylesheet is loaded here.
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&host).unwrap();
-        leptos::mount::mount_to(host.clone(), || design_loading("Loading QuiltSync")).forget();
-
-        let el: web_sys::Element = host.into();
+        let el = Mounted::new(|| design_loading("Loading QuiltSync"));
         // Inside the frame `_base.scss` grounds for a v2 reader — the two are
         // pinned together because the frame is what a stylesheet can see.
         let status = el
@@ -259,27 +254,68 @@ mod tests {
         wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
     }
 
+    /// A view mounted under `<body>`, torn down when this is dropped — after the
+    /// test's assertions, and on a failing one too.
+    ///
+    /// `test_support::mount` is the library's and `#[cfg(test)]`, so this binary
+    /// cannot reach it; this is the same shape, but owning its teardown: a
+    /// `Router` left mounted keeps listening for clicks on the window, and the
+    /// first one registered takes them from every later test's.
+    struct Mounted {
+        el: web_sys::Element,
+        owner: Owner,
+        handle: Option<Box<dyn std::any::Any>>,
+    }
+
+    impl Mounted {
+        fn new<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> Self {
+            let doc = web_sys::window().unwrap().document().unwrap();
+            let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
+            doc.body().unwrap().append_child(&host).unwrap();
+            let owner = Owner::new();
+            let handle = owner.with(|| leptos::mount::mount_to(host.clone(), f));
+            Self {
+                el: host.into(),
+                owner,
+                handle: Some(Box::new(handle)),
+            }
+        }
+    }
+
+    impl std::ops::Deref for Mounted {
+        type Target = web_sys::Element;
+        fn deref(&self) -> &web_sys::Element {
+            &self.el
+        }
+    }
+
+    impl Drop for Mounted {
+        fn drop(&mut self) {
+            // The route tests set the root marker. Put back here, after the
+            // assertions, so the next test starts from v1's.
+            quilt_sync_ui::theme::set_v2(false);
+            drop(self.handle.take());
+            self.owner.cleanup();
+            self.el.remove();
+        }
+    }
+
     /// `/installed-package` as the router draws it, over a stubbed settings read.
     ///
     /// Neither page has a Tauri host here, so each draws its own failure — inside
     /// its own frame, which is what tells them apart: v2's `PageLayout` carries
-    /// `data-v2-page`, v1's `Layout` is `#layout`. The marker is put back after,
-    /// since the route sets it.
-    async fn package_route(read: SettingsRead) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let host: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&host).unwrap();
-        leptos::mount::mount_to(host.clone(), move || {
+    /// `data-v2-page`, v1's `Layout` is `#layout`. The route sets the marker;
+    /// [`Mounted`]'s drop puts it back.
+    async fn package_route(read: SettingsRead) -> Mounted {
+        let el = Mounted::new(move || {
             view! {
                 <Router>
                     <PackagePage read=read />
                 </Router>
             }
-        })
-        .forget();
+        });
         sleep_ms(100).await;
-        quilt_sync_ui::theme::set_v2(false);
-        host.into()
+        el
     }
 
     fn draws_v2(el: &web_sys::Element) -> bool {
