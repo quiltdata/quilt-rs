@@ -570,7 +570,8 @@ struct Pane {
     query: &'static str,
     grouped: bool,
     /// `Keeping → The whole package`, which takes the per-file choice away:
-    /// no boxes, no select-all, and the footer can never appear.
+    /// no boxes, no select-all, and the footer can never appear. What the
+    /// slot shows instead follows the files: a caption once all are here.
     whole: bool,
     /// Resolve mode: the files that differ between the two revisions, marked.
     marked: &'static [&'static str],
@@ -694,6 +695,13 @@ fn pane(p: Pane) -> AnyView {
     let narrowed =
         Signal::derive(move || !query_sig.get().is_empty() || !facet_sig.get().starts_with("All"));
 
+    // The page's rule: the package, not the view, has nothing left to
+    // download, so the slot select-all would take says so under either scope.
+    let downloaded = {
+        let counted = files.iter().filter(|f| f.mark != Mark::Ignored).count();
+        let missing = files.iter().any(|f| f.mark == Mark::Missing);
+        (!missing && counted > 0).then_some(counted)
+    };
     let fill = framing == Framing::Page;
     let boxes = !whole;
     let footer_shown = Signal::derive(move || boxes && chosen.get() > 0);
@@ -821,8 +829,24 @@ fn pane(p: Pane) -> AnyView {
                             <ListToolbar reverse_when_stacked=true>
                                 // Select-all sits in the rows' checkbox column, the
                                 // list box's space-3 plus the 16px gutter in from
-                                // the pane's edge.
-                                <Show when=move || boxes && (offered.get() > 0)>
+                                // the pane's edge. With nothing left to download
+                                // the slot says so instead, its words in the rows'
+                                // name column: the box's 17px stays empty.
+                                {downloaded
+                                    .map(|n| {
+                                        view! {
+                                            <span style="flex:0 0 28px" />
+                                            <span style="flex:0 0 17px" />
+                                            <span style="font-size:var(--q-text-body); \
+                                                         color:var(--q-fgColor-muted); \
+                                                         white-space:nowrap">
+                                                {crate::pages::downloaded_words(n)}
+                                            </span>
+                                        }
+                                    })}
+                                <Show when=move || {
+                                    downloaded.is_none() && boxes && (offered.get() > 0)
+                                }>
                                     <span style="flex:0 0 28px" />
                                     <SelectAll
                                         selected=chosen
@@ -1200,9 +1224,9 @@ fn live(list: crate::commands::EntryList) -> AnyView {
     .into_any()
 }
 
-/// This scene's package with every file here and nothing changed: nothing is
-/// left to download, so the toolbar's left slot says so instead of offering
-/// select-all.
+/// This scene's package with every file here and nothing changed, the state
+/// whole-package Keeping settles into: nothing is left to download, so the
+/// toolbar's left slot says so instead of offering select-all.
 fn downloaded_package() -> Vec<File> {
     package()
         .into_iter()
@@ -1236,9 +1260,10 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
     The marked rows draw ahead of their data. Unresolved and visible: under `Group: None` \
-    the ellipsis eats the leaf, kept for now as a deliberate simplification. The last three \
-    cells are the page's own pane over this fixture, the second grown past the cap and the \
-    third with every file downloaded, where the slot select-all leaves says so.";
+    the ellipsis eats the leaf, kept for now as a deliberate simplification. Under whole-package \
+    Keeping every file is downloaded, so the slot select-all leaves reads `All 53 files \
+    downloaded`. The last two cells are the page's own pane over this fixture, the second \
+    grown past the cap.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -1293,8 +1318,8 @@ pub fn FilePaneScene() -> impl IntoView {
                 {pane(Pane { marked: MARKED, ..Pane::new("fp-marked") })}
                 {differs_caption(MARKED.len())}
             </Cell>
-            <Cell full=true label="Keeping → the whole package: no boxes, no select-all, no footer">
-                {pane(Pane { whole: true, ..Pane::new("fp-whole") })}
+            <Cell full=true label="Keeping → the whole package, all downloaded: no boxes, no footer, and the slot says so">
+                {pane(Pane { whole: true, files: downloaded_package(), ..Pane::new("fp-whole") })}
             </Cell>
             <Cell full=true label="the Changed facet — nothing here can be ticked, so select-all goes">
                 {pane(Pane { facet: "Changed", ..Pane::new("fp-changed") })}
@@ -1340,9 +1365,6 @@ pub fn FilePaneScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="live, over the cap — 1,089 files, the first 1,000 by path loaded">
                 <div style=PANE>{live(entry_list(over_the_cap()))}</div>
-            </Cell>
-            <Cell full=true label="live, everything downloaded — the slot left of Group says so, in the names' column">
-                <div style=PANE>{live(entry_list(downloaded_package()))}</div>
             </Cell>
         </Scene>
     }

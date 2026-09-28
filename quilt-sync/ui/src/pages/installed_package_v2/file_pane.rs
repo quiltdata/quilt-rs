@@ -29,6 +29,9 @@
 //! - **Selection feeds one action.** Select-all, the headings' boxes and the
 //!   footer's `[Download]` read one ticked set the page owns ([`selection`]).
 //!   Under whole-package Keeping none of them is drawn.
+//! - **Nothing to download is said, not left blank.** A package with no file
+//!   left to download reads `All 1,090 files downloaded` where select-all
+//!   would be, under either scope.
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
 //! - **Search narrows what is shown.** A case-insensitive substring of the
@@ -921,7 +924,9 @@ fn left_slot(
 }
 
 /// `All 1,090 files downloaded`, and `1 file downloaded` for a package of one.
-fn downloaded_words(files: usize) -> String {
+/// Public for the gallery, whose drawn pane says the same words.
+#[must_use]
+pub fn downloaded_words(files: usize) -> String {
     if files == 1 {
         String::from("1 file downloaded")
     } else {
@@ -964,9 +969,9 @@ fn footer(picking: Picking, loaded: StoredValue<Vec<String>>) -> AnyView {
     .into_any()
 }
 
-/// The toolbar under the search row: select-all's slot on the left, the view
-/// controls on the right. The facets need the package's counts, so a pane
-/// with no answer draws grouping alone.
+/// The toolbar under the search row: select-all or the caption on the left,
+/// the view controls on the right. The facets need the package's counts, so a
+/// pane with no answer draws grouping alone.
 fn toolbar(grouping: RwSignal<String>, left: AnyView, facets: Option<AnyView>) -> impl IntoView {
     view! {
         // Stacks upwards, so the line nearest the rows is the one acting on
