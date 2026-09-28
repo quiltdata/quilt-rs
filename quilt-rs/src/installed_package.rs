@@ -458,12 +458,25 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 // Refused: what it placed goes, as when the package is gone,
                 // so the files are not left untracked in the way of a retry.
                 // A path the entry now tracks is someone else's.
+                //
+                // A path the entry now tracks at another row (a commit took up
+                // the file before the redo renamed over it) gets that row's
+                // bytes back, so it reads as what was tracked.
                 Verdict::Redo(current) => {
-                    let placed: LineagePaths = write_step::placed(&started, &next)
-                        .into_iter()
-                        .filter(|(path, _)| !current.paths.contains_key(path))
-                        .collect();
-                    write_step::remove_placed(&self.storage, &package_home, &placed).await;
+                    let (mut untracked, mut replaced) = (LineagePaths::new(), BTreeMap::new());
+                    for (path, state) in write_step::placed(&started, &next) {
+                        match current.paths.get(&path) {
+                            None => {
+                                untracked.insert(path, state);
+                            }
+                            Some(tracked) if tracked.hash != state.hash => {
+                                replaced.insert(path, (state.hash, tracked.hash));
+                            }
+                            Some(_) => {}
+                        }
+                    }
+                    write_step::remove_placed(&self.storage, &package_home, &untracked).await;
+                    self.put_back(&package_home, &replaced).await;
                     break;
                 }
                 Verdict::Refused => break,

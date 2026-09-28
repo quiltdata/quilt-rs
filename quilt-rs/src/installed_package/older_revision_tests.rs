@@ -1019,3 +1019,44 @@ async fn a_download_redo_beaten_to_its_file_refuses_and_cleans_up() -> Res {
     assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
     Ok(())
 }
+
+/// A commit lands while a download's redo fetches: it tracks the download's
+/// untracked files at the bytes the download first placed. The redo then
+/// renames the new revision's bytes over one of them and refuses, since the
+/// commit moved the revision. The committed file must read as committed, so
+/// the refusal puts the committed bytes back.
+#[test(tokio::test)]
+async fn a_download_redo_crossed_by_a_commit_puts_the_committed_bytes_back() -> Res {
+    let t = Rev1Installed::new().await?;
+    let rev1_fetch = t.park_object("changes.txt", "c1");
+    let redo_fetch = t.park_object("changes.txt", "c2");
+
+    let (download, control) = tokio::join!(t.download(), async {
+        arrives(&rev1_fetch, "the download's fetch").await;
+        let pulled = t.pull().await;
+        rev1_fetch.release();
+        pulled?;
+        arrives(&redo_fetch, "the download's redo").await;
+        let committed = t
+            .package
+            .commit(
+                "mine".to_string(),
+                UserMeta::Keep,
+                None,
+                Some(HostConfig::default()),
+            )
+            .await;
+        redo_fetch.release();
+        committed
+    });
+    let committed = control?;
+    let err = download.expect_err("the download must refuse");
+    assert!(is_changed_underneath(&err, "downloading"), "{err}");
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.commit.map(|c| c.hash), Some(committed.hash));
+    let home = t.package.package_home().await?;
+    assert_eq!(tokio::fs::read(home.join("changes.txt")).await?, b"one");
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
