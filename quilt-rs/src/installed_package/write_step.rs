@@ -35,7 +35,7 @@ pub(super) enum Verdict<T> {
     /// It wrote (or had nothing to write) and is done.
     Written(T),
     /// The entry moved in a way its work missed: redo against this copy.
-    Redo(PackageLineage),
+    Redo(Box<PackageLineage>),
     /// The entry moved in a way its work cannot be made true of.
     Refused,
     /// The package was uninstalled while it worked.

@@ -409,7 +409,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                         return Ok(Verdict::Gone);
                     };
                     if !write_step::same_revision(current, &started) {
-                        return Ok(Verdict::Redo(current.clone()));
+                        return Ok(Verdict::Redo(Box::new(current.clone())));
                     }
                     *current = write_step::own_change(&started, &next, current);
                     Ok(Verdict::Written(current.paths.clone()))
@@ -430,7 +430,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                         self.install_again(&current, &placed, &package_home).await?;
                     next = redone;
                     skipped.extend(also_skipped);
-                    started = current;
+                    started = *current;
                 }
                 Verdict::Redo(_) | Verdict::Refused => break,
             }
@@ -606,7 +606,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                     if !write_step::same_revision(current, &started)
                         || !write_step::same_rows(&current.paths, &started.paths)
                     {
-                        return Ok(Verdict::Redo(current.clone()));
+                        return Ok(Verdict::Redo(Box::new(current.clone())));
                     }
                     *current = write_step::own_change(&started, &next, current);
                     Ok(Verdict::Written(()))
@@ -681,7 +681,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             }
         };
 
-        let outcome = flow::publish(
+        // Boxed so the write step after it does not push every caller's
+        // future over the workspace's size budget.
+        let outcome = Box::pin(flow::publish(
             lineage,
             &mut manifest,
             &self.paths,
@@ -696,7 +698,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 user_meta,
                 workflow,
             },
-        )
+        ))
         .await?;
 
         let (committed, push_result) = match outcome {
@@ -898,7 +900,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                         });
                     }
                     if !write_step::paths_added(&started, current).is_empty() {
-                        return Ok(Verdict::Redo(current.clone()));
+                        return Ok(Verdict::Redo(Box::new(current.clone())));
                     }
                     let mut dropped = BTreeMap::new();
                     for path in write_step::paths_removed(&started, current) {
@@ -924,7 +926,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                     next = self
                         .reconcile_to_latest(&started, &current, next, package_home)
                         .await?;
-                    started = current;
+                    started = *current;
                 }
                 Verdict::Redo(_) | Verdict::Refused => break,
             }

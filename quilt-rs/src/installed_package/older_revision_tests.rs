@@ -486,7 +486,7 @@ async fn an_uninstall_crossed_by_a_pull_wins_and_keeps_the_pull() -> Res {
     let home = t.package.package_home().await?;
     let changes = home.join("changes.txt");
     let parked = ParkedStorage::new(&changes);
-    let uninstaller = InstalledPackage {
+    let parked_package = InstalledPackage {
         lineage: t.package.lineage.clone(),
         paths: t.package.paths.clone(),
         remote: Arc::clone(&t.package.remote),
@@ -494,8 +494,8 @@ async fn an_uninstall_crossed_by_a_pull_wins_and_keeps_the_pull() -> Res {
         namespace: t.package.namespace.clone(),
     };
 
-    let uninstalling = vec![PathBuf::from("changes.txt")];
-    let (uninstalled, pulled) = tokio::join!(uninstaller.uninstall_paths(&uninstalling), async {
+    let to_remove = vec![PathBuf::from("changes.txt")];
+    let (uninstalled, pulled) = tokio::join!(parked_package.uninstall_paths(&to_remove), async {
         arrives(&parked.gate, "the uninstall's removal").await;
         let pulled = t.pull().await;
         parked.gate.release();
