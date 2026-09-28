@@ -127,6 +127,29 @@ fn classify_sync_already_up_to_date_is_ok() {
     assert!(classify_sync_err(err).is_ok());
 }
 
+/// Another writer changed the package while the tick's pull worked, so the
+/// pull wrote nothing. The next tick classifies it afresh: no pause.
+#[test]
+fn classify_sync_changed_underneath_is_a_quiet_skip() {
+    let err = Error::from(quilt::Error::PackageOp(
+        quilt::PackageOpError::ChangedUnderneath {
+            namespace: ("acme", "demo").into(),
+            verb: "pulling",
+        },
+    ));
+    assert!(classify_sync_err(err).is_ok());
+}
+
+/// The package was uninstalled while the tick's pull worked. Nothing is left
+/// to pause, and the next tick no longer lists it.
+#[test]
+fn classify_sync_not_installed_is_a_quiet_skip() {
+    let err = Error::from(quilt::Error::InstallPackage(
+        quilt::InstallPackageError::NotInstalled(("acme", "demo").into()),
+    ));
+    assert!(classify_sync_err(err).is_ok());
+}
+
 #[test]
 fn classify_sync_login_required() {
     let host: Host = "catalog.dev".parse().unwrap();
@@ -1868,6 +1891,52 @@ async fn the_pull_holds_its_activity_while_it_applies() -> Result<(), Error> {
         "the apply moves files — the line must name it while it runs"
     );
     assert_eq!(agg.activity(), None, "and clear once it returns");
+    Ok(())
+}
+
+// ── A pull that another writer crossed is skipped, not paused ──
+//
+// The engine refuses a pull whose package changed under it (a commit landed,
+// or a download crossed it twice) and writes nothing. That is no conflict of
+// the user's: the package stays unpaused and unbacked-off, and the next tick
+// classifies it afresh and pulls.
+
+#[tokio::test]
+async fn a_pull_the_package_changed_under_is_retried_on_the_next_tick() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let inner = inner_with(Arc::clone(&agg));
+
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model.expect_package_pull().times(1).returning(|_, _, _| {
+        Err(Error::from(quilt::Error::PackageOp(
+            quilt::PackageOpError::ChangedUnderneath {
+                namespace: ("acme", "demo").into(),
+                verb: "pulling",
+            },
+        )))
+    });
+    run_once(&model, &RoleCache::default(), &inner).await?;
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "a crossed pull is not a pause"
+    );
+    assert!(
+        inner.backoff.read().await.is_empty(),
+        "nor a failure to back off from: the next tick simply tries again"
+    );
+
+    let mut model = behind_clean_model();
+    model
+        .expect_package_pull_outcome()
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model
+        .expect_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(applied()));
+    run_once(&model, &RoleCache::default(), &inner).await?;
     Ok(())
 }
 
