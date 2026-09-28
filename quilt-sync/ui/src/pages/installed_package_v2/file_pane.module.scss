@@ -22,6 +22,19 @@
   margin-left: auto;
 }
 
+/* The toolbar and the list it acts on, as one child of the pane's column.
+ * `ListToolbar` carries its own `space-2` below it; as two siblings the
+ * column's gap came on top of that, and the toolbar sat twice as far from its
+ * list as from the search above it. Nested, the column's gap falls once, above
+ * the toolbar, and the two gaps match. The main page's `.list_region` is the
+ * same arrangement for the same reason. The skeleton nests its bars likewise. */
+.listing {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 /* The rows scroll inside the box; the cap notice above them does not. */
 .list {
   flex: 1;
@@ -82,6 +95,20 @@
 
 .gutter {
   flex: 0 0 var(--q-entry-gutter, 16px);
+}
+
+/* The box's hole, as `EntryRow`'s `.nobox` keeps it: the caption's words start
+ * in the rows' name column rather than where a box would be. */
+.nobox {
+  flex: 0 0 17px;
+}
+
+/* `All 1,090 files downloaded`: a statement about the package, not a control,
+ * so it is muted and has no pointer. Never wraps, as select-all's label. */
+.caption {
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  white-space: nowrap;
 }
 
 /* The list box's footer: a spacer and the `[Download]` primary, flush right on

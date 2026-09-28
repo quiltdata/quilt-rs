@@ -376,6 +376,18 @@ struct Row {
     ignored_by: Option<String>,
 }
 
+impl From<EntryData> for Row {
+    fn from(e: EntryData) -> Self {
+        Self {
+            place: Place::of(&e.status),
+            size: format_size(e.size),
+            ignored: e.ignored_by.is_some(),
+            ignored_by: e.ignored_by,
+            path: e.filename,
+        }
+    }
+}
+
 impl Row {
     /// Whether a box can tick it: not downloaded, and not ignored — an ignored
     /// file is stopped being ignored before it is fetched.
@@ -844,15 +856,42 @@ fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelec
     )
 }
 
-/// Select-all, in the rows' checkbox column: the list box's `space-3` plus
-/// the gutter the rows keep for a disclosure. Absent under whole-package scope,
-/// and while nothing on screen can be ticked.
-fn select_all(
+/// The toolbar's left slot, in the rows' checkbox column: the list box's
+/// `space-3` plus the gutter the rows keep for a disclosure.
+///
+/// A package with nothing left to download says so here, `All 1,090 files
+/// downloaded`, under either Keeping scope and whatever the view shows: it is
+/// a fact about the package, counted as the `All` facet counts. Otherwise it
+/// is select-all, absent under whole-package scope and while nothing on
+/// screen can be ticked.
+fn left_slot(
     picking: Picking,
     shown: Signal<Vec<String>>,
     narrowed: Signal<bool>,
     headed: Signal<bool>,
+    counts: &EntryCounts,
 ) -> AnyView {
+    let gutter = move || {
+        format!(
+            "--q-entry-gutter:{}",
+            if headed.get() { "16px" } else { "0px" }
+        )
+    };
+    // The package's counts, not the view's, so a facet, a search or the cap
+    // changes nothing; and not a package with nothing in `All` to speak of.
+    if counts.not_downloaded == 0 && counts.all > 0 {
+        let files = counts.all;
+        // The box's hole, as a row with no box keeps it, so the words start
+        // where the rows' names do and do not read as a label missing its box.
+        return view! {
+            <div class=style::selectall style=gutter>
+                <span class=style::gutter />
+                <span class=style::nobox />
+                <span class=style::caption>{downloaded_words(files)}</span>
+            </div>
+        }
+        .into_any();
+    }
     if picking.whole_package {
         return ().into_any();
     }
@@ -864,10 +903,7 @@ fn select_all(
     let any = Signal::derive(move || total.get() > 0);
     view! {
         <Show when=move || any.get()>
-            <div
-                class=style::selectall
-                style=move || format!("--q-entry-gutter:{}", if headed.get() { "16px" } else { "0px" })
-            >
+            <div class=style::selectall style=gutter>
                 <span class=style::gutter />
                 <SelectAll
                     selected=selected
@@ -882,6 +918,15 @@ fn select_all(
         </Show>
     }
     .into_any()
+}
+
+/// `All 1,090 files downloaded`, and `1 file downloaded` for a package of one.
+fn downloaded_words(files: usize) -> String {
+    if files == 1 {
+        String::from("1 file downloaded")
+    } else {
+        format!("All {} files downloaded", thousands(files))
+    }
 }
 
 /// The list box's last child while something is ticked: a right-aligned
@@ -922,16 +967,12 @@ fn footer(picking: Picking, loaded: StoredValue<Vec<String>>) -> AnyView {
 /// The toolbar under the search row: select-all's slot on the left, the view
 /// controls on the right. The facets need the package's counts, so a pane
 /// with no answer draws grouping alone.
-fn toolbar(
-    grouping: RwSignal<String>,
-    select_all: AnyView,
-    facets: Option<AnyView>,
-) -> impl IntoView {
+fn toolbar(grouping: RwSignal<String>, left: AnyView, facets: Option<AnyView>) -> impl IntoView {
     view! {
         // Stacks upwards, so the line nearest the rows is the one acting on
         // them. Select-all goes first, on the left.
         <ListToolbar reverse_when_stacked=true>
-            {select_all}
+            {left}
             <div class=style::views>
                 <Select
                     naming=Naming::Prefix("Group".to_string())
@@ -981,15 +1022,17 @@ pub fn FilePane(
         Listing::Unlisted(reason) => view! {
             <section class=style::root aria-label="Files">
                 {search_row(search)}
-                {toolbar(grouping, ().into_any(), None)}
-                <Card flush=true label="Files" fill=true>
-                    <LoadFailure
-                        centred=true
-                        words="Could not list this package's files."
-                        detail=reason
-                        on_retry=on_retry
-                    />
-                </Card>
+                <div class=style::listing>
+                    {toolbar(grouping, ().into_any(), None)}
+                    <Card flush=true label="Files" fill=true>
+                        <LoadFailure
+                            centred=true
+                            words="Could not list this package's files."
+                            detail=reason
+                            on_retry=on_retry
+                        />
+                    </Card>
+                </div>
             </section>
         }
         .into_any(),
@@ -1031,16 +1074,7 @@ fn ready(
         truncated,
     } = list;
     let loaded_count = entries.len();
-    let rows: Vec<Row> = entries
-        .into_iter()
-        .map(|e| Row {
-            place: Place::of(&e.status),
-            size: format_size(e.size),
-            ignored: e.ignored_by.is_some(),
-            ignored_by: e.ignored_by,
-            path: e.filename,
-        })
-        .collect();
+    let rows: Vec<Row> = entries.into_iter().map(Row::from).collect();
     let loaded = StoredValue::new(offered(&rows));
     let rows = StoredValue::new(rows);
 
@@ -1124,16 +1158,18 @@ fn ready(
     view! {
         <section class=style::root aria-label="Files">
             {search_row(search.field)}
-            {toolbar(
-                grouping,
-                select_all(picking, shown_offered, narrowed, headed),
-                Some(facets(&counts, facet).into_any()),
-            )}
-            <Card flush=true label="Files" fill=true>
-                {truncated.then(|| view! { <CapNotice total=total shown=loaded_count /> })}
-                {body}
-                {footer(picking, loaded)}
-            </Card>
+            <div class=style::listing>
+                {toolbar(
+                    grouping,
+                    left_slot(picking, shown_offered, narrowed, headed, &counts),
+                    Some(facets(&counts, facet).into_any()),
+                )}
+                <Card flush=true label="Files" fill=true>
+                    {truncated.then(|| view! { <CapNotice total=total shown=loaded_count /> })}
+                    {body}
+                    {footer(picking, loaded)}
+                </Card>
+            </div>
         </section>
     }
     .into_any()
@@ -1147,19 +1183,21 @@ pub fn FilePaneSkeleton() -> impl IntoView {
         <section class=style::root aria-label="Files">
             // The search field: full width, one control high.
             <SkeletonBox width="100%" height="32px" />
-            <div class=style::skeletonbar>
-                // The `Group:` select's width, then the facets'.
-                <SkeletonBox width="166px" height="32px" />
-                <SkeletonBox width="396px" height="32px" />
-            </div>
-            <Card flush=true label="Files" fill=true busy=Signal::stored(true)>
-                <div class=style::skeleton>
-                    {["48%", "62%", "55%", "48%", "62%", "55%", "48%", "62%"]
-                        .into_iter()
-                        .map(|width| view! { <SkeletonBox width=width /> })
-                        .collect_view()}
+            <div class=style::listing>
+                <div class=style::skeletonbar>
+                    // The `Group:` select's width, then the facets'.
+                    <SkeletonBox width="166px" height="32px" />
+                    <SkeletonBox width="396px" height="32px" />
                 </div>
-            </Card>
+                <Card flush=true label="Files" fill=true busy=Signal::stored(true)>
+                    <div class=style::skeleton>
+                        {["48%", "62%", "55%", "48%", "62%", "55%", "48%", "62%"]
+                            .into_iter()
+                            .map(|width| view! { <SkeletonBox width=width /> })
+                            .collect_view()}
+                    </div>
+                </Card>
+            </div>
         </section>
     }
 }
@@ -1287,6 +1325,13 @@ mod search_tests {
 #[cfg(test)]
 mod facet_tests {
     use super::*;
+
+    #[test]
+    fn the_caption_counts_as_the_facet_does() {
+        assert_eq!(downloaded_words(1_090), "All 1,090 files downloaded");
+        assert_eq!(downloaded_words(2), "All 2 files downloaded");
+        assert_eq!(downloaded_words(1), "1 file downloaded");
+    }
 
     /// The facet and the search narrow together, in the one hook both the list
     /// and select-all read.
@@ -2400,6 +2445,106 @@ mod pane_tests {
         assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
         assert!(!text(&el).contains("Select all"));
         assert!(!text(&el).contains("Download"));
+    }
+
+    /// A pane over `entries` whose search and facet the test drives.
+    fn driven_pane(
+        entries: Vec<EntryData>,
+        picking: Picking,
+        search: RwSignal<String>,
+        facet: RwSignal<String>,
+    ) -> web_sys::Element {
+        let total = entries.len();
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        })
+    }
+
+    /// Everything here: `All` counts three, one of them ignored and not counted.
+    fn downloaded_package() -> Vec<EntryData> {
+        vec![
+            entry("README.md", "pristine"),
+            entry("raw/a.csv", "pristine"),
+            entry("raw/b.csv", "modified"),
+            ignored("raw/.DS_Store"),
+        ]
+    }
+
+    /// With nothing left to download the slot select-all would take says so,
+    /// with the `All` facet's count, under either Keeping scope.
+    #[wasm_bindgen_test]
+    fn a_package_with_nothing_to_download_says_so_in_either_scope() {
+        for whole_package in [false, true] {
+            let picking = Picking {
+                whole_package,
+                ..Picking::default()
+            };
+            let el = picking_pane(downloaded_package(), picking, Grouping::BaseFolder);
+            element_saying(&el, "All 3 files downloaded");
+            assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+            assert!(!text(&el).contains("Select all"));
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn a_package_of_one_downloaded_file_says_it_in_the_singular() {
+        let el = picking_pane(
+            vec![entry("README.md", "pristine")],
+            Picking::default(),
+            Grouping::BaseFolder,
+        );
+        element_saying(&el, "1 file downloaded");
+    }
+
+    /// The caption is about the package, so the view controls leave it: a
+    /// search that matches nothing, and a facet with no rows in it.
+    #[wasm_bindgen_test]
+    async fn a_search_or_a_facet_leaves_the_caption_standing() {
+        let (search, facet) = (
+            RwSignal::new(String::new()),
+            RwSignal::new(Facet::All.key().to_string()),
+        );
+        let el = driven_pane(downloaded_package(), Picking::default(), search, facet);
+        search.set("nothing-matches".to_string());
+        crate::test_support::sleep_ms(40).await;
+        element_saying(&el, "No files match");
+        element_saying(&el, "All 3 files downloaded");
+        search.set(String::new());
+        facet.set(Facet::Ignored.key().to_string());
+        crate::test_support::sleep_ms(40).await;
+        element_saying(&el, "All 3 files downloaded");
+    }
+
+    /// A package with files left to download never says it has none, even
+    /// where the view holds nothing to tick: under `Changed` select-all is
+    /// simply gone, as before.
+    #[wasm_bindgen_test]
+    async fn a_view_with_nothing_to_tick_is_not_a_package_with_nothing_to_download() {
+        let (search, facet) = (
+            RwSignal::new(String::new()),
+            RwSignal::new(Facet::All.key().to_string()),
+        );
+        let el = driven_pane(mixed_package(), Picking::default(), search, facet);
+        element_saying(&el, "Select all 2");
+        facet.set(Facet::Changed.key().to_string());
+        leptos::task::tick().await;
+        assert!(!text(&el).contains("Select all"));
+        assert!(
+            !text(&el).contains("files downloaded"),
+            "markup was {}",
+            el.inner_html()
+        );
     }
 
     #[wasm_bindgen_test]

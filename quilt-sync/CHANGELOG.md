@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.5-dev]
+
+### Changed
+
+- **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (PRLINK)
+
 ## [v0.22.4] - 2026-09-28
 
 ### Changed
