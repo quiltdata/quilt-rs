@@ -25,6 +25,9 @@ use crate::routes;
 
 use super::status_watch::StatusWatch;
 use crate::components::appbar::appbar_actions;
+use crate::components::{
+    IgnorePopup, IgnorePopupData, Notification, UnignorePopup, UnignorePopupData,
+};
 
 mod bucket_form;
 pub(crate) mod context_pane;
@@ -37,6 +40,7 @@ mod role_dialog;
 
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
+use file_pane::{Reach, RowCommand, RowMenu};
 pub use header::{MenuCommand, MenuItem, menu_items};
 use header::{PageHeader, PageHeaderSkeleton};
 use resolve::{ResolveCommands, ResolvePane};
@@ -253,6 +257,11 @@ struct Files {
     /// The footer's `[Download]` is running. Here for `Wiring::downloading`'s
     /// reason: the rebuilt button must keep its spinner.
     downloading: RwSignal<bool>,
+    /// The ignore popup a row's *Ignore* opened. The page's, so the watcher's
+    /// re-read neither closes it nor loses what was typed.
+    ignoring: RwSignal<Option<IgnorePopupData>>,
+    /// The unignore popup a row's *Stop ignoring* opened, for the same reason.
+    unignoring: RwSignal<Option<UnignorePopupData>>,
 }
 
 /// What the panes read. Built by `package_body`: the resolve pane counts
@@ -340,6 +349,14 @@ fn package_body(
     let namespace = ns.to_string();
     let open_catalog = catalog_opener(namespace.clone(), w.outcome);
     let open_file = file_opener(namespace.clone(), uri.clone(), w.outcome);
+    let menu = RowMenu {
+        reach: Reach {
+            remote: uri.is_some(),
+            catalog: uri.as_ref().is_some_and(|u| u.catalog.is_some()),
+        },
+        busy: w.busy.into(),
+        on_command: row_runner(namespace.clone(), uri.clone(), w, files, open_file),
+    };
     let context = StoredValue::new(context);
     let pane = move || {
         let context = context.get_value();
@@ -384,6 +401,7 @@ fn package_body(
                     on_open=open_file
                     on_retry=files.retry
                     picking=picking
+                    menu=menu
                     differing=marks.differing
                 />
             </div>
@@ -433,6 +451,265 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
             task,
         );
     })
+}
+
+/// Runs what a row's `[⋯]` chose.
+///
+/// Opening and copying write nothing, so they take no lock, as `file_opener`
+/// does not; the two `.quiltignore` items open popups whose state is the
+/// page's ([`row_popups`]), and the menu holds them back while the lock is held.
+fn row_runner(
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    w: Wiring,
+    files: Files,
+    open_file: Callback<String>,
+) -> Callback<RowCommand> {
+    Callback::new(move |command: RowCommand| {
+        let (namespace, uri, outcome) = (namespace.clone(), uri.clone(), w.outcome);
+        match command {
+            RowCommand::Open(path) => open_file.run(path),
+            RowCommand::OpenInCatalog(path) => {
+                let Some(url) = uri
+                    .as_ref()
+                    .and_then(|u| crate::util::entry_catalog_url(u, &path))
+                else {
+                    return;
+                };
+                leptos::task::spawn_local(async move {
+                    if let Err(detail) = commands::open_in_web_browser(url).await {
+                        outcome.try_set(Some(Outcome {
+                            namespace,
+                            variant: BannerVariant::Critical,
+                            lead: "Could not open this file in the catalog.".to_string(),
+                            detail: Some(detail),
+                        }));
+                    }
+                });
+            }
+            RowCommand::CopyUri(_) | RowCommand::CopyPath(_) => {
+                leptos::task::spawn_local(async move {
+                    let copied = match clipped(&command, &namespace, uri.as_ref(), local_path).await
+                    {
+                        Ok(None) => return,
+                        Ok(Some((text, event))) => {
+                            commands::copy_to_clipboard(text, event).await.map(|_| ())
+                        }
+                        Err(detail) => Err(detail),
+                    };
+                    outcome.try_set(Some(copy_outcome(namespace, &command, copied)));
+                });
+            }
+            RowCommand::Ignore(path) => files.ignoring.set(Some(IgnorePopupData {
+                namespace,
+                suggested_pattern: path.clone(),
+                path,
+                uri,
+            })),
+            RowCommand::StopIgnoring { pattern, .. } => {
+                files.unignoring.set(Some(UnignorePopupData {
+                    namespace,
+                    pattern,
+                    uri,
+                }));
+            }
+        }
+    })
+}
+
+/// Where a package's file is on disk: `(namespace, path)` to the full path.
+/// A seam, like [`PageRead`], so a test can answer without a Tauri host.
+pub(crate) type LocalPath =
+    fn(String, String) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+fn local_path(
+    namespace: String,
+    path: String,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+    Box::pin(commands::package_file_path(namespace, path))
+}
+
+/// What a copy puts on the clipboard, and the address its event names: v1's
+/// `util::file_uri` for *Copy URI*, and for *Copy path* the file's full path on
+/// disk, which a `New` file has though no revision holds it. `Ok(None)` for a
+/// command that copies nothing, or an address with no remote to build it from;
+/// an error when the path cannot be found.
+///
+/// The header's remote names the revision this copy holds; the address is
+/// built at `Latest` instead, as the recent-files list builds its own
+/// (`util::package_uri`), so a copied address points at the package rather
+/// than at the revision the copier happens to have.
+async fn clipped(
+    command: &RowCommand,
+    namespace: &str,
+    uri: Option<&quilt_uri::S3PackageUri>,
+    local: LocalPath,
+) -> Result<Option<(String, Option<quilt_uri::S3PackageUri>)>, String> {
+    let file = |path: &str| {
+        uri.map(|u| {
+            let latest = quilt_uri::S3PackageUri {
+                revision: quilt_uri::RevisionPointer::Tag(quilt_uri::Tag::Latest),
+                ..u.clone()
+            };
+            crate::util::file_uri(&latest, path)
+        })
+    };
+    match command {
+        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.display(), Some(f)))),
+        RowCommand::CopyPath(path) => {
+            let on_disk = local(namespace.to_string(), path.clone()).await?;
+            Ok(Some((on_disk, file(path))))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// What the band says after a copy. The clipboard shows nothing, so a copy
+/// that worked says what it copied, which is the band's success case: no other
+/// surface says it.
+fn copy_outcome(namespace: String, command: &RowCommand, copied: Result<(), String>) -> Outcome {
+    let (variant, lead, detail) = match (copied, command) {
+        (Err(detail), _) => (
+            BannerVariant::Critical,
+            "Could not copy.".to_string(),
+            Some(detail),
+        ),
+        (Ok(()), RowCommand::CopyPath(path)) => (
+            BannerVariant::Success,
+            format!("Copied the path of {path}"),
+            None,
+        ),
+        (Ok(()), command) => (
+            BannerVariant::Success,
+            format!("Copied the address of {}", command.path()),
+            None,
+        ),
+    };
+    Outcome {
+        namespace,
+        variant,
+        lead,
+        detail,
+    }
+}
+
+/// The popups a row's `[⋯]` opens, drawn outside the body so a re-read keeps
+/// them.
+///
+/// They are v1's, which report through a `Notification`; this page reports on
+/// its band instead, so a failure becomes the band's, keyed to the package the
+/// popup was opened for ([`report_popup`]), and a success says nothing there:
+/// the re-read is the report. Adding a pattern re-reads the page itself.
+/// *Stop ignoring* opens `.quiltignore` in the reader's editor; the page
+/// re-reads once it opened, and the watcher, which never screens
+/// `.quiltignore` out, re-reads again when the edit is saved.
+///
+/// The page survives a switch of package, so an answer can land after the
+/// reader moved on. Both popups hold the page's lock while they wait, so no
+/// other `.quiltignore` popup opens before the answer lands, and an answer
+/// closes only its own popup ([`close_own`]).
+fn row_popups(files: Files, w: Wiring) -> impl IntoView {
+    let said = RwSignal::new(None::<Notification>);
+    let unignore_said = RwSignal::new(None::<Notification>);
+    // The package each popup was opened for, so its answer is that package's
+    // news even if it lands after the reader moved on (the band drops it
+    // then). Sound because both popups hold the page's lock while they wait,
+    // so no other `.quiltignore` popup can open before the answer lands.
+    let ignore_for = StoredValue::new(String::new());
+    let unignore_for = StoredValue::new(String::new());
+    report_popup(
+        said,
+        ignore_for,
+        "Could not ignore this file.",
+        None,
+        w.outcome,
+    );
+    report_popup(
+        unignore_said,
+        unignore_for,
+        "Could not open .quiltignore.",
+        Some(w.reload),
+        w.outcome,
+    );
+    view! {
+        {move || {
+            files.ignoring.get().map(|data| {
+                ignore_for.set_value(data.namespace.clone());
+                let (ns, path) = (data.namespace.clone(), data.path.clone());
+                view! {
+                    <IgnorePopup
+                        data=data
+                        notification=said
+                        refetch=w.reload
+                        on_close=move || {
+                            files
+                                .ignoring
+                                .update(|open| {
+                                    close_own(open, |d| d.namespace == ns && d.path == path);
+                                });
+                        }
+                        lock=w.busy
+                    />
+                }
+            })
+        }}
+        {move || {
+            files.unignoring.get().map(|data| {
+                unignore_for.set_value(data.namespace.clone());
+                let (ns, pattern) = (data.namespace.clone(), data.pattern.clone());
+                view! {
+                    <UnignorePopup
+                        data=data
+                        notification=unignore_said
+                        on_close=move || {
+                            files
+                                .unignoring
+                                .update(|open| {
+                                    close_own(open, |d| d.namespace == ns && d.pattern == pattern);
+                                });
+                        }
+                        lock=w.busy
+                    />
+                }
+            })
+        }}
+    }
+}
+
+/// Turn a v1 popup's `Notification` into this page's band: a failure is news
+/// about `opened_for`, the package the popup was opened for, whichever package
+/// is on screen when it lands (the band drops it if that is another one). A
+/// success says nothing; `then` is what it does besides, since the ignore popup
+/// re-reads the page itself and the unignore popup does not.
+fn report_popup(
+    notice: RwSignal<Option<Notification>>,
+    opened_for: StoredValue<String>,
+    lead: &'static str,
+    then: Option<Trigger>,
+    outcome: RwSignal<Option<Outcome>>,
+) {
+    Effect::new(move |_| {
+        let Some(n) = notice.get() else { return };
+        notice.set(None);
+        if let Notification::Error(detail) = n {
+            outcome.set(Some(Outcome {
+                namespace: opened_for.get_value(),
+                variant: BannerVariant::Critical,
+                lead: lead.to_string(),
+                detail: Some(detail),
+            }));
+        } else if let Some(reload) = then {
+            reload.notify();
+        }
+    });
+}
+
+/// Close the popup `open` holds only if it is the one `mine` names: an answer
+/// that lands after the reader moved on must not close a popup opened since.
+fn close_own<T>(open: &mut Option<T>, mine: impl Fn(&T) -> bool) {
+    if open.as_ref().is_some_and(mine) {
+        *open = None;
+    }
 }
 
 /// What the band says after a download: nothing when every file came down,
@@ -602,6 +879,8 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     let facet = RwSignal::new(Facet::All.key().to_string());
     // Ticks name paths in one package, so another package starts with none.
     let ticked = RwSignal::new(BTreeSet::new());
+    // A popup names one package's file, so another package closes it.
+    let (ignoring, unignoring) = (RwSignal::new(None), RwSignal::new(None));
     Effect::new(move |_| {
         ns.track();
         grouping.set(Grouping::BaseFolder.label().to_string());
@@ -609,6 +888,8 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         search.set(String::new());
         facet.set(Facet::All.key().to_string());
         ticked.set(BTreeSet::new());
+        ignoring.set(None);
+        unignoring.set(None);
     });
     // The list comes with the page read, so trying again is reading the page.
     let files = Files {
@@ -619,6 +900,8 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         retry: Callback::new(move |()| reload.notify()),
         ticked,
         downloading: RwSignal::new(false),
+        ignoring,
+        unignoring,
     };
 
     // A `resolve=1` the package cannot honour is replaced by the plain address,
@@ -643,6 +926,7 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
     // the page rather than the package; the package's own name is on screen.
     view! {
         <PackageEventListener reload=reload />
+        {row_popups(files, w)}
         <PageLayout
             heading="Package"
             // In the frame's slot — directly under the appbar, pushing the page
@@ -934,6 +1218,183 @@ mod tests {
         assert_eq!(answer_for(None::<(String, u8)>, "team/b"), None);
     }
 
+    /// A popup's failure is news about the package it was opened for, even
+    /// when it lands after the reader moved to another: the band, keyed by
+    /// package, then shows it on neither the new package nor under its name.
+    #[wasm_bindgen_test]
+    async fn a_popup_s_failure_is_the_package_it_was_opened_for() {
+        // Scoped, not `set`: the wasm tests share one thread, and an owner left
+        // current would outlive this test and own the next one's reactive work.
+        let owner = Owner::new();
+        let (notice, outcome) = owner.with(|| {
+            let notice = RwSignal::new(None);
+            let outcome = RwSignal::new(None);
+            let opened_for = StoredValue::new("team/a".to_string());
+            report_popup(
+                notice,
+                opened_for,
+                "Could not ignore this file.",
+                None,
+                outcome,
+            );
+            (notice, outcome)
+        });
+
+        // The reader is on team/b by now; nothing the popup recorded moves.
+        notice.set(Some(Notification::Error("denied".to_string())));
+        leptos::task::tick().await;
+        assert_eq!(
+            outcome.get_untracked(),
+            Some(said(
+                "team/a",
+                BannerVariant::Critical,
+                "Could not ignore this file.",
+                Some("denied"),
+            ))
+        );
+        assert!(notice.get_untracked().is_none(), "the notice is consumed");
+
+        let el = mount(move || outcome_band(outcome, Signal::stored("team/b".to_string())));
+        assert!(
+            !el.inner_html().contains("Could not ignore"),
+            "team/b's band does not carry team/a's failure",
+        );
+    }
+
+    /// A popup's answer closes that popup only: one that lands after the
+    /// reader moved on, and opened another, leaves the other one open.
+    #[test]
+    fn a_popup_s_answer_closes_only_that_popup() {
+        let theirs = |ns: &str| UnignorePopupData {
+            namespace: ns.to_string(),
+            pattern: "*.log".to_string(),
+            uri: None,
+        };
+        let mut open = Some(theirs("team/b"));
+        close_own(&mut open, |d| d.namespace == "team/a");
+        assert_eq!(open.map(|d| d.namespace), Some("team/b".to_string()));
+
+        let mut open = Some(theirs("team/a"));
+        close_own(&mut open, |d| d.namespace == "team/a");
+        assert!(open.is_none());
+    }
+
+    /// The clipboard shows nothing, so a copy says what it copied, in the
+    /// recent-files list's words for an address, and a refusal says so.
+    #[test]
+    fn a_copy_says_what_it_copied() {
+        let uri = RowCommand::CopyUri("raw/a.csv".to_string());
+        let path = RowCommand::CopyPath("raw/a.csv".to_string());
+        assert_eq!(
+            copy_outcome("team/a".to_string(), &uri, Ok(())),
+            said(
+                "team/a",
+                BannerVariant::Success,
+                "Copied the address of raw/a.csv",
+                None
+            )
+        );
+        assert_eq!(
+            copy_outcome("team/a".to_string(), &path, Ok(())),
+            said(
+                "team/a",
+                BannerVariant::Success,
+                "Copied the path of raw/a.csv",
+                None
+            )
+        );
+        assert_eq!(
+            copy_outcome("team/a".to_string(), &path, Err("denied".to_string())),
+            said(
+                "team/a",
+                BannerVariant::Critical,
+                "Could not copy.",
+                Some("denied")
+            )
+        );
+    }
+
+    /// Where this test's package is on disk, as the backend would answer.
+    fn at_home(
+        namespace: String,
+        path: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>>>> {
+        Box::pin(async move { Ok(format!("/Users/me/QuiltSync/{namespace}/{path}")) })
+    }
+
+    fn not_there(
+        _: String,
+        path: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>>>> {
+        Box::pin(async move { Err(format!("{path} is not there")) })
+    }
+
+    /// Copy URI puts `util::file_uri`'s address on the clipboard, at `Latest`;
+    /// Copy path puts the file's full path on disk, which needs no remote.
+    #[wasm_bindgen_test]
+    async fn copy_uri_copies_the_address_and_copy_path_the_full_path_on_disk() {
+        let package = crate::util::package_uri(
+            "team-bucket",
+            &"user/plate-07".try_into().unwrap(),
+            Some("example.quilt.dev"),
+        );
+        let address = "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=example.quilt.dev";
+        let copy_uri = RowCommand::CopyUri("runs/one.csv".to_string());
+        let (text, event) = clipped(&copy_uri, "user/plate-07", Some(&package), at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, address);
+        assert_eq!(event.map(|u| u.display()), Some(text));
+
+        // A New row: the full path on disk, as opening the file resolves it.
+        let copy_path = RowCommand::CopyPath("runs/new.csv".to_string());
+        let (text, _) = clipped(&copy_path, "user/plate-07", None, at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "/Users/me/QuiltSync/user/plate-07/runs/new.csv");
+        assert_eq!(
+            clipped(&copy_path, "user/plate-07", None, not_there).await,
+            Err("runs/new.csv is not there".to_string()),
+            "a path that cannot be found is a failed copy, not an empty one",
+        );
+
+        assert_eq!(
+            clipped(
+                &RowCommand::CopyUri("a.csv".to_string()),
+                "user/plate-07",
+                None,
+                at_home
+            )
+            .await,
+            Ok(None),
+            "no remote, no address",
+        );
+        assert_eq!(
+            clipped(
+                &RowCommand::Ignore("a.csv".to_string()),
+                "user/plate-07",
+                Some(&package),
+                at_home
+            )
+            .await,
+            Ok(None),
+        );
+
+        // The header's remote names the revision this copy holds; the address
+        // names the package, as the recent-files list's does.
+        let pinned = quilt_uri::S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Hash("abc123".to_string()),
+            ..package.clone()
+        };
+        let (text, _) = clipped(&copy_uri, "user/plate-07", Some(&pinned), at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, address);
+    }
+
     /// A download the remote could not finish is a warning that names the
     /// files left behind; one it finished says nothing, as success does here.
     #[test]
@@ -960,6 +1421,8 @@ mod tests {
             retry: Callback::new(|()| ()),
             ticked: RwSignal::new(BTreeSet::new()),
             downloading: RwSignal::new(false),
+            ignoring: RwSignal::new(None),
+            unignoring: RwSignal::new(None),
         }
     }
 
@@ -1764,6 +2227,40 @@ mod tests {
             truncated: false,
         });
         counted(data)
+    }
+
+    /// A row's Ignore opens the ignore popup with the row's path as its
+    /// pattern, and the watcher's re-read neither closes it nor loses what was
+    /// typed: its state is the page's, not the body's.
+    #[wasm_bindgen_test]
+    async fn ignore_opens_the_popup_with_the_path_and_a_re_read_keeps_it() {
+        let el = screen_at(PLAIN, settled_read).await;
+        el.query_selector(
+            "section[aria-label='Files'] button[aria-label='More actions for this file']",
+        )
+        .unwrap()
+        .expect("the row's [⋯]")
+        .unchecked_into::<web_sys::HtmlElement>()
+        .click();
+        sleep_ms(10).await;
+        button_saying(&el, "Ignore").click();
+        sleep_ms(10).await;
+        let field = || -> web_sys::HtmlInputElement {
+            el.query_selector(".ignore-input")
+                .unwrap()
+                .unwrap_or_else(|| panic!("the ignore popup; markup was {}", el.inner_html()))
+                .unchecked_into()
+        };
+        assert_eq!(field().value(), "a.csv");
+
+        field().set_value("*.csv");
+        field()
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert_eq!(field().value(), "*.csv", "kept across the re-read");
     }
 
     /// A collapsed folder is the page's: a re-read keeps it, and another
