@@ -80,9 +80,9 @@ impl MockRemote {
             .unwrap_or(0)
     }
 
-    /// Holds the next `get_object_stream` of `uri` until the returned gate is
-    /// released, so a test can land another operation inside this one. Only
-    /// the next fetch parks; later ones pass.
+    /// Holds the next `get_object_stream` or `put_object` of `uri` until the
+    /// returned gate is released, so a test can land another operation inside
+    /// this one. Only the next call parks; later ones pass.
     ///
     /// # Panics
     ///
@@ -154,6 +154,10 @@ impl Remote for MockRemote {
     ) -> Res {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} put request");
+        let parked = self.parked.lock().unwrap().remove(&key);
+        if let Some(gate) = parked {
+            gate.hold().await;
+        }
         self.storage.write_byte_stream(key, contents.into()).await
     }
 

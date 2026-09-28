@@ -86,7 +86,7 @@ pub(super) struct Rev1Installed {
     pub(super) package: InstalledPackage<LocalStorage, MockRemote>,
     pub(super) rev1: String,
     pub(super) rev2: String,
-    _dirs: [tempfile::TempDir; 3],
+    dirs: [tempfile::TempDir; 3],
 }
 
 impl Rev1Installed {
@@ -138,7 +138,7 @@ impl Rev1Installed {
             },
             rev1,
             rev2,
-            _dirs: [scratch, home_dir, paths_dir],
+            dirs: [scratch, home_dir, paths_dir],
         })
     }
 
@@ -177,7 +177,7 @@ impl Rev1Installed {
     /// Publishes revision 3, which modifies `changes.txt` again and keeps
     /// `same.txt`, and moves `latest` to it. Returns its hash.
     pub(super) async fn publish_rev3(&self) -> Res<String> {
-        let scratch = self._dirs[0].path();
+        let scratch = self.dirs[0].path();
         let same = publish_row(self.remote(), scratch, "same.txt", "s1", b"same").await?;
         let three = publish_row(self.remote(), scratch, "changes.txt", "c3", b"three").await?;
         let rev3 = publish_manifest(self.remote(), vec![three, same]).await?;
@@ -383,7 +383,7 @@ async fn installing_another_package_during_a_pull_keeps_the_pull() -> Res {
 }
 
 /// Waits for a parked fetch, failing rather than hanging when it never comes.
-async fn arrives(gate: &crate::io::remote::mocks::Gate, what: &str) {
+pub(super) async fn arrives(gate: &crate::io::remote::mocks::Gate, what: &str) {
     tokio::time::timeout(std::time::Duration::from_secs(10), gate.arrived())
         .await
         .unwrap_or_else(|_| panic!("{what} never happened"));
@@ -734,11 +734,11 @@ async fn a_pull_crossed_by_an_uninstall_and_a_download_keeps_both() -> Res {
 /// inside `uninstall_paths`, which never touches the remote), or taking the
 /// lineage lock (the moment a writer's work is done and its write step starts).
 #[derive(Clone)]
-struct ParkedStorage {
+pub(super) struct ParkedStorage {
     inner: LocalStorage,
     park: Park,
     armed: Arc<std::sync::atomic::AtomicBool>,
-    gate: Arc<crate::io::remote::mocks::Gate>,
+    pub(super) gate: Arc<crate::io::remote::mocks::Gate>,
 }
 
 #[derive(Clone)]
@@ -752,7 +752,7 @@ impl ParkedStorage {
         Self::parking(Park::Remove(path.to_path_buf()))
     }
 
-    fn at_the_write_step() -> Self {
+    pub(super) fn at_the_write_step() -> Self {
         Self::parking(Park::Lock)
     }
 
@@ -778,12 +778,20 @@ impl ParkedStorage {
 
     /// A second handle on `t`'s package that goes through this storage.
     fn package(&self, t: &Rev1Installed) -> InstalledPackage<ParkedStorage, MockRemote> {
+        self.handle(&t.package)
+    }
+
+    /// A second handle on `package` that goes through this storage.
+    pub(super) fn handle(
+        &self,
+        package: &InstalledPackage<LocalStorage, MockRemote>,
+    ) -> InstalledPackage<ParkedStorage, MockRemote> {
         InstalledPackage {
-            lineage: t.package.lineage.clone(),
-            paths: t.package.paths.clone(),
-            remote: Arc::clone(&t.package.remote),
+            lineage: package.lineage.clone(),
+            paths: package.paths.clone(),
+            remote: Arc::clone(&package.remote),
             storage: self.clone(),
-            namespace: t.package.namespace.clone(),
+            namespace: package.namespace.clone(),
         }
     }
 }

@@ -159,13 +159,15 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         }
         // A pull that raced another pull and found nothing to do. Benign:
         // the namespace is already at `latest`, so keep syncing quietly.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::AlreadyUpToDate)) => Ok(()),
-        // Another writer changed the package while this pull worked (a commit,
-        // a reset, a download crossing it twice), or uninstalled it, so the
-        // pull wrote nothing. Neither is the user's to resolve: skip quietly,
-        // and the next tick classifies the package afresh.
+        // Likewise when another writer changed the package while this pull
+        // worked (a commit, a reset, a download crossing it twice), or
+        // uninstalled it, so the pull wrote nothing. Neither is the user's to
+        // resolve: skip quietly, and the next tick classifies it afresh.
         Error::Quilt(
-            quilt::Error::PackageOp(quilt::PackageOpError::ChangedUnderneath { .. })
+            quilt::Error::PackageOp(
+                quilt::PackageOpError::AlreadyUpToDate
+                | quilt::PackageOpError::ChangedUnderneath { .. },
+            )
             | quilt::Error::InstallPackage(quilt::InstallPackageError::NotInstalled(_)),
         ) => Ok(()),
         Error::Quilt(quilt::Error::PackageOp(
