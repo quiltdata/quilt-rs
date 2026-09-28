@@ -231,12 +231,15 @@ pub(super) fn BucketDialog(
     // The page's last answer for this target stands in for the read, so the
     // rebuilt dialog does not ask again: an answer that came back different —
     // a failure, most likely — would reset the reader's workflow under them.
+    // Only a success is kept. A failure is shown but not stored, so a rebuild
+    // asks again and a remote that was briefly unreachable gets its workflows
+    // offered once it answers.
     let workflows = LocalResource::new(move || {
         let target = debounced_target.get();
         let answered = draft.workflows.with_untracked(|last| {
             last.as_ref()
                 .filter(|(asked, _)| Some(asked) == target.as_ref())
-                .cloned()
+                .map(|(asked, config)| (asked.clone(), Ok(config.clone())))
         });
         async move {
             if answered.is_some() {
@@ -244,10 +247,14 @@ pub(super) fn BucketDialog(
             }
             let (host, name) = target?;
             let answer = read(host.clone(), name.clone()).await;
-            let answered = ((host, name), answer);
-            // `try_`: the draft is the page's, and the page can be gone by now.
-            draft.workflows.try_set(Some(answered.clone()));
-            Some(answered)
+            let asked = (host, name);
+            if let Ok(config) = &answer {
+                // `try_`: the draft is the page's, and the page can be gone by now.
+                draft
+                    .workflows
+                    .try_set(Some((asked.clone(), config.clone())));
+            }
+            Some((asked, answer))
         }
     });
 
@@ -665,6 +672,17 @@ mod tests {
         }
     }
 
+    /// Failing the first time it is asked, and governed every time after, as
+    /// a remote that was briefly unreachable does.
+    fn failing_once(host: String, bucket: String) -> Answer {
+        if WORKFLOW_READS.get() == 0 {
+            WORKFLOW_READS.set(1);
+            Box::pin(async { Err("connection reset".to_string()) })
+        } else {
+            governed(host, bucket)
+        }
+    }
+
     fn published() -> commands::PackageHeaderData {
         let uri: quilt_uri::S3PackageUri =
             "quilt+s3://team-bucket#package=team/dataset&catalog=open.quiltdata.com"
@@ -885,6 +903,30 @@ mod tests {
 
         assert_eq!(value_of(&el, "Workflow"), "Beta");
         assert_eq!(WORKFLOW_READS.get(), 1, "read once");
+    }
+
+    /// A failure is not kept. The rebuilt dialog asks again, so a remote that
+    /// was briefly unreachable offers its workflows once it answers, rather
+    /// than leaving the form on the bucket default until the dialog closes.
+    #[wasm_bindgen_test]
+    async fn a_rebuilt_dialog_asks_again_after_a_failed_read() {
+        let w = Wiring::new();
+        let header = RwSignal::new(published());
+        let el = mount_rebuilt_reading(w, header, failing_once);
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+        element_saying(&el, "Bucket default");
+
+        header.set(published());
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+
+        assert_eq!(WORKFLOW_READS.get(), 2, "asked again");
+        assert_eq!(value_of(&el, "Workflow"), "Alpha (default)");
+        choose(&el, "Workflow", "Beta");
+        leptos::task::tick().await;
+        assert_eq!(value_of(&el, "Workflow"), "Beta", "the governed options");
     }
 
     /// A draft is one package's. A re-read that rebuilds the dialog, still

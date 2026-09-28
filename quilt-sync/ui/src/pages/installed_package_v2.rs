@@ -191,9 +191,10 @@ pub struct Dialogs {
     pub replace: RwSignal<bool>,
 }
 
-/// A workflow read's answer, with the target — host and bucket — it was
-/// asked for.
-pub type WorkflowAnswer = ((String, String), Result<commands::CommitWorkflows, String>);
+/// A workflow read's successful answer, with the target — host and bucket —
+/// it was asked for. Only a success: a failure is shown but not kept, so the
+/// next read asks again.
+pub type WorkflowAnswer = ((String, String), commands::CommitWorkflows);
 
 /// The bucket dialog's fields, held by the page. Filled from the package's
 /// remote only when the dialog opens, going from closed to open; a dialog
@@ -209,10 +210,13 @@ pub struct BucketDraft {
     /// again; a different target, or a fresh opening, restarts at the
     /// bucket's preselection.
     pub workflow_for: RwSignal<Option<(String, String)>>,
-    /// The last answered workflow read, with the target it was for. The
+    /// The last successful workflow read, with the target it was for. The
     /// rebuilt dialog takes it rather than asking again, because a second
     /// answer could differ — a failure would reset the reader's choice to the
-    /// bucket default. A fresh opening clears it, so each opening reads anew.
+    /// bucket default. A failure is not kept: it is most likely passing, and
+    /// kept it would hold the form on the bucket default after the remote
+    /// recovers, so the rebuilt dialog asks again instead. A fresh opening
+    /// clears it, so each opening reads anew.
     pub workflows: RwSignal<Option<WorkflowAnswer>>,
     /// The package the draft was filled for. One route serves every package,
     /// so a draft left from another one is refilled rather than shown.
