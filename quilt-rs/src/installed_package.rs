@@ -130,7 +130,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// Takes this package's lock, waiting while another writer holds it.
     ///
     /// Every public writer here takes it before its first read of the entry
-    /// and holds it through its write. See [`LockedPackage`].
+    /// and holds it through its write. See [`LockedPackage`]. Each boxes the
+    /// body it runs on the handle: inline, that body would sit inside every
+    /// caller's future, and the CLI's command future then outgrows the
+    /// compiler's layout depth limit.
     pub async fn lock(&self) -> Res<LockedPackage<S, R>> {
         let held = package_lock::lock(&self.storage, &self.paths, &self.namespace).await?;
         Ok(LockedPackage {
@@ -419,7 +422,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         if paths.is_empty() {
             return Ok(flow::InstallPathsReport::default());
         }
-        self.lock().await?.install_paths(paths).await
+        Box::pin(self.lock().await?.install_paths(paths)).await
     }
 
     async fn install_paths_unlocked(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
@@ -450,7 +453,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
-        self.lock().await?.uninstall_paths(paths).await
+        Box::pin(self.lock().await?.uninstall_paths(paths)).await
     }
 
     async fn uninstall_paths_unlocked(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
@@ -477,10 +480,12 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
     ) -> Res<CommitState> {
-        self.lock()
-            .await?
-            .commit(message, user_meta, workflow, host_config_opt)
-            .await
+        Box::pin(
+            self.lock()
+                .await?
+                .commit(message, user_meta, workflow, host_config_opt),
+        )
+        .await
     }
 
     async fn commit_unlocked(
@@ -552,10 +557,12 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
     ) -> Res<PublishOutcome> {
-        self.lock()
-            .await?
-            .publish(message, user_meta, workflow, host_config_opt, None)
-            .await
+        Box::pin(
+            self.lock()
+                .await?
+                .publish(message, user_meta, workflow, host_config_opt, None),
+        )
+        .await
     }
 
     async fn publish_unlocked(
@@ -643,7 +650,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     /// Push the local revision to the remote.
     pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
-        self.lock().await?.push(host_config_opt).await
+        Box::pin(self.lock().await?.push(host_config_opt)).await
     }
 
     async fn push_unlocked(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
@@ -716,7 +723,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// while the autosync tick pulls waits for the pull and then lands on the
     /// entry the pull wrote.
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
-        self.lock().await?.set_sync_scope(scope).await
+        Box::pin(self.lock().await?.set_sync_scope(scope)).await
     }
 
     async fn set_sync_scope_unlocked(&self, scope: SyncScope) -> Res<()> {
@@ -736,7 +743,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
     ) -> Res<flow::PullReport> {
-        self.lock().await?.pull(host_config_opt, scope).await
+        Box::pin(self.lock().await?.pull(host_config_opt, scope)).await
     }
 
     async fn pull_unlocked(
@@ -905,7 +912,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// merge page when the user resolves a `Diverged` state in favor of
     /// their own revision.
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
-        self.lock().await?.certify_latest().await
+        Box::pin(self.lock().await?.certify_latest()).await
     }
 
     async fn certify_latest_unlocked(&self) -> Res<ManifestUri> {
@@ -926,7 +933,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
-        self.lock().await?.reset_to_latest().await
+        Box::pin(self.lock().await?.reset_to_latest()).await
     }
 
     async fn reset_to_latest_unlocked(&self) -> Res<ManifestUri> {
@@ -959,7 +966,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// package with unpushed commits still has a chain, but undoing there would
     /// leave a pending commit equal to its own base.
     pub async fn undo_commit(&self) -> Res<CommitState> {
-        self.lock().await?.undo_commit().await
+        Box::pin(self.lock().await?.undo_commit()).await
     }
 
     async fn undo_commit_unlocked(&self) -> Res<CommitState> {
@@ -992,10 +999,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         origin: Option<Host>,
         workflow: WorkflowIntent,
     ) -> Res<SetRemoteOutcome> {
-        self.lock()
-            .await?
-            .set_remote(bucket, origin, workflow)
-            .await
+        Box::pin(self.lock().await?.set_remote(bucket, origin, workflow)).await
     }
 
     async fn set_remote_unlocked(
