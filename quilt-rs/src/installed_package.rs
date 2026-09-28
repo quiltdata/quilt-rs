@@ -436,21 +436,26 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                 }
                 Verdict::Redo(current) if round < write_step::MAX_REDO => {
                     let placed = write_step::placed(&started, &next);
-                    let (redone, also_skipped) =
-                        match self.install_again(&current, &placed, &package_home).await {
-                            Ok(redone) => redone,
-                            // The redo's check before each rename found a
-                            // file another writer replaced meanwhile. Theirs
-                            // stands; what this one placed goes.
-                            Err(Error::PackageOp(PackageOpError::PullConflict(_))) => {
-                                self.remove_placed_untracked(&placed, &package_home).await?;
-                                return Err(write_step::changed_underneath(
-                                    &self.namespace,
-                                    "downloading",
-                                ));
-                            }
-                            Err(err) => return Err(err),
-                        };
+                    let (redone, also_skipped) = match Box::pin(self.install_again(
+                        &current,
+                        &placed,
+                        &package_home,
+                    ))
+                    .await
+                    {
+                        Ok(redone) => redone,
+                        // The redo's check before each rename found a
+                        // file another writer replaced meanwhile. Theirs
+                        // stands; what this one placed goes.
+                        Err(Error::PackageOp(PackageOpError::PullConflict(_))) => {
+                            self.remove_placed_untracked(&placed, &package_home).await?;
+                            return Err(write_step::changed_underneath(
+                                &self.namespace,
+                                "downloading",
+                            ));
+                        }
+                        Err(err) => return Err(err),
+                    };
                     next = redone;
                     skipped.extend(also_skipped);
                     started = *current;
@@ -922,8 +927,9 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             scope,
         )
         .await?;
-        self.write_latest(started, next, &package_home, "pulling")
-            .await?;
+        // Boxed so the write step does not push every caller's future over the
+        // workspace's size budget.
+        Box::pin(self.write_latest(started, next, &package_home, "pulling")).await?;
         Ok(report)
     }
 
