@@ -14,7 +14,8 @@
 //!
 //! Two versions, because they are the two days a user has. The busy page is the
 //! worst case — 19 things needing decisions — and the calm page is the common one,
-//! where `ZeroLine` collapses the whole region to a line.
+//! where `ZeroLine` collapses the whole region to a line. A third shows the calm
+//! page while its checks are still out, beside the page it settles into.
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -27,11 +28,11 @@ use crate::kit::Activities;
 use crate::kit::Activity;
 use crate::kit::ActivityKind;
 use crate::kit::Button;
-use crate::kit::Card;
 use crate::kit::PageLayout;
 use crate::kit::Spinner;
 use crate::kit::SpinnerVariant;
 use crate::kit::ZeroLine;
+use crate::kit::ZeroLineSkeleton;
 use crate::kit::icons;
 
 fn appbar_actions() -> AnyView {
@@ -89,20 +90,15 @@ pub fn PageScene() -> impl IntoView {
             <div class="g-window">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>
                     <StateStripRegion />
-                    // The queue region collapsed. Composed here rather than hidden inside
-                    // `QueueRegion` behind a flag — "is anything wrong" is the caller's
-                    // question, and a region that answered it for itself would need the
-                    // data this gallery does not have.
-                    //
-                    // No count: counting to zero is noise, and `Card`'s count is optional
-                    // for exactly this row of the design.
-                    <Card title="Needs your attention">
-                        <ZeroLine text="Everything is Latest — 43 packages" />
-                    </Card>
+                    // The queue region collapsed: the bare line, with no card and no
+                    // heading, exactly as the page's `QueueRegion` draws it when
+                    // nothing needs a decision.
+                    <ZeroLine text="Everything is Latest — 43 packages" />
                     <PackagesRegion view_name="normal-day-view" />
                 </PageLayout>
             </div>
         </Scene>
+        <CheckingScene />
         <Scene
             title="Scene · the appbar alone"
             note="The two chrome buttons on the brand ground, with nothing under them to \
@@ -147,6 +143,40 @@ pub fn PageScene() -> impl IntoView {
             <div class="g-window">
                 <div data-home-frame>
                     <Spinner variant=SpinnerVariant::Region aria_label="Loading QuiltSync" />
+                </div>
+            </div>
+        </Scene>
+    }
+}
+
+/// The calm page while its checks are still out, beside the page it settles into.
+/// Its own component so `PageScene` stays one screen of scenes.
+#[component]
+fn CheckingScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · the whole page, still checking"
+            note="The same calm day a moment earlier, beside the page it settles into. \
+                  The light phase has answered and the heavy phase has not, so every row \
+                  is still the light phase's guess, dimmed, and the queue's outcome is \
+                  not known yet. The placeholder holds the zero line's place until it is: \
+                  the first package row must start at the same height in both windows, \
+                  or the list jumps when the all-clear lands."
+        >
+            <div class="g-window-pair">
+                <div class="g-window">
+                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                        <StateStripRegion />
+                        <ZeroLineSkeleton />
+                        <PackagesRegion view_name="checking-view" provisional=true />
+                    </PageLayout>
+                </div>
+                <div class="g-window">
+                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                        <StateStripRegion />
+                        <ZeroLine text="Everything is Latest — 43 packages" />
+                        <PackagesRegion view_name="checked-view" />
+                    </PageLayout>
                 </div>
             </div>
         </Scene>

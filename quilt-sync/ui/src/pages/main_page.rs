@@ -908,8 +908,9 @@ fn MainPageRegions(
                 // where the queue will be and drops when the queue arrives —
                 // and the region always renders SOMETHING once it knows, even
                 // when that is the one-line all-clear, so the shift came
-                // entirely from rendering nothing while it did not
-                // (qhq-8mgw.55).
+                // entirely from rendering nothing while it did not.
+                // `QueueRegion` keeps drawing the same line after this
+                // resolves, until the heavy phase has answered.
                 <ZeroLineSkeleton />
                 // The toolbar, from the same helper the resolved arm calls: it is
                 // on screen with the appbar and the strip, and is never itself a
@@ -2746,6 +2747,68 @@ mod tests {
         assert!(
             text.contains("Everything is Latest — 2 packages"),
             "and it says so the moment the last answer lands: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_holds_its_line_until_every_check_has_answered() {
+        // Owner, watching a load settle to the all-clear: "There is no
+        // placeholder or spacer for 'Everything is Latest'. The Page (the
+        // packages list) is jumping when the section is finally filled." The
+        // fallback held the line only until the light phase resolved; the heavy
+        // phase then drew nothing until the last answer, so the list rose one
+        // line and dropped again.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        // No Tauri host, so the calls the resolve fired have already failed;
+        // put them back in flight, with nothing settled — the first frame of
+        // every real load.
+        let store = seeded_store(slot);
+        store.outstanding.set(2);
+        leptos::task::tick().await;
+        let line = el
+            .query_selector("[class*=placeholder]")
+            .unwrap()
+            .expect("the resolved page holds the queue's line while checks are out");
+        assert_eq!(line.get_attribute("aria-busy").as_deref(), Some("true"));
+
+        settle_all(store, &payload);
+        store.outstanding.set(0);
+        leptos::task::tick().await;
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_none(),
+            "the zero line replaces the placeholder, not joins it"
+        );
+        assert!(
+            el.text_content()
+                .unwrap()
+                .contains("Everything is Latest — 2 packages"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_page_with_no_packages_holds_no_line_open() {
+        // A fresh install: nothing to check, so nothing to wait for. A
+        // placeholder here would promise a line the page never draws.
+        let el = mount_regions(
+            Ok(MainPagePackagesData { packages: vec![] }),
+            Ok(one_signed_out_host()),
+        );
+        sleep_ms(50).await;
+
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_none(),
+            "no packages, no placeholder"
         );
     }
 

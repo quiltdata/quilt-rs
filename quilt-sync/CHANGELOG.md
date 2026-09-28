@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.5-dev]
+
+### Fixed
+
+- On the new main page, the package list no longer jumps down when **Everything is Latest** appears (PRLINK)
+
 ## [v0.22.4] - 2026-09-28
 
 ### Changed

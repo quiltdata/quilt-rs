@@ -4,7 +4,11 @@
  * first words carry the meaning, and the tail is a count.
  */
 
-.root {
+/* `.placeholder` is listed here rather than written as `composes: root`: stylance
+ * passes `composes` through to the bundle untranslated, where no browser reads it,
+ * and the placeholder rendered as a stack of two blocks four pixels too tall. */
+.root,
+.placeholder {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -45,7 +49,16 @@
  * by less, and it shifts to show something worth seeing.
  *
  * Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
- * already use — a test looking for this one has to be able to say so. */
-.placeholder {
-  composes: root;
+ * already use — a test looking for this one has to be able to say so. Its box is
+ * `.root`'s, from the shared rule at the top of this file.
+ *
+ * The line box, restated. The real `.text` is a line of text, so it is as tall as
+ * the body size times the tight leading; the bar inside this one is a block, which
+ * forms no line box at all, and the span would shrink to the bar's 12px. That is
+ * the 3.5px step `skeleton_box.rs` warns about, arriving exactly when the list has
+ * started to be read. */
+.placeholder .text {
+  display: flex;
+  align-items: center;
+  height: calc(var(--q-text-body) * var(--q-line-tight));
 }

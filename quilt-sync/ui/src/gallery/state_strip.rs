@@ -252,9 +252,7 @@ fn PausedStale() -> impl IntoView {
                     />
                 </Card>
             </div>
-            <Card title="Needs your attention">
-                <ZeroLine text="Everything is Latest — 13 packages" />
-            </Card>
+            <ZeroLine text="Everything is Latest — 13 packages" />
         </Scene>
     }
 }
