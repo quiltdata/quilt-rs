@@ -477,6 +477,8 @@ pub struct KeepingData {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentRevisionData {
+    /// Top hash of the revision's manifest: the mismatch band's hover text.
+    pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
 }
@@ -1789,10 +1791,11 @@ mod tests {
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
         )
         .unwrap();
 
+        assert_eq!(context.revision.hash, "abc123");
         assert_eq!(context.revision.message.as_deref(), Some("Initial upload"));
         assert!(
             (context.revision.obtained_at - 1_758_500_000_000.0).abs() < f64::EPSILON,

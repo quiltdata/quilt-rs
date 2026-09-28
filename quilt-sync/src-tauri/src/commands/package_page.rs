@@ -137,6 +137,11 @@ pub enum ResolveData {
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentRevisionData {
+    /// Top hash of the revision's manifest. Only a deep link that asked for a
+    /// different revision reads it: the mismatch band names this side by its
+    /// message and puts the hash on hover, falling back to its short form when
+    /// the revision has no message.
+    pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
 }
@@ -451,6 +456,7 @@ fn package_context_data(
 
     Ok(PackageContextData {
         revision: CurrentRevisionData {
+            hash: revision.hash,
             message: revision.message,
             obtained_at: epoch_millis(revision.obtained),
         },
@@ -1055,6 +1061,7 @@ mod tests {
     fn current_revision_context_wire_form_is_verbatim() {
         let context = PackageContextData {
             revision: CurrentRevisionData {
+                hash: "abc123".to_string(),
                 message: Some("Initial upload".to_string()),
                 obtained_at: 1_758_500_000_000.0,
             },
@@ -1066,7 +1073,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
         );
     }
 
@@ -1274,6 +1281,7 @@ mod tests {
             context,
             PackageContextData {
                 revision: CurrentRevisionData {
+                    hash: "pending-hash".to_string(),
                     message: Some("Pending commit".to_string()),
                     obtained_at: 1_758_500_000_000.0,
                 },

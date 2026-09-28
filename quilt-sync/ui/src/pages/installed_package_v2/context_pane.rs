@@ -243,6 +243,7 @@ mod tests {
     ) -> commands::PackageContextData {
         commands::PackageContextData {
             revision: CurrentRevisionData {
+                hash: "abc123".to_string(),
                 message: message.map(ToString::to_string),
                 obtained_at: 1_758_500_000_000.0,
             },

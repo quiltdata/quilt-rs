@@ -26,20 +26,14 @@ pub fn RemotePackage() -> impl IntoView {
                     requested_bucket,
                     requested_origin,
                     ..
-                }) => {
-                    let path = format!(
-                        "{base}&mismatch={}&mrbucket={}",
-                        urlencoding::encode(requested_hash),
-                        urlencoding::encode(requested_bucket),
-                    );
-                    match requested_origin {
-                        Some(origin) => format!(
-                            "{path}&mrcatalog={}",
-                            urlencoding::encode(&origin.to_string())
-                        ),
-                        None => path,
-                    }
-                }
+                }) => crate::routes::keeping_mismatch(
+                    base,
+                    Some(&crate::routes::RevisionMismatch {
+                        hash: requested_hash.clone(),
+                        bucket: requested_bucket.clone(),
+                        catalog: requested_origin.as_ref().map(ToString::to_string),
+                    }),
+                ),
                 Some(commands::RemoteBanner::LocalOnly) => format!("{base}&localOnly=1"),
                 None => base,
             };

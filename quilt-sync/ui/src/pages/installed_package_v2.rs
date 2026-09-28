@@ -34,6 +34,7 @@ pub(crate) mod context_pane;
 pub(crate) mod file_pane;
 mod header;
 pub(crate) mod keeping;
+mod mismatch_band;
 pub(crate) mod resolve;
 mod revision_history;
 mod role_dialog;
@@ -173,6 +174,12 @@ pub struct Dialogs {
     /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
     /// one dialog: the state calls for it, or the reader chooses it.
     pub bucket: RwSignal<bool>,
+    /// What the reader has typed into that dialog. Here beside its flag, for
+    /// the flag's reason: a re-read rebuilds the dialog, and the rebuilt one
+    /// must not put the package's remote back over the draft. One handle to
+    /// the draft's signals rather than the signals inline, because `Wiring`
+    /// is passed by value to every part of the header.
+    pub bucket_draft: StoredValue<BucketDraft>,
     /// Opened only by the row's `Switch role`, which exists only when the
     /// payload names somewhere to switch to.
     pub role: RwSignal<bool>,
@@ -182,6 +189,51 @@ pub struct Dialogs {
     pub remove: RwSignal<bool>,
     /// Resolve's *Replace mine*: here, so a re-read mid-reset keeps it open.
     pub replace: RwSignal<bool>,
+}
+
+/// A workflow read's successful answer, with the target — host and bucket —
+/// it was asked for. Only a success: a failure is shown but not kept, so the
+/// next read asks again.
+pub type WorkflowAnswer = ((String, String), commands::CommitWorkflows);
+
+/// The bucket dialog's fields, held by the page. Filled from the package's
+/// remote only when the dialog opens, going from closed to open; a dialog
+/// rebuilt while open finds them as the reader left them.
+#[derive(Clone, Copy)]
+pub struct BucketDraft {
+    pub host: RwSignal<String>,
+    pub bucket: RwSignal<String>,
+    /// The workflow's label, as the dialog's select names it.
+    pub workflow: RwSignal<String>,
+    /// The target — host and bucket — the workflow was chosen for. A read of
+    /// the same target keeps the choice, because the rebuilt dialog views it
+    /// again; a different target, or a fresh opening, restarts at the
+    /// bucket's preselection.
+    pub workflow_for: RwSignal<Option<(String, String)>>,
+    /// The last successful workflow read, with the target it was for. The
+    /// rebuilt dialog takes it rather than asking again, because a second
+    /// answer could differ — a failure would reset the reader's choice to the
+    /// bucket default. A failure is not kept: it is most likely passing, and
+    /// kept it would hold the form on the bucket default after the remote
+    /// recovers, so the rebuilt dialog asks again instead. A fresh opening
+    /// clears it, so each opening reads anew.
+    pub workflows: RwSignal<Option<WorkflowAnswer>>,
+    /// The package the draft was filled for. One route serves every package,
+    /// so a draft left from another one is refilled rather than shown.
+    pub namespace: RwSignal<Option<String>>,
+}
+
+impl BucketDraft {
+    fn new() -> Self {
+        Self {
+            host: RwSignal::new(String::new()),
+            bucket: RwSignal::new(String::new()),
+            workflow: RwSignal::new(String::new()),
+            workflow_for: RwSignal::new(None),
+            workflows: RwSignal::new(None),
+            namespace: RwSignal::new(None),
+        }
+    }
 }
 
 impl Wiring {
@@ -196,6 +248,7 @@ impl Wiring {
             replace_to: RwSignal::new(None),
             dialogs: Dialogs {
                 bucket: RwSignal::new(false),
+                bucket_draft: StoredValue::new(BucketDraft::new()),
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),
@@ -291,14 +344,16 @@ pub fn differing_marks(
 
 /// Where this page should be instead, when it was asked for a mode the
 /// package does not have: only an answered read about the package on screen decides.
+/// A deep link's mismatch stays on the address, so the band does not end with the mode.
 fn normalized_address(
     asked: bool,
     showing: &str,
     answered: &commands::PackagePageData,
+    mismatch: Option<&routes::RevisionMismatch>,
 ) -> Option<String> {
     let namespace = &answered.header.namespace;
     (asked && namespace.to_string() == showing && answered.context.resolve.is_none())
-        .then(|| routes::package_page_href(namespace))
+        .then(|| routes::keeping_mismatch(routes::package_page_href(namespace), mismatch))
 }
 
 /// Render one successful page payload. Kept pure so its atomic shape can be
@@ -368,7 +423,7 @@ fn package_body(
                     revision=context.revision
                     resolve=resolve
                     marks=marks.differing
-                    back_href=routes::package_page_href(&ns)
+                    back_href=mismatch_band::carrying(routes::package_page_href(&ns))
                     w=w
                     commands=resolving
                 />
@@ -814,7 +869,13 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
 /// so no setting and no build offers it.
 #[component]
 pub fn InstalledPackageV2() -> impl IntoView {
-    view! { <PackageScreen read=read_page resolving=ResolveCommands::app() /> }
+    view! {
+        <PackageScreen
+            read=read_page
+            resolving=ResolveCommands::app()
+            revision_message=mismatch_band::app_revision_message
+        />
+    }
 }
 
 /// The page's one read: the header, the pane and the pause, for one namespace.
@@ -827,15 +888,25 @@ fn read_page(
     Box::pin(commands::get_package_page_data(namespace))
 }
 
-/// The page over whichever read and resolve commands it is given, so a routed
-/// test can feed it a payload without a Tauri host.
+/// The page over whichever read, resolve commands and revision lookup it is
+/// given, so a routed test can feed it a payload without a Tauri host.
 #[component]
-fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
+fn PackageScreen(
+    read: PageRead,
+    resolving: ResolveCommands,
+    revision_message: mismatch_band::RevisionMessage,
+) -> impl IntoView {
     let query = use_query_map();
     // The address is the only input, and changes without a remount: one route serves every package.
     // Memos, so only `namespace` re-runs the read: the mode opens with no loading state.
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
     let asked = Memo::new(move |_| query.read().get("resolve").as_deref() == Some("1"));
+    // A deep link's other revision. Given to every address the page builds for
+    // this package, and looked up here rather than by the band, which every
+    // re-read rebuilds.
+    let mismatch = Memo::new(move |_| routes::RevisionMismatch::from_query(&query.read()));
+    provide_context(mismatch_band::Carried(mismatch));
+    let requested = mismatch_band::requested_message(mismatch, ns, revision_message);
 
     // What the reader has already read and closed. Keyed on the message, so a
     // different pause is news again — see `pause_banner`.
@@ -914,7 +985,9 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
         let Some((_, Ok(answered))) = data.get() else {
             return;
         };
-        if let Some(to) = normalized_address(asked.get(), &ns.get(), &answered) {
+        if let Some(to) =
+            normalized_address(asked.get(), &ns.get(), &answered, mismatch.get().as_ref())
+        {
             w.replace_to.set(Some(Replace {
                 namespace: ns.get(),
                 to,
@@ -937,7 +1010,16 @@ fn PackageScreen(read: PageRead, resolving: ResolveCommands) -> impl IntoView {
             banner=view! {
                 {outcome_band(outcome, ns.into())}
                 {move || match answer_for(data.get(), &ns.get()) {
-                    Some(Ok(d)) => pause_banner(d.sync_paused, dismissed),
+                    Some(Ok(d)) => view! {
+                        {pause_banner(d.sync_paused.clone(), dismissed)}
+                        {mismatch_band::mismatch_band(
+                            mismatch,
+                            requested.into(),
+                            d.context.revision.clone(),
+                            &d.header.state,
+                        )}
+                    }
+                    .into_any(),
                     // A failed read still says nothing about a command that ran
                     // before it; the outcome band above is outside this arm for
                     // exactly that reason.
@@ -1163,7 +1245,9 @@ mod tests {
             .unwrap();
     }
 
-    fn page_data() -> commands::PackagePageData {
+    /// A settled page for `team/dataset` at its latest revision. The child
+    /// modules' tests start from it and change only what they are about.
+    pub(super) fn page_data() -> commands::PackagePageData {
         commands::PackagePageData {
             header: commands::PackageHeaderData {
                 namespace: "team/dataset".try_into().unwrap(),
@@ -1176,6 +1260,7 @@ mod tests {
             },
             context: commands::PackageContextData {
                 revision: commands::CurrentRevisionData {
+                    hash: "0123456789abcdef".to_string(),
                     message: Some("Initial upload".to_string()),
                     obtained_at: 1_758_500_000_000.0,
                 },
@@ -1412,7 +1497,7 @@ mod tests {
     }
 
     /// The pane's page-owned state at rest, which is all these tests need of it.
-    fn idle_files() -> Files {
+    pub(super) fn idle_files() -> Files {
         Files {
             grouping: RwSignal::new(Grouping::BaseFolder.label().to_string()),
             collapsed: RwSignal::new(BTreeSet::new()),
@@ -2055,26 +2140,46 @@ mod tests {
     #[test]
     fn only_an_answered_read_that_is_not_diverged_normalises() {
         assert_eq!(
-            normalized_address(true, "team/dataset", &page_data()).as_deref(),
+            normalized_address(true, "team/dataset", &page_data(), None).as_deref(),
             Some(PLAIN)
         );
         assert_eq!(
-            normalized_address(true, "team/dataset", &diverged(compared())),
+            normalized_address(true, "team/dataset", &diverged(compared()), None),
             None
         );
         assert_eq!(
-            normalized_address(true, "team/dataset", &diverged(refused())),
+            normalized_address(true, "team/dataset", &diverged(refused()), None),
             None
         );
         assert_eq!(
-            normalized_address(false, "team/dataset", &page_data()),
+            normalized_address(false, "team/dataset", &page_data(), None),
             None
         );
     }
 
     #[test]
     fn a_read_about_another_package_decides_nothing() {
-        assert_eq!(normalized_address(true, "other/pkg", &page_data()), None);
+        assert_eq!(
+            normalized_address(true, "other/pkg", &page_data(), None),
+            None
+        );
+    }
+
+    /// The deep link's mismatch survives the replacement, so leaving a mode
+    /// the package cannot have does not end the band.
+    #[test]
+    fn the_normalised_address_keeps_the_mismatch() {
+        let mismatch = routes::RevisionMismatch {
+            hash: "c41d8f02".to_string(),
+            bucket: "quilt-lab".to_string(),
+            catalog: Some("https://open.quilt.bio".to_string()),
+        };
+        assert_eq!(
+            normalized_address(true, "team/dataset", &page_data(), Some(&mismatch)),
+            Some(format!(
+                "{PLAIN}&mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio"
+            ))
+        );
     }
 
     thread_local! {
@@ -2136,7 +2241,15 @@ mod tests {
                     <Routes fallback=|| view! { "no route" }>
                         <Route
                             path=path!("/installed-package")
-                            view=move || view! { <PackageScreen read=read resolving=resolving /> }
+                            view=move || {
+                                view! {
+                                    <PackageScreen
+                                        read=read
+                                        resolving=resolving
+                                        revision_message=mismatch_band::app_revision_message
+                                    />
+                                }
+                            }
                         />
                     </Routes>
                 </Router>

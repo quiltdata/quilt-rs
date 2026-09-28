@@ -336,6 +336,7 @@ fn resolve(exit: &str, resolve: ResolveData) -> AnyView {
             namespace=Namespace::try_from(NAMESPACE).expect("a scene namespace")
             uri=None
             revision=CurrentRevisionData {
+                hash: "e7f2a9".to_string(),
                 message: Some("Re-run plate 7 with the corrected layout".to_string()),
                 obtained_at: ago(0.4 * HOUR),
             }
@@ -445,6 +446,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                 <crate::pages::CurrentRevisionPane
                     data=crate::commands::PackageContextData {
                         revision: crate::commands::CurrentRevisionData {
+                            hash: "b5e013".to_string(),
                             message: Some("Add Caihong folder-upload note".to_string()),
                             obtained_at: ago(2.0 * HOUR),
                         },

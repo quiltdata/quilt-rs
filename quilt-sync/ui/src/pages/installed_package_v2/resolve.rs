@@ -174,7 +174,7 @@ pub fn ResolvePane(
     let target = Target {
         namespace: namespace.to_string(),
         uri,
-        plain: routes::package_page_href(&namespace),
+        plain: super::mismatch_band::carrying(routes::package_page_href(&namespace)),
     };
     let on_certify = certify_press(target.clone(), w, commands.certify);
     let replace = w.dialogs.replace;
@@ -449,6 +449,7 @@ mod tests {
 
     fn revision() -> CurrentRevisionData {
         CurrentRevisionData {
+            hash: "abc123".to_string(),
             message: Some("Mine".into()),
             obtained_at: 1_758_500_000_000.0,
         }
