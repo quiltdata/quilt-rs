@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.40.1-dev]
+
+### Fixed
+
+- An S3 call fails with a timeout when S3 sends nothing for 60 seconds after the request is sent. Such a call used to wait forever: `HeadObject`, `GetObject`, `PutObject` and every multipart upload step. Only silence counts, so a slow upload or download that keeps moving bytes is never cut off, and a large `CompleteMultipartUpload` still succeeds. A timed-out call is retried like any other network error (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
 ## [v0.40.0] - 2026-09-28
 
 ### Added
