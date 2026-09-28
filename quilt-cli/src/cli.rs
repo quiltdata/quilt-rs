@@ -392,9 +392,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             };
 
             log::debug!("Committing {args:?}");
-            // Boxed: the writer runs inside its package lock, and inline it
-            // makes `init`'s future too large.
-            Ok(Box::pin(commit::command(m, args)).await)
+            Ok(commit::command(m, args).await)
         }
         Commands::Install {
             namespace,
@@ -440,8 +438,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             };
 
             log::debug!("Pull {args:?}");
-            // Boxed, as commit is.
-            Ok(Box::pin(pull::command(m, args)).await)
+            Ok(pull::command(m, args).await)
         }
         Commands::Push {
             pkg,
