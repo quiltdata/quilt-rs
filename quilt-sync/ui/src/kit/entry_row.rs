@@ -174,8 +174,10 @@ pub fn EntryRow(
     #[prop(optional)]
     differs: bool,
     /// The row's `[⋯]`. Empty means no menu at all rather than an empty one.
-    #[prop(optional)]
-    actions: Vec<MenuAction>,
+    /// A signal, so an item can be disabled and released under an open menu;
+    /// whether there is a menu is decided once, from the items it starts with.
+    #[prop(optional, into)]
+    actions: Signal<Vec<MenuAction>>,
 ) -> impl IntoView {
     let full_name = path.unwrap_or_else(|| name.clone());
 
@@ -261,7 +263,7 @@ pub fn EntryRow(
             aria-describedby=differs.then_some(DIFFERS_ID)
         >
             {main}
-            {if actions.is_empty() {
+            {if actions.with_untracked(Vec::is_empty) {
                 // A menu-shaped hole, for the same reason a boxless row keeps a
                 // box-shaped one: without it the sizes in a list where one row has
                 // no actions stop being a column.

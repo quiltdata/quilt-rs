@@ -728,6 +728,18 @@ pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Resul
     tauri::invoke("copy_to_clipboard", &Args { text, uri }).await
 }
 
+/// Where one of a package's files is on disk, resolved as opening it resolves
+/// it. For the file pane's *Copy path*.
+pub async fn package_file_path(namespace: String, path: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        path: String,
+    }
+    tauri::invoke("package_file_path", &Args { namespace, path }).await
+}
+
 pub async fn get_settings_data() -> Result<SettingsData, String> {
     tauri::invoke_unit("get_settings_data").await
 }
