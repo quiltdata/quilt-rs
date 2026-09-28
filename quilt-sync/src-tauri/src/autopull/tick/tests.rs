@@ -448,33 +448,37 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage_for_list.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
-    model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     // Clean tree: the dry-run classifier reports a straight surgical update.
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(pulled(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        }))
-    });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            }))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -537,26 +541,27 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage_for_list.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
-    model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
     model
-        .expect_package_pull()
+        .expect_locked_package_pull()
         .withf(|_, _, scope| *scope == SyncScope::EntirePackage)
         .times(1)
         .returning(|_, _, _| {
@@ -614,36 +619,40 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage_for_list.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
-    model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
     // Individual-file scope: the revision's new path is listed and not fetched.
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        let mut report = pulled(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            let mut report = pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            });
+            report.added_not_fetched = vec![std::path::PathBuf::from("qc/summary.csv")];
+            report.updated = vec![std::path::PathBuf::from("reads/day2.fastq")];
+            Ok(report)
         });
-        report.added_not_fetched = vec![std::path::PathBuf::from("qc/summary.csv")];
-        report.updated = vec![std::path::PathBuf::from("reads/day2.fastq")];
-        Ok(report)
-    });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -703,6 +712,9 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -716,7 +728,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -724,22 +736,28 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
             ))
         });
     // Dry run: the surgical update reconciles cleanly, keeping the local add.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(preview(PullOutcome::KeepsLocalChanges {
-            added: vec![std::path::PathBuf::from("local.txt")],
-            modified: Vec::new(),
-            removed: Vec::new(),
-        }))
-    });
+    model
+        .expect_locked_package_pull_outcome()
+        .times(1)
+        .returning(|_| {
+            Ok(preview(PullOutcome::KeepsLocalChanges {
+                added: vec![std::path::PathBuf::from("local.txt")],
+                modified: Vec::new(),
+                removed: Vec::new(),
+            }))
+        });
     // The pull is actually performed.
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(pulled(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        }))
-    });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            }))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -798,6 +816,9 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -812,7 +833,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -821,21 +842,27 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         });
     // Dry run: the pull reconciles every local change (e.g. identical edit) →
     // KeepsLocalChanges with all-empty lists = nothing kept.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(preview(PullOutcome::KeepsLocalChanges {
-            added: Vec::new(),
-            modified: Vec::new(),
-            removed: Vec::new(),
-        }))
-    });
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(pulled(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        }))
-    });
+    model
+        .expect_locked_package_pull_outcome()
+        .times(1)
+        .returning(|_| {
+            Ok(preview(PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: Vec::new(),
+                removed: Vec::new(),
+            }))
+        });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            }))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -893,6 +920,9 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -906,7 +936,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -914,17 +944,20 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
             ))
         });
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(pulled(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        }))
-    });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            }))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -970,6 +1003,9 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
 
     let mut model = MockQuiltModel::new();
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -977,18 +1013,16 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         ))
     });
     // Status refresh succeeds and reports Behind, so the pull dry-run runs.
-    model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     // The dry-run itself hits an expired token.
     let host_for_dry_run = host.clone();
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(move |_| {
             Err(Error::from(quilt::Error::Login(
@@ -1041,6 +1075,9 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -1053,7 +1090,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -1061,13 +1098,16 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
             ))
         });
     // Dry run: a tracked path changed on both sides → the whole pull blocks.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(preview(PullOutcome::Blocked {
-            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        }))
-    });
+    model
+        .expect_locked_package_pull_outcome()
+        .times(1)
+        .returning(|_| {
+            Ok(preview(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            }))
+        });
     // The pull itself must never run when the outcome is Blocked.
-    model.expect_package_pull().times(0);
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -1121,6 +1161,9 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -1131,13 +1174,11 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     // `InstalledPackage::status` surfaces when the cached token has
     // expired).
     let host_for_status = host.clone();
-    model
-        .expect_get_installed_package_status()
-        .returning(move |_, _| {
-            Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::NoSession(Some(host_for_status.clone())),
-            )))
-        });
+    model.expect_locked_package_status().returning(move |_, _| {
+        Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(Some(host_for_status.clone())),
+        )))
+    });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -1189,25 +1230,26 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
 
     let mut model = MockQuiltModel::new();
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
-    model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            let mut changes = BTreeMap::new();
-            changes.insert(
-                std::path::PathBuf::from("a.txt"),
-                quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
-            );
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::UpToDate,
-                changes,
-            ))
-        });
+    model.expect_locked_package_status().returning(|_, _| {
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            std::path::PathBuf::from("a.txt"),
+            quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
+        );
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::UpToDate,
+            changes,
+        ))
+    });
 
     // pull + push disabled → the tick observes and does nothing.
     let outcome = refresh_then_maybe_sync(
@@ -1222,7 +1264,8 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         &test_aggregator(),
     )
     .await
-    .expect("no-action tick should be Ok");
+    .expect("no-action tick should be Ok")
+    .expect("the package was not busy");
 
     assert!(outcome.has_changes);
     let hex_path = hex("a.txt");
@@ -1261,6 +1304,9 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -1273,19 +1319,22 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
                 changes,
             ))
         });
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(preview(PullOutcome::Blocked {
-            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        }))
-    });
-    model.expect_package_pull().times(0);
+    model
+        .expect_locked_package_pull_outcome()
+        .times(1)
+        .returning(|_| {
+            Ok(preview(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            }))
+        });
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
@@ -1524,20 +1573,21 @@ fn behind_clean_model() -> MockQuiltModel {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
-    model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     model
 }
 
@@ -1572,14 +1622,14 @@ async fn apply_flag_is_clear_while_the_tick_classifies() -> Result<(), Error> {
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(move |_| {
             *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
             Ok(preview(PullOutcome::CleanUpdate))
         });
     model
-        .expect_package_pull()
+        .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| Ok(applied()));
 
@@ -1599,14 +1649,14 @@ async fn apply_flag_is_set_while_the_pull_applies() -> Result<(), Error> {
     let mut model = behind_clean_model();
 
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
 
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_package_pull()
+        .expect_locked_package_pull()
         .times(1)
         .returning(move |_, _, _| {
             *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
@@ -1628,11 +1678,11 @@ async fn apply_flag_is_cleared_after_the_pull_returns() -> Result<(), Error> {
     let agg = test_aggregator();
     let mut model = behind_clean_model();
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
     model
-        .expect_package_pull()
+        .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| Ok(applied()));
 
@@ -1693,19 +1743,22 @@ async fn a_conflict_verdict_reached_while_that_package_was_applying_does_not_pau
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
                 changes,
             ))
         });
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(preview(PullOutcome::Blocked {
-            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        }))
-    });
-    model.expect_package_pull().times(0);
+    model
+        .expect_locked_package_pull_outcome()
+        .times(1)
+        .returning(|_| {
+            Ok(preview(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            }))
+        });
+    model.expect_locked_package_pull().times(0);
 
     let inner = inner_with(Arc::clone(&agg));
     // Someone else — a hand-pressed pull — is writing this package right now.
@@ -1794,7 +1847,7 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -1806,7 +1859,7 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
     let agg_in_verdict = Arc::clone(&agg);
     let ns_in_verdict = ns.clone();
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(move |_| {
             drop(agg_in_verdict.apply_guard(&ns_in_verdict));
@@ -1814,7 +1867,7 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
                 conflicts: vec![std::path::PathBuf::from("conflict.txt")],
             }))
         });
-    model.expect_package_pull().times(0);
+    model.expect_locked_package_pull().times(0);
 
     let inner = inner_with(Arc::clone(&agg));
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1827,67 +1880,88 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
     Ok(())
 }
 
-// ── A pull and a download of the same package never overlap ──
+// ── A package another writer holds is skipped, not waited on ──
 //
-// `pull` and `install_paths` each read the package's lineage, await, and write
-// the whole entry back, so whichever writes last wins. With the pull last, the
-// package names the newer revision with the downloaded paths gone, and an
-// untouched file reads Modified. Until quilt-rs orders lineage
-// writers itself, the tick stays out of the way of a download.
+// A download, a hand-pressed action or the CLI holds the package's lock from
+// its first read to its write. The tick only tries it: a busy package is
+// skipped with nothing read, nothing reported, no pause and no backoff, and
+// the next tick classifies it afresh. The tick runs packages one after
+// another, so the packages after it sync as usual.
+
+/// Two `Behind` packages with clean trees, `acme/busy` listed first; the
+/// try-lock finds `acme/busy` held when `busy` says so.
+fn two_behind_packages(busy: bool) -> MockQuiltModel {
+    let lineage = behind_clean_lineage();
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        let domain = quilt::LocalDomain::new(std::path::PathBuf::new());
+        Ok(vec![
+            domain.create_installed_package(("acme", "busy").into()),
+            domain.create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|ns| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone()),
+        ))
+    });
+    let busy_ns: Namespace = ("acme", "busy").into();
+    model.expect_try_lock_package().returning(move |package| {
+        Ok((!busy || package.namespace != busy_ns).then(|| package.namespace.clone()))
+    });
+    model
+        .expect_locked_package_status()
+        .times(if busy { 1 } else { 2 })
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                BTreeMap::new(),
+            ))
+        });
+    model
+        .expect_locked_package_pull_outcome()
+        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+    model
+        .expect_locked_package_pull()
+        .times(if busy { 1 } else { 2 })
+        .returning(|_, _, _| Ok(applied()));
+    model
+}
 
 #[tokio::test]
-async fn the_tick_skips_a_package_while_it_downloads_and_pulls_it_on_the_next_tick()
--> Result<(), Error> {
-    let ns: Namespace = ("acme", "demo").into();
-    let agg = test_aggregator();
-    let inner = inner_with(Arc::clone(&agg));
+async fn the_tick_skips_a_busy_package_quietly_and_syncs_the_rest() -> Result<(), Error> {
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        reporter: reporter.clone(),
+        ..inner_with(test_aggregator())
+    };
 
-    let mut model = behind_clean_model();
-    model
-        .expect_package_pull_outcome()
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
-    model.expect_package_pull().times(0);
-    {
-        let _downloading = agg.lock_lineage_writer(&ns).await;
-        run_once(&model, &RoleCache::default(), &inner).await?;
-    }
+    // `times` above: the busy package is never read or pulled, the other is.
+    run_once(&two_behind_packages(true), &RoleCache::default(), &inner).await?;
+    let busy: Namespace = ("acme", "busy").into();
+    assert!(
+        !reporter
+            .statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(ns, _)| *ns == busy),
+        "nothing was observed, so nothing is reported"
+    );
     assert!(
         inner.paused.read().await.is_empty(),
-        "a skipped pull is not a pause"
+        "a skipped package is not a pause"
     );
     assert!(
         inner.backoff.read().await.is_empty(),
         "nor a failure to back off from: the next tick simply tries again"
     );
 
-    let mut model = behind_clean_model();
-    model
-        .expect_package_pull_outcome()
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
-    model
-        .expect_package_pull()
-        .times(1)
-        .returning(|_, _, _| Ok(applied()));
-    run_once(&model, &RoleCache::default(), &inner).await?;
-    Ok(())
-}
-
-// A download of one package says nothing about another.
-#[tokio::test]
-async fn a_download_of_another_package_does_not_hold_the_pull_back() -> Result<(), Error> {
-    let agg = test_aggregator();
-    let inner = inner_with(Arc::clone(&agg));
-    let mut model = behind_clean_model();
-    model
-        .expect_package_pull_outcome()
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
-    model
-        .expect_package_pull()
-        .times(1)
-        .returning(|_, _, _| Ok(applied()));
-
-    let _downloading = agg.lock_lineage_writer(&("acme", "other").into()).await;
-    run_once(&model, &RoleCache::default(), &inner).await?;
+    // The next tick finds it free and pulls it with the other.
+    run_once(&two_behind_packages(false), &RoleCache::default(), &inner).await?;
     Ok(())
 }
 
@@ -1910,14 +1984,14 @@ async fn the_pull_holds_its_activity_while_it_applies() -> Result<(), Error> {
     let agg = test_aggregator();
     let mut model = behind_clean_model();
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
 
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_package_pull()
+        .expect_locked_package_pull()
         .times(1)
         .returning(move |_, _, _| {
             *seen_hook.lock().unwrap() = Some(agg_hook.activity());
@@ -1941,14 +2015,14 @@ async fn a_failed_pull_clears_its_activity() -> Result<(), Error> {
     let agg = test_aggregator();
     let mut model = behind_clean_model();
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
 
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_package_pull()
+        .expect_locked_package_pull()
         .times(1)
         .returning(move |_, _, _| {
             *seen_hook.lock().unwrap() = Some(agg_hook.activity());
@@ -1985,6 +2059,9 @@ async fn the_classify_shows_no_activity() -> Result<(), Error> {
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -1994,25 +2071,23 @@ async fn the_classify_shows_no_activity() -> Result<(), Error> {
 
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let (seen_status, agg_status) = (Arc::clone(&seen), Arc::clone(&agg));
-    model
-        .expect_get_installed_package_status()
-        .returning(move |_, _| {
-            seen_status.lock().unwrap().push(agg_status.activity());
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
+    model.expect_locked_package_status().returning(move |_, _| {
+        seen_status.lock().unwrap().push(agg_status.activity());
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     let (seen_outcome, agg_outcome) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(move |_| {
             seen_outcome.lock().unwrap().push(agg_outcome.activity());
             Ok(preview(PullOutcome::CleanUpdate))
         });
     model
-        .expect_package_pull()
+        .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| Ok(applied()));
 
@@ -2050,6 +2125,9 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -2057,7 +2135,7 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
         ))
     });
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .times(1..)
         .returning(|_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
@@ -2065,9 +2143,9 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
                 BTreeMap::new(),
             ))
         });
-    model.expect_package_pull_outcome().times(0);
-    model.expect_package_pull().times(0);
-    model.expect_package_publish().times(0);
+    model.expect_locked_package_pull_outcome().times(0);
+    model.expect_locked_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
 
     let activity = agg.subscribe_activity();
     run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;

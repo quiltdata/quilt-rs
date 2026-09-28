@@ -261,6 +261,20 @@ fn model_for(stack: &Arc<FakeStack>) -> MockQuiltModel {
 
     let s3 = Arc::clone(stack);
     model
+        .expect_try_lock_package()
+        .returning(|package| Ok(Some(package.namespace.clone())));
+    let s3_locked = Arc::clone(stack);
+    model
+        .expect_locked_package_status()
+        .returning(move |namespace, _| {
+            let bucket = bucket_for(namespace);
+            if s3_locked.can_read(bucket) {
+                Ok(quilt::lineage::InstalledPackageStatus::default())
+            } else {
+                Err(access_denied(bucket))
+            }
+        });
+    model
         .expect_get_installed_package_status()
         .returning(move |package, _| {
             let bucket = bucket_for(&package.namespace);

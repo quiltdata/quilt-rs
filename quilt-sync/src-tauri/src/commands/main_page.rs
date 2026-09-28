@@ -2321,6 +2321,8 @@ mod tests {
         reason = "`readable_buckets` awaits; the other two do not. Rewriting just those would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
     )]
     impl model::QuiltModel for SilentHost {
+        type Locked = quilt::LockedPackage;
+
         fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
             &self.domain
         }
@@ -2395,6 +2397,8 @@ mod tests {
         reason = "`refresh_roles` awaits; the others do not — see `SilentHost`."
     )]
     impl model::QuiltModel for SilentRole {
+        type Locked = quilt::LockedPackage;
+
         fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
             &self.domain
         }

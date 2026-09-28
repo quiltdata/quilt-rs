@@ -349,7 +349,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     push_enabled: bool,
     scope: SyncScope,
     aggregator: &SyncTrayAggregator,
-) -> Result<RefreshOutcome, WatchError> {
+) -> Result<Option<RefreshOutcome>, WatchError> {
     let installed = model
         .get_installed_package(namespace)
         .await
@@ -360,6 +360,21 @@ pub(crate) async fn refresh_then_maybe_sync(
             )))
         })?;
 
+    // The whole refresh, from the status read through the pull or the
+    // publish, runs under the package's lock, so the classify reads the
+    // entry the write replaces. A download, a hand-pressed action or the CLI
+    // holding it means the package is mid-write: skip it with no pause and no
+    // backoff, and classify it afresh next tick. Never wait: the tick runs
+    // packages one after another, and a wait here would stall them all.
+    let Some(locked) = model
+        .try_lock_package(&installed)
+        .await
+        .map_err(WatchError::Transient)?
+    else {
+        info!("autosync: namespace={namespace} is being written, syncing next tick");
+        return Ok(None);
+    };
+
     // Sampled before the walk, compared at the conflict gate: a write that
     // starts and finishes inside the span below is invisible to a "running
     // now?" question asked afterwards.
@@ -367,7 +382,7 @@ pub(crate) async fn refresh_then_maybe_sync(
 
     // `status` does the cheap tag refresh; an expired token surfaces here.
     let status = model
-        .get_installed_package_status(&installed, None)
+        .locked_package_status(&locked, None)
         .await
         .map_err(classify_transient_or_login)?;
     let upstream = status.upstream_state;
@@ -414,7 +429,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         // The preview also names what the revision adds; the tick routes on the
         // verdict alone and leaves those to the surfaces that report them.
         let outcome = model
-            .package_pull_outcome(&installed)
+            .locked_package_pull_outcome(&locked)
             .await
             .map_err(classify_transient_or_login)?
             .outcome;
@@ -437,20 +452,16 @@ pub(crate) async fn refresh_then_maybe_sync(
         match outcome {
             PullOutcome::Blocked { conflicts } => {
                 if !verdict_held_still(aggregator, namespace, epoch_before) {
-                    return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
+                    return Ok(Some(RefreshOutcome::observed(
+                        upstream,
+                        has_changes,
+                        fingerprint,
+                    )));
                 }
                 let files = conflicts.iter().map(|p| p.display().to_string()).collect();
                 return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                // A download or hand pull of this package is writing its lineage, and the
-                // pull's write would drop what it records, so an untouched file would read
-                // Modified. Leave the package `Behind`, with no pause and no backoff, for
-                // the next tick.
-                let Some(_ordered) = aggregator.try_lock_lineage_writer(namespace) else {
-                    info!("autosync: namespace={namespace} is being written, pulling next tick");
-                    return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
-                };
                 // Bracket only this call. The classify above reads — it
                 // resolves `latest` and fetches a manifest — so a flag that
                 // spanned the whole tick would report an apply when no working
@@ -460,7 +471,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                     let _applying = aggregator.apply_guard(namespace);
                     // The activity line spans the transfer and nothing else: the check never shows.
                     let _activity = aggregator.activity_guard(ActivityOp::Pull, namespace);
-                    model.package_pull(&installed, None, scope).await
+                    model.locked_package_pull(&locked, None, scope).await
                 };
                 return match applied {
                     Ok(report) => {
@@ -469,19 +480,20 @@ pub(crate) async fn refresh_then_maybe_sync(
                         // `kept_changes` is the intended post-pull state.
                         // `kept_changes` comes from the outcome (post-pull
                         // truth), not the pre-pull `has_changes`.
-                        Ok(RefreshOutcome {
+                        Ok(Some(RefreshOutcome {
                             pulled: Some(report),
                             ..RefreshOutcome::observed(
                                 quilt::lineage::UpstreamState::UpToDate,
                                 kept_changes,
                                 clean_uptodate_fingerprint(),
                             )
-                        })
+                        }))
                     }
                     // Nothing was applied on the error path, so the pre-pull
                     // `has_changes` still describes the tree.
-                    Err(err) => classify_sync_err(err)
-                        .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
+                    Err(err) => classify_sync_err(err).map(|()| {
+                        Some(RefreshOutcome::observed(upstream, has_changes, fingerprint))
+                    }),
                 };
             }
             // Race: tip moved back to up-to-date between status and classify.
@@ -506,40 +518,45 @@ pub(crate) async fn refresh_then_maybe_sync(
             // `None`, so reaching here means it is `Some` — the `unwrap_or(now)`
             // is a total function's shape, not a guess.
             let edited_at = status.most_recent_mtime.unwrap_or(now);
-            return Ok(RefreshOutcome::deferred(
+            return Ok(Some(RefreshOutcome::deferred(
                 upstream,
                 has_changes,
                 fingerprint,
                 edited_at + quiet_window,
-            ));
+            )));
         }
-        // `publish_with_settings` is shared with the manual one-click
-        // Publish command in `commands.rs`, so a change to publish
-        // settings (new placeholder, new field) applies identically
-        // regardless of who triggered the publish.
+        // `publish_locked_with_settings` renders the settings as the manual
+        // one-click Publish command does, so a change to publish settings (new
+        // placeholder, new field) applies identically regardless of who
+        // triggered the publish. It publishes on the held lock and reuses
+        // `status`, walked under it.
         let published = {
             // The activity line spans the transfer and nothing else: the check never shows.
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
-            model::publish_with_settings(model, namespace, publish, status).await
+            model::publish_locked_with_settings(model, &locked, &installed, publish, status).await
         };
         return match published {
             Ok((_, message)) => {
                 info!("autosync: published namespace={namespace}");
-                Ok(RefreshOutcome {
+                Ok(Some(RefreshOutcome {
                     upstream: quilt::lineage::UpstreamState::UpToDate,
                     has_changes: false,
                     published: Some(message),
                     pulled: None,
                     fingerprint: clean_uptodate_fingerprint(),
                     publish_arm_at: None,
-                })
+                }))
             }
             Err(err) => classify_sync_err(err)
-                .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
+                .map(|()| Some(RefreshOutcome::observed(upstream, has_changes, fingerprint))),
         };
     }
 
-    Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint))
+    Ok(Some(RefreshOutcome::observed(
+        upstream,
+        has_changes,
+        fingerprint,
+    )))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -700,6 +717,13 @@ pub(crate) async fn run_once(
             &inner.aggregator,
         )
         .await;
+        // Another writer holds the package: nothing was observed, so nothing
+        // is reported, and its pause, backoff and arm time stand as they were.
+        let result = match result {
+            Ok(None) => continue,
+            Ok(Some(outcome)) => Ok(outcome),
+            Err(err) => Err(err),
+        };
 
         // One place decides this namespace's arm time. It is armed only by a
         // quiet-window deferral; a publish, a pull, a pause, a login block and a

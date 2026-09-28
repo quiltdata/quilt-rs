@@ -219,22 +219,18 @@ pub async fn package_push(
     model.package_push(&installed_package, host_config).await
 }
 
-/// Render `PublishSettings` into a message / metadata / workflow triple
-/// and route through [`package_publish`].
+/// What `settings` say to publish `status` with: the rendered commit message,
+/// the default metadata, and the workflow intent.
 ///
-/// Shared entry point for both the manual one-click Publish command and
-/// the autosync watcher tick — keep them in lockstep so a change to
-/// publish settings (new placeholder, new field) applies identically
-/// regardless of who triggered the publish. Returns the outcome paired
-/// with the rendered commit message; the autosync tick needs the message
-/// string for its `autosync-published` event, the manual command can
-/// discard it.
-pub async fn publish_with_settings(
-    model: &impl QuiltModel,
+/// Shared by both publish paths, the manual one-click Publish command and the
+/// autosync watcher tick, to keep them in lockstep so a change to publish
+/// settings (new placeholder, new field) applies identically regardless of
+/// who triggered the publish.
+fn publish_inputs(
     namespace: &quilt_uri::Namespace,
     settings: &PublishSettings,
-    status: quilt::lineage::InstalledPackageStatus,
-) -> Result<(quilt::PublishOutcome, String), Error> {
+    status: &quilt::lineage::InstalledPackageStatus,
+) -> (String, String, WorkflowIntent) {
     let changes_summary = commit_message::generate(&status.changes);
     let message = commit_message::render_publish_message(
         settings.message_template.as_deref().unwrap_or_default(),
@@ -248,6 +244,23 @@ pub async fn publish_with_settings(
     // — honour the bucket's default workflow; a non-empty id (after trimming)
     // enforces that named workflow.
     let workflow = WorkflowIntent::from_optional_id(settings.default_workflow.as_deref());
+    (message, metadata, workflow)
+}
+
+/// Render `PublishSettings` into a message / metadata / workflow triple
+/// and route through [`package_publish`]: the manual one-click Publish.
+///
+/// `status` only names the changes in the message. The publish takes the
+/// package's lock and walks the tree again under it, since a download may
+/// have landed since `status` was read. Returns the outcome paired with the
+/// rendered commit message.
+pub async fn publish_with_settings(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+    settings: &PublishSettings,
+    status: quilt::lineage::InstalledPackageStatus,
+) -> Result<(quilt::PublishOutcome, String), Error> {
+    let (message, metadata, workflow) = publish_inputs(namespace, settings, &status);
     let outcome = package_publish(
         model,
         namespace.clone(),
@@ -255,9 +268,39 @@ pub async fn publish_with_settings(
         &metadata,
         workflow,
         None,
-        Some(status),
     )
     .await?;
+    Ok((outcome, message))
+}
+
+/// [`publish_with_settings`] for the autosync tick, on the lock it has held
+/// since it walked `status`, so the publish reuses that walk. Returns the
+/// outcome paired with the rendered message, which the tick's
+/// `autosync-published` event carries.
+pub async fn publish_locked_with_settings<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    installed: &quilt::InstalledPackage,
+    settings: &PublishSettings,
+    status: quilt::lineage::InstalledPackageStatus,
+) -> Result<(quilt::PublishOutcome, String), Error> {
+    let (message, metadata, workflow) = publish_inputs(&installed.namespace, settings, &status);
+    debug!(
+        "Publishing the package.\nNamespace: {},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
+        installed.namespace, message, metadata, workflow
+    );
+    let metadata = parse_metadata(&metadata)?;
+    let workflow = model.resolve_workflow(installed, workflow).await?;
+    let outcome = model
+        .locked_package_publish(
+            locked,
+            message.clone(),
+            metadata,
+            workflow,
+            None,
+            Some(status),
+        )
+        .await?;
     Ok((outcome, message))
 }
 
@@ -268,7 +311,6 @@ pub async fn package_publish(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-    status: Option<quilt::lineage::InstalledPackageStatus>,
 ) -> Result<quilt::PublishOutcome, Error> {
     debug!(
         "Publishing the package.\nNamespace: {},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
@@ -289,7 +331,6 @@ pub async fn package_publish(
             metadata,
             workflow,
             host_config,
-            status,
         )
         .await
 }
@@ -490,7 +531,7 @@ mod tests {
         model
             .expect_package_publish()
             .times(1)
-            .returning(|_, _, _, _, _, _| Ok(fake_publish_outcome(&("acme", "demo").into())));
+            .returning(|_, _, _, _, _| Ok(fake_publish_outcome(&("acme", "demo").into())));
         model
     }
 
@@ -553,7 +594,7 @@ mod tests {
         model
             .expect_package_publish()
             .times(1)
-            .returning(|_, _, _, _, _, _| Err(workflow_rejection()));
+            .returning(|_, _, _, _, _| Err(workflow_rejection()));
 
         // `PublishOutcome` is not `Debug`, so match rather than `expect_err`.
         let Err(err) = package_publish(
@@ -562,7 +603,6 @@ mod tests {
             "msg",
             "",
             WorkflowIntent::BucketDefault,
-            None,
             None,
         )
         .await

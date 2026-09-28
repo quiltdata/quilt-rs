@@ -47,6 +47,9 @@ fn fixture_with_lineage_and_status(
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage_clone.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
@@ -55,7 +58,7 @@ fn fixture_with_lineage_and_status(
     });
     let status_mutex = std::sync::Mutex::new(Some(status));
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .returning(move |_, _| Ok(status_mutex.lock().unwrap().take().unwrap()));
     // `model::package_publish` (free fn) routes the workflow lookup
     // through the trait. These fixtures use default publish settings, so
@@ -159,7 +162,7 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
     let ns_for_push = ns.clone();
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Ok(quilt::PublishOutcome::CommittedAndPushed(
@@ -215,7 +218,7 @@ async fn run_once_publishes_on_pending_commit_only() -> Result<(), Error> {
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     let ns_for_push = ns.clone();
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Ok(quilt::PublishOutcome::PushedOnly(fake_push_outcome(
@@ -250,7 +253,7 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     // No `expect_package_publish` — mockall panics if the call happens.
-    model.expect_package_publish().times(0);
+    model.expect_locked_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
@@ -292,7 +295,7 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
     status.most_recent_mtime = Some(edited_at);
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage.clone(), status);
-    model.expect_package_publish().times(0);
+    model.expect_locked_package_publish().times(0);
 
     let outcome = refresh_then_maybe_sync(
         &model,
@@ -306,7 +309,8 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
         &test_aggregator(),
     )
     .await
-    .expect("a deferral is an Ok outcome");
+    .expect("a deferral is an Ok outcome")
+    .expect("the package was not busy");
 
     assert_eq!(
         outcome.publish_arm_at,
@@ -334,7 +338,7 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
     );
     let ns_for_push = ns.clone();
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Ok(quilt::PublishOutcome::CommittedAndPushed(
@@ -354,7 +358,8 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
         &test_aggregator(),
     )
     .await
-    .expect("a quiet tree publishes");
+    .expect("a quiet tree publishes")
+    .expect("the package was not busy");
 
     assert!(
         outcome.published.is_some(),
@@ -379,7 +384,7 @@ async fn run_once_clears_an_arm_time_when_the_package_stops_waiting() -> Result<
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
     let ns_for_push = ns.clone();
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Ok(quilt::PublishOutcome::CommittedAndPushed(
@@ -428,8 +433,8 @@ async fn run_once_clears_an_arm_time_when_the_package_pauses() -> Result<(), Err
         lineage,
         quiet_status(UpstreamState::Diverged, BTreeMap::new()),
     );
-    model.expect_package_publish().times(0);
-    model.expect_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
@@ -471,11 +476,11 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_outcome()
         .times(1)
         .returning(|_| Ok(preview(PullOutcome::UpToDate)));
-    model.expect_package_pull().times(0);
-    model.expect_package_publish().times(0);
+    model.expect_locked_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
@@ -515,7 +520,7 @@ async fn run_once_publishes_local_first_push() -> Result<(), Error> {
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     let ns_for_push = ns.clone();
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Ok(quilt::PublishOutcome::CommittedAndPushed(
@@ -549,8 +554,8 @@ async fn run_once_pauses_on_classic_diverged() -> Result<(), Error> {
     let status = quiet_status(UpstreamState::Diverged, BTreeMap::new());
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
-    model.expect_package_publish().times(0);
-    model.expect_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
@@ -586,8 +591,8 @@ async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
     let status = quiet_status(UpstreamState::Diverged, BTreeMap::new());
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
-    model.expect_package_publish().times(0);
-    model.expect_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_for_run_once(reporter.clone());
@@ -611,7 +616,7 @@ async fn run_once_pauses_on_push_workflow_failure() -> Result<(), Error> {
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(|_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::PackageOp(
@@ -666,7 +671,7 @@ async fn run_once_pauses_on_workflow_validation_rejection() -> Result<(), Error>
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(|_, _, _, _, _, _| Err(workflow_rejection()));
 
@@ -712,7 +717,7 @@ async fn run_once_pauses_on_workflow_validation_rejection() -> Result<(), Error>
 
 /// An autosync publish the bucket refuses with `AccessDenied` must pause and
 /// name the role, not back off. Nothing else in the app covers this write:
-/// the tick calls `model::publish_with_settings` directly, so the Tauri
+/// the tick calls `model::publish_locked_with_settings` directly, so the Tauri
 /// command layer's "current role can't write here" message never runs for an
 /// autosync push.
 #[tokio::test]
@@ -731,7 +736,7 @@ async fn run_once_pauses_and_names_the_role_on_denied_publish() -> Result<(), Er
     // promotes the `AccessDenied` code over the caller's `PutObject`
     // fallback, so a denied push arrives as `S3ErrorKind::AccessDenied`.
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(|_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::S3(quilt::S3Error::new(
@@ -796,7 +801,7 @@ async fn run_once_pauses_on_denied_publish_even_when_the_role_is_unknown() -> Re
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(|_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::S3(quilt::S3Error::new(
@@ -833,7 +838,7 @@ async fn run_once_backoffs_on_transient_publish_error() -> Result<(), Error> {
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(|_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::Io(std::io::Error::new(
@@ -871,7 +876,7 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     let host_for_publish = host.clone();
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::Login(
@@ -921,7 +926,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     // Mockall panics if package_publish is called — that's the assertion.
-    model.expect_package_publish().times(0);
+    model.expect_locked_package_publish().times(0);
 
     let settings = AutosyncSettings {
         pull: PullSettings {
@@ -975,8 +980,8 @@ async fn run_once_pull_only_does_not_publish_changes() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) =
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
-    model.expect_package_publish().times(0);
-    model.expect_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_with_flags(reporter.clone(), true, false);
@@ -1001,8 +1006,8 @@ async fn run_once_push_only_does_not_pull_behind() -> Result<(), Error> {
     let status =
         quilt::lineage::InstalledPackageStatus::new(UpstreamState::Behind, BTreeMap::new());
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
-    model.expect_package_pull().times(0);
-    model.expect_package_publish().times(0);
+    model.expect_locked_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = make_inner_with_flags(reporter.clone(), false, true);
@@ -1040,7 +1045,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(|_, _, _, _, _, _| {
             Err(Error::from(quilt::Error::PackageOp(
@@ -1084,21 +1089,27 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
     let (mut model, _) =
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::Behind, changes));
     // Non-conflicting local work: the pull reconciles cleanly and keeps it.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(preview(PullOutcome::KeepsLocalChanges {
-            added: vec![std::path::PathBuf::from("file.txt")],
-            modified: Vec::new(),
-            removed: Vec::new(),
-        }))
-    });
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(pulled(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        }))
-    });
+    model
+        .expect_locked_package_pull_outcome()
+        .times(1)
+        .returning(|_| {
+            Ok(preview(PullOutcome::KeepsLocalChanges {
+                added: vec![std::path::PathBuf::from("file.txt")],
+                modified: Vec::new(),
+                removed: Vec::new(),
+            }))
+        });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            }))
+        });
     let reporter = Arc::new(RecordingReporter::default());
     let (tx, rx) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
@@ -1142,7 +1153,7 @@ async fn the_publish_holds_its_activity_while_it_runs() -> Result<(), Error> {
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
     let ns_for_push = ns.clone();
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             *seen_hook.lock().unwrap() = Some(agg_hook.activity());
@@ -1178,7 +1189,7 @@ async fn a_failed_publish_clears_its_activity() -> Result<(), Error> {
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_package_publish()
+        .expect_locked_package_publish()
         .times(1)
         .returning(move |_, _, _, _, _, _| {
             *seen_hook.lock().unwrap() = Some(agg_hook.activity());
