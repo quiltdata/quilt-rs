@@ -36,7 +36,7 @@ pub struct MockRemote {
     parked: Arc<Mutex<HashMap<String, Arc<Gate>>>>,
 }
 
-/// One parked fetch: the fetch says when it arrives, then waits to be let go.
+/// One parked operation: it says when it arrives, then waits to be let go.
 ///
 /// Both sides are [`tokio::sync::Notify`] permits, so neither order of arrival
 /// and release loses a wake-up.
@@ -55,6 +55,12 @@ impl Gate {
     /// Lets the parked fetch go on.
     pub fn release(&self) {
         self.released.notify_one();
+    }
+
+    /// The parked side: says it has arrived, then waits to be released.
+    pub async fn hold(&self) {
+        self.arrived.notify_one();
+        self.released.notified().await;
     }
 }
 
@@ -118,8 +124,7 @@ impl Remote for MockRemote {
             .or_insert(0) += 1;
         let parked = self.parked.lock().unwrap().remove(&key);
         if let Some(gate) = parked {
-            gate.arrived.notify_one();
-            gate.released.notified().await;
+            gate.hold().await;
         }
 
         let body = self

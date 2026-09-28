@@ -174,6 +174,15 @@ impl Rev1Installed {
         Ok(())
     }
 
+    /// A domain on this package's directory, sharing its storage and remote.
+    pub(super) fn domain(&self) -> crate::LocalDomain<LocalStorage, MockRemote> {
+        crate::LocalDomain::with_parts(
+            self.package.paths.clone(),
+            self.package.storage.clone(),
+            Arc::clone(&self.package.remote),
+        )
+    }
+
     pub(super) fn remote(&self) -> &MockRemote {
         &self.package.remote
     }
@@ -306,4 +315,361 @@ async fn a_download_racing_the_pull_installs_from_the_new_revision() -> Res {
     );
     assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
     Ok(())
+}
+
+/// Two packages written at once: an install of another package spans the
+/// pull of this one. The install writes one entry, not the whole record it
+/// read before its fetch, so the pull's entry survives.
+#[test(tokio::test)]
+async fn installing_another_package_during_a_pull_keeps_the_pull() -> Res {
+    let t = Rev1Installed::new().await?;
+    let other: Namespace = ("f", "b").into();
+    t.remote()
+        .put_object(
+            None,
+            &S3Uri::from_str(&format!("s3://{BUCKET}/.quilt/named_packages/f/b/latest"))?,
+            t.rev1.as_bytes().to_vec(),
+        )
+        .await?;
+    let domain = t.domain();
+    let resolving_other = t
+        .remote()
+        .park(&format!("s3://{BUCKET}/.quilt/named_packages/f/b/latest"));
+
+    let other_uri = ManifestUri {
+        bucket: BUCKET.to_string(),
+        namespace: other.clone(),
+        hash: t.rev1.clone(),
+        origin: None,
+    };
+
+    let (installed, pulled) = tokio::join!(domain.install_package(&other_uri), async {
+        resolving_other.arrived().await;
+        let pulled = t.pull().await;
+        resolving_other.release();
+        pulled
+    },);
+    pulled?;
+    installed?;
+
+    let lineage = domain.get_lineage().await?;
+    assert_eq!(
+        lineage.packages[&t.package.namespace].current_hash(),
+        Some(t.rev2.as_str()),
+        "the pull's entry survives the install"
+    );
+    assert_eq!(
+        lineage.packages[&other].current_hash(),
+        Some(t.rev1.as_str())
+    );
+    Ok(())
+}
+
+/// Waits for a parked fetch, failing rather than hanging when it never comes.
+async fn arrives(gate: &crate::io::remote::mocks::Gate, what: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), gate.arrived())
+        .await
+        .unwrap_or_else(|_| panic!("{what} never happened"));
+}
+
+fn is_changed_underneath(err: &Error, verb: &str) -> bool {
+    matches!(
+        err,
+        Error::PackageOp(PackageOpError::ChangedUnderneath { verb: v, .. }) if *v == verb
+    )
+}
+
+/// Two pulls at once: the second to write finds the entry already at latest,
+/// which is its own result, and succeeds without writing.
+#[test(tokio::test)]
+async fn two_pulls_at_once_both_succeed() -> Res {
+    let t = Rev1Installed::new().await?;
+    t.download().await?;
+    let fetching_rev2 = t.park_manifest(&t.rev2);
+
+    let (first, second) = tokio::join!(t.pull(), async {
+        arrives(&fetching_rev2, "the first pull's fetch").await;
+        let pulled = t.pull().await;
+        fetching_rev2.release();
+        pulled
+    });
+    first?;
+    second?;
+
+    assert_eq!(
+        t.outcome().await?,
+        (
+            Some(t.rev2.clone()),
+            Rev1Installed::all_paths(),
+            b"two".to_vec()
+        )
+    );
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
+
+/// A commit lands while a pull works. The pull refuses and writes nothing:
+/// re-pointing the package at latest would drop the commit. The file it
+/// placed stays, as a local change against the commit.
+#[test(tokio::test)]
+async fn a_pull_crossed_by_a_commit_refuses_and_keeps_the_commit() -> Res {
+    let t = Rev1Installed::new().await?;
+    t.download().await?;
+    let home = t.package.package_home().await?;
+    let fetching_rev2 = t.park_manifest(&t.rev2);
+
+    let (pulled, committed) = tokio::join!(t.pull(), async {
+        arrives(&fetching_rev2, "the pull's fetch").await;
+        tokio::fs::write(home.join("same.txt"), b"edited").await?;
+        let committed = t
+            .package
+            .commit(
+                "mine".to_string(),
+                UserMeta::Keep,
+                None,
+                Some(HostConfig::default()),
+            )
+            .await;
+        fetching_rev2.release();
+        committed
+    });
+    let commit = committed?;
+    let err = pulled.expect_err("the pull must refuse");
+    assert!(is_changed_underneath(&err, "pulling"), "{err}");
+    assert_eq!(err.to_string(), "f/a changed while pulling; try again");
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.commit.map(|c| c.hash), Some(commit.hash));
+    assert_eq!(lineage.base_hash, t.rev1);
+    Ok(())
+}
+
+/// A pull crossed by an uninstall of a path it tracked: the pull writes
+/// second and leaves the path out, rather than tracking a file that is gone.
+#[test(tokio::test)]
+async fn a_pull_crossed_by_an_uninstall_leaves_the_path_out() -> Res {
+    let t = Rev1Installed::new().await?;
+    t.download().await?;
+    let home = t.package.package_home().await?;
+    let fetching_rev2 = t.park_manifest(&t.rev2);
+
+    let (pulled, uninstalled) = tokio::join!(t.pull(), async {
+        arrives(&fetching_rev2, "the pull's fetch").await;
+        let uninstalled = t
+            .package
+            .uninstall_paths(&vec![PathBuf::from("same.txt")])
+            .await;
+        fetching_rev2.release();
+        uninstalled
+    });
+    uninstalled?;
+    pulled?;
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.current_hash(), Some(t.rev2.as_str()));
+    assert_eq!(
+        lineage.paths.keys().cloned().collect::<Vec<_>>(),
+        vec![PathBuf::from("changes.txt")]
+    );
+    assert!(!home.join("same.txt").exists());
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
+
+/// The other order: the uninstall read the package before a pull landed and
+/// writes after it. The uninstall wins, and the pull's move to revision 2
+/// survives: the uninstall removes its one path, not the pull's revision.
+#[test(tokio::test)]
+async fn an_uninstall_crossed_by_a_pull_wins_and_keeps_the_pull() -> Res {
+    let t = Rev1Installed::new().await?;
+    t.download().await?;
+    let home = t.package.package_home().await?;
+    let changes = home.join("changes.txt");
+    let parked = ParkedStorage::new(&changes);
+    let uninstaller = InstalledPackage {
+        lineage: t.package.lineage.clone(),
+        paths: t.package.paths.clone(),
+        remote: Arc::clone(&t.package.remote),
+        storage: parked.clone(),
+        namespace: t.package.namespace.clone(),
+    };
+
+    let uninstalling = vec![PathBuf::from("changes.txt")];
+    let (uninstalled, pulled) = tokio::join!(uninstaller.uninstall_paths(&uninstalling), async {
+        arrives(&parked.gate, "the uninstall's removal").await;
+        let pulled = t.pull().await;
+        parked.gate.release();
+        pulled
+    },);
+    pulled?;
+    uninstalled?;
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.current_hash(), Some(t.rev2.as_str()));
+    assert_eq!(
+        lineage.paths.keys().cloned().collect::<Vec<_>>(),
+        vec![PathBuf::from("same.txt")]
+    );
+    assert!(!changes.exists());
+    assert_eq!(t.changed().await?, Vec::<PathBuf>::new());
+    Ok(())
+}
+
+/// A download that finishes after its package was uninstalled writes nothing,
+/// says the package is not installed, and removes the files it placed.
+#[test(tokio::test)]
+async fn a_download_after_the_package_was_uninstalled_does_not_bring_it_back() -> Res {
+    let t = Rev1Installed::new().await?;
+    let home = t.package.package_home().await?;
+    let domain = t.domain();
+    let fetching_changes = t.park_object("changes.txt", "c1");
+
+    let (downloaded, uninstalled) = tokio::join!(t.download(), async {
+        arrives(&fetching_changes, "the download's fetch").await;
+        let uninstalled = domain.uninstall_package(t.package.namespace.clone()).await;
+        fetching_changes.release();
+        uninstalled
+    });
+    uninstalled?;
+    let err = downloaded.expect_err("the download must not re-create the package");
+    assert!(
+        matches!(
+            err,
+            Error::InstallPackage(crate::InstallPackageError::NotInstalled(_))
+        ),
+        "{err}"
+    );
+
+    assert!(
+        !domain
+            .get_lineage()
+            .await?
+            .packages
+            .contains_key(&t.package.namespace)
+    );
+    assert!(!home.join("changes.txt").exists());
+    assert!(!home.join("same.txt").exists());
+    Ok(())
+}
+
+/// One redo round, then refuse. The pull's write finds a download landed and
+/// reconciles it; while it does, another download lands, and the pull gives up
+/// rather than redo again.
+#[test(tokio::test)]
+async fn a_pull_that_keeps_being_crossed_refuses_after_one_redo() -> Res {
+    let t = Rev1Installed::new().await?;
+    let fetching_rev2 = t.park_manifest(&t.rev2);
+    let redoing = t.park_object("changes.txt", "c2");
+
+    let (pulled, downloads) = tokio::join!(t.pull(), async {
+        arrives(&fetching_rev2, "the pull's fetch").await;
+        t.package
+            .install_paths(&[PathBuf::from("changes.txt")])
+            .await?;
+        fetching_rev2.release();
+        arrives(&redoing, "the pull's redo").await;
+        t.package
+            .install_paths(&[PathBuf::from("same.txt")])
+            .await?;
+        redoing.release();
+        Res::Ok(())
+    });
+    downloads?;
+    let err = pulled.expect_err("the pull must refuse");
+    assert!(is_changed_underneath(&err, "pulling"), "{err}");
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.current_hash(), Some(t.rev1.as_str()));
+    assert_eq!(
+        lineage.paths.keys().cloned().collect::<Vec<_>>(),
+        Rev1Installed::all_paths()
+    );
+    Ok(())
+}
+
+/// [`LocalStorage`], except that removing one file parks until the gate is
+/// released: the only way to land another writer inside `uninstall_paths`,
+/// which never touches the remote.
+#[derive(Clone)]
+struct ParkedStorage {
+    inner: LocalStorage,
+    path: PathBuf,
+    gate: Arc<crate::io::remote::mocks::Gate>,
+}
+
+impl ParkedStorage {
+    fn new(path: &Path) -> Self {
+        Self {
+            inner: LocalStorage::new(),
+            path: path.to_path_buf(),
+            gate: Arc::default(),
+        }
+    }
+}
+
+impl Storage for ParkedStorage {
+    async fn copy(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res<u64> {
+        self.inner.copy(from, to).await
+    }
+
+    async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+        self.inner.create_dir_all(path).await
+    }
+
+    async fn create_file(&self, path: impl AsRef<Path>) -> Res<tokio::fs::File> {
+        self.inner.create_file(path).await
+    }
+
+    async fn exists(&self, path: impl AsRef<Path>) -> bool {
+        self.inner.exists(path).await
+    }
+
+    async fn modified_timestamp(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Res<chrono::DateTime<chrono::Utc>> {
+        self.inner.modified_timestamp(path).await
+    }
+
+    async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {
+        self.inner.open_file(path).await
+    }
+
+    async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
+        self.inner.read_byte_stream(path).await
+    }
+
+    async fn read_dir(&self, path: impl AsRef<Path> + Send + Sync) -> Res<tokio::fs::ReadDir> {
+        self.inner.read_dir(path).await
+    }
+
+    async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+        self.inner.remove_dir_all(path).await
+    }
+
+    async fn remove_file(&self, path: impl AsRef<Path> + Send) -> std::io::Result<()> {
+        if path.as_ref() == self.path {
+            self.gate.hold().await;
+        }
+        self.inner.remove_file(path).await
+    }
+
+    async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
+        self.inner.rename(from, to).await
+    }
+
+    async fn write_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        self.inner.write_byte_stream(path, body).await
+    }
+
+    async fn lock_exclusive(
+        &self,
+        path: impl AsRef<Path> + Send,
+    ) -> Res<crate::io::storage::LockGuard> {
+        self.inner.lock_exclusive(path).await
+    }
 }

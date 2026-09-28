@@ -286,9 +286,11 @@ impl From<&crate::quilt::Error> for Failure {
                 | RemoteCatalogError::BucketUnreachable(_),
             ) => Self::Refusal(RefusalKind::DeploymentMisconfigured),
 
-            E::PackageOp(PackageOpError::PullConflict(_)) => {
-                Self::Refusal(RefusalKind::PullConflict)
-            }
+            // Both are another writer's change landing on the package while
+            // this one worked; the user retries, nothing is ours to fix.
+            E::PackageOp(
+                PackageOpError::PullConflict(_) | PackageOpError::ChangedUnderneath { .. },
+            ) => Self::Refusal(RefusalKind::PullConflict),
 
             E::PackageOp(PackageOpError::AlreadyUpToDate)
             | E::InstallPackage(
