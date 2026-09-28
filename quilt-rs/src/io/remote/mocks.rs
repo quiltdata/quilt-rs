@@ -32,6 +32,36 @@ pub struct MockRemote {
     /// Per-URI count of `get_object_stream` calls, so tests can assert that a
     /// config or schema document is fetched exactly once across an operation.
     get_object_calls: Arc<Mutex<HashMap<String, usize>>>,
+    /// Fetches held until a test lets them go; see [`MockRemote::park`].
+    parked: Arc<Mutex<HashMap<String, Arc<Gate>>>>,
+}
+
+/// One parked operation: it says when it arrives, then waits to be let go.
+///
+/// Both sides are [`tokio::sync::Notify`] permits, so neither order of arrival
+/// and release loses a wake-up.
+#[derive(Default)]
+pub struct Gate {
+    arrived: tokio::sync::Notify,
+    released: tokio::sync::Notify,
+}
+
+impl Gate {
+    /// Waits until the parked fetch has arrived and is holding.
+    pub async fn arrived(&self) {
+        self.arrived.notified().await;
+    }
+
+    /// Lets the parked fetch go on.
+    pub fn release(&self) {
+        self.released.notify_one();
+    }
+
+    /// The parked side: says it has arrived, then waits to be released.
+    pub async fn hold(&self) {
+        self.arrived.notify_one();
+        self.released.notified().await;
+    }
 }
 
 impl MockRemote {
@@ -48,6 +78,23 @@ impl MockRemote {
             .get(uri)
             .copied()
             .unwrap_or(0)
+    }
+
+    /// Holds the next `get_object_stream` or `put_object` of `uri` until the
+    /// returned gate is released, so a test can land another operation inside
+    /// this one. Only the next call parks; later ones pass.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal mutex is poisoned.
+    #[must_use]
+    pub fn park(&self, uri: &str) -> Arc<Gate> {
+        let gate = Arc::new(Gate::default());
+        self.parked
+            .lock()
+            .unwrap()
+            .insert(uri.to_string(), Arc::clone(&gate));
+        gate
     }
 }
 
@@ -75,6 +122,10 @@ impl Remote for MockRemote {
             .unwrap()
             .entry(key.clone())
             .or_insert(0) += 1;
+        let parked = self.parked.lock().unwrap().remove(&key);
+        if let Some(gate) = parked {
+            gate.hold().await;
+        }
 
         let body = self
             .storage
@@ -103,6 +154,10 @@ impl Remote for MockRemote {
     ) -> Res {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} put request");
+        let parked = self.parked.lock().unwrap().remove(&key);
+        if let Some(gate) = parked {
+            gate.hold().await;
+        }
         self.storage.write_byte_stream(key, contents.into()).await
     }
 
