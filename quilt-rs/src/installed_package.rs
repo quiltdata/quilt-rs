@@ -292,7 +292,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<InstalledPackageStatus> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest().await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
 
         let host_config = match host_config_opt {
             Some(hc) => hc,
@@ -346,7 +346,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             },
             None => lineage,
         };
-        let manifest = self.manifest().await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
 
         let host_config = match host_config_opt {
             Some(hc) => hc,
@@ -1044,7 +1044,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         }
 
         let remote_uri = lineage.remote()?.clone();
-        let base = self.manifest().await?;
+        let base = self.manifest_from_lineage(&lineage).await?;
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
