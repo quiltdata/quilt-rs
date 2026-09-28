@@ -25,6 +25,7 @@ pub mod lineage;
 mod local_domain;
 pub mod manifest;
 pub mod object_hash;
+mod package_lock;
 pub mod paths;
 pub mod quiltignore;
 
@@ -49,11 +50,13 @@ pub use error::RoleError;
 pub use error::S3Error;
 pub use error::S3ErrorKind;
 pub use installed_package::InstalledPackage;
+pub use installed_package::LockedPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;
 pub use installed_package::SetRemoteOutcome;
 pub use lineage::DEFAULT_HOME_DIR_NAME;
 pub use local_domain::LocalDomain;
+pub use package_lock::on_package_lock_wait;
 pub use workflow::WorkflowValidationError;
 
 pub type Res<T = ()> = std::result::Result<T, Error>;

@@ -51,6 +51,7 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
 // `dot_quilt_dir()`, so `DOT_QUILT_DIR` stays the single source of the prefix
 // and a rename propagates without touching these.
 const LINEAGE_FILE: &str = "data.json";
+const LOCKS_DIR: &str = "locks";
 
 const INSTALLED_DIR: &str = "installed";
 // Local cache directory under `<data_dir>/.quilt`. Distinct from the S3 key
@@ -136,6 +137,15 @@ impl DomainPaths {
     #[must_use]
     pub fn lineage(&self) -> PathBuf {
         self.dot_quilt_dir().join(LINEAGE_FILE)
+    }
+
+    /// The package's lock file, `.quilt/locks/<owner>/<name>.lock`; see
+    /// [`InstalledPackage::lock`](crate::InstalledPackage::lock).
+    #[must_use]
+    pub fn package_lock(&self, namespace: &Namespace) -> PathBuf {
+        self.dot_quilt_dir()
+            .join(LOCKS_DIR)
+            .join(format!("{namespace}.lock"))
     }
 
     /// Path to the manifest cached in semi-temporary directory
@@ -283,6 +293,10 @@ mod tests {
 
         assert_eq!(paths.dot_quilt_dir(), PathBuf::from("foo/bar/.quilt"));
         assert_eq!(paths.lineage(), PathBuf::from("foo/bar/.quilt/data.json"));
+        assert_eq!(
+            paths.package_lock(&("acme", "demo").into()),
+            PathBuf::from("foo/bar/.quilt/locks/acme/demo.lock")
+        );
         assert_eq!(
             paths.installed_manifests_dir(&namespace),
             PathBuf::from("foo/bar/.quilt/installed/test/package"),

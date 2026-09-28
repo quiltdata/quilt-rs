@@ -191,6 +191,33 @@ impl Rev1Installed {
         Ok(())
     }
 
+    /// A domain on this package's directory, sharing its storage and remote.
+    pub(super) fn domain(&self) -> crate::LocalDomain<LocalStorage, MockRemote> {
+        crate::LocalDomain::with_parts(
+            self.package.paths.clone(),
+            self.package.storage.clone(),
+            Arc::clone(&self.package.remote),
+        )
+    }
+
+    /// The manifest URI of revision 1 under another namespace, `f/b`, whose
+    /// `latest` tag names it.
+    pub(super) async fn other_package(&self) -> Res<ManifestUri> {
+        self.remote()
+            .put_object(
+                None,
+                &S3Uri::from_str(&format!("s3://{BUCKET}/.quilt/named_packages/f/b/latest"))?,
+                self.rev1.as_bytes().to_vec(),
+            )
+            .await?;
+        Ok(ManifestUri {
+            bucket: BUCKET.to_string(),
+            namespace: ("f", "b").into(),
+            hash: self.rev1.clone(),
+            origin: None,
+        })
+    }
+
     pub(super) fn remote(&self) -> &MockRemote {
         &self.package.remote
     }
@@ -268,12 +295,13 @@ async fn a_pull_racing_the_download_leaves_no_file_reading_modified() -> Res {
     let t = Rev1Installed::new().await?;
     let fetching_rev2 = t.park_manifest(&t.rev2);
 
-    let (pulled, (downloaded, _)) = tokio::join!(
+    let (pulled, (downloaded, finished_inside)) = tokio::join!(
         t.pull(),
         inside(&fetching_rev2, Duration::from_millis(300), t.download())
     );
     downloaded?;
     pulled?;
+    assert!(!finished_inside, "the download must wait out the pull");
 
     let changed = t.changed().await?;
     let lineage = t.package.lineage().await?;
@@ -290,4 +318,76 @@ async fn a_pull_racing_the_download_leaves_no_file_reading_modified() -> Res {
         lineage.paths.keys().collect::<Vec<_>>(),
     );
     t.assert_clean_at_rev2().await
+}
+
+/// Two packages written at once: a pull of this package, parked on its
+/// fetch of revision 2, does not hold up a download of another package.
+#[test(tokio::test)]
+async fn a_pull_of_one_package_does_not_hold_up_a_download_of_another() -> Res {
+    let t = Rev1Installed::new().await?;
+    let domain = t.domain();
+    let other = domain.install_package(&t.other_package().await?).await?;
+    let all_paths = Rev1Installed::all_paths();
+    let fetching_rev2 = t.park_manifest(&t.rev2);
+
+    let (pulled, (downloaded, finished_inside)) = tokio::join!(
+        t.pull(),
+        inside(
+            &fetching_rev2,
+            Duration::from_secs(10),
+            other.install_paths(&all_paths)
+        )
+    );
+    pulled?;
+    downloaded?;
+    assert!(finished_inside, "the other package's download must not wait");
+
+    let lineage = domain.get_lineage().await?;
+    assert_eq!(
+        lineage.packages[&t.package.namespace].current_hash(),
+        Some(t.rev2.as_str())
+    );
+    assert_eq!(
+        lineage.packages[&other.namespace]
+            .paths
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        Rev1Installed::all_paths()
+    );
+    Ok(())
+}
+
+/// An install of another package, parked on its manifest fetch, spans the
+/// pull of this one. The pull does not wait for it, and the install splices
+/// in its one entry rather than writing back the record it read, so the
+/// pull's entry survives.
+#[test(tokio::test)]
+async fn installing_another_package_during_a_pull_keeps_the_pull() -> Res {
+    let t = Rev1Installed::new().await?;
+    let domain = t.domain();
+    let other_uri = t.other_package().await?;
+    let resolving_other = t
+        .remote()
+        .park(&format!("s3://{BUCKET}/.quilt/named_packages/f/b/latest"));
+
+    let (installed, (pulled, finished_inside)) = tokio::join!(
+        domain.install_package(&other_uri),
+        inside(&resolving_other, Duration::from_secs(10), t.pull())
+    );
+    pulled?;
+    installed?;
+    assert!(finished_inside, "the pull must not wait for another package");
+
+    let lineage = domain.get_lineage().await?;
+    assert_eq!(
+        lineage.packages[&t.package.namespace].current_hash(),
+        Some(t.rev2.as_str()),
+        "the pull's entry survives the install"
+    );
+    assert_eq!(
+        lineage.packages[&other_uri.namespace].current_hash(),
+        Some(t.rev1.as_str())
+    );
+    Ok(())
 }
