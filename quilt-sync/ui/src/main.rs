@@ -72,6 +72,7 @@ fn Home() -> impl IntoView {
             read=read_settings
             v2=|| view! { <pages::MainPage /> }.into_any()
             v1=|| view! { <pages::InstalledPackagesList /> }.into_any()
+            skeleton=|| view! { <pages::MainPageSkeleton actions=loading_actions() /> }.into_any()
             loading="Loading QuiltSync"
         />
     }
@@ -94,6 +95,7 @@ fn PackagePage(read: SettingsRead) -> impl IntoView {
             read=read
             v2=|| view! { <pages::InstalledPackageV2 /> }.into_any()
             v1=|| view! { <pages::InstalledPackage /> }.into_any()
+            skeleton=|| view! { <pages::PackagePageSkeleton actions=loading_actions() /> }.into_any()
             loading="Loading package"
         />
     }
@@ -109,9 +111,8 @@ fn read_settings() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData,
 /// One route that is two pages: `v2` when [`design_preview`] says so, `v1`
 /// otherwise, asked afresh on every visit.
 ///
-/// A fetch, so there is one frame with nothing on it. That is deliberate over
-/// guessing: showing v1 and then swapping it for v2 is worse than a blank frame.
-/// Asked per visit rather than once for the session, because saving the
+/// A fetch, so there is a frame before the answer — [`design_loading`] says what
+/// it holds. Asked per visit rather than once for the session, because saving the
 /// preference in Settings has to take effect on the next page the reader opens,
 /// and a cached answer would need a second path to hear about that.
 ///
@@ -126,13 +127,16 @@ fn ByDesign(
     read: SettingsRead,
     v2: fn() -> AnyView,
     v1: fn() -> AnyView,
-    /// What the loading frame's spinner announces.
+    /// `v2`'s first paint, for the loading frame when the root marker predicts
+    /// `v2`.
+    skeleton: fn() -> AnyView,
+    /// What the loading frame announces.
     loading: &'static str,
 ) -> impl IntoView {
     let settings = LocalResource::new(read);
 
     view! {
-        <Suspense fallback=move || design_loading(loading)>
+        <Suspense fallback=move || design_loading(loading, skeleton)>
             {move || Suspend::new(async move {
                 let settings = settings.await;
                 let on = design_preview(settings.as_ref().map_err(String::as_str));
@@ -145,13 +149,26 @@ fn ByDesign(
 
 /// What a [`ByDesign`] route shows while it works out which page it is.
 ///
-/// A spinner, which `kit::Spinner`'s own doc reserves for two jobs — this is the
-/// second, "filling a region that cannot be skeletonised because its contents are
-/// not a list of rows". A skeleton is the right loading state for a list, because
-/// it holds the shape the content will take; here not even the page is decided
-/// yet, so there is no shape to hold. No appbar around it either: drawing one
-/// page's chrome and then swapping it for the other's is the flicker these routes
-/// exist to avoid.
+/// The page the root marker predicts. The marker is the answer this read gave
+/// last time — `index.html` restores it before the first paint, and every
+/// `ByDesign` sets it from its own answer — so it is wrong only when the
+/// preference changed somewhere this app did not see. For a v2 reader that makes
+/// the frame `skeleton`, the v2 page's own first paint: the appbar, then the page
+/// in the shape it will take. The page then draws the same skeleton and fills it,
+/// so the frame is the first step of the page's own loading and nothing moves at
+/// either handover.
+///
+/// The prediction is cheap to get wrong. A stale marker costs one v2 skeleton
+/// frame before v1, and that frame is a skeleton rather than a real page, so the
+/// swap replaces placeholders instead of content the reader has started to read.
+/// A v1 reader gets the spinner v1's own pages load behind: v1 has no skeletons
+/// to draw, and a v2 one would be the guess the marker has just ruled out.
+///
+/// The announcement is the frame's, not the skeleton's, so it speaks whichever
+/// generation is coming and says what it is waiting on. Off-screen text inside
+/// the live region, for `kit::Spinner`'s reason: a live region announces its
+/// content, and one with nothing inside may never fire. It sits outside every
+/// `aria-busy` region, which would hold its announcement back.
 ///
 /// The ground is these routes' alone. `data-home-frame` is styled off
 /// `theme::set_v2`'s root marker (`_base.scss`), which records the reader's
@@ -159,13 +176,28 @@ fn ByDesign(
 /// marker only where it predicts what is coming. That is here and nowhere else:
 /// `/` and `/installed-package` render v2 on exactly the value the marker is set
 /// from, so the ground the frame paints is the ground the page then keeps.
-fn design_loading(label: &'static str) -> AnyView {
+fn design_loading(label: &'static str, skeleton: fn() -> AnyView) -> AnyView {
+    let page = if quilt_sync_ui::theme::is_v2() {
+        skeleton()
+    } else {
+        view! { <components::Spinner /> }.into_any()
+    };
     view! {
         <div data-home-frame>
-            <kit::Spinner variant=kit::SpinnerVariant::Region aria_label=label />
+            <p role="status" data-sr-only>
+                {label}
+            </p>
+            {page}
         </div>
     }
     .into_any()
+}
+
+/// The appbar's controls in a loading frame: Refresh spinning, as the page
+/// draws it while its first read is out, so the bar does not change at the
+/// handover. Pressing it does nothing — there is no page yet to refresh.
+fn loading_actions() -> AnyView {
+    components::appbar::appbar_actions(|| (), Signal::stored(true))
 }
 
 /// Whether the reader has opted into the redesigned application generation,
@@ -208,27 +240,108 @@ mod tests {
         }
     }
 
+    /// The frame `/` draws while it decides, in whichever generation the root
+    /// marker predicts, under a router because the v2 appbar's Settings navigates.
+    fn home_frame(v2: bool) -> Mounted {
+        quilt_sync_ui::theme::set_v2(v2);
+        Mounted::new(|| {
+            view! {
+                <Router>
+                    {design_loading("Loading QuiltSync", || {
+                        view! { <pages::MainPageSkeleton actions=loading_actions() /> }.into_any()
+                    })}
+                </Router>
+            }
+        })
+    }
+
     #[wasm_bindgen_test]
     fn the_loading_frame_announces_itself() {
-        // `/` cannot skeletonise — it does not know which page is coming — so it
-        // spins, and a spinner with nothing beside it has to say what it is
-        // waiting on. `kit::Spinner`'s own doc: a `Region` spinner "always passes
-        // something", rendered as off-screen text INSIDE the live region rather
-        // than as a label on it, or the announcement may never fire.
+        // The frame's skeleton or spinner says nothing on its own — the bars are
+        // hidden and v1's rings are markup — so the frame has to say what it is
+        // waiting on. `kit::Spinner`'s rule: off-screen text INSIDE the live
+        // region rather than a label on it, or the announcement may never fire.
         //
-        // This pins that the frame is not empty and that it speaks. It cannot
-        // pin what it looks like: no stylesheet is loaded here.
-        let el = Mounted::new(|| design_loading("Loading QuiltSync"));
-        // Inside the frame `_base.scss` grounds for a v2 reader — the two are
-        // pinned together because the frame is what a stylesheet can see.
+        // This pins that the frame speaks, in both generations. It cannot pin
+        // what it looks like: no stylesheet is loaded here.
+        for v2 in [true, false] {
+            let el = home_frame(v2);
+            // Inside the frame `_base.scss` grounds for a v2 reader — the two are
+            // pinned together because the frame is what a stylesheet can see.
+            let status = el
+                .query_selector("[data-home-frame] [role=status]")
+                .unwrap()
+                .expect("the loading frame is a live region inside the grounded frame");
+            assert_eq!(
+                status.text_content().unwrap().trim(),
+                "Loading QuiltSync",
+                "and it says what it is waiting on (v2: {v2})"
+            );
+            // `aria-busy` on an ancestor holds a live region's news back until it
+            // clears, which is when there is nothing left to announce.
+            assert!(
+                status.closest("[aria-busy=true]").unwrap().is_none(),
+                "and nothing busy around it silences it (v2: {v2})"
+            );
+        }
+    }
+
+    /// The marker predicts v2, so the frame is the v2 page's own first paint:
+    /// its appbar and its skeleton, with the skeleton's region marked busy. Not
+    /// the tiny region spinner the frame used to hold, nor v1's.
+    #[wasm_bindgen_test]
+    fn a_v2_reader_waits_on_the_page_s_skeleton() {
+        let el = home_frame(true);
+        let frame = el.query_selector("[data-home-frame]").unwrap().unwrap();
+        assert!(
+            frame.query_selector("[data-v2-page]").unwrap().is_some(),
+            "the v2 page's frame, appbar and all; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            frame.query_selector("[aria-busy=true]").unwrap().is_some(),
+            "a skeleton region that says it is busy; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            frame.query_selector(".q-spinner").unwrap().is_none(),
+            "and no spinner beside it; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A v1 reader gets the spinner v1's own pages load behind, and no v2
+    /// surface: a v2 skeleton is a prediction the marker has ruled out.
+    #[wasm_bindgen_test]
+    fn a_v1_reader_waits_on_v1_s_spinner() {
+        let el = home_frame(false);
+        assert!(
+            el.query_selector("[data-home-frame] .q-spinner")
+                .unwrap()
+                .is_some(),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
+    }
+
+    /// `/installed-package` before its settings read answers: the package
+    /// page's skeleton for a v2 reader, announced as the package it is.
+    #[wasm_bindgen_test]
+    async fn the_package_route_waits_on_the_package_skeleton() {
+        quilt_sync_ui::theme::set_v2(true);
+        let el = package_route(settings_pending).await;
         let status = el
             .query_selector("[data-home-frame] [role=status]")
             .unwrap()
-            .expect("the loading frame is a live region inside the grounded frame");
-        assert_eq!(
-            status.text_content().unwrap().trim(),
-            "Loading QuiltSync",
-            "and it says what it is waiting on"
+            .expect("the frame, still up: the read never answers");
+        assert_eq!(status.text_content().unwrap().trim(), "Loading package");
+        assert!(
+            el.query_selector("[data-home-frame] [data-v2-page] [aria-label=Files]")
+                .unwrap()
+                .is_some(),
+            "the package page's panes, not the main page's list; markup was {}",
+            el.inner_html()
         );
     }
 
@@ -238,6 +351,10 @@ mod tests {
 
     fn settings_off() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
         Box::pin(async { Ok(settings_stub(false)) })
+    }
+
+    fn settings_pending() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {
+        Box::pin(std::future::pending())
     }
 
     fn settings_fail() -> Pin<Box<dyn Future<Output = Result<SettingsData, String>>>> {

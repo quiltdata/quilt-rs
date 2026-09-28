@@ -16,6 +16,10 @@ pub use commit::Commit;
 pub use error::Error;
 pub use installed_package::InstalledPackage;
 pub use installed_package_v2::InstalledPackageV2;
+// The page's first paint, for `main.rs` to draw while it decides the page and for
+// the gallery to draw beside the other page scenes: one definition, so the three
+// cannot disagree about where the header lands.
+pub use installed_package_v2::PackagePageSkeleton;
 // The gallery draws this exact live slice rather than maintaining another
 // approximation of the page component.
 pub use installed_package_v2::context_pane::{CurrentRevisionPane, RevisionHistoryFetch};
@@ -35,6 +39,8 @@ pub use installed_package_v2::resolve::{
 pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
 pub use main_page::MainPage;
+// The same, for the main page.
+pub use main_page::MainPageSkeleton;
 // For the gallery, which is a second binary against this library and draws the same
 // queue rows. Re-exported one function rather than opening the page's module: a
 // second copy of the map in the gallery is a copy that drifts.

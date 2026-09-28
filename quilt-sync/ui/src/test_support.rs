@@ -76,3 +76,23 @@ pub(crate) fn button_saying(root: &web_sys::Element, text: &str) -> web_sys::Htm
         .unwrap_or_else(|| panic!("no button says {text:?}; markup was {}", root.inner_html()))
         .unchecked_into()
 }
+
+/// An element's box structure: each tag and its classes, nested, and nothing
+/// else — no text, no ids, no other attributes.
+///
+/// For pinning that two renders lay out alike when no stylesheet is loaded to
+/// measure them: the same elements carrying the same classes take the same
+/// boxes. Ids are left out because a control mints a fresh one per instance.
+pub(crate) fn shape(el: &web_sys::Element) -> String {
+    let mut out = format!(
+        "<{} {}>",
+        el.tag_name().to_lowercase(),
+        el.get_attribute("class").unwrap_or_default()
+    );
+    let children = el.children();
+    for i in 0..children.length() {
+        out.push_str(&shape(&children.item(i).unwrap()));
+    }
+    out.push_str("</>");
+    out
+}

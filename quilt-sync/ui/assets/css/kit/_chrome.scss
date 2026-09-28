@@ -230,8 +230,7 @@ body {
 
 /* A whole-page scene at the window's minimum inner height, so the fold is the one a
  * user at the floor sees rather than the gallery's own viewport. `auto` for a scene
- * that is only the bar. The loading frame's own `min-height: 100vh` (see `_base.scss`)
- * is pulled down to the window for the same reason. */
+ * that is only the bar. */
 .g-window {
   --q-frame-height: 560px;
   height: var(--q-frame-height);
@@ -244,10 +243,6 @@ body {
 /* The bar-only scene shows the bar, not the empty padded `main` under it. */
 .g-window--bar main {
   display: none;
-}
-
-.g-shell .g-window > [data-home-frame] {
-  min-height: 100%;
 }
 
 /* The state strip's two-card row. This is page layout rather than gallery chrome, and

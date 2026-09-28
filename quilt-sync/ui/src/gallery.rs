@@ -112,6 +112,7 @@ use crate::gallery::load_failure::LoadFailureStories;
 use crate::gallery::package_header::PackageHeaderScene;
 use crate::gallery::packages::PackageRowStories;
 use crate::gallery::packages::PackagesScene;
+use crate::gallery::page::LoadingScene;
 use crate::gallery::page::PageScene;
 use crate::gallery::pane_section::PaneSectionStories;
 use crate::gallery::queue::QueueScene;
@@ -272,6 +273,7 @@ fn Gallery() -> impl IntoView {
                     "Installed package",
                     view! { <InstalledPackageScene /> }.into_any(),
                 ),
+                ("While loading", view! { <LoadingScene /> }.into_any()),
             ],
         ),
     ];
@@ -507,6 +509,32 @@ mod tests {
     #[wasm_bindgen_test]
     fn every_description_the_file_pane_scene_names_is_drawn() {
         assert_eq!(dangling_descriptions(FilePaneScene), Vec::<String>::new());
+    }
+
+    /// The skeletons are the app's, and the app's appbar navigates: a scene that
+    /// reached for a router would panic on mount here, where there is none. Both
+    /// pages drawn, each a v2 surface with a region that says it is busy.
+    #[wasm_bindgen_test]
+    fn the_loading_scene_draws_both_pages_without_a_router() {
+        use crate::gallery::page::LoadingScene;
+
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), LoadingScene);
+        let pages = container
+            .query_selector_all("[data-v2-page]")
+            .unwrap()
+            .length();
+        let busy = container
+            .query_selector_all("[data-v2-page] [aria-busy=true]")
+            .unwrap()
+            .length();
+        drop(handle);
+        container.remove();
+        assert_eq!(pages, 2, "the main page and the package page");
+        assert!(busy >= 2, "each says it is busy, found {busy}");
     }
 
     #[wasm_bindgen_test]

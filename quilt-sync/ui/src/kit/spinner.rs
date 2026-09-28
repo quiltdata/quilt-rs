@@ -10,6 +10,12 @@
 //! Which leaves it two jobs: inline beside a label that names the work, and filling a
 //! region that cannot be skeletonised because its contents are not a list of rows.
 //!
+//! Not the frame `main.rs` draws while a route decides between v1 and v2, though that
+//! frame once looked like the second job. It is skeletonised now: the root marker
+//! `index.html` restores before the first paint predicts which page is coming, so the
+//! frame draws that page's skeleton, and a stale marker costs one skeleton frame before
+//! v1's page — see `design_loading`.
+//!
 //! # `Button` has its own
 //!
 //! Deliberately not this one. `Button` draws its spinner as a `::before` on the leading
