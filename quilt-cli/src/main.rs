@@ -21,6 +21,7 @@ async fn main() {
     let args = Args::parse();
     init_logging(args.verbose);
     let format = format_from_args(&args);
+    cli::notice_lock_waits(|line| eprintln!("{line}"));
 
     // An error raised before dispatch — an unreadable domain, a rejected flag
     // combination — is a command failure like any other. It used to go out as a
