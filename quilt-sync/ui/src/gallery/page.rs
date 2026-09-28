@@ -14,8 +14,8 @@
 //!
 //! Two versions, because they are the two days a user has. The busy page is the
 //! worst case — 19 things needing decisions — and the calm page is the common one,
-//! where `ZeroLine` collapses the whole region to a line. A third shows the calm
-//! page while its checks are still out, beside the page it settles into.
+//! where `ZeroLine` collapses the whole region to a line. A third pairs the calm
+//! page still checking with the page it settles into.
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -90,9 +90,7 @@ pub fn PageScene() -> impl IntoView {
             <div class="g-window">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>
                     <StateStripRegion />
-                    // The queue region collapsed: the bare line, with no card and no
-                    // heading, exactly as the page's `QueueRegion` draws it when
-                    // nothing needs a decision.
+                    // Bare, with no card, as `QueueRegion` draws it.
                     <ZeroLine text="Everything is Latest — 43 packages" />
                     <PackagesRegion view_name="normal-day-view" />
                 </PageLayout>
@@ -149,19 +147,15 @@ pub fn PageScene() -> impl IntoView {
     }
 }
 
-/// The calm page while its checks are still out, beside the page it settles into.
-/// Its own component so `PageScene` stays one screen of scenes.
+/// The calm page still checking, beside the page it settles into.
 #[component]
 fn CheckingScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · the whole page, still checking"
-            note="The same calm day a moment earlier, beside the page it settles into. \
-                  The light phase has answered and the heavy phase has not, so every row \
-                  is still the light phase's guess, dimmed, and the queue's outcome is \
-                  not known yet. The placeholder holds the zero line's place until it is: \
-                  the first package row must start at the same height in both windows, \
-                  or the list jumps when the all-clear lands."
+            note="The calm day before its checks answer, beside the page it settles into: \
+                  rows dimmed, the zero line's placeholder in the queue's place. The first \
+                  package row must start at the same height in both windows."
         >
             <div class="g-window-pair">
                 <div class="g-window">

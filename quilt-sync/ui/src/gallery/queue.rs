@@ -110,10 +110,8 @@ fn ZeroLineStory() -> impl IntoView {
                   (acceptance criterion 8) — a full-height empty state here would push the \
                   package list below the fold in order to say that nothing is wrong. \
                   \
-                  It stands alone, with no card: the queue's heading and count are \
-                  `Card`'s, and appear only when there is a queue. While the checks are \
-                  still out, ZeroLineSkeleton holds the line's place, and the two must be \
-                  the same height — compare the second cell's two lines."
+                  It has no card; the heading and count come with a queue. \
+                  ZeroLineSkeleton holds its place while checks are out, at the same height."
         >
             <Cell full=true label="the healthy queue">
                 <ZeroLine text="Everything is Latest — 43 packages" />

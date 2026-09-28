@@ -416,8 +416,7 @@ body {
   }
 }
 
-/* Two whole-page windows side by side, for a scene whose point is that they line
- * up: a row that starts lower in one than the other is a jump the user sees. */
+/* Two whole-page windows side by side, so their rows can be compared. */
 .g-window-pair {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

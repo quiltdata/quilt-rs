@@ -342,8 +342,7 @@ pub fn PackagesRegion(
     /// scenes mount this region beside this file's own, and two instances sharing a
     /// name become one group with one selection between them.
     view_name: &'static str,
-    /// Every row still waiting on its check: the light phase's guess, dimmed, as
-    /// the page draws it before the heavy phase answers.
+    /// Every row still waiting on its check, dimmed.
     #[prop(optional)]
     provisional: bool,
 ) -> impl IntoView {

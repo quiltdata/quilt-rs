@@ -557,52 +557,21 @@ pub fn QueueRegion(
 
     let shape = Memo::new(move |_| {
         if items.with(Vec::is_empty) && in_flight.get() && total.get() > 0 {
-            // Packages to speak for, calls still out, and nothing yet that needs
-            // a decision: the answer is on its way and is not known. Every page
-            // load passes through here — nothing has settled on the first frame —
-            // and most of them leave for the zero line, so the line is held open
-            // until then. Rendering nothing here dropped the list by one line
-            // and pushed it back down when the all-clear arrived.
-            //
-            // A skeleton, and within `kit/skeleton_box.rs`'s "only for unknown"
-            // rule: unlike a row's `StateLabel`, which the light phase already
-            // answered and the heavy phase merely corrects, the queue has no
-            // provisional answer to show. Whether it will be one line or a card
-            // is what the outstanding calls decide.
-            //
-            // Rows that HAVE settled into the queue are shown at once instead
-            // (`Shape::Queue`), and the list below them keeps settling.
+            // Calls still out and nothing queued: the answer is unknown, so hold
+            // the zero line's place (skeleton_box.rs: unknown, not provisional).
             return Shape::Pending;
         }
         if packages.with(Vec::is_empty) && unchecked.with(Vec::is_empty) {
-            // Nothing to speak for. With calls still out that is `Pending`
-            // above; what reaches here is a fresh install with no packages at
-            // all. "Everything is Latest — 0 packages" is a non-sequitur there;
-            // it invents copy for a case the zero line was never meant to speak
-            // for. The empty-install story belongs to the list's own blankslate,
-            // which a later plan owns.
-            //
-            // `unchecked` is what keeps the offline case out of here: with every
-            // call failed the settled list is empty too, and bailing on that
-            // alone left the region ABSENT — no card, no heading, no zero line —
-            // over a page of rows the app could not read.
+            // A fresh install: "Everything is Latest — 0 packages" would be a
+            // non-sequitur, and the list's blankslate speaks for it. `unchecked`
+            // keeps the all-failed case, whose settled list is empty too, out.
             return Shape::Nothing;
         }
         if items.with(Vec::is_empty) {
             if packages.with(Vec::len) < total.get() {
-                // Every call has answered, and some package is still not
-                // accounted for. `outstanding` decrements on failure by design
-                // (R3: a queue that waited on a failed refresh would go silent
-                // forever), and a failed row stays provisional, so R2 drops it
-                // from `packages` — which is why "no call outstanding" was never
-                // the same question as "every package accounted for". A
-                // signed-out host is the ordinary way here, and announcing an
-                // all-clear over packages the app could not read is a false
-                // all-clear by another route.
-                //
-                // Not a skeleton: nothing more is coming, so one would never
-                // clear. "We could not tell" belongs to the list below, as a row
-                // that stays dashed.
+                // Every call answered, some package unread (a failed call
+                // decrements `outstanding` but stays out of `packages`, R2/R3):
+                // no all-clear, and no skeleton, since nothing more is coming.
                 return Shape::Silent;
             }
             return Shape::Zero;
@@ -612,9 +581,6 @@ pub fn QueueRegion(
 
     move || match shape.get() {
         Shape::Nothing | Shape::Silent => ().into_any(),
-        // The zero line's own geometry, so a healthy load does not move the list
-        // when the all-clear replaces it. A day that does need attention still
-        // shifts, by less, and it shifts to show something worth seeing.
         Shape::Pending => view! { <ZeroLineSkeleton /> }.into_any(),
         // Acceptance criterion 8, unchanged. The count is the light total,
         // not `packages.len()`: the sentence speaks for every package the
@@ -685,11 +651,9 @@ pub fn QueueRegion(
 enum Shape {
     /// No region: nothing to speak for.
     Nothing,
-    /// The zero line's placeholder: calls still out, and nothing settled yet
-    /// that needs a decision.
+    /// The zero line's placeholder: calls still out, nothing queued.
     Pending,
-    /// No region: every call answered, some package still unaccounted for, and
-    /// so no right to speak.
+    /// No region: every call answered, some package still unread.
     Silent,
     /// One line, no card.
     Zero,
@@ -1267,17 +1231,13 @@ mod tests {
         );
     }
 
-    /// The zero line's placeholder, when the region drew one. `[class*=placeholder]`
-    /// is `ZeroLineSkeleton`'s own class, chosen so a test can name it.
+    /// `ZeroLineSkeleton`, found by its own class.
     fn placeholder(el: &web_sys::Element) -> Option<web_sys::Element> {
         el.query_selector("[class*=placeholder]").unwrap()
     }
 
     #[wasm_bindgen_test]
     fn a_load_with_nothing_settled_yet_holds_the_line_open() {
-        // Every page load, on its first frame after the light phase: packages on
-        // the page, none confirmed, calls out. Rendering nothing here let the
-        // list sit one line high and drop when the all-clear arrived.
         let el = mount_region_of(
             Signal::stored(vec![]),
             one_signed_in(),
@@ -1296,8 +1256,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_fresh_install_holds_no_line_open_even_while_in_flight() {
-        // Nothing to speak for means nothing to wait for: a placeholder over an
-        // empty install would promise a line that never comes.
         let el = mount_region_of(
             Signal::stored(vec![]),
             one_signed_in(),
@@ -1311,8 +1269,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_check_that_answered_with_nothing_holds_no_line_open() {
-        // Every call answered and one package is still unaccounted for: nothing
-        // more is coming, so a placeholder here would never clear.
         let el = mount_region_of(
             Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
             one_signed_in(),
@@ -1330,8 +1286,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_row_that_needs_a_decision_replaces_the_held_line() {
-        // A day that does need attention: the card arrives as soon as its first
-        // row does, and the placeholder does not linger above it.
         let packages = RwSignal::new(vec![]);
         let el = mount_region_of(
             packages.into(),
