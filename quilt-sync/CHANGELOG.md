@@ -23,7 +23,7 @@
 
 ### Changed
 
-- **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (PRLINK)
+- **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (<https://github.com/quiltdata/quilt-rs/pull/1020>)
 
 ## [v0.22.4] - 2026-09-28
 
