@@ -169,6 +169,15 @@ impl Rev1Installed {
         Ok(())
     }
 
+    /// A pull under the whole-package scope, which also fetches remote
+    /// changes to paths this copy does not track.
+    pub(super) async fn pull_entire(&self) -> Res {
+        self.package
+            .pull(Some(HostConfig::default()), SyncScope::EntirePackage)
+            .await?;
+        Ok(())
+    }
+
     pub(super) async fn download(&self) -> Res {
         self.package.install_paths(&Self::all_paths()).await?;
         Ok(())
@@ -861,4 +870,41 @@ impl Storage for ParkedStorage {
         self.maybe_park(&Park::Lock, path.as_ref()).await;
         self.inner.lock_exclusive(path).await
     }
+}
+
+/// Another pull got to latest first, and then an uninstall removed a path this
+/// pull placed. This pull writes nothing, as the entry is already where it was
+/// going, but the file it placed must not stay behind untracked.
+#[test(tokio::test)]
+async fn a_pull_beaten_to_latest_removes_a_file_uninstalled_meanwhile() -> Res {
+    let t = Rev1Installed::new().await?;
+    let home = t.package.package_home().await?;
+    // Whole-package scope: the untracked `changes.txt` is fetched, and placed
+    // with no check of what is there.
+    let fetching = t.park_object("changes.txt", "c2");
+
+    let (first, others) = tokio::join!(t.pull_entire(), async {
+        arrives(&fetching, "the first pull's fetch").await;
+        let others = async {
+            t.pull_entire().await?;
+            t.package
+                .uninstall_paths(&vec![PathBuf::from("changes.txt")])
+                .await?;
+            Res::Ok(())
+        }
+        .await;
+        fetching.release();
+        others
+    });
+    others?;
+    first?;
+
+    let lineage = t.package.lineage().await?;
+    assert_eq!(lineage.current_hash(), Some(t.rev2.as_str()));
+    assert!(lineage.paths.is_empty());
+    assert!(
+        !home.join("changes.txt").exists(),
+        "the uninstalled file must not come back"
+    );
+    Ok(())
 }

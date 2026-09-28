@@ -921,11 +921,18 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
                         return Ok(Verdict::Gone);
                     };
                     if !write_step::same_revision(current, &started) {
-                        return Ok(if write_step::same_revision(current, &next) {
-                            Verdict::Written(current.clone())
-                        } else {
-                            Verdict::Refused
-                        });
+                        if !write_step::same_revision(current, &next) {
+                            return Ok(Verdict::Refused);
+                        }
+                        // Another pull got there first, so there is nothing
+                        // to write. A file this one placed that the entry no
+                        // longer tracks was uninstalled since: it goes.
+                        for (path, state) in write_step::placed(&started, &next) {
+                            if !current.paths.contains_key(&path) {
+                                uninstalled.insert(path, state.hash);
+                            }
+                        }
+                        return Ok(Verdict::Written(current.clone()));
                     }
                     // Before the redo check, so a redo carries it: `next`
                     // no longer tracks it, whatever `started` becomes.
