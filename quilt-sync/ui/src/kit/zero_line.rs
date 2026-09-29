@@ -43,10 +43,13 @@ pub fn ZeroLine(
 /// cause card: the all-clear is what most loads resolve to, and reserving a
 /// card's height would trade this shift for an upward one on every healthy day
 /// (qhq-8mgw.55).
+///
+/// Drawn until every package's check has answered. The line is the busy region
+/// (`aria-busy`); its bars are `aria-hidden`, per `skeleton_box.rs`.
 #[component]
 pub fn ZeroLineSkeleton() -> impl IntoView {
     view! {
-        <p class=style::placeholder>
+        <p class=style::placeholder aria-busy="true">
             <SkeletonBox width="14px" height="14px" />
             <span class=style::text>
                 <SkeletonBox width="240px" />

@@ -468,3 +468,10 @@ body {
     --q-pane-divider-below: var(--q-space-7);
   }
 }
+
+/* Two whole-page windows side by side, so their rows can be compared. */
+.g-window-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--q-space-3);
+}

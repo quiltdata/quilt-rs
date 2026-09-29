@@ -4,7 +4,9 @@
  * first words carry the meaning, and the tail is a count.
  */
 
-.root {
+/* Shared with `.placeholder`: stylance leaves `composes` untranslated. */
+.root,
+.placeholder {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -45,7 +47,12 @@
  * by less, and it shifts to show something worth seeing.
  *
  * Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
- * already use — a test looking for this one has to be able to say so. */
-.placeholder {
-  composes: root;
+ * already use — a test looking for this one has to be able to say so.
+ *
+ * The bar is a block and forms no line box, so the text's line height is set
+ * explicitly to match `.root .text`. */
+.placeholder .text {
+  display: flex;
+  align-items: center;
+  height: calc(var(--q-text-body) * var(--q-line-tight));
 }
