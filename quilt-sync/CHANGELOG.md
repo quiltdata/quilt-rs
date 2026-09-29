@@ -24,6 +24,7 @@
 ### Changed
 
 - **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (<https://github.com/quiltdata/quilt-rs/pull/1020>)
+- **New design preview**: on the package page, downloaded files and fully downloaded folders show a small check in the checkbox column, and when every file is downloaded the caption above the file list carries a green check (<https://github.com/quiltdata/quilt-rs/pull/1026>)
 
 ### Fixed
 
