@@ -838,8 +838,7 @@ fn pane(p: Pane) -> AnyView {
                                             <span style="flex:0 0 28px" />
                                             <span style="flex:0 0 17px" />
                                             <span style="font-size:var(--q-text-body); \
-                                                         color:var(--q-fgColor-muted); \
-                                                         white-space:nowrap">
+                                                         color:var(--q-fgColor-muted)">
                                                 {crate::pages::downloaded_words(n)}
                                             </span>
                                         }

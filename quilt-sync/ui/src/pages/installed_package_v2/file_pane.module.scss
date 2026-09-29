@@ -104,11 +104,12 @@
 }
 
 /* `All 1,090 files downloaded`: a statement about the package, not a control,
- * so it is muted and has no pointer. Never wraps, as select-all's label. */
+ * so it is muted and has no pointer. Unlike select-all's label it wraps: a pane
+ * narrower than the words (high zoom) breaks the line rather than spilling past
+ * the pane, and an ellipsis would cut the one word that says what it means. */
 .caption {
   font-size: var(--q-text-body);
   color: var(--q-fgColor-muted);
-  white-space: nowrap;
 }
 
 /* The list box's footer: a spacer and the `[Download]` primary, flush right on
