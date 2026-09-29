@@ -37,6 +37,22 @@
 //! made *select all 56* disagree with *download 17*. A row without a box keeps
 //! the column's width so the names still line up.
 //!
+//! A caller whose row's file is on disk passes `have_mark`, and the hole holds
+//! a muted check: *have it*. The rule is per row, in every scope and state: a
+//! file that is here carries the check, and one that is not carries a box when
+//! it can be picked, otherwise nothing. Were the check drawn only while some
+//! row has a box, the column would flip from ticks to blank the moment the
+//! last file landed, and the finished list would look like another design
+//! rather than the completed one; per row, the column simply fills up. A
+//! uniform column carries no information, so a thousand muted ticks stay
+//! quiet — it is unevenness that draws the eye.
+//!
+//! The check is a statement and never a control: no hit target of its own,
+//! and ignored on a row that has a box, since the box already says everything
+//! a mark could. The glyph is the kit's choice, made once here: an empty,
+//! disabled box would say *not picked*, which in this list means *not
+//! downloaded*, and a download arrow would invite the click it is reporting.
+//!
 //! One value rather than two optional props is the same discipline
 //! [`CheckState`](super::CheckState) follows: a box that accepts clicks and
 //! discards them cannot be built, and neither can a row that both selects and
@@ -82,6 +98,7 @@ use super::ActionMenu;
 use super::Checkbox;
 use super::MenuAction;
 use super::StateLabel;
+use super::icons;
 use super::state_label::StateTone;
 
 stylance::import_crate_style!(style, "src/kit/entry_row.module.scss");
@@ -178,6 +195,11 @@ pub fn EntryRow(
     /// whether there is a menu is decided once, from the items it starts with.
     #[prop(optional, into)]
     actions: Signal<Vec<MenuAction>>,
+    /// The file is here, so the box-shaped hole holds a muted check rather
+    /// than a blank — whatever the rest of the list is. Ignored on a selectable
+    /// row: the box is its only occupant.
+    #[prop(optional)]
+    have_mark: bool,
 ) -> impl IntoView {
     let full_name = path.unwrap_or_else(|| name.clone());
 
@@ -233,7 +255,7 @@ pub fn EntryRow(
         Some(EntryAction::Open(on_open)) => view! {
             <div class=style::main on:click=move |_| on_open.run(())>
                 {gutter()}
-                <span class=style::nobox />
+                {nobox(have_mark)}
                 <button type="button" class=style::open title=full_name>
                     {name}
                 </button>
@@ -245,7 +267,7 @@ pub fn EntryRow(
         None => view! {
             <div class=format!("{} {}", style::main, style::inert)>
                 {gutter()}
-                <span class=style::nobox />
+                {nobox(have_mark)}
                 <span class=style::name title=full_name>{name}</span>
                 {trailing()}
             </div>
@@ -273,6 +295,18 @@ pub fn EntryRow(
                     .into_any()
             }}
         </div>
+    }
+}
+
+/// The hole a row without a box keeps, empty or holding the check.
+fn nobox(have_mark: bool) -> AnyView {
+    if have_mark {
+        view! {
+            <span class=format!("{} {}", style::nobox, style::mark)>{icons::check()}</span>
+        }
+        .into_any()
+    } else {
+        view! { <span class=style::nobox /> }.into_any()
     }
 }
 
@@ -454,6 +488,64 @@ mod tests {
                 .is_none(),
             "markup was {}",
             plain.inner_html()
+        );
+    }
+
+    /// The mark lives in the hole, so it can only appear where there is one: a
+    /// row with a box has none, and a mark asked of it is dropped. Without the
+    /// prop the hole stays blank.
+    #[wasm_bindgen_test]
+    fn a_mark_fills_the_hole_and_only_the_hole() {
+        let slot = format!(".{} svg", style::nobox);
+
+        let here = mount(|| {
+            view! {
+                <EntryRow
+                    name="notes/ernest-thread.md"
+                    size="12 KB"
+                    action=EntryAction::Open(Callback::new(|()| ()))
+                    have_mark=true
+                />
+            }
+        });
+        assert!(
+            here.query_selector(&slot).unwrap().is_some(),
+            "an openable row draws its mark inside the box-shaped hole; markup was {}",
+            here.inner_html()
+        );
+
+        let missing = mount(|| {
+            view! {
+                <EntryRow
+                    name="raw/plate-07.csv"
+                    state="Not downloaded"
+                    size="4.1 MB"
+                    action=EntryAction::Select(
+                        EntrySelection::new(RwSignal::new(false), Callback::new(|_| ())),
+                    )
+                    have_mark=true
+                />
+            }
+        });
+        assert!(
+            missing.query_selector(&slot).unwrap().is_none(),
+            "a selectable row has a box, not a hole, and draws no mark; markup was {}",
+            missing.inner_html()
+        );
+
+        let blank = mount(|| {
+            view! {
+                <EntryRow
+                    name="notes/ernest-thread.md"
+                    size="12 KB"
+                    action=EntryAction::Open(Callback::new(|()| ()))
+                />
+            }
+        });
+        assert!(
+            blank.query_selector(&slot).unwrap().is_none(),
+            "a row not asked for the mark keeps its hole blank; markup was {}",
+            blank.inner_html()
         );
     }
 }

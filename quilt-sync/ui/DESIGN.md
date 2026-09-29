@@ -552,6 +552,19 @@ as well as a state.
   box.
 - **Provisional:** While the page is still resolving a row's true state, the
   chip takes a dashed border and the whole row dims. Static, never animated.
+- **Downloaded draws no label.** It is the resting state of a file list, so
+  the row says nothing. A file that is here carries a muted 12px check in the
+  box column, and a file that is not carries a box when it can be picked, so
+  the column reads as what you have and fills up as files land — in every
+  scope, and never flipping to blank when the last file does. The check is a
+  statement and never a control. A folder heading summarises its rows the same
+  way: a tri-state box while a row under it has a box, and the same muted check
+  when every file under it is here, which is what a collapsed folder can then
+  say without being opened. The check judges the folder whole, not the rows the
+  view shows, so a filter that hides a missing file never earns the folder a
+  check. When every file is here, the select-all slot carries the Success
+  tone's tick before `All 1,090 files downloaded`, the same tick as the main
+  page's `Everything is Latest`.
 
 ### Package Row
 

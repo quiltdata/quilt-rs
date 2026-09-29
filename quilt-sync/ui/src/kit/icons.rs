@@ -136,7 +136,8 @@ pub fn overflow() -> AnyView {
 }
 
 /// The chosen one of a set. Marks the active option in a
-/// [`SplitButton`](super::SplitButton)'s menu.
+/// [`SplitButton`](super::SplitButton)'s menu, and, muted, a downloaded
+/// [`EntryRow`](super::EntryRow)'s box-shaped hole.
 #[must_use]
 pub fn check() -> AnyView {
     view! {

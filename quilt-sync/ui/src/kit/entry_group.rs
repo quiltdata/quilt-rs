@@ -43,6 +43,18 @@
 //! hides a difference. Open, the rows carry it and the heading does not. It is
 //! said twice, as the rows' mark is: a hidden sentence for reading, and the
 //! disclosure naming [`DIFFERS_ID`], the pane's count, for focus.
+//!
+//! # A heading summarises its rows
+//!
+//! The way the select-all slot summarises the list: a tri-state box while any
+//! row under it has a box, and, when every row under it is here, `have_mark`
+//! puts the rows' muted check in the hole. It pays most closed — a collapsed
+//! heading with a check says *all of this is here* without being opened, and
+//! one with a box says *something in here is still to fetch*. Muted, not the
+//! Success tone: a summary of a subset is bookkeeping, and the green tick stays
+//! the one package-level statement on the screen. Like the rows' check it is a
+//! statement and never a control, and it is ignored on a heading that has a
+//! box.
 
 use leptos::prelude::*;
 
@@ -109,6 +121,11 @@ pub fn EntryGroup(
     /// heading only while it is closed; open, the rows carry the mark.
     #[prop(optional)]
     differs: bool,
+    /// Every row under this heading is here, so the box-shaped hole holds the
+    /// rows' muted check rather than a blank. Ignored when there is a
+    /// `selection`: the box is the hole's only occupant.
+    #[prop(optional)]
+    have_mark: bool,
     children: ChildrenFn,
 ) -> impl IntoView {
     let full_name = name.clone();
@@ -144,6 +161,17 @@ pub fn EntryGroup(
                         }
                             .into_any()
                     }
+                    // The rows' check, summarised: a statement, never a control.
+                    None if have_mark => {
+                        view! {
+                            <span class=format!(
+                                "{} {}",
+                                style::nobox,
+                                style::mark,
+                            )>{icons::check()}</span>
+                        }
+                            .into_any()
+                    }
                     None => view! { <span class=style::nobox /> }.into_any(),
                 }}
                 <span class=style::name title=full_name>{name}</span>
@@ -156,5 +184,77 @@ pub fn EntryGroup(
             </div>
             <Show when=move || open.get()>{children()}</Show>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use wasm_bindgen_test::*;
+
+    /// The check lives in the hole, so it appears only where there is one: a
+    /// heading with a box has none, and a mark asked of it is dropped. Without
+    /// the prop the hole stays blank.
+    #[wasm_bindgen_test]
+    fn a_mark_fills_the_hole_and_only_the_hole() {
+        let slot = format!(".{} svg", style::nobox);
+
+        let here = mount(|| {
+            view! {
+                <EntryGroup name="notes/" count=6 open=RwSignal::new(false) have_mark=true>
+                    <span />
+                </EntryGroup>
+            }
+        });
+        assert!(
+            here.query_selector(&slot).unwrap().is_some(),
+            "a heading whose rows are all here draws the check in its hole; markup was {}",
+            here.inner_html()
+        );
+
+        let picking = mount(|| {
+            view! {
+                <EntryGroup
+                    name="raw/"
+                    count=2
+                    open=RwSignal::new(false)
+                    selection=GroupSelection::new(CheckState::Off, Callback::new(|_| ()))
+                    have_mark=true
+                >
+                    <span />
+                </EntryGroup>
+            }
+        });
+        assert!(
+            picking
+                .query_selector("input[type=checkbox]")
+                .unwrap()
+                .is_some(),
+            "a heading with a selection draws its box; markup was {}",
+            picking.inner_html()
+        );
+        assert!(
+            picking.query_selector(&slot).unwrap().is_none(),
+            "a heading with a box has no hole and draws no check; markup was {}",
+            picking.inner_html()
+        );
+
+        let blank = mount(|| {
+            view! {
+                <EntryGroup name="raw/" count=2 open=RwSignal::new(false)>
+                    <span />
+                </EntryGroup>
+            }
+        });
+        let hole = blank
+            .query_selector(&format!(".{}", style::nobox))
+            .unwrap()
+            .expect("a heading with neither keeps its hole");
+        assert!(
+            hole.child_element_count() == 0,
+            "a heading not asked for the mark keeps its hole blank; markup was {}",
+            blank.inner_html()
+        );
     }
 }

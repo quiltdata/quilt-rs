@@ -38,17 +38,19 @@ const STATES: &str = "The resting state is silent: `Downloaded` is what most of 
                       a downloadable row carries a box — a tick on a file already here has \
                       nothing to act on, and it is what made `select all 56` disagree with \
                       `download 17`. The boxless rows keep the column's width, so the names \
-                      still line up.";
+                      still line up, and a row whose file is here holds a muted check \
+                      there.";
 
 fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
     view! {
         <Story title="EntryRow" note=STATES>
-            <Cell full=true label="downloaded — no box; a click opens the local file">
+            <Cell full=true label="downloaded — no box but a muted check, since the file is here; a click opens it">
                 <EntryRow
                     name="notes/ernest-thread.md"
                     size="12 KB"
                     action=open("notes/ernest-thread.md", opened)
                     actions=menu()
+                    have_mark=true
                 />
             </Cell>
             <Cell full=true label="not downloaded — a fact, and the only kind that ticks">
@@ -68,6 +70,7 @@ fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String
                     size="8 KB"
                     action=open("notes/caihong-upload.md", opened)
                     actions=menu()
+                    have_mark=true
                 />
             </Cell>
             <Cell full=true label="new — added by the revision and not here yet, so it ticks">
@@ -102,6 +105,7 @@ fn click_rule(opened: RwSignal<String>) -> AnyView {
                     size="4 KB"
                     action=open("notes/plate-notes.md", opened)
                     actions=menu()
+                    have_mark=true
                 />
             </Cell>
             <Cell full=true label="not here — ticks">
@@ -150,6 +154,7 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
                     differs=true
                     action=open("notes/ernest-thread.md", opened)
                     actions=menu()
+                    have_mark=true
                 />
                 {differs_caption(1)}
             </Cell>
@@ -167,6 +172,48 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
                     name="notes/ernest-thread.md"
                     size="12 KB"
                     action=open("notes/ernest-thread.md", opened)
+                    have_mark=true
+                />
+            </Cell>
+        </Story>
+    }
+    .into_any()
+}
+
+const MARK: &str = "The box is a picker for one action, Download, so a downloaded row has \
+                    nothing to pick — but a blank hole beside boxed rows reads as uneven. \
+                    A disabled empty box would say \"not picked\", which in this list means \
+                    \"not downloaded\", and nothing unlocks it; a download arrow would invite \
+                    the click it is reporting. So a row whose file is here carries a muted \
+                    check: a statement, never a control. The rule is the row's own, in every \
+                    scope and state. Were it the list's, the column would flip from ticks to \
+                    blank the moment the last file landed, and the finished list would look \
+                    like another design; per row, the column simply fills up. A uniform column \
+                    carries no information, so a thousand muted ticks stay quiet — it is \
+                    unevenness that draws the eye.";
+
+fn mark(opened: RwSignal<String>) -> AnyView {
+    view! {
+        <Story title="EntryRow · the downloaded row's mark" note=MARK>
+            <Cell full=true label="with the mark — the file is here">
+                <EntryRow
+                    name="notes/plate-notes.md"
+                    size="4 KB"
+                    action=open("notes/plate-notes.md", opened)
+                    actions=menu()
+                    have_mark=true
+                />
+            </Cell>
+            <Cell
+                full=true
+                label="without — the file is not here (deleted), so there is nothing to have"
+            >
+                <EntryRow
+                    name="raw/plate-06.csv"
+                    state="Deleted"
+                    tone=StateTone::Danger
+                    size="4.0 MB"
+                    actions=menu()
                 />
             </Cell>
         </Story>
@@ -179,7 +226,7 @@ pub fn EntryRowStories() -> impl IntoView {
     let ticked = RwSignal::new(false);
     let fresh = RwSignal::new(false);
     let long = RwSignal::new(false);
-    // Shared by all three stories, so a click anywhere in the section reports in
+    // Shared by all four stories, so a click anywhere in the section reports in
     // one place.
     let opened = RwSignal::new(String::from("nothing yet"));
 
@@ -187,5 +234,6 @@ pub fn EntryRowStories() -> impl IntoView {
         {states(ticked, fresh, opened)}
         {click_rule(opened)}
         {edges(long, opened)}
+        {mark(opened)}
     }
 }

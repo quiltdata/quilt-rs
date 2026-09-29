@@ -98,9 +98,24 @@
 }
 
 /* The box's hole, as `EntryRow`'s `.nobox` keeps it: the caption's words start
- * in the rows' name column rather than where a box would be. */
-.nobox {
+ * in the rows' name column rather than where a box would be. It holds the
+ * Success tone's tick, the column's summary when every file is here, drawn as
+ * `ZeroLine` draws it: `fg` and not `onMuted` because there is no fill under
+ * it, and legal here because the caption does not hover. Centred in the hole as
+ * the rows' check is, and no hit target — a statement, not a control. */
+.done {
+  display: flex;
   flex: 0 0 17px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.done svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-success);
 }
 
 /* `All 1,090 files downloaded`: a statement about the package, not a control,

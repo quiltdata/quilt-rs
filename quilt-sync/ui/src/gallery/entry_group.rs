@@ -12,29 +12,30 @@ use crate::kit::EntryRow;
 use crate::kit::EntrySelection;
 use crate::kit::GroupSelection;
 
-/// Enough rows to scroll the heading against. Downloaded, so none of them
-/// carries a box — the point of the cell is the heading, not the selection.
+/// Enough rows to scroll the heading against. Downloaded, so each carries the
+/// check, not a box — the point of the cell is the heading, not the selection.
 fn notes() -> AnyView {
     view! {
-        <EntryRow name="ernest-thread.md" size="12 KB" />
-        <EntryRow name="caihong-upload.md" size="8 KB" />
-        <EntryRow name="plate-notes.md" size="4 KB" />
-        <EntryRow name="handoff.md" size="31 KB" />
-        <EntryRow name="requirements.md" size="33 KB" />
-        <EntryRow name="design.md" size="30 KB" />
+        <EntryRow name="ernest-thread.md" size="12 KB" have_mark=true />
+        <EntryRow name="caihong-upload.md" size="8 KB" have_mark=true />
+        <EntryRow name="plate-notes.md" size="4 KB" have_mark=true />
+        <EntryRow name="handoff.md" size="31 KB" have_mark=true />
+        <EntryRow name="requirements.md" size="33 KB" have_mark=true />
+        <EntryRow name="design.md" size="30 KB" have_mark=true />
     }
     .into_any()
 }
 
-/// A group whose files are all present. Every row is downloaded, so none of
-/// them carries a box — and neither does the heading, because a box that can
-/// select nothing is the dead control `Select` already refuses to be.
+/// A group whose files are all present. Every row is downloaded, so each
+/// carries the check, not a box — and the heading carries no box either,
+/// because a box that can select nothing is the dead control `Select` already
+/// refuses to be. It carries the rows' check instead, summarising them.
 fn settled_group(open: RwSignal<bool>) -> AnyView {
     view! {
-        <EntryGroup name="notes/" count=Signal::derive(|| 3) open=open>
-            <EntryRow name="ernest-thread.md" size="12 KB" />
-            <EntryRow name="caihong-upload.md" size="8 KB" />
-            <EntryRow name="plate-notes.md" size="4 KB" />
+        <EntryGroup name="notes/" count=Signal::derive(|| 3) open=open have_mark=true>
+            <EntryRow name="ernest-thread.md" size="12 KB" have_mark=true />
+            <EntryRow name="caihong-upload.md" size="8 KB" have_mark=true />
+            <EntryRow name="plate-notes.md" size="4 KB" have_mark=true />
         </EntryGroup>
     }
     .into_any()
@@ -47,8 +48,10 @@ fn settled_group(open: RwSignal<bool>) -> AnyView {
 fn flat_list(pending: RwSignal<bool>) -> AnyView {
     view! {
         <div class="g-stack" style="--q-entry-gutter: 0">
-            <EntryRow name="README.md" size="2 KB" />
-            <EntryRow name="quilt_summarize.json" size="1 KB" />
+            // The files that are here carry the check, whatever the rest of
+            // the list is.
+            <EntryRow name="README.md" size="2 KB" have_mark=true />
+            <EntryRow name="quilt_summarize.json" size="1 KB" have_mark=true />
             <EntryRow
                 name="manifest.jsonl"
                 state="Not downloaded"
@@ -76,8 +79,9 @@ fn root_files(pending: RwSignal<bool>, grouped: RwSignal<bool>) -> AnyView {
         // A column, because a cell's body is a flex ROW and three loose rows
         // would sit beside each other. An `EntryGroup` brings its own.
         <div class="g-stack">
-            <EntryRow name="README.md" size="2 KB" />
-            <EntryRow name="quilt_summarize.json" size="1 KB" />
+            // Here, so the check, as in the flat cell.
+            <EntryRow name="README.md" size="2 KB" have_mark=true />
+            <EntryRow name="quilt_summarize.json" size="1 KB" have_mark=true />
             // `Not downloaded` and therefore selectable. A row in that state
             // without a box is the mock that teaches the wrong rule.
             <EntryRow
@@ -88,9 +92,9 @@ fn root_files(pending: RwSignal<bool>, grouped: RwSignal<bool>) -> AnyView {
                     EntrySelection::new(pending, Callback::new(move |next| pending.set(next))),
                 )
             />
-            <EntryGroup name="raw/" count=Signal::derive(|| 2) open=grouped>
-                <EntryRow name="plate-06.csv" size="4.0 MB" />
-                <EntryRow name="plate-07.csv" size="4.1 MB" />
+            <EntryGroup name="raw/" count=Signal::derive(|| 2) open=grouped have_mark=true>
+                <EntryRow name="plate-06.csv" size="4.0 MB" have_mark=true />
+                <EntryRow name="plate-07.csv" size="4.1 MB" have_mark=true />
             </EntryGroup>
         </div>
     }
@@ -104,7 +108,9 @@ const NOTE: &str = "A container, not a heading: it holds its rows, owns whether 
                     inspect it. The heading cannot be a label, since it holds the disclosure \
                     button, so the box names its own group: a column of `Select all` names \
                     nothing. Scroll the last cell — the heading sticks, and costs 29px \
-                    against a 32px row.";
+                    against a 32px row. The heading's box is the rows' summary, and so is \
+                    its check: a folder whose files are all here carries the rows' muted \
+                    check, which a collapsed heading can say without being opened.";
 
 /// The group whose heading box is derived from its three rows, so the heading
 /// and the rows can never disagree about how many are ticked.
@@ -219,13 +225,14 @@ pub fn EntryGroupStories() -> impl IntoView {
                     count=Signal::derive(|| 2)
                     open=marked_shut
                     differs=true
+                    have_mark=true
                 >
-                    <EntryRow name="a.csv" size="4 KB" differs=true />
-                    <EntryRow name="b.csv" size="4 KB" />
+                    <EntryRow name="a.csv" size="4 KB" differs=true have_mark=true />
+                    <EntryRow name="b.csv" size="4 KB" have_mark=true />
                 </EntryGroup>
                 {differs_caption(1)}
             </Cell>
-            <Cell full=true label="every file already here — nothing to select, so no box">
+            <Cell full=true label="every file already here — nothing to select, so no box, and the heading and every row have the check">
                 {settled_group(settled)}
             </Cell>
             <Cell full=true label="no group anywhere — Group: None, or a flat package. No gutter to keep">
@@ -240,6 +247,7 @@ pub fn EntryGroupStories() -> impl IntoView {
                         name="notes/"
                         count=Signal::derive(|| 6)
                         open=scroller
+                        have_mark=true
                     >
                         {notes()}
                     </EntryGroup>

@@ -87,6 +87,25 @@
   flex: 0 0 17px;
 }
 
+/* The hole with the check in it (`have_mark`): a statement that the file is
+ * here, drawn on every row whose file is on disk, whatever the rest of the list
+ * is, and never a control. Muted so it does not compete with the boxes above and
+ * below it: a column of them carries no information and stays quiet, and it is
+ * unevenness that draws the eye. No hit target of its own — a click falls
+ * through to the row, which is what a click on an empty hole already did. */
+.nobox.mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--q-fgColor-muted);
+  pointer-events: none;
+}
+
+.mark svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* The same trick at the other end: an `IconButton`'s small square, held open so
  * a row with no actions does not pull its size out of the column. */
 .nomenu {

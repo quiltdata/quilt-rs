@@ -122,6 +122,7 @@ use crate::kit::Select;
 use crate::kit::SelectAll;
 use crate::kit::SkeletonBox;
 use crate::kit::state_label::StateTone;
+use crate::pages::downloaded_words;
 use quilt_sync_ui::util::format_size;
 
 /// The two files the resolve fixture has differing between the revisions. Both
@@ -472,6 +473,10 @@ fn menu(mark: Mark, subject: String, confirm: Confirm) -> Vec<MenuAction> {
 /// place the click and the menu disagree — §3 calls an ignored file unopenable
 /// and the file is plainly on disk, so the row stays inert while the menu, which
 /// names what it does rather than inferring it, offers `Open file`.
+///
+/// A file that is here carries the check, in every scope and whatever the rest
+/// of the list is, so the column fills up as files land; a file that is not
+/// carries a box when it can be picked, otherwise nothing.
 fn row(
     r: &Row,
     flat: bool,
@@ -511,6 +516,7 @@ fn row(
                 tone=tone
                 size=r.size.clone()
                 differs=marked
+                have_mark=true
                 action=EntryAction::Open(Callback::new(|()| ()))
                 actions=actions
             />
@@ -836,10 +842,16 @@ fn pane(p: Pane) -> AnyView {
                                     .map(|n| {
                                         view! {
                                             <span style="flex:0 0 28px" />
-                                            <span style="flex:0 0 17px" />
+                                            // The column's summary, as the page draws
+                                            // it: the Success tone's own tick. The
+                                            // rows' check is muted bookkeeping; this is
+                                            // a statement.
+                                            <span class="g-fp-done">
+                                                {StateTone::Success.glyph()}
+                                            </span>
                                             <span style="font-size:var(--q-text-body); \
                                                          color:var(--q-fgColor-muted)">
-                                                {crate::pages::downloaded_words(n)}
+                                                {downloaded_words(n)}
                                             </span>
                                         }
                                     })}
@@ -1010,7 +1022,9 @@ fn draw(
 /// A heading and its rows. The heading's box is derived from the rows under it
 /// and toggles exactly those, so `Mixed` is a fact about them rather than an
 /// assertion beside them — and a group with nothing selectable carries no box,
-/// because it would be a control with nothing to act on.
+/// because it would be a control with nothing to act on. It carries the rows'
+/// check instead when every file in its folder is here, judged over the whole
+/// package rather than the rows shown, as the page's heading does.
 fn group(
     name: String,
     members: Vec<usize>,
@@ -1049,6 +1063,20 @@ fn group(
         )
     });
 
+    // The whole folder, not the rows the view leaves, so a facet or a search
+    // that hides a missing file never earns the folder the check. Only the
+    // `Ignored` facet shows ignored rows, and it shows nothing else, so a
+    // heading over nothing but those is that view's, which draws no check.
+    let ignored_view = all.with_value(|rs| members.iter().all(|&i| rs[i].mark == Mark::Ignored));
+    let all_here = !ignored_view
+        && all.with_value(|rs| {
+            let mut tracked = rs
+                .iter()
+                .filter(|r| r.folder.as_deref() == Some(name.as_str()) && r.mark != Mark::Ignored)
+                .peekable();
+            tracked.peek().is_some() && tracked.all(|r| r.mark.local())
+        });
+
     let members = StoredValue::new(members);
     let children = move || {
         all.with_value(|rs| {
@@ -1073,7 +1101,12 @@ fn group(
         }
         .into_any(),
         None => view! {
-            <EntryGroup name=name count=Signal::derive(move || count) open=open>
+            <EntryGroup
+                name=name
+                count=Signal::derive(move || count)
+                open=open
+                have_mark=all_here
+            >
                 {children}
             </EntryGroup>
         }
@@ -1259,10 +1292,12 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
     The marked rows draw ahead of their data. Unresolved and visible: under `Group: None` \
-    the ellipsis eats the leaf, kept for now as a deliberate simplification. Under whole-package \
-    Keeping every file is downloaded, so the slot select-all leaves reads `All 53 files \
-    downloaded`. The last two cells are the page's own pane over this fixture, the second \
-    grown past the cap.";
+    the ellipsis eats the leaf, kept for now as a deliberate simplification. A file that is \
+    here carries a muted check in the box column, in every scope, so the column fills up as \
+    files land, and a folder whose files are all here carries it on its heading. Under \
+    whole-package Keeping every file is downloaded, so the slot select-all leaves reads \
+    `All 53 files downloaded` behind the Success tone's tick. The last two cells are the \
+    page's own pane over this fixture, the second grown past the cap.";
 
 /// The region itself, for the whole-page scene.
 ///

@@ -339,6 +339,24 @@ body {
   .g-fp-footer { animation: none; }
 }
 
+/* The gallery scene's all-downloaded tick, in the box's hole before `All 53 files
+ * downloaded`. The page's own pane draws it with `file_pane.module.scss`'s
+ * `.done`, which this chrome mirrors; keep the two in step. */
+.g-fp-done {
+  display: flex;
+  flex: 0 0 17px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.g-fp-done svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-success);
+}
+
 /* The installed package page's two-pane shell. Page layout rather than gallery
  * chrome, here until the page's own region is written, and it moves with it.
  *
