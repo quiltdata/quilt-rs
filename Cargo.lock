@@ -5860,20 +5860,24 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.40.0"
+version = "0.40.1-dev"
 dependencies = [
  "async-trait",
  "aws-config",
  "aws-credential-types",
  "aws-sdk-s3",
  "aws-smithy-checksums",
+ "aws-smithy-http-client",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "aws-types",
  "base64 0.23.1",
+ "bytes",
  "chrono",
  "getrandom 0.4.3",
  "gitignores",
  "hex",
+ "http-body 1.1.0",
  "ignore",
  "jsonschema",
  "multibase",

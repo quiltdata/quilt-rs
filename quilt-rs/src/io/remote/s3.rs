@@ -49,6 +49,8 @@ use quilt_uri::S3Uri;
 
 use crate::io::remote::RemoteObjectStream;
 
+mod response_timeout;
+
 /// S3's HEAD-bucket endpoint returns `x-amz-bucket-region` for any bucket
 /// that exists and is addressable, regardless of permissions. A missing
 /// header means the bucket name didn't resolve — typo, malformed name,
@@ -351,8 +353,10 @@ impl RemoteS3 {
     }
 
     /// `aws_config::defaults` already applies 3-attempt standard retry
-    /// (exponential backoff + jitter) and a 3.1 s connect timeout; no
-    /// read/operation timeout so slow multipart uploads aren't cut off.
+    /// (exponential backoff + jitter) and a 3.1 s connect timeout. On top,
+    /// [`response_timeout::s3_client`] fails a call when S3 stays silent for
+    /// 60 s after the request is sent. There is no overall operation timeout,
+    /// so a slow upload or download that keeps moving is never cut off.
     ///
     /// For the `Some(host)` branch, credential freshness is handled by
     /// [`QuiltCredentialsProvider`] on every S3 request — the cached
@@ -443,7 +447,7 @@ impl RemoteS3 {
                     .await
             }
         };
-        let client = aws_sdk_s3::Client::new(&config);
+        let client = response_timeout::s3_client(&config);
         // The construction is already announced above; this only says it finished.
         trace!("✔️ created new S3 client for region {:?}", region);
 
@@ -1107,7 +1111,9 @@ mod tests {
     /// Read one HTTP/1.1 request: the headers, then `Content-Length` bytes of
     /// body. The SDK frames every request the stub sees that way, a bodiless
     /// one included.
-    async fn read_http_request(stream: &mut tokio::net::TcpStream) -> std::io::Result<()> {
+    pub(super) async fn read_http_request(
+        stream: &mut tokio::net::TcpStream,
+    ) -> std::io::Result<()> {
         use tokio::io::AsyncReadExt;
 
         let mut request = Vec::new();

@@ -5,7 +5,7 @@ keywords = ["data", "versioning", "s3", "manifest", "reproducibility"]
 categories = ["filesystem", "science", "api-bindings"]
 
 # Inherit from workspace
-version = "0.40.0"
+version = "0.40.1-dev"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,16 +20,20 @@ testing = []
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
+bytes.workspace = true
 aws-config.workspace = true
 aws-credential-types.workspace = true
 aws-sdk-s3.workspace = true
 aws-smithy-checksums.workspace = true
+aws-smithy-http-client.workspace = true
+aws-smithy-runtime-api.workspace = true
 aws-smithy-types.workspace = true
 aws-types.workspace = true
 chrono.workspace = true
 getrandom.workspace = true
 gitignores.workspace = true
 hex.workspace = true
+http-body.workspace = true
 ignore.workspace = true
 jsonschema.workspace = true
 multibase.workspace = true
