@@ -79,6 +79,10 @@ pub async fn model(
 
 /// Store `dir`, resolved against the current directory, as the home and
 /// create its folder.
+///
+/// The folder is created first, so a home that can't be created is never
+/// stored. When the change is then refused, the folders created here are
+/// removed again.
 pub async fn set(
     local_domain: &quilt_rs::LocalDomain,
     dir: &Path,
@@ -86,11 +90,22 @@ pub async fn set(
     via: Via,
 ) -> Result<Home, Error> {
     let dir = resolve(dir, &std::env::current_dir()?)?;
+    let first_created = dir
+        .ancestors()
+        .filter(|a| !a.exists())
+        .last()
+        .map(Path::to_path_buf);
+    std::fs::create_dir_all(&dir)?;
     let result = if overwrite {
         local_domain.overwrite_home(&dir).await
     } else {
         local_domain.set_home(&dir).await
     };
+    if result.is_err()
+        && let Some(first_created) = &first_created
+    {
+        remove_created(&dir, first_created);
+    }
     let home = result.map_err(|err| match err {
         err @ quilt_rs::Error::Lineage(quilt_rs::LineageError::HomeInUse { .. }) => {
             Error::HomeInUse {
@@ -103,8 +118,17 @@ pub async fn set(
         }
         err => Error::from(err),
     })?;
-    std::fs::create_dir_all(home.as_ref())?;
     Ok(home)
+}
+
+/// Remove `dir` and its parents up to `first_created`, the folders `set` made.
+/// `remove_dir` only removes an empty folder, so anything put there since stays.
+fn remove_created(dir: &Path, first_created: &Path) {
+    for folder in dir.ancestors() {
+        if std::fs::remove_dir(folder).is_err() || folder == first_created {
+            break;
+        }
+    }
 }
 
 /// `dir` as an absolute path, a relative one taken against `base`, with `.`
@@ -338,6 +362,57 @@ mod tests {
         .await?;
 
         assert_eq!(stored_home(temp_dir.path()).await?, other.path());
+        Ok(())
+    }
+
+    /// A home that can't be created is not stored, even with `--overwrite`:
+    /// the installed packages would otherwise point at an unusable folder.
+    #[test(tokio::test)]
+    async fn a_home_that_cannot_be_created_is_not_stored() -> Result<(), Error> {
+        let (_m, temp_dir) = domain_with_one_package().await?;
+        let parent = tempfile::tempdir()?;
+        let file = parent.path().join("a-file");
+        std::fs::write(&file, b"not a folder")?;
+
+        let (_, stderr) = run(
+            home_args(temp_dir.path(), Some(file.join("home")), true),
+            Format::Text,
+        )
+        .await?;
+
+        assert!(!stderr.is_empty(), "the failure is reported");
+        assert_eq!(stored_home(temp_dir.path()).await?, temp_dir.path());
+        Ok(())
+    }
+
+    /// A refused change leaves no folder behind it created.
+    #[test(tokio::test)]
+    async fn a_refused_home_leaves_no_folder_behind() -> Result<(), Error> {
+        let (_m, temp_dir) = domain_with_one_package().await?;
+        let parent = tempfile::tempdir()?;
+        let new_home = parent.path().join("new/home");
+
+        run(
+            home_args(temp_dir.path(), Some(new_home.clone()), false),
+            Format::Text,
+        )
+        .await?;
+
+        assert!(!parent.path().join("new").exists(), "nothing is created");
+        Ok(())
+    }
+
+    /// Both spellings at once would set the home twice, the first without the
+    /// second's `--overwrite`.
+    #[test(tokio::test)]
+    async fn home_flag_and_subcommand_together_are_rejected() -> Result<(), Error> {
+        let (_m, temp_dir) = create_model_in_temp_dir().await?;
+        let other = tempfile::tempdir()?;
+        let mut args = home_args(temp_dir.path(), Some(other.path().to_path_buf()), false);
+        args.home = Some(other.path().to_path_buf());
+
+        assert!(matches!(init(args).await, Err(Error::HomeTwice)));
+        assert_eq!(stored_home(temp_dir.path()).await?, temp_dir.path());
         Ok(())
     }
 

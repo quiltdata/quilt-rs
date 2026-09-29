@@ -367,7 +367,10 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     // default for a new domain on first use. `quilt home <dir>` sets its own,
     // so defaulting first would only write a home it is about to replace.
     let sets_home = matches!(args.command, Commands::Home { dir: Some(_), .. });
-    if args.home.is_some() || !sets_home {
+    if sets_home && args.home.is_some() {
+        return Err(Error::HomeTwice);
+    }
+    if !sets_home {
         initialize_home(&m, args.home, &mut std::io::stderr()).await?;
     }
 
@@ -546,6 +549,9 @@ pub enum Error {
     #[error("{reason}. Moving the home isn't supported yet. {retry}")]
     HomeInUse { reason: String, retry: home::Retry },
 
+    #[error("--home and \"quilt home <dir>\" both set the home; pass only \"quilt home <dir>\"")]
+    HomeTwice,
+
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 
@@ -612,6 +618,7 @@ impl Error {
             Error::Domain => "domain",
             Error::Home => "home",
             Error::HomeInUse { .. } => "home_in_use",
+            Error::HomeTwice => "home_twice",
             Error::Quilt(err) => match err {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",
@@ -675,6 +682,7 @@ mod tests {
                 },
                 "home_in_use",
             ),
+            (Error::HomeTwice, "home_twice"),
             (Error::NamespaceRequired, "namespace_required"),
             (Error::WorkflowEmpty, "workflow_empty"),
             (Error::WorkflowRequiresBucket, "workflow_requires_bucket"),
