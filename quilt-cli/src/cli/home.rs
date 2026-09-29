@@ -107,9 +107,24 @@ pub async fn set(
     Ok(home)
 }
 
-/// `dir` as an absolute path, a relative one taken against `base`.
+/// `dir` as an absolute path, a relative one taken against `base`, with `.`
+/// and `..` folded away so one folder is stored one way.
+///
+/// Lexical, not `canonicalize`: resolving symlinks would make a stored home
+/// that names a link (`/tmp` on macOS) read as a different folder.
 fn resolve(dir: &Path, base: &Path) -> Result<PathBuf, Error> {
-    Ok(std::path::absolute(base.join(dir))?)
+    let absolute = std::path::absolute(base.join(dir))?;
+    let mut resolved = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                resolved.pop();
+            }
+            other => resolved.push(other),
+        }
+    }
+    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -259,6 +274,14 @@ mod tests {
         assert_eq!(
             super::resolve(std::path::Path::new("/abs/home"), base).unwrap(),
             PathBuf::from("/abs/home")
+        );
+        assert_eq!(
+            super::resolve(std::path::Path::new("../Data"), base).unwrap(),
+            PathBuf::from("/work/Data")
+        );
+        assert_eq!(
+            super::resolve(std::path::Path::new("sub/../home"), base).unwrap(),
+            PathBuf::from("/work/dir/home")
         );
     }
 
