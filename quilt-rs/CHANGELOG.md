@@ -23,11 +23,11 @@
 
 ### Added
 
-- `LocalDomain::overwrite_home` and `DomainLineageIo::overwrite_home` set the home even while packages are installed (PRLINK)
+- `LocalDomain::overwrite_home` and `DomainLineageIo::overwrite_home` set the home even while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### Changed
 
-- `LocalDomain::set_home` and `DomainLineageIo::set_home` refuse a different home while any package is installed, and change nothing. The error is `LineageError::HomeInUse`, with the current home and the number of installed packages. Setting the home the domain already has writes nothing (PRLINK)
+- `LocalDomain::set_home` and `DomainLineageIo::set_home` refuse a different home while any package is installed, and change nothing. The error is `LineageError::HomeInUse`, with the current home and the number of installed packages. Setting the home the domain already has writes nothing (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### Fixed
 
