@@ -19,6 +19,20 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.0-dev]
+
+### Added
+
+- `quilt home` prints the home, the folder where installed packages keep their files, and `quilt home <dir>` sets it. A relative `<dir>` is taken against the current directory, and a missing folder is created. While any package is installed, a different home is refused, because the packages' files stay in the old folder; `quilt home <dir> --overwrite` changes it anyway. `quilt home --json` prints `{"home": "<path>"}`, and a refusal has the error kind `home_in_use` (PRLINK)
+
+### Deprecated
+
+- `--home <dir>` is deprecated in favor of `quilt home <dir>`. It prints a warning, then sets the home the same way, so it now refuses a different home while packages are installed (PRLINK)
+
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.40.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.33.0] - 2026-09-28
 
 ### Changed

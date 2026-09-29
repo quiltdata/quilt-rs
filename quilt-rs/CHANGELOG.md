@@ -21,6 +21,14 @@
 
 ## [v0.40.1-dev]
 
+### Added
+
+- `LocalDomain::overwrite_home` and `DomainLineageIo::overwrite_home` set the home even while packages are installed (PRLINK)
+
+### Changed
+
+- `LocalDomain::set_home` and `DomainLineageIo::set_home` refuse a different home while any package is installed, and change nothing. The error is `LineageError::HomeInUse`, with the current home and the number of installed packages. Setting the home the domain already has writes nothing (PRLINK)
+
 ### Fixed
 
 - An S3 call fails with a timeout when S3 sends nothing for 60 seconds after the request is sent. Such a call used to wait forever: `HeadObject`, `GetObject`, `PutObject` and every multipart upload step. Only silence counts, so a slow upload or download that keeps moving bytes is never cut off, and a large `CompleteMultipartUpload` still succeeds. A timed-out call is retried like any other network error (<https://github.com/quiltdata/quilt-rs/pull/1021>)

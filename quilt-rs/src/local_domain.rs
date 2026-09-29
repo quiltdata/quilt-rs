@@ -81,6 +81,13 @@ impl LocalDomain {
         Ok(self.lineage.set_home(&self.storage, dir).await?.home)
     }
 
+    /// [`LocalDomain::set_home`] even while packages are installed: they then
+    /// point at empty folders under the new home.
+    pub async fn overwrite_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
+        info!("Overwriting home directory with {}", dir.as_ref().display());
+        Ok(self.lineage.overwrite_home(&self.storage, dir).await?.home)
+    }
+
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
         debug!(
             "Scaffolding installation paths for namespace: {}",

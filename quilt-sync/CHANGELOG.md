@@ -29,6 +29,10 @@
 
 - On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
 
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.40.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.22.4] - 2026-09-28
 
 ### Changed

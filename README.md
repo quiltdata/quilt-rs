@@ -101,7 +101,8 @@ quilt push -n lab/assays --bucket lab-data --origin quilt.example.com
 ```
 
 Collaborators log in to the same stack, then install. Their working copies use
-`~/QuiltSync` unless they pass `--home` to choose a different directory.
+`~/QuiltSync` unless they choose a different directory first with
+`quilt home <dir>`.
 `install` by itself fetches only the manifest, the content-hashed file listing;
 `--path` (or a `&path=` param in the URI) downloads the files they actually
 need:

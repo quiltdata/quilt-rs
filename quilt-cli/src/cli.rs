@@ -17,6 +17,7 @@ mod browse;
 mod commit;
 mod create;
 mod history;
+mod home;
 mod install;
 mod list;
 mod login;
@@ -33,6 +34,7 @@ mod uninstall;
 #[cfg(test)]
 mod fixtures;
 
+use model::Commands as _;
 use model::Model;
 pub use output::Format;
 pub use output::Std;
@@ -86,9 +88,21 @@ fn get_default_home_dir() -> Result<PathBuf, Error> {
         .ok_or(Error::Home)
 }
 
-async fn initialize_home(model: &Model, home: Option<PathBuf>) -> Result<(), Error> {
+/// Make sure the domain has a home before a command runs.
+///
+/// `home` is the deprecated global `--home`: it warns on `stderr`, then does
+/// what `quilt home <dir>` does without `--overwrite`.
+async fn initialize_home(
+    model: &Model,
+    home: Option<PathBuf>,
+    stderr: &mut impl std::io::Write,
+) -> Result<(), Error> {
     if let Some(dir) = home {
-        model.set_home(dir).await?;
+        writeln!(
+            stderr,
+            "warning: --home is deprecated; use \"quilt home <dir>\""
+        )?;
+        home::set(model.get_local_domain(), &dir, false, home::Via::HomeFlag).await?;
     } else {
         match model.get_home().await {
             Ok(_) => {}
@@ -142,9 +156,9 @@ pub struct Args {
     #[command(subcommand)]
     command: Commands,
 
-    /// Absolute path for the directory, where all packages will store their mutable files.
-    /// Defaults to `~/QuiltSync` on first use. Ex. /home/user/QuiltSync
-    #[arg(long)]
+    /// Deprecated: use `quilt home <dir>`. Sets the home before the command,
+    /// as `quilt home <dir>` does without `--overwrite`.
+    #[arg(long, value_name = "DIR")]
     home: Option<PathBuf>,
 
     /// Path to local domain
@@ -216,6 +230,28 @@ enum Commands {
         /// Commit with no workflow (explicit opt-out)
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
+    },
+    /// Print the home, or set it with `quilt home <dir>`
+    ///
+    /// The home is the folder where installed packages keep their files, one
+    /// `<prefix>/<name>` folder each. On first use it defaults to `~/QuiltSync`.
+    /// `<dir>` may be relative to the current directory, and is created if
+    /// missing.
+    ///
+    /// Changing the home is refused while any package is installed, since
+    /// their folders live under the current one.
+    Home {
+        /// Folder to use as the home
+        #[arg(value_name = "DIR")]
+        dir: Option<PathBuf>,
+        /// Change the home even while packages are installed.
+        ///
+        /// Their files are not moved: each installed package then points at an
+        /// empty folder under the new home, and its files read as deleted. An
+        /// app or another `quilt` writing a package at the same time finishes
+        /// under the old folder.
+        #[arg(long, requires = "dir")]
+        overwrite: bool,
     },
     /// Install package locally
     Install {
@@ -327,9 +363,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
 
-    // Preserve an existing home, honor an explicit --home override, and set
-    // the default for a new domain on first use.
-    initialize_home(&m, args.home).await?;
+    // Preserve an existing home, honor the deprecated --home, and set the
+    // default for a new domain on first use. `quilt home <dir>` sets its own,
+    // so defaulting first would only write a home it is about to replace.
+    let sets_home = matches!(args.command, Commands::Home { dir: Some(_), .. });
+    if args.home.is_some() || !sets_home {
+        initialize_home(&m, args.home, &mut std::io::stderr()).await?;
+    }
 
     match args.command {
         Commands::Browse { uri } => {
@@ -382,6 +422,12 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
+        }
+        Commands::Home { dir, overwrite } => {
+            let args = home::Input { dir, overwrite };
+
+            log::debug!("Home {args:?}");
+            Ok(home::command(m, args).await)
         }
         Commands::Install {
             namespace,
@@ -494,8 +540,11 @@ pub enum Error {
     #[error("Domain directory is required. We store files and credentials there")]
     Domain,
 
-    #[error("Could not determine the home directory. Pass --home to specify one")]
+    #[error("Could not determine the default home directory. Run \"quilt home <dir>\" to set one")]
     Home,
+
+    #[error("{reason}. Moving the home isn't supported yet. {retry}")]
+    HomeInUse { reason: String, retry: home::Retry },
 
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
@@ -562,6 +611,7 @@ impl Error {
         match self {
             Error::Domain => "domain",
             Error::Home => "home",
+            Error::HomeInUse { .. } => "home_in_use",
             Error::Quilt(err) => match err {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",
@@ -618,6 +668,13 @@ mod tests {
         let cases: Vec<(Error, &str)> = vec![
             (Error::Domain, "domain"),
             (Error::Home, "home"),
+            (
+                Error::HomeInUse {
+                    reason: "busy".to_string(),
+                    retry: home::Retry::OverwriteFlag,
+                },
+                "home_in_use",
+            ),
             (Error::NamespaceRequired, "namespace_required"),
             (Error::WorkflowEmpty, "workflow_empty"),
             (Error::WorkflowRequiresBucket, "workflow_requires_bucket"),
@@ -895,7 +952,7 @@ mod tests {
         std::fs::create_dir_all(paths.dot_quilt_dir())?;
         std::fs::write(paths.lineage(), br#"{"packages":{},"home":""}"#)?;
 
-        initialize_home(&model, None).await?;
+        initialize_home(&model, None, &mut Vec::new()).await?;
 
         assert_eq!(model.get_home().await?.as_ref(), &get_default_home_dir()?);
         Ok(())
@@ -907,7 +964,7 @@ mod tests {
         let home_temp_dir = tempfile::tempdir()?;
         model.set_home(home_temp_dir.path()).await?;
 
-        initialize_home(&model, None).await?;
+        initialize_home(&model, None, &mut Vec::new()).await?;
 
         assert_eq!(
             model.get_home().await?.as_ref(),
