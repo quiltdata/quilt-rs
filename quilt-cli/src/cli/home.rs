@@ -95,7 +95,12 @@ pub async fn set(
         .filter(|a| !a.exists())
         .last()
         .map(Path::to_path_buf);
-    std::fs::create_dir_all(&dir)?;
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        if let Some(first_created) = &first_created {
+            remove_created(&dir, first_created);
+        }
+        return Err(err.into());
+    }
     let result = if overwrite {
         local_domain.overwrite_home(&dir).await
     } else {
@@ -125,7 +130,12 @@ pub async fn set(
 /// `remove_dir` only removes an empty folder, so anything put there since stays.
 fn remove_created(dir: &Path, first_created: &Path) {
     for folder in dir.ancestors() {
-        if std::fs::remove_dir(folder).is_err() || folder == first_created {
+        // A creation that failed partway never made the deepest folders.
+        let gone = match std::fs::remove_dir(folder) {
+            Ok(()) => true,
+            Err(_) => !folder.exists(),
+        };
+        if !gone || folder == first_created {
             break;
         }
     }
@@ -381,6 +391,27 @@ mod tests {
         .await?;
 
         assert!(!stderr.is_empty(), "the failure is reported");
+        assert_eq!(stored_home(temp_dir.path()).await?, temp_dir.path());
+        Ok(())
+    }
+
+    /// A creation that fails partway removes the folders it did create. The
+    /// last name is longer than any filesystem allows, so `new/` is made
+    /// before creating the leaf fails.
+    #[test(tokio::test)]
+    async fn a_creation_that_fails_partway_leaves_no_folder_behind() -> Result<(), Error> {
+        let (_m, temp_dir) = create_model_in_temp_dir().await?;
+        let parent = tempfile::tempdir()?;
+        let new_home = parent.path().join("new").join("x".repeat(300));
+
+        let (_, stderr) = run(
+            home_args(temp_dir.path(), Some(new_home), false),
+            Format::Text,
+        )
+        .await?;
+
+        assert!(!stderr.is_empty(), "the failure is reported");
+        assert!(!parent.path().join("new").exists(), "nothing is left");
         assert_eq!(stored_home(temp_dir.path()).await?, temp_dir.path());
         Ok(())
     }
