@@ -317,7 +317,10 @@ fn prefix(namespace: &'static str) -> String {
     format!("{}/", namespace.prefix())
 }
 
-fn row(entry: (&'static str, &'static str, &'static str, StateTone, f64)) -> AnyView {
+fn row(
+    entry: (&'static str, &'static str, &'static str, StateTone, f64),
+    provisional: bool,
+) -> AnyView {
     let (_, namespace, state, tone, elapsed) = entry;
     view! {
         <PackageRow
@@ -326,6 +329,7 @@ fn row(entry: (&'static str, &'static str, &'static str, StateTone, f64)) -> Any
             changed_at=ago(elapsed)
             state=state
             tone=tone
+            provisional=provisional
         />
     }
     .into_any()
@@ -338,6 +342,9 @@ pub fn PackagesRegion(
     /// scenes mount this region beside this file's own, and two instances sharing a
     /// name become one group with one selection between them.
     view_name: &'static str,
+    /// Every row still waiting on its check, dimmed.
+    #[prop(optional)]
+    provisional: bool,
 ) -> impl IntoView {
     let view_mode = RwSignal::new("Packages".to_string());
     let query = RwSignal::new(String::new());
@@ -380,7 +387,11 @@ pub fn PackagesRegion(
                     let rows = fixtures();
                     let axis = group.get();
                     if axis == "None" {
-                        return rows.into_iter().map(row).collect_view().into_any();
+                        return rows
+                            .into_iter()
+                            .map(|entry| row(entry, provisional))
+                            .collect_view()
+                            .into_any();
                     }
                     let bucket_axis = axis == "Bucket";
                     // One path for both axes, differing only in the key. Grouping by
@@ -410,7 +421,10 @@ pub fn PackagesRegion(
                                 .collect();
                             view! {
                                 {header(group_key, group_rows.len(), bucket_axis)}
-                                {group_rows.into_iter().map(row).collect_view()}
+                                {group_rows
+                                    .into_iter()
+                                    .map(|entry| row(entry, provisional))
+                                    .collect_view()}
                             }
                                 .into_any()
                         })
