@@ -128,6 +128,7 @@ impl HttpConnector for ResponseTimeoutConnector {
         } else {
             *request.body_mut() = SdkBody::from_body_1_x(NotifyWhenSent {
                 inner: body,
+                pending: bytes::Bytes::new(),
                 sent: Some(sent_tx),
             });
         }
@@ -150,10 +151,37 @@ impl HttpConnector for ResponseTimeoutConnector {
     }
 }
 
-/// A request body that drops `sent` once it has nothing more to send.
+/// The largest piece of a request body handed to hyper at once.
+///
+/// hyper asks for more body only while its write queue holds fewer than 16
+/// pieces and under about 400 KB (hyper 1.11.1, `proto/h1/io.rs`). With small
+/// pieces, the last one is handed over when at most 128 KiB is still waiting
+/// in hyper, plus the OS socket buffer, so the clock starts close to when the
+/// body is on the wire. An in-memory body is one frame, often megabytes: handed
+/// over whole, it would start the clock before any of it was sent.
+///
+/// On a real link the OS sizes the socket buffer to about what the path holds,
+/// so it drains in a few round trips. What is left is hyper's 128 KiB, which
+/// only a link slower than about 2 KB/s takes longer than 60 s to send.
+const PIECE: usize = 8 * 1024;
+
+/// A request body that hands its data over in [`PIECE`]s and drops `sent`
+/// once it has nothing more to send.
 struct NotifyWhenSent {
     inner: SdkBody,
+    /// The rest of the frame last read from `inner`, not yet handed over.
+    pending: bytes::Bytes,
     sent: Option<oneshot::Sender<()>>,
+}
+
+impl NotifyWhenSent {
+    fn next_piece(&mut self) -> bytes::Bytes {
+        let piece = self.pending.split_to(self.pending.len().min(PIECE));
+        if self.pending.is_empty() && http_body::Body::is_end_stream(&self.inner) {
+            self.sent = None;
+        }
+        piece
+    }
 }
 
 impl http_body::Body for NotifyWhenSent {
@@ -164,19 +192,43 @@ impl http_body::Body for NotifyWhenSent {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
-        let frame = std::task::ready!(Pin::new(&mut self.inner).poll_frame(cx));
-        if !matches!(frame, Some(Ok(_))) || self.inner.is_end_stream() {
-            self.sent = None;
+        if !self.pending.is_empty() {
+            return Poll::Ready(Some(Ok(http_body::Frame::data(self.next_piece()))));
         }
-        Poll::Ready(frame)
+        let frame = std::task::ready!(Pin::new(&mut self.inner).poll_frame(cx));
+        match frame {
+            Some(Ok(frame)) => match frame.into_data() {
+                Ok(data) => {
+                    self.pending = data;
+                    Poll::Ready(Some(Ok(http_body::Frame::data(self.next_piece()))))
+                }
+                Err(frame) => {
+                    if http_body::Body::is_end_stream(&self.inner) {
+                        self.sent = None;
+                    }
+                    Poll::Ready(Some(Ok(frame)))
+                }
+            },
+            other => {
+                self.sent = None;
+                Poll::Ready(other)
+            }
+        }
     }
 
     fn is_end_stream(&self) -> bool {
-        http_body::Body::is_end_stream(&self.inner)
+        self.pending.is_empty() && http_body::Body::is_end_stream(&self.inner)
     }
 
     fn size_hint(&self) -> http_body::SizeHint {
-        http_body::Body::size_hint(&self.inner)
+        let inner = http_body::Body::size_hint(&self.inner);
+        let pending = self.pending.len() as u64;
+        let mut hint = http_body::SizeHint::new();
+        hint.set_lower(inner.lower() + pending);
+        if let Some(upper) = inner.upper() {
+            hint.set_upper(upper + pending);
+        }
+        hint
     }
 }
 
@@ -404,6 +456,82 @@ mod tests {
             elapsed >= SLOW.saturating_sub(TICK),
             "the body was not slow: {elapsed:?}"
         );
+    }
+
+    /// Read the request headers, then its body at `per_tick` bytes a
+    /// [`TICK`]: a slow link. Answer `200 OK` once the body is in.
+    async fn read_slowly(mut stream: TcpStream, per_tick: usize) {
+        use tokio::io::AsyncReadExt;
+
+        let mut request = Vec::new();
+        let mut buf = vec![0u8; per_tick];
+        let header_end = loop {
+            if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+            match stream.read(&mut buf).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => request.extend_from_slice(&buf[..n]),
+            }
+        };
+        let body_len: usize = String::from_utf8_lossy(&request[..header_end])
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse().ok())?
+            })
+            .unwrap_or(0);
+        let mut read = request.len() - header_end;
+        let mut this_tick = 0;
+        while read < body_len {
+            if this_tick >= per_tick {
+                tokio::time::sleep(TICK).await;
+                this_tick = 0;
+            }
+            let want = (per_tick - this_tick).min(buf.len());
+            match stream.read(&mut buf[..want]).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => {
+                    read += n;
+                    this_tick += n;
+                }
+            }
+        }
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+            .await;
+        let _ = stream.shutdown().await;
+    }
+
+    /// An in-memory body is one frame, handed over whole before any of it is
+    /// on the wire. A large one over a slow link, like a manifest, must still
+    /// not be cut off.
+    ///
+    /// The clock starts once the last piece is handed over, while the socket
+    /// buffers still hold some of the body. On a real link the OS sizes them to
+    /// about what the path holds, so they drain in a few round trips. On
+    /// loopback with a slow reader they grow to megabytes, so the server reads
+    /// fast enough (10 MB/s) that they drain well inside [`TIMEOUT`], and the
+    /// body is large enough that the whole upload still takes about 6 s.
+    #[test(tokio::test)]
+    async fn slow_steady_in_memory_upload_succeeds() {
+        const PER_TICK: usize = 2 * 1024 * 1024;
+        let addr = spawn_endpoint(|stream| read_slowly(stream, PER_TICK)).await;
+        let body = vec![b'x'; PER_TICK * 2 * STEPS];
+
+        let (result, elapsed) = timed(Box::pin(
+            client(addr)
+                .put_object()
+                .bucket("b")
+                .key("k")
+                .body(ByteStream::from(body))
+                .send(),
+        ))
+        .await;
+
+        result.expect("a slow upload that keeps moving must succeed");
+        assert!(elapsed >= SLOW, "the body was not slow: {elapsed:?}");
     }
 
     /// Answer with `head`, then send `body` one byte every [`TICK`].
