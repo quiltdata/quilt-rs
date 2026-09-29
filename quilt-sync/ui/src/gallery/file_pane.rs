@@ -570,7 +570,8 @@ struct Pane {
     query: &'static str,
     grouped: bool,
     /// `Keeping → The whole package`, which takes the per-file choice away:
-    /// no boxes, no select-all, and the footer can never appear.
+    /// no boxes, no select-all, and the footer can never appear. What the
+    /// slot shows instead follows the files: a caption once all are here.
     whole: bool,
     /// Resolve mode: the files that differ between the two revisions, marked.
     marked: &'static [&'static str],
@@ -694,6 +695,13 @@ fn pane(p: Pane) -> AnyView {
     let narrowed =
         Signal::derive(move || !query_sig.get().is_empty() || !facet_sig.get().starts_with("All"));
 
+    // The page's rule: the package, not the view, has nothing left to
+    // download, so the slot select-all would take says so under either scope.
+    let downloaded = {
+        let counted = files.iter().filter(|f| f.mark != Mark::Ignored).count();
+        let missing = files.iter().any(|f| f.mark == Mark::Missing);
+        (!missing && counted > 0).then_some(counted)
+    };
     let fill = framing == Framing::Page;
     let boxes = !whole;
     let footer_shown = Signal::derive(move || boxes && chosen.get() > 0);
@@ -781,182 +789,203 @@ fn pane(p: Pane) -> AnyView {
                     placeholder="Search files…"
                 />
             </div>
-            {match body {
-                Body::Loading => {
-                    view! {
-                        // The toolbar's own labels carry counts, and counts are
-                        // data — so this is the one piece of chrome that cannot
-                        // outlive its load. §7 has to record the exception.
-                        //
-                        // It reserves the height the real toolbar takes, which
-                        // at this width is two lines and not one: a skeleton
-                        // that stands 36px shorter than what replaces it moves
-                        // the list down on arrival, which is the jump the
-                        // never-move-geometry rule exists to prevent — and the
-                        // rule binds a load as much as a hover.
-                        <div
-                            class="g-stack"
-                            style="gap:var(--q-space-2); padding:var(--q-space-1) 0"
-                        >
-                            <div style="display:flex; gap:var(--q-space-2); \
-                                        justify-content:flex-end">
-                                <SkeletonBox width="166px" height="32px" />
-                                <SkeletonBox width="396px" height="32px" />
-                            </div>
-                            <div style="display:flex; gap:var(--q-space-2)">
-                                <span style="flex:0 0 28px" />
-                                <SkeletonBox width="102px" height="20px" />
-                            </div>
-                        </div>
-                    }
-                        .into_any()
-                }
-                _ => {
-                    view! {
-                        <ListToolbar reverse_when_stacked=true>
-                            // Select-all sits in the rows' checkbox column, the
-                            // list box's space-3 plus the 16px gutter in from
-                            // the pane's edge.
-                            <Show when=move || boxes && (offered.get() > 0)>
-                                <span style="flex:0 0 28px" />
-                                <SelectAll
-                                    selected=chosen
-                                    total=offered
-                                    narrowed=narrowed
-                                    on_toggle=move |next| {
-                                        let indices = shown.get();
-                                        all.with_value(|rs| {
-                                            picks
-                                                .update(|p| {
-                                                    for i in indices {
-                                                        if let Some(slot) = rs[i].pick {
-                                                            p[slot] = next;
-                                                        }
-                                                    }
-                                                });
-                                        });
-                                    }
-                                />
-                            </Show>
-                            <div style="margin-left:auto; display:flex; gap:var(--q-space-2); \
-                                        flex-wrap:wrap-reverse; justify-content:flex-end">
-                                <Select
-                                    naming=Naming::Prefix("Group".to_string())
-                                    options=vec!["Base folder".to_string(), "None".to_string()]
-                                    selected=group_sig
-                                />
-                                <SegmentedControl
-                                    aria_label="Filter files"
-                                    name=name
-                                    options=segments
-                                    selected=facet_sig
-                                />
-                            </div>
-                        </ListToolbar>
-                    }
-                        .into_any()
-                }
-            }}
-            // The box. `flush`, because the rows carry their own padding: the
-            // headings stick to its top edge and the footer's hairline — which
-            // is `Card`'s own rule about two children — reaches both borders.
-            <Card flush=true label="Files" fill=fill>
+            // The toolbar and the box as one child of the column, as on the page:
+            // `ListToolbar` carries its own space-2 below it, so as siblings the
+            // column's gap doubled it and the toolbar sat further from its list
+            // than from the search.
+            <div class="g-stack" style=if fill { LIST_FILLING } else { "" }>
                 {match body {
-                    Body::Failed => {
-                        view! {
-                            <LoadFailure
-                                centred=true
-                                words="Could not read this package's files."
-                                on_retry=Callback::new(|()| ())
-                            />
-                        }
-                            .into_any()
-                    }
                     Body::Loading => {
                         view! {
-                            // The box reserves the resting list's height too. A
-                            // skeleton that stands 117px shorter than the rows
-                            // it becomes moves the whole page under the reader
-                            // at the moment the data lands.
-                            <div style=format!(
-                                "{LIST_RESTING}; height:313px; overflow:hidden; \
-                                 padding:var(--q-space-2) var(--q-space-3); \
-                                 display:flex; flex-direction:column; \
-                                 gap:var(--q-space-3)",
-                            )>
-                                {(0..8)
-                                    .map(|i| {
-                                        view! {
-                                            <SkeletonBox width=if i % 3 == 0 {
-                                                "48%"
-                                            } else if i % 3 == 1 {
-                                                "62%"
-                                            } else {
-                                                "55%"
-                                            } />
-                                        }
-                                    })
-                                    .collect_view()}
+                            // The toolbar's own labels carry counts, and counts are
+                            // data — so this is the one piece of chrome that cannot
+                            // outlive its load. §7 has to record the exception.
+                            //
+                            // It reserves the height the real toolbar takes, which
+                            // at this width is two lines and not one: a skeleton
+                            // that stands 36px shorter than what replaces it moves
+                            // the list down on arrival, which is the jump the
+                            // never-move-geometry rule exists to prevent — and the
+                            // rule binds a load as much as a hover.
+                            <div
+                                class="g-stack"
+                                style="gap:var(--q-space-2); padding:var(--q-space-1) 0"
+                            >
+                                <div style="display:flex; gap:var(--q-space-2); \
+                                            justify-content:flex-end">
+                                    <SkeletonBox width="166px" height="32px" />
+                                    <SkeletonBox width="396px" height="32px" />
+                                </div>
+                                <div style="display:flex; gap:var(--q-space-2)">
+                                    <span style="flex:0 0 28px" />
+                                    <SkeletonBox width="102px" height="20px" />
+                                </div>
                             </div>
                         }
                             .into_any()
                     }
                     _ => {
                         view! {
-                            {(body == Body::Capped)
-                                .then(|| {
-                                    view! {
-                                        // The first 1,000 by path: the page read
-                                        // sorts before it caps and sends the
-                                        // total (quilt-rs#992).
-                                        <p style="margin:0; padding:var(--q-space-2) \
-                                                  var(--q-space-3); \
-                                                  color:var(--q-fgColor-muted); \
-                                                  font-size:var(--q-text-body)">
-                                            "This package has 4,312 files. This list covers the first 1,000 by path."
-                                        </p>
-                                    }
-                                })}
-                            <div
-                                style=move || {
-                                    format!(
-                                        "{}; overflow-y:auto; --q-entry-gutter:{}",
-                                        if fill {
-                                            LIST_FILLING
-                                        } else {
-                                            match (footer_shown.get(), body) {
-                                                (true, _) => LIST_WITH_FOOTER,
-                                                (false, Body::Capped) => LIST_UNDER_NOTICE,
-                                                (false, _) => LIST_RESTING,
-                                            }
-                                        },
-                                        if group_sig.get() == "None" { "0" } else { "16px" },
-                                    )
-                                }
-                            >
-                                {list}
-                            </div>
+                            <ListToolbar reverse_when_stacked=true>
+                                // Select-all sits in the rows' checkbox column, the
+                                // list box's space-3 plus the 16px gutter in from
+                                // the pane's edge. With nothing left to download
+                                // the slot says so instead, its words in the rows'
+                                // name column: the box's 17px stays empty.
+                                {downloaded
+                                    .map(|n| {
+                                        view! {
+                                            <span style="flex:0 0 28px" />
+                                            <span style="flex:0 0 17px" />
+                                            <span style="font-size:var(--q-text-body); \
+                                                         color:var(--q-fgColor-muted)">
+                                                {crate::pages::downloaded_words(n)}
+                                            </span>
+                                        }
+                                    })}
+                                <Show when=move || {
+                                    downloaded.is_none() && boxes && (offered.get() > 0)
+                                }>
+                                    <span style="flex:0 0 28px" />
+                                    <SelectAll
+                                        selected=chosen
+                                        total=offered
+                                        narrowed=narrowed
+                                        on_toggle=move |next| {
+                                            let indices = shown.get();
+                                            all.with_value(|rs| {
+                                                picks
+                                                    .update(|p| {
+                                                        for i in indices {
+                                                            if let Some(slot) = rs[i].pick {
+                                                                p[slot] = next;
+                                                            }
+                                                        }
+                                                    });
+                                            });
+                                        }
+                                    />
+                                </Show>
+                                <div style="margin-left:auto; display:flex; gap:var(--q-space-2); \
+                                            flex-wrap:wrap-reverse; justify-content:flex-end">
+                                    <Select
+                                        naming=Naming::Prefix("Group".to_string())
+                                        options=vec!["Base folder".to_string(), "None".to_string()]
+                                        selected=group_sig
+                                    />
+                                    <SegmentedControl
+                                        aria_label="Filter files"
+                                        name=name
+                                        options=segments
+                                        selected=facet_sig
+                                    />
+                                </div>
+                            </ListToolbar>
                         }
                             .into_any()
                     }
                 }}
-                <Show when=move || footer_shown.get()>
-                    // Spacer and a Button, and `Card` draws the hairline above
-                    // them. It slides 4px and fades in, copying the Banner's
-                    // carve-out from the never-move-geometry rule, and has no
-                    // exit animation: unticking the last row makes the list grow
-                    // back, and animating that would move rows under the pointer.
-                    <div class="g-fp-footer">
-                        <Button
-                            variant=ButtonVariant::Primary
-                            loading=running
-                            on_click=move |_| ()
-                        >
-                            {move || format!("Download {}", chosen.get())}
-                        </Button>
-                    </div>
-                </Show>
-            </Card>
+                // The box. `flush`, because the rows carry their own padding: the
+                // headings stick to its top edge and the footer's hairline — which
+                // is `Card`'s own rule about two children — reaches both borders.
+                <Card flush=true label="Files" fill=fill>
+                    {match body {
+                        Body::Failed => {
+                            view! {
+                                <LoadFailure
+                                    centred=true
+                                    words="Could not read this package's files."
+                                    on_retry=Callback::new(|()| ())
+                                />
+                            }
+                                .into_any()
+                        }
+                        Body::Loading => {
+                            view! {
+                                // The box reserves the resting list's height too. A
+                                // skeleton that stands 117px shorter than the rows
+                                // it becomes moves the whole page under the reader
+                                // at the moment the data lands.
+                                <div style=format!(
+                                    "{LIST_RESTING}; height:313px; overflow:hidden; \
+                                     padding:var(--q-space-2) var(--q-space-3); \
+                                     display:flex; flex-direction:column; \
+                                     gap:var(--q-space-3)",
+                                )>
+                                    {(0..8)
+                                        .map(|i| {
+                                            view! {
+                                                <SkeletonBox width=if i % 3 == 0 {
+                                                    "48%"
+                                                } else if i % 3 == 1 {
+                                                    "62%"
+                                                } else {
+                                                    "55%"
+                                                } />
+                                            }
+                                        })
+                                        .collect_view()}
+                                </div>
+                            }
+                                .into_any()
+                        }
+                        _ => {
+                            view! {
+                                {(body == Body::Capped)
+                                    .then(|| {
+                                        view! {
+                                            // The first 1,000 by path: the page read
+                                            // sorts before it caps and sends the
+                                            // total (quilt-rs#992).
+                                            <p style="margin:0; padding:var(--q-space-2) \
+                                                      var(--q-space-3); \
+                                                      color:var(--q-fgColor-muted); \
+                                                      font-size:var(--q-text-body)">
+                                                "This package has 4,312 files. This list covers the first 1,000 by path."
+                                            </p>
+                                        }
+                                    })}
+                                <div
+                                    style=move || {
+                                        format!(
+                                            "{}; overflow-y:auto; --q-entry-gutter:{}",
+                                            if fill {
+                                                LIST_FILLING
+                                            } else {
+                                                match (footer_shown.get(), body) {
+                                                    (true, _) => LIST_WITH_FOOTER,
+                                                    (false, Body::Capped) => LIST_UNDER_NOTICE,
+                                                    (false, _) => LIST_RESTING,
+                                                }
+                                            },
+                                            if group_sig.get() == "None" { "0" } else { "16px" },
+                                        )
+                                    }
+                                >
+                                    {list}
+                                </div>
+                            }
+                                .into_any()
+                        }
+                    }}
+                    <Show when=move || footer_shown.get()>
+                        // Spacer and a Button, and `Card` draws the hairline above
+                        // them. It slides 4px and fades in, copying the Banner's
+                        // carve-out from the never-move-geometry rule, and has no
+                        // exit animation: unticking the last row makes the list grow
+                        // back, and animating that would move rows under the pointer.
+                        <div class="g-fp-footer">
+                            <Button
+                                variant=ButtonVariant::Primary
+                                loading=running
+                                on_click=move |_| ()
+                            >
+                                {move || format!("Download {}", chosen.get())}
+                            </Button>
+                        </div>
+                    </Show>
+                </Card>
+            </div>
             {stop_keeping(confirm)}
         </div>
     }
@@ -1194,6 +1223,22 @@ fn live(list: crate::commands::EntryList) -> AnyView {
     .into_any()
 }
 
+/// This scene's package with every file here and nothing changed, the state
+/// whole-package Keeping settles into: nothing is left to download, so the
+/// toolbar's left slot says so instead of offering select-all.
+fn downloaded_package() -> Vec<File> {
+    package()
+        .into_iter()
+        .map(|f| match f.mark {
+            Mark::Ignored => f,
+            _ => File {
+                mark: Mark::Here,
+                ..f
+            },
+        })
+        .collect()
+}
+
 /// This scene's package grown to 1,089 files by a folder of plates this copy
 /// has not downloaded, so the page read cuts it.
 fn over_the_cap() -> Vec<File> {
@@ -1214,8 +1259,10 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
     The marked rows draw ahead of their data. Unresolved and visible: under `Group: None` \
-    the ellipsis eats the leaf, kept for now as a deliberate simplification. The last two \
-    cells are the page's own pane over this fixture, the second grown past the cap.";
+    the ellipsis eats the leaf, kept for now as a deliberate simplification. Under whole-package \
+    Keeping every file is downloaded, so the slot select-all leaves reads `All 53 files \
+    downloaded`. The last two cells are the page's own pane over this fixture, the second \
+    grown past the cap.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -1270,8 +1317,8 @@ pub fn FilePaneScene() -> impl IntoView {
                 {pane(Pane { marked: MARKED, ..Pane::new("fp-marked") })}
                 {differs_caption(MARKED.len())}
             </Cell>
-            <Cell full=true label="Keeping → the whole package: no boxes, no select-all, no footer">
-                {pane(Pane { whole: true, ..Pane::new("fp-whole") })}
+            <Cell full=true label="Keeping → the whole package, all downloaded: no boxes, no footer, and the slot says so">
+                {pane(Pane { whole: true, files: downloaded_package(), ..Pane::new("fp-whole") })}
             </Cell>
             <Cell full=true label="the Changed facet — nothing here can be ticked, so select-all goes">
                 {pane(Pane { facet: "Changed", ..Pane::new("fp-changed") })}
