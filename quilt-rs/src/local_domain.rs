@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use tracing::{debug, info, trace, warn};
 
+use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
@@ -19,12 +21,17 @@ use crate::lineage::DomainLineage;
 use crate::lineage::Home;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
+use crate::package_lock;
 use crate::paths;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
+///
+/// Cheap to clone: a clone shares the remote and works on the same
+/// directory, so a caller holding the domain behind a mutex can clone it and
+/// release the mutex before a writer that waits on a package's lock.
 #[derive(Debug)]
 pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
@@ -34,6 +41,17 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     /// handle, release the mutex, and only then await a network round trip.
     /// See [`LocalDomain::remote_handle`].
     remote: Arc<R>,
+}
+
+impl<S: Storage + Clone, R: Remote> Clone for LocalDomain<S, R> {
+    fn clone(&self) -> Self {
+        Self {
+            paths: self.paths.clone(),
+            lineage: self.lineage.clone(),
+            storage: self.storage.clone(),
+            remote: Arc::clone(&self.remote),
+        }
+    }
 }
 
 impl LocalDomain {
@@ -66,6 +84,20 @@ impl LocalDomain {
         Self {
             paths,
             lineage,
+            storage,
+            remote,
+        }
+    }
+}
+
+impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
+    /// A domain over `paths` with the given storage and remote, for tests
+    /// that drive it against a mock.
+    #[cfg(test)]
+    pub(crate) fn with_parts(paths: paths::DomainPaths, storage: S, remote: Arc<R>) -> Self {
+        Self {
+            lineage: lineage::DomainLineageIo::new(paths.lineage()),
+            paths,
             storage,
             remote,
         }
@@ -121,7 +153,7 @@ impl LocalDomain {
     /// would start empty and discard whatever it built, and logout could
     /// not reach the clients it is required to drop.
     #[must_use]
-    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage {
+    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage<S, R> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
         InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
@@ -132,9 +164,10 @@ impl LocalDomain {
         }
     }
 
-    pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
+    pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
+        let _held = package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
 
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
@@ -156,7 +189,8 @@ impl LocalDomain {
         .await?;
 
         debug!("Updating domain lineage");
-        self.lineage.write(&self.storage, lineage).await?;
+        self.insert_package(lineage, &manifest_uri.namespace)
+            .await?;
 
         info!("Successfully installed package: {}", manifest_uri.namespace);
         Ok(self.create_installed_package(manifest_uri.namespace.clone()))
@@ -167,8 +201,9 @@ impl LocalDomain {
         namespace: Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
-    ) -> Res<InstalledPackage> {
+    ) -> Res<InstalledPackage<S, R>> {
         info!("Creating package: {}", namespace);
+        let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
 
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
 
@@ -182,7 +217,7 @@ impl LocalDomain {
         )
         .await?;
 
-        self.lineage.write(&self.storage, lineage).await?;
+        self.insert_package(lineage, &namespace).await?;
 
         info!("Successfully created package: {}", namespace);
         Ok(self.create_installed_package(namespace))
@@ -190,6 +225,7 @@ impl LocalDomain {
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
+        let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
 
         debug!("Preparing paths for uninstallation");
         self.scaffold_paths_for_installing(&namespace).await?;
@@ -198,17 +234,39 @@ impl LocalDomain {
         let lineage = self.lineage.read(&self.storage).await?;
 
         debug!("Executing package uninstallation flow");
-        let lineage =
-            flow::uninstall_package(lineage, &self.paths, &self.storage, namespace.clone()).await?;
+        // It removes the entry from this copy; the splice below removes it
+        // from the record as it is now.
+        flow::uninstall_package(lineage, &self.paths, &self.storage, namespace.clone()).await?;
 
         debug!("Updating domain lineage after uninstallation");
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .update_package_lineage(&self.storage, &namespace, |entry| {
+                *entry = None;
+                Ok(())
+            })
+            .await?;
 
         info!("Successfully uninstalled package: {}", namespace);
         Ok(())
     }
 
-    pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
+    /// Splices the one entry an install or a create made into the record as
+    /// it is now, leaving every other package's entry as another writer may
+    /// have changed it meanwhile. The caller holds the package's lock.
+    async fn insert_package(&self, made: DomainLineage, namespace: &Namespace) -> Res {
+        let mut made = made;
+        let entry = made.packages.remove(namespace).ok_or_else(|| {
+            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
+        })?;
+        self.lineage
+            .update_package_lineage(&self.storage, namespace, |current| {
+                *current = Some(entry);
+                Ok(())
+            })
+            .await
+    }
+
+    pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage<S, R>>> {
         // A pair of lines for a lookup that runs on every tick. The count is the
         // only part worth keeping, and only when it is surprising — so both go to
         // `trace` and the status line reports what was found.
@@ -239,7 +297,7 @@ impl LocalDomain {
     pub async fn get_installed_package(
         &self,
         namespace: &Namespace,
-    ) -> Res<Option<InstalledPackage>> {
+    ) -> Res<Option<InstalledPackage<S, R>>> {
         trace!("Looking up installed package: {}", namespace);
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {

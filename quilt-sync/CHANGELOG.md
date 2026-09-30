@@ -28,12 +28,13 @@
 
 ### Fixed
 
+- Two changes to one package no longer drop each other's work, whatever makes them: a download, **Pull**, **Commit**, background updates, or the `quilt` CLI in a terminal. An action on a package that is busy waits behind its spinner, and background updates skip the package until its next round. Other packages are never held up (<https://github.com/quiltdata/quilt-rs/pull/1022>)
 - On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
 - **New design preview**: opening the main page or a package page shows the page's outline while it loads, instead of a nearly blank window with a small spinner (<https://github.com/quiltdata/quilt-rs/pull/1028>)
 
 ### quilt-rs
 
-- Updated [from v0.40.0 to v0.40.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.40.0 to v0.41.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.4] - 2026-09-28
 

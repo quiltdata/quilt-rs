@@ -372,6 +372,17 @@ enum Commands {
     },
 }
 
+/// The line a writer prints when another quilt process, such as `QuiltSync`,
+/// is writing the same package and this one waits for it.
+pub const WAITING_NOTICE: &str = "waiting for another quilt process…";
+
+/// Hands [`WAITING_NOTICE`] to `print` whenever a writer finds its package's
+/// lock held and is about to wait. `main` prints it to stderr, so `--json`
+/// output on stdout stays clean.
+pub fn notice_lock_waits(print: impl Fn(&str) + Send + Sync + 'static) {
+    quilt_rs::on_package_lock_wait(move || print(WAITING_NOTICE));
+}
+
 impl Commands {
     /// Whether a new domain gets the default home before this command runs.
     ///
@@ -688,6 +699,40 @@ mod tests {
 
     use crate::cli::model::create_model_in_temp_dir;
     use crate::cli::model::install_package_into_temp_dir;
+
+    /// A writer whose package another process holds says it is waiting,
+    /// once, then runs when the other lets go.
+    #[test(tokio::test)]
+    async fn a_writer_waiting_on_a_held_package_says_so() -> Result<(), Error> {
+        let printed = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        notice_lock_waits({
+            let printed = std::sync::Arc::clone(&printed);
+            move |line| printed.lock().expect("printed").push(line.to_string())
+        });
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let namespace: Namespace = ("test", "held").into();
+        let created = m
+            .create(create::Input {
+                namespace: namespace.clone(),
+                source: None,
+                message: None,
+            })
+            .await?;
+        let held = created.installed_package.lock().await?;
+
+        let mut uninstall = std::pin::pin!(m.uninstall(uninstall::Input { namespace }));
+        let early =
+            tokio::time::timeout(std::time::Duration::from_millis(300), &mut uninstall).await;
+        assert!(early.is_err(), "the uninstall waits for the holder");
+        assert_eq!(*printed.lock().expect("printed"), vec![WAITING_NOTICE]);
+
+        drop(held);
+        tokio::time::timeout(std::time::Duration::from_secs(10), uninstall)
+            .await
+            .expect("the uninstall runs once the holder lets go")?;
+        assert_eq!(printed.lock().expect("printed").len(), 1, "said once");
+        Ok(())
+    }
 
     /// The hint is a command the reader is meant to run, and since #941 it also
     /// travels inside a machine-readable `error.message` that an agent may echo

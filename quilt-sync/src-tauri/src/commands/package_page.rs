@@ -743,18 +743,21 @@ async fn download_backlog_from_model(
     namespace: &quilt_uri::Namespace,
     paths: &[String],
 ) -> Result<Vec<PathBuf>, Error> {
-    // Taken first, so a wait for the tick's pull raises no quit prompt of its own.
-    let _ordered = watcher.lock_lineage_writer(namespace).await;
-    // A whole-package catch-up, so it raises the in-flight flag a pull does:
-    // quitting mid-download would leave files in place that the lineage never records.
-    let _applying = watcher.apply_guard(namespace);
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
             namespace.to_owned(),
         ))
     })?;
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    Ok(m.package_install_paths(&installed, &paths).await?.skipped)
+    // Lock before raising the flag: while another writer holds the package,
+    // the download has written nothing, so quitting then loses nothing.
+    let locked = m.lock_package(&installed).await?;
+    // A whole-package catch-up, so it raises the in-flight flag a pull does:
+    // quitting mid-download would leave files in place that the lineage never records.
+    let _applying = watcher.apply_guard(namespace);
+    Ok(m.locked_package_install_paths(&locked, &paths)
+        .await?
+        .skipped)
 }
 
 #[cfg(test)]
@@ -1797,7 +1800,8 @@ mod tests {
     }
 
     /// The download writes working files like a pull, so it holds the flag
-    /// that makes quitting ask first, and only while it writes.
+    /// that makes quitting ask first, and only while it writes: not while it
+    /// takes the package's lock.
     #[tokio::test]
     async fn the_download_holds_the_apply_flag_while_it_writes() {
         let watcher = test_watcher();
@@ -1805,7 +1809,12 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths()
+        let locking = aggregator.clone();
+        m.expect_lock_package().times(1).returning(move |p| {
+            assert!(!locking.apply_in_progress(), "down while taking the lock");
+            Ok(p.namespace.clone())
+        });
+        m.expect_locked_package_install_paths()
             .times(1)
             .returning(move |_, _| {
                 assert!(aggregator.apply_in_progress(), "held while installing");
@@ -1823,119 +1832,38 @@ mod tests {
         );
     }
 
-    /// The tick's pull and a download each read the package's lineage, await,
-    /// and write the whole entry back, so an overlap loses one of the writes
-    /// and a file nobody touched reads Modified. A download that starts mid-pull
-    /// waits the pull out, and it is the download that waits: the user asked
-    /// for it, the pull did not.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_download_started_during_the_ticks_pull_waits_for_the_pull_to_finish() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::{Arc, Mutex, mpsc};
-
-        let ns: quilt_uri::Namespace = ("acme", "demo").into();
-        let pulling = Arc::new(AtomicBool::new(false));
-        let installed_mid_pull = Arc::new(Mutex::new(Vec::new()));
-        let (started_tx, started_rx) = mpsc::channel::<()>();
-        let (release_tx, release_rx) = mpsc::channel::<()>();
-        let release_rx = Mutex::new(release_rx);
-
-        let mut m = crate::model::mocks::create();
-        let remote = quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ns.clone(),
-            hash: "h0".to_string(),
-            origin: Some("catalog.dev".parse().unwrap()),
-        };
-        let lineage = quilt::lineage::PackageLineage::from_remote(remote.clone(), "h1".to_string());
-        let listed = ns.clone();
-        m.expect_get_installed_packages_list()
-            .returning(move || Ok(vec![make_installed_package(listed.clone())]));
-        m.expect_get_installed_package_lineage()
-            .returning(move |_| Ok(lineage.clone()));
-        m.expect_get_installed_package()
-            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_get_installed_package_status().returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                quilt::lineage::UpstreamState::Behind,
-                std::collections::BTreeMap::new(),
-            ))
-        });
-        m.expect_package_pull_outcome().returning(|_| {
-            Ok(quilt::flow::PullPreview {
-                outcome: quilt::flow::PullOutcome::CleanUpdate,
-                added: Vec::new(),
-            })
-        });
-        let pulling_in_pull = Arc::clone(&pulling);
-        m.expect_package_pull().times(1).returning(move |_, _, _| {
-            pulling_in_pull.store(true, Ordering::SeqCst);
-            started_tx.send(()).unwrap();
-            // Stands in for the pull's network work, between its lineage read
-            // and its write. Blocks this worker; the download runs on the other.
-            release_rx.lock().unwrap().recv().unwrap();
-            pulling_in_pull.store(false, Ordering::SeqCst);
-            Ok(quilt::flow::PullReport {
-                manifest_uri: remote.clone(),
-                added: Vec::new(),
-                added_not_fetched: Vec::new(),
-                updated: Vec::new(),
-                removed: Vec::new(),
-                message: None,
-            })
-        });
-        let (pulling_in_install, seen) = (Arc::clone(&pulling), Arc::clone(&installed_mid_pull));
-        m.expect_package_install_paths()
-            .times(1)
-            .returning(move |_, _| {
-                seen.lock()
-                    .unwrap()
-                    .push(pulling_in_install.load(Ordering::SeqCst));
-                Ok(quilt::flow::InstallPathsReport::default())
-            });
-        let m = Arc::new(m);
-
-        let watcher = Arc::new(test_watcher());
-        watcher.inner_for_test().settings.write().await.pull.enabled = true;
-
-        let tick = tokio::spawn({
-            let (m, watcher) = (Arc::clone(&m), Arc::clone(&watcher));
-            async move {
-                crate::autopull::tick::run_once(
-                    &*m,
-                    &RoleCache::default(),
-                    watcher.inner_for_test(),
-                )
-                .await
-            }
-        });
-        tokio::task::spawn_blocking(move || started_rx.recv())
+    /// While another writer holds the package, the download waits having
+    /// written nothing, so it must not report an apply: quitting then loses
+    /// nothing and must not ask.
+    #[tokio::test]
+    async fn a_download_waiting_for_the_package_lock_reports_nothing_applying() {
+        use crate::model::QuiltModel;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let m = crate::model::Model::create(dir.path());
+        m.set_home(dir.path().join("home")).await.expect("home");
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        let package = m
+            .package_create(ns.clone(), None, None)
             .await
-            .unwrap()
-            .expect("the tick reaches its pull");
+            .expect("create");
+        let watcher = test_watcher();
 
-        let download = tokio::spawn({
-            let (m, watcher, ns) = (Arc::clone(&m), Arc::clone(&watcher), ns.clone());
-            async move { download_backlog_from_model(&*m, &watcher, &ns, &["plate/b.csv".into()]).await }
-        });
-        // Long enough for an unordered download to run to completion.
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Another writer of the package, the `quilt` CLI say, holds its lock.
+        let other_writer = package.lock().await.expect("lock");
+        let paths = ["plate/b.csv".to_string()];
+        let mut download = std::pin::pin!(download_backlog_from_model(&m, &watcher, &ns, &paths));
+        let early =
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut download).await;
+        assert!(early.is_err(), "the download waits for the other writer");
         assert!(
-            !download.is_finished(),
-            "the download must not run while the pull is in flight"
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "nothing is applying while the download waits for the lock"
         );
 
-        release_tx.send(()).unwrap();
-        tick.await.unwrap().expect("the tick succeeds");
-        download
+        drop(other_writer);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), download)
             .await
-            .unwrap()
-            .expect("the download succeeds once the pull is done");
-        assert_eq!(
-            *installed_mid_pull.lock().unwrap(),
-            vec![false],
-            "the download installed once, after the pull"
-        );
+            .expect("the download runs once the other writer lets go");
     }
 
     /// A download mock that asserts it installs `expected` and never opens
@@ -1944,7 +1872,9 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths()
+        m.expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        m.expect_locked_package_install_paths()
             .times(1)
             .returning(move |_, paths| {
                 assert_eq!(
@@ -1990,7 +1920,9 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths().returning(|_, _| {
+        m.expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        m.expect_locked_package_install_paths().returning(|_, _| {
             Ok(quilt::flow::InstallPathsReport {
                 skipped: vec![PathBuf::from("plate/c.csv")],
                 ..Default::default()
@@ -2015,7 +1947,9 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths()
+        m.expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        m.expect_locked_package_install_paths()
             .returning(|_, _| Err(access_denied_error()));
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 

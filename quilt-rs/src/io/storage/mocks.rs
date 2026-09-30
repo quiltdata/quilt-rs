@@ -139,4 +139,20 @@ impl Storage for MockStorage {
 
         Ok(())
     }
+
+    /// The same real lock as [`LocalStorage`](super::LocalStorage)'s, on the
+    /// path re-rooted under this mock's temp directory: two mocks never share
+    /// a lock, and two handles on one mock always do.
+    async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<super::LockGuard> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::lock::lock_exclusive(rel_path.as_ref()).await
+    }
+
+    async fn try_lock_exclusive(
+        &self,
+        path: impl AsRef<Path> + Send,
+    ) -> Res<Option<super::LockGuard>> {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::lock::try_lock_exclusive(rel_path.as_ref()).await
+    }
 }
