@@ -853,6 +853,33 @@ fn file_opener(
     })
 }
 
+/// The whole package page before its read answers: the appbar, the banner's
+/// row, and [`package_skeleton`].
+///
+/// What `/installed-package` draws while it reads which package page the reader
+/// has switched on, when the root marker says it will be this one — see
+/// `main.rs`'s `design_loading`. It is [`PackageScreen`]'s own first paint, so
+/// the handover moves nothing: the appbar, the header and both panes land on
+/// the pixels they already hold.
+///
+/// The banner is passed empty, not left out. The page always fills
+/// `PageLayout`'s slot — its bands are drawn from the answer, inside the slot —
+/// and the slot's row takes its padding whether a band is in it or not, so a
+/// skeleton without one would sit that much higher than the page it hands to.
+///
+/// `actions` is the appbar's, passed in because the app's Settings button
+/// navigates and the gallery, which draws this too, has no router.
+#[component]
+pub fn PackagePageSkeleton(actions: AnyView) -> impl IntoView {
+    view! {
+        <PageLayout heading="Package" banner=().into_any() actions=actions>
+            {package_skeleton()}
+        </PageLayout>
+    }
+}
+
+/// The page's body while its read is out: the header, then both panes, in the
+/// shell the answered page uses.
 fn package_skeleton() -> AnyView {
     view! {
         <div class=style::page>
@@ -2301,6 +2328,76 @@ mod tests {
         });
         sleep_ms(50).await;
         el
+    }
+
+    /// `PackagePageSkeleton` is the page's own first paint, so
+    /// `/installed-package` handing its loading frame over to the page moves
+    /// nothing: the same boxes from the appbar down, the banner's empty row
+    /// included, as the page draws while its one read is out.
+    #[wasm_bindgen_test]
+    async fn the_skeleton_is_the_page_s_first_paint() {
+        use crate::components::appbar::appbar_actions;
+        use crate::test_support::shape;
+
+        let page = screen_at("/installed-package?namespace=team%2Fdataset", pending_read).await;
+        let skeleton = mount(|| {
+            view! {
+                <Router>
+                    <PackagePageSkeleton actions=appbar_actions(|| (), Signal::stored(true)) />
+                </Router>
+            }
+        });
+        leptos::task::tick().await;
+
+        let frame = |el: &web_sys::Element| {
+            shape(
+                &el.query_selector("[data-v2-page]")
+                    .unwrap()
+                    .expect("a v2 page"),
+            )
+        };
+        assert_eq!(frame(&skeleton), frame(&page));
+    }
+
+    /// The file pane's toolbar is the answered pane's, spot for spot: the
+    /// select-all line on the left, which an answered pane with files always
+    /// draws, and the view controls on the right. A skeleton without the first
+    /// sat a line short of the pane that replaced it once the toolbar stacked.
+    #[wasm_bindgen_test]
+    async fn the_skeleton_keeps_select_all_s_spot() {
+        use crate::components::appbar::appbar_actions;
+
+        // The classes of the toolbar's direct children, which name the spots.
+        fn spots(el: &web_sys::Element) -> Vec<String> {
+            let bar = el
+                .query_selector("section[aria-label=Files] > [class^=listing] > :first-child")
+                .unwrap()
+                .expect("the file pane's toolbar");
+            let children = bar.children();
+            (0..children.length())
+                .map(|i| {
+                    children
+                        .item(i)
+                        .unwrap()
+                        .get_attribute("class")
+                        .unwrap_or_default()
+                })
+                .collect()
+        }
+
+        let page = screen_at("/installed-package?namespace=team%2Fdataset", settled_read).await;
+        let answered = spots(&page);
+        let skeleton = mount(|| {
+            view! {
+                <Router>
+                    <PackagePageSkeleton actions=appbar_actions(|| (), Signal::stored(true)) />
+                </Router>
+            }
+        });
+        leptos::task::tick().await;
+
+        assert_eq!(answered.len(), 2, "select-all and the views: {answered:?}");
+        assert_eq!(spots(&skeleton), answered);
     }
 
     fn search() -> String {

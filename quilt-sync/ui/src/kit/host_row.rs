@@ -11,6 +11,7 @@ use leptos::prelude::*;
 use crate::kit::Button;
 use crate::kit::Naming;
 use crate::kit::Select;
+use crate::kit::SkeletonText;
 
 stylance::import_crate_style!(style, "src/kit/host_row.module.scss");
 
@@ -91,6 +92,29 @@ pub fn HostRow(
                 } else {
                     ().into_any()
                 }}
+            </span>
+        </div>
+    }
+}
+
+/// A host row's geometry, while the sessions are still being read: the host's
+/// line and the role's, from the row's own classes, so it is as tall as a row
+/// that settles into it.
+///
+/// No trailing slot. What goes there — a role select, a sign-in button, nothing
+/// — is the answer being waited for, and the row centres it on the text, which
+/// is the taller of the two either way.
+#[component]
+pub fn HostRowSkeleton() -> impl IntoView {
+    view! {
+        <div class=style::root aria-hidden="true">
+            <span class=style::text>
+                <span class=style::host>
+                    <SkeletonText width="45%" />
+                </span>
+                <span class=style::sub>
+                    <SkeletonText width="30%" />
+                </span>
             </span>
         </div>
     }

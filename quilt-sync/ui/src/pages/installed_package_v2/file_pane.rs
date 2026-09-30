@@ -72,7 +72,7 @@ use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Button, ButtonVariant, Card, EntryAction, EntryGroup, EntryRow, EntrySelection,
     GroupSelection, ListToolbar, LoadFailure, MenuAction, Naming, SearchInput, Segment,
-    SegmentedControl, Select, SelectAll, SkeletonBox,
+    SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
 };
 use crate::util::format_size;
 
@@ -1291,11 +1291,25 @@ pub fn FilePaneSkeleton() -> impl IntoView {
             // The search field: full width, one control high.
             <SkeletonBox width="100%" height="32px" />
             <div class=style::listing>
-                <div class=style::skeletonbar>
-                    // The `Group:` select's width, then the facets'.
-                    <SkeletonBox width="166px" height="32px" />
-                    <SkeletonBox width="396px" height="32px" />
-                </div>
+                // The answered pane's own toolbar, over placeholders, so it
+                // stacks where that one stacks and is as tall on either line.
+                <ListToolbar reverse_when_stacked=true>
+                    // Select-all's spot, which an answered pane always fills —
+                    // with select-all, or with the caption saying every file is
+                    // here. The box's 17px, then a line of the caption's type.
+                    <div class=style::selectall aria-hidden="true">
+                        <span class=style::gutter />
+                        <SkeletonBox width="17px" height="17px" />
+                        <span class=style::caption>
+                            <SkeletonText width="96px" />
+                        </span>
+                    </div>
+                    <div class=style::views>
+                        // The `Group:` select's width, then the facets'.
+                        <SkeletonBox width="166px" height="32px" />
+                        <SkeletonBox width="396px" height="32px" />
+                    </div>
+                </ListToolbar>
                 <Card flush=true label="Files" fill=true busy=Signal::stored(true)>
                     <div class=style::skeleton>
                         {["48%", "62%", "55%", "48%", "62%", "55%", "48%", "62%"]

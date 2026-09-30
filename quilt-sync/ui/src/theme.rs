@@ -310,8 +310,9 @@ mod tests {
     /// The reset in `app.scss` reaches v1's pages, whose ink no theme switches,
     /// and `follow_os` cannot see the flag — so a themed ground on `body` would
     /// go dark under v1's black text, for a v2 reader on Settings as much as for
-    /// a v1 one at home. The one ground it may paint is the frame `/` shows
-    /// before it knows its page, and only behind `V2_CLASS`. Pinned on the
+    /// a v1 one at home. The one ground it may paint is the frame `/` and
+    /// `/installed-package` show before they know their page, and only behind
+    /// `V2_CLASS`. Pinned on the
     /// stylesheet, where the bare rule was added once already.
     #[test]
     fn the_shared_reset_paints_a_ground_only_for_a_v2_reader_s_home_frame() {

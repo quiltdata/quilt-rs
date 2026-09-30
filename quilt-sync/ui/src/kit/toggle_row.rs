@@ -6,6 +6,8 @@
 use leptos::prelude::*;
 
 use super::Checkbox;
+use super::SkeletonBox;
+use super::SkeletonText;
 
 stylance::import_crate_style!(style, "src/kit/toggle_row.module.scss");
 
@@ -54,6 +56,40 @@ pub fn ToggleRow(
                 </span>
             </label>
             {trailing.map(|slot| view! { <span class=style::trailing>{slot}</span> })}
+        </div>
+    }
+}
+
+/// A toggle row's geometry, while the setting is still being read.
+///
+/// Built from the row's own classes, and every text slot a [`SkeletonText`], so
+/// it is the height of the row that replaces it: the padding, the label's line,
+/// the sub-line's gap and its line, whatever type the row inherits. The box is
+/// the checkbox's 17px square, which is shorter than the words and so decides
+/// nothing, and the trailing slot keeps a countdown's width.
+///
+/// Hidden whole: a toggle that is not there yet has nothing to say, and the card
+/// around it is what says it is busy.
+#[component]
+pub fn ToggleRowSkeleton() -> impl IntoView {
+    view! {
+        <div class=format!("{} {}", style::root, style::skeleton) aria-hidden="true">
+            <span class=style::main>
+                <span class=style::box_slot>
+                    <SkeletonBox width="17px" height="17px" />
+                </span>
+                <span class=style::text>
+                    <span class=style::label>
+                        <SkeletonText width="136px" />
+                    </span>
+                    <span class=style::sublabel>
+                        <SkeletonText width="232px" />
+                    </span>
+                </span>
+            </span>
+            <span class=style::trailing>
+                <SkeletonText width="48px" />
+            </span>
         </div>
     }
 }

@@ -24,6 +24,7 @@ use crate::commands::MainPageAccountsData;
 use crate::kit::Blankslate;
 use crate::kit::Card;
 use crate::kit::HostRow;
+use crate::kit::HostRowSkeleton;
 use crate::routes::sign_in_href;
 
 /// The card, on one payload — the shape [`AutosyncBody`](super::autosync) has,
@@ -74,6 +75,23 @@ pub(super) fn AccountsBody(
             // replaced live region never fires. Last in the body, or the top row
             // lands on the far side of the card's own `.body > * + *`.
             <span data-sr-only role="status">{move || watch.said.get()}</span>
+        </Card>
+    }
+    .into_any()
+}
+
+/// The card before the sessions are read: its title and one
+/// [`HostRowSkeleton`].
+///
+/// One row, because the number of hosts is what is being read. The strip
+/// stretches both cards to the taller one, and one host row is shorter than the
+/// Autosync card's two toggles, so the row lands at the height it will keep
+/// unless the reader has more hosts than fit beside those — a strip that then
+/// grows is growing to show them.
+pub(super) fn accounts_skeleton() -> AnyView {
+    view! {
+        <Card title="Accounts" busy=true>
+            <HostRowSkeleton />
         </Card>
     }
     .into_any()

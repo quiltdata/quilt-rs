@@ -32,6 +32,7 @@ use crate::kit::Countdown;
 use crate::kit::StateLabel;
 use crate::kit::StateTone;
 use crate::kit::ToggleRow;
+use crate::kit::ToggleRowSkeleton;
 
 /// An interval in the shortest honest form: `30s`, `5 min`.
 ///
@@ -248,6 +249,19 @@ fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
     }
 }
 
+/// The card before its read answers: its title, which is known, and the two
+/// toggles as [`ToggleRowSkeleton`]s, so it is the height of the card that
+/// replaces it. Busy, so a screen reader hears the rows arrive.
+pub(super) fn autosync_skeleton() -> AnyView {
+    view! {
+        <Card title="Autosync" busy=true>
+            <ToggleRowSkeleton />
+            <ToggleRowSkeleton />
+        </Card>
+    }
+    .into_any()
+}
+
 /// Refetch when the window becomes visible again.
 ///
 /// Split into its own component so it can be mounted alone in a test, and kept out
@@ -297,11 +311,12 @@ where
 
 /// The card and its payload.
 ///
-/// **No skeleton and no fallback content.** §6: chrome is never skeletonised,
-/// only the queue and the two lists — and this payload is a memory read (three
-/// `RwLock`s the watcher already holds), so the pending window is shorter than a
-/// frame. A failed fetch renders nothing and logs: the only way it can fail is a
-/// missing bridge or an unregistered command, and asserting anything about
+/// [`autosync_skeleton`] until the first answer. The read is a memory read
+/// (three `RwLock`s the watcher already holds), but it is still a round trip
+/// behind the page's first paint, and a strip that drew nothing until then
+/// arrived by pushing the queue and the list down under the reader. A
+/// `Transition`, so a refetch keeps the last card rather than the skeleton. A
+/// failed fetch draws the failure card and logs: asserting anything about
 /// autosync on the strength of a failed read would be the manufactured state
 /// plan 2's final review removed from the row path.
 #[component]
@@ -316,7 +331,7 @@ pub fn AutosyncCard(
 ) -> impl IntoView {
     view! {
         <AutosyncListener reload=reload />
-        <Transition fallback=|| ()>
+        <Transition fallback=autosync_skeleton>
             {move || Suspend::new(async move {
                 match watcher.await {
                     Ok(data) => view! { <AutosyncBody data=data reload=reload /> }.into_any(),

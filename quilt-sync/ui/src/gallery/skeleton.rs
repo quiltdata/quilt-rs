@@ -11,12 +11,16 @@ use crate::Story;
 use crate::gallery::queue::row;
 use crate::kit::Card;
 use crate::kit::GroupHeading;
+use crate::kit::HostRow;
+use crate::kit::HostRowSkeleton;
 use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
 use crate::kit::PackageState;
 use crate::kit::QueueRowSkeleton;
 use crate::kit::SkeletonBox;
 use crate::kit::StateTone;
+use crate::kit::ToggleRow;
+use crate::kit::ToggleRowSkeleton;
 
 const HOUR: f64 = 3_600_000.0;
 
@@ -78,8 +82,10 @@ fn Rows() -> impl IntoView {
                   the real rows they stand in for: if the boundary reads as a step, the list \
                   will jump when it settles, exactly when somebody starts reading. The \
                   skeleton rows reuse the real row's own `.root` class rather than restating \
-                  its padding, so equal height holds by construction. Chrome is never \
-                  skeletonised — only the queue and the two lists have an unknown state."
+                  its padding, so equal height holds by construction, and their text slots \
+                  are SkeletonText, a bar in a held-open line, so they are as tall as the \
+                  words. Chrome is never skeletonised — only the queue, the two lists and \
+                  the strip's two cards have an unknown state."
         >
             <Cell wide=true label="package list — four unknown rows above two real ones">
                 <Card>
@@ -123,6 +129,31 @@ fn Rows() -> impl IntoView {
                             },
                         )}
                     </div>
+                </Card>
+            </Cell>
+            <Cell wide=true label="autosync — a skeleton toggle above a real one">
+                <Card title="Autosync">
+                    <div class="g-rows" aria-busy="true">
+                        <ToggleRowSkeleton />
+                    </div>
+                    <ToggleRow
+                        label="Publish your changes"
+                        sublabel="After 5 min of inactivity"
+                        checked=RwSignal::new(true)
+                        trailing=view! { "nothing to publish" }.into_any()
+                    />
+                </Card>
+            </Cell>
+            <Cell wide=true label="accounts — a skeleton host above a real one">
+                <Card title="Accounts">
+                    <div class="g-rows" aria-busy="true">
+                        <HostRowSkeleton />
+                    </div>
+                    <HostRow
+                        host="open.quiltdata.com"
+                        role=RwSignal::new("analyst".to_string())
+                        on_sign_in=|_| ()
+                    />
                 </Card>
             </Cell>
             <Cell wide=true label="the whole region unknown — what the first paint shows">

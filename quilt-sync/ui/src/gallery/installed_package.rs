@@ -28,6 +28,10 @@
 //! | list, three ticked | — | **220px · 6 rows** |
 //! | at the 900px default | — | 609px · 19 rows |
 //!
+//! Measured before the cells drew `PageLayout`'s banner row, which the app
+//! always fills and so always lays out, empty or not. It costs each list here
+//! 16px, which is what the app was already paying.
+//!
 //! v1 manages about four at the same window. The difference is not layout
 //! cleverness: **the header came in at 60px against the 108 §1 budgeted**,
 //! because the built header is two lines — a `BackLink` over one 32px row — and
@@ -137,7 +141,9 @@ fn page(
             class="g-window"
             style=format!("width:{width}px; --q-frame-height:{height}px; max-width:100%")
         >
-            <PageLayout heading="QuiltSync" actions=appbar_actions()>
+            // The banner's row, empty, as the app always fills that slot: without
+            // it the page here sat 16px higher than the page the app draws.
+            <PageLayout heading="QuiltSync" banner=().into_any() actions=appbar_actions()>
                 <div class="g-ip-page">
                     <PackageHeaderRegion
                         state=state

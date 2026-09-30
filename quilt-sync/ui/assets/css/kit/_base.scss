@@ -24,14 +24,21 @@ body {
   line-height: var(--q-line-body);
 }
 
-/* The frame `/` shows while it resolves the design generation has no page to
- * paint its ground, and only a reader carrying `theme::set_v2`'s root marker
- * wants one. That marker records the generation the reader has opted into — their
- * *New design preview* answer, and nothing else — and `body` itself must stay
- * bare regardless, since a v2 reader visits v1's pages
- * too. An attribute, like `[data-sr-only]`: it marks a role, on an element
- * outside any module. */
+/* The frame `/` and `/installed-package` show while they resolve the design
+ * generation, and only a reader carrying `theme::set_v2`'s root marker wants a
+ * ground under it. That marker records the generation the reader has opted into —
+ * their *New design preview* answer, and nothing else — and `body` itself must
+ * stay bare regardless, since a v2 reader visits v1's pages too. For that reader
+ * the frame holds the v2 page's skeleton, which paints its own ground; this one
+ * is the floor under it. An attribute, like `[data-sr-only]`: it marks a role, on
+ * an element outside any module.
+ *
+ * `flow-root` so the frame contains its children's margins. A plain block lets a
+ * first child's top margin collapse through it, which moves the frame down and
+ * leaves a band of bare body above the ground — the region spinner this frame
+ * used to hold did exactly that with its 32px. */
 :root.qui-v2 [data-home-frame] {
+  display: flow-root;
   min-height: 100vh;
   background: var(--q-bgColor-page);
 }

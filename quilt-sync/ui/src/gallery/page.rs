@@ -16,6 +16,11 @@
 //! worst case — 19 things needing decisions — and the calm page is the common one,
 //! where `ZeroLine` collapses the whole region to a line. A third pairs the calm
 //! page still checking with the page it settles into.
+//!
+//! [`LoadingScene`] is the pages before they have anything to show, and those are
+//! the app's own components rather than compositions: `MainPageSkeleton` and
+//! `PackagePageSkeleton` are what `main.rs` draws while a route decides between v1
+//! and v2, so a scene there is the frame the reader sees.
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -29,17 +34,29 @@ use crate::kit::Activity;
 use crate::kit::ActivityKind;
 use crate::kit::Button;
 use crate::kit::PageLayout;
-use crate::kit::Spinner;
-use crate::kit::SpinnerVariant;
 use crate::kit::ZeroLine;
 use crate::kit::ZeroLineSkeleton;
 use crate::kit::icons;
+use crate::pages;
 
 fn appbar_actions() -> AnyView {
     view! {
         <Button leading_visual=icons::sync() on_click=|_| ()>
             "Refresh"
         </Button>
+        <Button leading_visual=icons::gear() on_click=|_| ()>
+            "Settings"
+        </Button>
+    }
+    .into_any()
+}
+
+/// The bar a loading page draws: Refresh spinning, because the page's first read
+/// is out. The app's own is `components::appbar::appbar_actions` over the same
+/// `refresh_button`; its Settings navigates, and this gallery has no router.
+fn loading_actions() -> AnyView {
+    view! {
+        {quilt_sync_ui::components::appbar::refresh_button(|| (), Signal::stored(true))}
         <Button leading_visual=icons::gear() on_click=|_| ()>
             "Settings"
         </Button>
@@ -131,17 +148,42 @@ pub fn PageScene() -> impl IntoView {
                 </Provider>
             </div>
         </Scene>
+    }
+}
+
+/// Both pages before they have anything to show — see the module doc.
+#[component]
+pub fn LoadingScene() -> impl IntoView {
+    view! {
         <Scene
-            title="Scene · the frame while / decides"
-            note="What the window shows between launch and knowing which main page to draw: \
-                  the page ground and a region spinner, no appbar. Drawing one page's chrome \
-                  and then swapping it for the other's is the flicker this frame exists to \
-                  avoid. The markup is main.rs's, repeated here because a bin cannot lend it."
+            title="Scene · the main page while it loads"
+            note="What / draws before any read has answered, and what it draws even \
+                  earlier, while it reads which main page the reader has switched on: the \
+                  root marker predicts this one, so the frame is this page's first paint \
+                  rather than a spinner of its own. The appbar with Refresh spinning, the \
+                  strip's two cards on their toggle and host skeletons, the zero line held \
+                  open, the toolbar — inert, since its controls lead nowhere until the \
+                  page takes over — and three package rows. MainPageSkeleton is drawn \
+                  here and by main.rs's frame, and its regions are the page's own loading boundary, so neither \
+                  handover — frame to page, page to rows — moves anything. A v1 reader \
+                  gets v1's own spinner instead, whose stylesheet this gallery does not \
+                  load."
         >
             <div class="g-window">
-                <div data-home-frame>
-                    <Spinner variant=SpinnerVariant::Region aria_label="Loading QuiltSync" />
-                </div>
+                <pages::MainPageSkeleton actions=loading_actions() />
+            </div>
+        </Scene>
+        <Scene
+            title="Scene · the package page while it loads"
+            note="The same for /installed-package: the appbar, the banner's empty row, the \
+                  header's two lines and both panes, select-all's spot in the file \
+                  toolbar included, before the page's one read answers. \
+                  PackagePageSkeleton, shared with main.rs's frame; its body is the page's \
+                  own first paint. The banner's row is there because the page always \
+                  fills that slot, as the package page's own scenes now draw it too."
+        >
+            <div class="g-window">
+                <pages::PackagePageSkeleton actions=loading_actions() />
             </div>
         </Scene>
     }

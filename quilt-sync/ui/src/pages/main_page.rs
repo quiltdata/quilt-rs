@@ -39,6 +39,7 @@ use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
+use crate::commands::MainPageWatcherData;
 use crate::components::appbar::appbar_actions;
 use crate::routes::package_page_href;
 use crate::util;
@@ -573,6 +574,105 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
     cause
 }
 
+/// The list region's controls: which view is on, the search, both `Group`
+/// axes, the sort, and whether *Create package* is open.
+///
+/// Held by [`MainPageRegions`]' body, not inside the `Suspend` below it. A
+/// refetch rebuilds that subtree, so a signal created inside it would clear the
+/// reader's search and reset their axes on every Refresh (R2), and
+/// `CreatePackageDialog` mounts outside the `Transition`, so one created there
+/// would close a dialog the reader is mid-typing into.
+///
+/// One constructor, so [`MainPageSkeleton`]'s inert set opens on exactly the
+/// values the page does: a toolbar that drew `Group: Bucket` and then
+/// `Group: None` would move under the cursor at the handover.
+#[derive(Clone, Copy)]
+struct ListControls {
+    view_selected: RwSignal<String>,
+    query: RwSignal<String>,
+    group_packages_by: RwSignal<String>,
+    group_files_by: RwSignal<String>,
+    sort_by: RwSignal<String>,
+    create_open: RwSignal<bool>,
+}
+
+impl ListControls {
+    fn new() -> Self {
+        Self {
+            view_selected: RwSignal::new(PACKAGES_VIEW.to_string()),
+            query: RwSignal::new(String::new()),
+            group_packages_by: RwSignal::new(GROUP_BUCKET.to_string()),
+            group_files_by: RwSignal::new(GROUP_NONE.to_string()),
+            sort_by: RwSignal::new(SORT_CHANGED.to_string()),
+            create_open: RwSignal::new(false),
+        }
+    }
+}
+
+/// The queue and the list before the package rows are read: the queue/list
+/// boundary's fallback, and the same regions in [`MainPageSkeleton`].
+///
+/// The toolbar is passed in because it is chrome bound to whichever signals its
+/// caller holds. `inert` takes the list region out of reach of pointer and
+/// keyboard without changing a box, for a caller whose controls lead nowhere —
+/// see [`MainPageSkeleton`].
+fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
+    view! {
+        // The queue's line, held open. Without it the list starts where the
+        // queue will be and drops when the queue arrives — and the region always
+        // renders SOMETHING once it knows, even when that is the one-line
+        // all-clear, so the shift came entirely from rendering nothing while it
+        // did not. `QueueRegion` holds it on until the heavy phase answers.
+        <ZeroLineSkeleton />
+        // The toolbar, from the same helper the resolved arm calls: it is on
+        // screen with the appbar and the strip, and is never itself a skeleton.
+        // The skeletons below it are the packages view's, because that is the
+        // view the page opens on (R4).
+        <div class=style::list_region inert=inert>
+            {toolbar}
+            <Card label="Packages" busy=true>
+                <PackageRowSkeleton />
+                <PackageRowSkeleton />
+                <PackageRowSkeleton />
+            </Card>
+        </div>
+    }
+    .into_any()
+}
+
+/// The whole main page before any of its reads have answered: the appbar, the
+/// strip's two cards, and [`regions_skeleton`].
+///
+/// What `/` draws while it reads which main page the reader has switched on,
+/// when the root marker says it will be this one — see `main.rs`'s
+/// `design_loading`. It is the page's own first paint, element for element, so
+/// the handover to [`MainPage`] moves nothing: the appbar, the zero line and the
+/// toolbar land on the pixels they already hold.
+///
+/// The strip's two cards are their own skeletons, as the page's cards draw
+/// them until their reads answer. The toolbar is drawn, for its place, and
+/// inert: its signals are the frame's own and the page builds fresh ones, so a
+/// search typed or a view picked during the wait would vanish at the handover,
+/// and *Create package* would open nothing — its dialog belongs to the page.
+/// Inert rather than disabled, which would grey it and so change how the frame
+/// looks against the page that replaces it. The page's own fallback leaves the
+/// same toolbar live, over the page's signals and beside its dialog.
+///
+/// `actions` is the appbar's, passed in because the app's Settings button
+/// navigates and the gallery, which draws this too, has no router.
+#[component]
+pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
+    view! {
+        <PageLayout heading="QuiltSync" actions=actions>
+            <div class=style::strip>
+                {autosync::autosync_skeleton()}
+                {accounts::accounts_skeleton()}
+            </div>
+            {regions_skeleton(list_toolbar(ListControls::new()), true)}
+        </PageLayout>
+    }
+}
+
 /// The list region's chrome: the toolbar, and the toggle that names which of the
 /// region's two views is on screen.
 ///
@@ -582,14 +682,15 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
 /// list must keep sharing one boundary (R6), so rendering the toolbar twice from
 /// one definition is what buys "on screen at first paint" without splitting
 /// anything.
-fn list_toolbar(
-    view_selected: RwSignal<String>,
-    query: RwSignal<String>,
-    group_packages_by: RwSignal<String>,
-    group_files_by: RwSignal<String>,
-    sort_by: RwSignal<String>,
-    create_open: RwSignal<bool>,
-) -> AnyView {
+fn list_toolbar(controls: ListControls) -> AnyView {
+    let ListControls {
+        view_selected,
+        query,
+        group_packages_by,
+        group_files_by,
+        sort_by,
+        create_open,
+    } = controls;
     let on_packages = move || view_selected.get() == PACKAGES_VIEW;
     view! {
         <ListToolbar>
@@ -721,6 +822,11 @@ fn files_view(
     .into_any()
 }
 
+/// A read of the watcher's payload, for [`MainPageRegions`]' test seam.
+type WatcherRead = fn() -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<MainPageWatcherData, String>>>,
+>;
+
 /// The page's three regions, in the order they are read: the state strip, the
 /// attention queue, then the package list. §2's arrangement, and the reason the
 /// queue sits above the list — it is what you look at first.
@@ -801,6 +907,11 @@ fn MainPageRegions(
     /// the app runs.
     #[prop(optional_no_strip)]
     fetch_files: Option<Callback<(), Result<MainPageRecentFilesData, String>>>,
+    /// Stands in for `commands::get_main_page_watcher`, the same kind of seam:
+    /// with no Tauri host the real read fails at once, so a test that wants the
+    /// Autosync card still loading has to supply a read that has not answered.
+    #[prop(optional_no_strip)]
+    fetch_watcher: Option<WatcherRead>,
 ) -> impl IntoView {
     // In the component body, NOT inside the `Suspend` closure below. A refetch
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
@@ -809,8 +920,10 @@ fn MainPageRegions(
     // Held here rather than inside the Autosync card, for the reason the accounts
     // read is: the queue joins against this payload for a paused package's message.
     let watcher_reload = Trigger::new();
-    let watcher =
-        autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher);
+    let watcher = match fetch_watcher {
+        Some(read) => autosync::watcher_resource(watcher_reload, reload, read),
+        None => autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher),
+    };
     // A signal, NOT awaited beside `hosts` below. The watcher reloads on a deadline,
     // on the window coming back and after a toggle write; awaiting it inside that
     // `Suspend` would rebuild the queue on each, re-collapsing every expanded cause
@@ -825,18 +938,17 @@ fn MainPageRegions(
             })
             .unwrap_or_default()
     });
-    let view_selected = RwSignal::new(PACKAGES_VIEW.to_string());
-    // R2, and the same reason `view_selected` is here: a refetch rebuilds the
-    // resolved subtree, so a signal created inside it would clear the reader's
-    // search and reset their axes on every Refresh.
-    let query = RwSignal::new(String::new());
-    let group_packages_by = RwSignal::new(GROUP_BUCKET.to_string());
-    let group_files_by = RwSignal::new(GROUP_NONE.to_string());
-    let sort_by = RwSignal::new(SORT_CHANGED.to_string());
-    // Same placement, same reason: `CreatePackageDialog` mounts outside the
-    // `Transition` below, and a signal created inside a refetch's resolved
-    // subtree would close a dialog the reader is mid-typing into.
-    let create_open = RwSignal::new(false);
+    // Here, for the reason `ListControls` gives: a refetch rebuilds the
+    // resolved subtree, and a signal created inside it would reset.
+    let controls = ListControls::new();
+    let ListControls {
+        view_selected,
+        query,
+        group_packages_by,
+        group_files_by,
+        sort_by,
+        create_open,
+    } = controls;
     // A one-way latch, not `view_selected` itself. The resource's source closure
     // is reactive, so gating it on the view directly would refetch on *every*
     // toggle and resolve the feed back to nothing on the way to Packages —
@@ -872,7 +984,7 @@ fn MainPageRegions(
         // owns when it blanks.
         <div class=style::strip>
             <autosync::AutosyncCard reload=watcher_reload watcher=watcher />
-            <Transition fallback=|| ()>
+            <Transition fallback=accounts::accounts_skeleton>
                 {move || Suspend::new(async move {
                     match accounts.await {
                         Ok(data) => {
@@ -902,36 +1014,7 @@ fn MainPageRegions(
         // across a resolve with a `Show` or a `StoredValue`, would reuse the
         // `QueueRegion` instance and with it the expander signals a refetch is
         // supposed to reset (R6).
-        <Transition fallback=move || {
-            view! {
-                // The queue's line, held open. Without it the list starts
-                // where the queue will be and drops when the queue arrives —
-                // and the region always renders SOMETHING once it knows, even
-                // when that is the one-line all-clear, so the shift came
-                // entirely from rendering nothing while it did not.
-                // `QueueRegion` holds it on until the heavy phase answers.
-                <ZeroLineSkeleton />
-                // The toolbar, from the same helper the resolved arm calls: it is
-                // on screen with the appbar and the strip, and is never itself a
-                // skeleton. The skeletons below it are the packages view's,
-                // because that is the view the page opens on (R4).
-                <div class=style::list_region>
-                    {list_toolbar(
-                        view_selected,
-                        query,
-                        group_packages_by,
-                        group_files_by,
-                        sort_by,
-                        create_open,
-                    )}
-                    <Card label="Packages" busy=true>
-                        <PackageRowSkeleton />
-                        <PackageRowSkeleton />
-                        <PackageRowSkeleton />
-                    </Card>
-                </div>
-            }
-        }>
+        <Transition fallback=move || regions_skeleton(list_toolbar(controls), false)>
             {move || Suspend::new(async move {
                 match packages.await {
                     Ok(data) => {
@@ -1051,14 +1134,7 @@ fn MainPageRegions(
                                 pause_messages=pause_messages
                             />
                             <div class=style::list_region>
-                            {list_toolbar(
-                                view_selected,
-                                query,
-                                group_packages_by,
-                                group_files_by,
-                                sort_by,
-                                create_open,
-                            )}
+                            {list_toolbar(controls)}
                             // Neither card carries a title: the toggle immediately
                             // above names the view, and a card titled `Packages`
                             // over a Packages / Recent files switch says it twice
@@ -1220,14 +1296,7 @@ fn MainPageRegions(
                         // as in the arm above.
                         view! {
                             <div class=style::list_region>
-                                {list_toolbar(
-                                    view_selected,
-                                    query,
-                                    group_packages_by,
-                                    group_files_by,
-                                    sort_by,
-                                    create_open,
-                                )}
+                                {list_toolbar(controls)}
                                 <Show
                                     when=move || view_selected.get() == FILES_VIEW
                                     fallback=move || {
@@ -1746,9 +1815,18 @@ mod tests {
             let accounts = LocalResource::new(|| {
                 std::future::pending::<Result<MainPageAccountsData, String>>()
             });
+            // Pending too, so the strip is on its skeletons as the app's is
+            // before its reads answer, rather than on the failure a read with
+            // no Tauri host gives at once.
+            let watcher: WatcherRead = || Box::pin(std::future::pending());
             view! {
                 <leptos_router::components::Router>
-                    <MainPageRegions packages=packages accounts=accounts reload=reload />
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        fetch_watcher=Some(watcher)
+                    />
                 </leptos_router::components::Router>
             }
         })
@@ -3095,6 +3173,78 @@ mod tests {
             queue_text(&el).as_deref(),
             Some(before.as_str()),
             "the queue is untouched by the list's own toggle"
+        );
+    }
+
+    /// `MainPageSkeleton` is the page's own first paint, so `/` handing its
+    /// loading frame over to the page moves nothing: under the appbar, the same
+    /// column children in the same boxes as the page draws before its reads
+    /// answer.
+    ///
+    /// The strip's two card skeletons included. One exception, which takes no
+    /// box: the `<dialog>` is closed, so it is not laid out.
+    #[wasm_bindgen_test]
+    async fn the_skeleton_is_the_page_s_first_paint() {
+        use crate::test_support::shape;
+
+        fn column(children: &web_sys::HtmlCollection) -> Vec<String> {
+            (0..children.length())
+                .map(|i| children.item(i).unwrap())
+                .filter(|child| child.tag_name() != "DIALOG")
+                .map(|child| shape(&child))
+                .collect()
+        }
+
+        let skeleton = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageSkeleton actions=().into_any() />
+                </leptos_router::components::Router>
+            }
+        });
+        let page = mount_regions_pending();
+        leptos::task::tick().await;
+
+        let main = skeleton.query_selector("main").unwrap().unwrap();
+        assert_eq!(column(&main.children()), column(&page.children()));
+        assert_eq!(
+            page.query_selector_all(&format!(".{} [aria-busy=true]", style::strip))
+                .unwrap()
+                .length(),
+            2,
+            "and the strip is on both of its cards' skeletons, not on nothing"
+        );
+    }
+
+    /// The loading frame's toolbar is inert and the page's own fallback's is
+    /// not. The frame's controls sit over signals the page does not inherit, and
+    /// its *Create package* has no dialog to open, so anything done there would
+    /// be lost; the page's fallback is over the page's signals and dialog, where
+    /// a reader may start work before the rows arrive.
+    #[wasm_bindgen_test]
+    async fn only_the_loading_frame_s_toolbar_is_inert() {
+        let frame = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageSkeleton actions=().into_any() />
+                </leptos_router::components::Router>
+            }
+        });
+        let page = mount_regions_pending();
+        leptos::task::tick().await;
+
+        let search = |el: &web_sys::Element| {
+            el.query_selector("input[type=search], input")
+                .unwrap()
+                .expect("the toolbar's search")
+        };
+        assert!(
+            search(&frame).closest("[inert]").unwrap().is_some(),
+            "the frame's toolbar is out of reach"
+        );
+        assert!(
+            search(&page).closest("[inert]").unwrap().is_none(),
+            "the page's own fallback keeps it live"
         );
     }
 

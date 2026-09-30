@@ -29,6 +29,7 @@
 ### Fixed
 
 - On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
+- **New design preview**: opening the main page or a package page shows the page's outline while it loads, instead of a nearly blank window with a small spinner (<https://github.com/quiltdata/quilt-rs/pull/1028>)
 
 ### quilt-rs
 
