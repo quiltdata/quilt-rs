@@ -28,6 +28,7 @@
 ### Changed
 
 - `LocalDomain::set_home` and `DomainLineageIo::set_home` refuse a different home while any package is installed, and change nothing. The error is `LineageError::HomeInUse`, with the current home and the number of installed packages. Setting the home the domain already has writes nothing (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+- `set_home` and `overwrite_home` create the home folder if it is missing. A home whose folder can't be created is not stored (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### Fixed
 

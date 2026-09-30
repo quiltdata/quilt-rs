@@ -77,12 +77,8 @@ pub async fn model(
     Ok(Output { home })
 }
 
-/// Store `dir`, resolved against the current directory, as the home and
-/// create its folder.
-///
-/// The folder is created first, so a home that can't be created is never
-/// stored. When the change is then refused, the folders created here are
-/// removed again.
+/// Store `dir`, resolved against the current directory, as the home.
+/// quilt-rs creates its folder.
 pub async fn set(
     local_domain: &quilt_rs::LocalDomain,
     dir: &Path,
@@ -90,28 +86,12 @@ pub async fn set(
     via: Via,
 ) -> Result<Home, Error> {
     let dir = resolve(dir, &std::env::current_dir()?)?;
-    let first_created = dir
-        .ancestors()
-        .filter(|a| !a.exists())
-        .last()
-        .map(Path::to_path_buf);
-    if let Err(err) = std::fs::create_dir_all(&dir) {
-        if let Some(first_created) = &first_created {
-            remove_created(&dir, first_created);
-        }
-        return Err(err.into());
-    }
     let result = if overwrite {
         local_domain.overwrite_home(&dir).await
     } else {
         local_domain.set_home(&dir).await
     };
-    if result.is_err()
-        && let Some(first_created) = &first_created
-    {
-        remove_created(&dir, first_created);
-    }
-    let home = result.map_err(|err| match err {
+    result.map_err(|err| match err {
         err @ quilt_rs::Error::Lineage(quilt_rs::LineageError::HomeInUse { .. }) => {
             Error::HomeInUse {
                 reason: err.to_string(),
@@ -122,23 +102,7 @@ pub async fn set(
             }
         }
         err => Error::from(err),
-    })?;
-    Ok(home)
-}
-
-/// Remove `dir` and its parents up to `first_created`, the folders `set` made.
-/// `remove_dir` only removes an empty folder, so anything put there since stays.
-fn remove_created(dir: &Path, first_created: &Path) {
-    for folder in dir.ancestors() {
-        // A creation that failed partway never made the deepest folders.
-        let gone = match std::fs::remove_dir(folder) {
-            Ok(()) => true,
-            Err(_) => !folder.exists(),
-        };
-        if !gone || folder == first_created {
-            break;
-        }
-    }
+    })
 }
 
 /// `dir` as an absolute path, a relative one taken against `base`, with `.`
@@ -391,27 +355,6 @@ mod tests {
         .await?;
 
         assert!(!stderr.is_empty(), "the failure is reported");
-        assert_eq!(stored_home(temp_dir.path()).await?, temp_dir.path());
-        Ok(())
-    }
-
-    /// A creation that fails partway removes the folders it did create. The
-    /// last name is longer than any filesystem allows, so `new/` is made
-    /// before creating the leaf fails.
-    #[test(tokio::test)]
-    async fn a_creation_that_fails_partway_leaves_no_folder_behind() -> Result<(), Error> {
-        let (_m, temp_dir) = create_model_in_temp_dir().await?;
-        let parent = tempfile::tempdir()?;
-        let new_home = parent.path().join("new").join("x".repeat(300));
-
-        let (_, stderr) = run(
-            home_args(temp_dir.path(), Some(new_home), false),
-            Format::Text,
-        )
-        .await?;
-
-        assert!(!stderr.is_empty(), "the failure is reported");
-        assert!(!parent.path().join("new").exists(), "nothing is left");
         assert_eq!(stored_home(temp_dir.path()).await?, temp_dir.path());
         Ok(())
     }

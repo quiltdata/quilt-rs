@@ -83,9 +83,32 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
 }
 
 fn get_default_home_dir() -> Result<PathBuf, Error> {
-    dirs::home_dir()
+    default_home_dir_under(user_home_dir())
+}
+
+fn default_home_dir_under(user_home: Option<PathBuf>) -> Result<PathBuf, Error> {
+    user_home
         .map(|user_home| user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME))
         .ok_or(Error::Home)
+}
+
+#[cfg(not(test))]
+fn user_home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
+/// A temporary folder stands in for the user's home under test: setting the
+/// home creates its folder, and a test must not create the real `~/QuiltSync`.
+#[cfg(test)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the real lookup it stands in for"
+)]
+fn user_home_dir() -> Option<PathBuf> {
+    static USER_HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let user_home = USER_HOME
+        .get_or_init(|| tempfile::tempdir().expect("a temporary folder for the user home"));
+    Some(user_home.path().to_path_buf())
 }
 
 /// Make sure the domain has a home before a command runs.
@@ -917,13 +940,20 @@ mod tests {
     }
 
     #[test]
-    fn test_get_default_home_dir() -> Result<(), Error> {
-        let user_home = dirs::home_dir().ok_or(Error::Home)?;
+    fn default_home_dir_is_quiltsync_under_the_user_home() {
         assert_eq!(
-            get_default_home_dir()?,
-            user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME)
+            default_home_dir_under(Some(PathBuf::from("/home/ann"))).unwrap(),
+            PathBuf::from("/home/ann/QuiltSync")
         );
-        Ok(())
+        assert!(matches!(default_home_dir_under(None), Err(Error::Home)));
+    }
+
+    /// `set_home` creates the folder, so a test that sets the default home
+    /// must not reach the real one.
+    #[test]
+    fn tests_never_use_the_real_default_home() {
+        let real = dirs::home_dir().map(|home| home.join(quilt_rs::DEFAULT_HOME_DIR_NAME));
+        assert_ne!(get_default_home_dir().ok(), real);
     }
 
     #[test(tokio::test)]

@@ -183,9 +183,12 @@ impl DomainLineageIo {
         Ok(updated)
     }
 
-    /// Point the domain at `home`.
+    /// Point the domain at `home`, creating its folder.
     ///
-    /// Writes nothing when `home` is already the stored one. Refuses with
+    /// The folder is created before `data.json` is written, so a home that
+    /// can't be created is never stored. When `home` is already the stored
+    /// one, only a missing folder is created and `data.json` is not rewritten.
+    /// Refuses with
     /// [`LineageError::HomeInUse`] and changes nothing when `home` differs and
     /// any package is installed, because their working folders live under the
     /// current home. [`DomainLineageIo::overwrite_home`] skips that check.
@@ -226,6 +229,7 @@ impl DomainLineageIo {
                 };
                 let home = Home::from(home);
                 if lineage.home == home {
+                    storage.create_dir_all(home.as_ref()).await?;
                     return Ok(lineage);
                 }
                 if !overwrite && !home_missing && !lineage.packages.is_empty() {
@@ -234,10 +238,12 @@ impl DomainLineageIo {
                         installed: lineage.packages.len(),
                     }));
                 }
+                storage.create_dir_all(home.as_ref()).await?;
                 lineage.home = home;
                 self.write(storage, lineage).await
             }
             Err(_) if !storage.exists(&self.path).await => {
+                storage.create_dir_all(home.as_ref()).await?;
                 self.write(storage, DomainLineage::new(home)).await
             }
             Err(e) => Err(e),
@@ -526,6 +532,10 @@ mod tests {
 
         assert_eq!(lineage, DomainLineage::new("/home/directory"));
         assert_eq!(storage.read_bytes(&file_path).await?, stored.to_vec());
+        assert!(
+            storage.exists("/home/directory").await,
+            "a missing folder is still created"
+        );
         Ok(())
     }
 
@@ -561,6 +571,7 @@ mod tests {
             storage.read_bytes(&file_path).await?,
             ONE_INSTALLED.to_vec()
         );
+        assert!(!storage.exists("/new/home").await, "no folder is created");
         Ok(())
     }
 
@@ -594,6 +605,76 @@ mod tests {
         let lineage = io.read(&storage).await?;
         assert_eq!(lineage.home, Home::from("/new/home"));
         assert_eq!(lineage.namespaces(), vec![Namespace::from(("foo", "bar"))]);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn set_home_creates_the_home_folder() -> Res {
+        let storage = MockStorage::default();
+
+        DomainLineageIo::new(PathBuf::from("foo"))
+            .set_home(&storage, "/new/home")
+            .await?;
+
+        assert!(storage.exists("/new/home").await);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn changing_the_home_creates_the_new_folder() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
+            .await?;
+
+        DomainLineageIo::new(file_path)
+            .overwrite_home(&storage, "/new/home")
+            .await?;
+
+        assert!(storage.exists("/new/home").await);
+        Ok(())
+    }
+
+    /// A file where the home's parent should be makes the folder impossible
+    /// to create.
+    #[test(tokio::test)]
+    async fn a_home_that_cannot_be_created_is_not_stored() -> Res {
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream("/blocked", ByteStream::from_static(b"a file"))
+            .await?;
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
+            .await?;
+
+        DomainLineageIo::new(file_path.clone())
+            .overwrite_home(&storage, "/blocked/home")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            storage.read_bytes(&file_path).await?,
+            ONE_INSTALLED.to_vec()
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_first_home_that_cannot_be_created_writes_no_record() -> Res {
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream("/blocked", ByteStream::from_static(b"a file"))
+            .await?;
+        let file_path = PathBuf::from("foo");
+
+        DomainLineageIo::new(file_path.clone())
+            .set_home(&storage, "/blocked/home")
+            .await
+            .unwrap_err();
+
+        assert!(!storage.exists(&file_path).await);
         Ok(())
     }
 

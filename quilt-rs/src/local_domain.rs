@@ -76,6 +76,8 @@ impl LocalDomain {
         Ok(lineage.home)
     }
 
+    /// See [`lineage::DomainLineageIo::set_home`]: creates the home folder,
+    /// and refuses a new home while packages are installed.
     pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
         info!("Setting home directory to {}", dir.as_ref().display());
         Ok(self.lineage.set_home(&self.storage, dir).await?.home)
