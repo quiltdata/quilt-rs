@@ -25,6 +25,7 @@
 
 - `InstalledPackage::lock` and `InstalledPackage::try_lock` take the package's lock, `.quilt/locks/<owner>/<name>.lock`, and return a `LockedPackage` whose writers run under it without locking again. `lock` waits for another writer, in this process or another; `try_lock` returns `None` while one holds it (<https://github.com/quiltdata/quilt-rs/pull/1022>)
 - `on_package_lock_wait` sets a hook that runs once each time a writer has to wait for its package's lock (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- `LocalDomain::gc` deletes the objects no installed manifest uses, everything in the `packages/` manifest cache and everything in `staging/`, and returns a `GcReport` of the counts and bytes freed, whose `Display` is the sentence to show a user. It try-locks every package first; if one is busy it deletes nothing and returns the new `Error::PackageBusy` naming it (<https://github.com/quiltdata/quilt-rs/pull/TBD>)
 - `LocalDomain::overwrite_home` and `DomainLineageIo::overwrite_home` set the home even while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### Changed

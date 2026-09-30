@@ -10,6 +10,7 @@ use crate::cli::Error;
 use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::create;
+use crate::cli::gc;
 use crate::cli::history;
 use crate::cli::home;
 use crate::cli::install;
@@ -42,6 +43,10 @@ pub trait Commands {
     async fn commit(&self, args: commit::Input) -> Result<commit::Output, Error> {
         let local_domain = self.get_local_domain();
         commit::model(local_domain, args).await
+    }
+
+    async fn gc(&self) -> Result<gc::Output, Error> {
+        gc::model(self.get_local_domain()).await
     }
 
     async fn home(&self, args: home::Input) -> Result<home::Output, Error> {

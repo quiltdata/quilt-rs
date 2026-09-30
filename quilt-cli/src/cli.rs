@@ -16,6 +16,7 @@ use quilt_uri::Namespace;
 mod browse;
 mod commit;
 mod create;
+mod gc;
 mod history;
 mod home;
 mod install;
@@ -254,6 +255,13 @@ enum Commands {
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
+    /// Delete what the local store holds for nothing, and print what was freed
+    ///
+    /// Deletes the objects no installed package uses, such as those an
+    /// uninstall left, the cache of remote manifests, and files left mid-write
+    /// by an interrupted command. Stops without deleting anything if another
+    /// quilt process, such as `QuiltSync`, is changing a package.
+    Gc,
     /// Print the home, or set it with `quilt home <dir>`
     ///
     /// The home is the folder where installed packages keep their files, one
@@ -476,6 +484,10 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
         }
+        Commands::Gc => {
+            log::debug!("Collecting garbage");
+            Ok(gc::command(m).await)
+        }
         Commands::Home { dir, overwrite } => {
             let args = home::Input { dir, overwrite };
 
@@ -602,6 +614,9 @@ pub enum Error {
     #[error("--home and \"quilt home <dir>\" both set the home; pass only \"quilt home <dir>\"")]
     HomeTwice,
 
+    #[error("Cannot free space: {0} is busy in another quilt process. Try again once it finishes")]
+    PackageBusy(Namespace),
+
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 
@@ -669,6 +684,7 @@ impl Error {
             Error::Home => "home",
             Error::HomeInUse { .. } => "home_in_use",
             Error::HomeTwice => "home_twice",
+            Error::PackageBusy(_) => "package_busy",
             Error::Quilt(err) => match err {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",

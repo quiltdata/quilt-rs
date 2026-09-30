@@ -47,6 +47,7 @@ cargo install quilt-cli
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, newest first    |
 | `uninstall` | Remove a package from local tracking             |
+| `gc`        | Delete stored files no installed package uses    |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
 
