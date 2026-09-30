@@ -61,6 +61,9 @@ pub struct EntryCounts {
     pub changed: usize,
     pub not_downloaded: usize,
     pub ignored: usize,
+    /// Also inside `changed`; on its own because the v2 pane's all-downloaded
+    /// caption must know about a deleted file past the list cap.
+    pub deleted: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -1755,7 +1758,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::from_str::<FilesData>(
-                r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0},"total":0,"truncated":false}"#
+                r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0,"deleted":0},"total":0,"truncated":false}"#
             )
             .unwrap(),
             FilesData::Listed(EntryList {
@@ -1771,7 +1774,7 @@ mod tests {
     #[test]
     fn entry_counts_wire_form_is_verbatim() {
         let counts = serde_json::from_str::<EntryCounts>(
-            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10}"#,
+            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10,"deleted":200}"#,
         )
         .unwrap();
 
@@ -1782,6 +1785,7 @@ mod tests {
                 changed: 700,
                 not_downloaded: 700,
                 ignored: 10,
+                deleted: 200,
             }
         );
     }

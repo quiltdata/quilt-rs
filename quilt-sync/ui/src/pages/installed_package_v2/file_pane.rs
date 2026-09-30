@@ -47,8 +47,8 @@
 //!   left to download reads `All 1,090 files downloaded` where select-all
 //!   would be, under either scope, with the Success tone's tick in the box's
 //!   hole: the column's summary, the same tick as the main page's `Everything
-//!   is Latest`. A deleted file is not on disk either, so while one is loaded
-//!   the slot shows what it would without the caption.
+//!   is Latest`. A deleted file is not on disk either, so while the package
+//!   has one the slot shows what it would without the caption.
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
 //! - **Search narrows what is shown.** A case-insensitive substring of the
@@ -946,7 +946,7 @@ fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelec
 /// A package with nothing left to download says so here, `All 1,090 files
 /// downloaded`, under either Keeping scope and whatever the view shows: it is
 /// a fact about the package, counted as the `All` facet counts, and it waits
-/// while a loaded file is deleted. Otherwise it is select-all, absent under
+/// while a file is deleted. Otherwise it is select-all, absent under
 /// whole-package scope and while nothing on screen can be ticked.
 fn left_slot(
     picking: Picking,
@@ -954,7 +954,6 @@ fn left_slot(
     narrowed: Signal<bool>,
     headed: Signal<bool>,
     counts: &EntryCounts,
-    any_deleted: bool,
 ) -> AnyView {
     let gutter = move || {
         format!(
@@ -965,10 +964,9 @@ fn left_slot(
     // The package's counts, not the view's, so a facet, a search or the cap
     // changes nothing; and not a package with nothing in `All` to speak of.
     // Nor while a file is deleted: the caption says every file is on disk,
-    // and a deleted one is not, whatever the download count says. A deleted
-    // row past the cap is not loaded and cannot be seen, the same caveat the
-    // cap notice states.
-    if counts.not_downloaded == 0 && counts.all > 0 && !any_deleted {
+    // and a deleted one is not, whatever the download count says. The
+    // package's deleted count too, so one past the cap holds it back as well.
+    if counts.not_downloaded == 0 && counts.all > 0 && counts.deleted == 0 {
         let files = counts.all;
         // The box's hole, as a row with no box keeps it, so the words start
         // where the rows' names do. In it, the column's summary: a box when
@@ -1181,9 +1179,6 @@ fn ready(
     let loaded_count = entries.len();
     let rows: Vec<Row> = entries.into_iter().map(Row::from).collect();
     let loaded = StoredValue::new(offered(&rows));
-    // Whether a loaded file is gone from disk, which holds back the
-    // all-downloaded caption (`left_slot`).
-    let any_deleted = rows.iter().any(|r| r.place == Place::Deleted);
     let rows = StoredValue::new(rows);
     let drawing = Drawing {
         on_open,
@@ -1273,7 +1268,7 @@ fn ready(
             <div class=style::listing>
                 {toolbar(
                     grouping,
-                    left_slot(picking, shown_offered, narrowed, headed, &counts, any_deleted),
+                    left_slot(picking, shown_offered, narrowed, headed, &counts),
                     Some(facets(&counts, facet).into_any()),
                 )}
                 <Card flush=true label="Files" fill=true>
@@ -1855,7 +1850,11 @@ mod pane_tests {
             }
             counts.all += 1;
             match e.status.as_str() {
-                "added" | "modified" | "deleted" => counts.changed += 1,
+                "added" | "modified" => counts.changed += 1,
+                "deleted" => {
+                    counts.changed += 1;
+                    counts.deleted += 1;
+                }
                 "remote" => counts.not_downloaded += 1,
                 _ => {}
             }
@@ -2073,6 +2072,7 @@ mod pane_tests {
                     changed: 4,
                     not_downloaded: 0,
                     ignored: 0,
+                    deleted: 0,
                 },
                 ..list(vec![entry("a.csv", "pristine")], 1_500, true)
             }),
@@ -2092,6 +2092,7 @@ mod pane_tests {
                 changed: 2,
                 not_downloaded: 17,
                 ignored: 3,
+                deleted: 0,
             },
             ..list(vec![entry("a.csv", "pristine")], 4_312, true)
         }));
@@ -2944,8 +2945,8 @@ mod pane_tests {
         }
     }
 
-    /// A deleted file is not on disk, so while one is loaded the caption
-    /// waits, under either scope, and the slot shows what it would without
+    /// A deleted file is not on disk, so while the package has one the
+    /// caption waits, under either scope, and the slot shows what it would without
     /// it; the deleted file's folder has no check. Once the file is gone from
     /// the list, the caption returns.
     #[wasm_bindgen_test]
@@ -2989,6 +2990,32 @@ mod pane_tests {
                 el.inner_html()
             );
         }
+    }
+
+    /// The deleted count is the package's, so a deleted file past the cap,
+    /// not among the loaded rows, holds the caption back all the same.
+    #[wasm_bindgen_test]
+    fn a_deleted_file_past_the_cap_holds_the_caption_back() {
+        let entries = downloaded_package();
+        let loaded = entries.len();
+        let mut listing = list(entries, loaded + 1, true);
+        listing.counts.all += 1;
+        listing.counts.changed += 1;
+        listing.counts.deleted += 1;
+        let el = listed_pane(RwSignal::new(Listing::Ready(listing)), Picking::default());
+        assert!(
+            !text(&el).contains("files downloaded"),
+            "markup was {}",
+            el.inner_html()
+        );
+        let slot = el
+            .query_selector(&format!(".{}", style::selectall))
+            .unwrap();
+        assert!(
+            slot.is_none_or(|s| s.query_selector("svg").unwrap().is_none()),
+            "no tick in the slot; markup was {}",
+            el.inner_html()
+        );
     }
 
     #[wasm_bindgen_test]
@@ -3843,6 +3870,7 @@ mod marks_tests {
                 changed: 1,
                 not_downloaded: 0,
                 ignored: 1,
+                deleted: 1,
             },
             total: 2,
             truncated: false,

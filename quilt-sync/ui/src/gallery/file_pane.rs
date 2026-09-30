@@ -1249,7 +1249,11 @@ fn entry_list(files: Vec<File>) -> crate::commands::EntryList {
         }
         counts.all += 1;
         match e.status.as_str() {
-            "added" | "modified" | "deleted" => counts.changed += 1,
+            "added" | "modified" => counts.changed += 1,
+            "deleted" => {
+                counts.changed += 1;
+                counts.deleted += 1;
+            }
             "remote" => counts.not_downloaded += 1,
             _ => {}
         }
