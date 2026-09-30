@@ -59,8 +59,10 @@
   max-width: 100%;
 }
 
-// The surface drawn flat, with the popover's border and shadow.
+// The surface drawn flat, with the popover's border, padding and shadow.
 .g-ork-flat {
+  box-sizing: border-box;
+  padding: var(--q-space-3);
   width: 360px;
   max-width: 100%;
   border: 1px solid var(--q-borderColor-default);
