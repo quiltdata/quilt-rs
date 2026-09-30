@@ -152,7 +152,8 @@ fn ByDesign(
 /// The page the root marker predicts. The marker is the answer this read gave
 /// last time — `index.html` restores it before the first paint, and every
 /// `ByDesign` sets it from its own answer — so it is wrong only when the
-/// preference changed somewhere this app did not see. For a v2 reader that makes
+/// preference changed somewhere this app did not see, or when this read fails
+/// and the route falls back to v1 under a v2 marker. For a v2 reader that makes
 /// the frame `skeleton`, the v2 page's own first paint: the appbar, then the page
 /// in the shape it will take. The page then draws the same skeleton and fills it,
 /// so the frame is the first step of the page's own loading and nothing moves at
