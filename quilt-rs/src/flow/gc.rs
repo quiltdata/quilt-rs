@@ -329,9 +329,9 @@ mod tests {
     }
 
     fn object_names(paths: &DomainPaths) -> Res<BTreeSet<String>> {
-        Ok(std::fs::read_dir(paths.objects_dir())?
+        std::fs::read_dir(paths.objects_dir())?
             .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
-            .collect::<Res<_>>()?)
+            .collect()
     }
 
     /// Uninstalling a package orphans its own objects; gc deletes those and
