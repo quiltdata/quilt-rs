@@ -54,9 +54,9 @@ pub trait Commands {
         install::model(local_domain, args).await
     }
 
-    async fn list(&self) -> Result<list::Output, Error> {
+    async fn list(&self, args: list::Input) -> Result<list::Output, Error> {
         let local_domain = self.get_local_domain();
-        list::model(local_domain).await
+        list::model(local_domain, args).await
     }
 
     async fn log(&self, args: history::Input) -> Result<history::Output, Error> {
