@@ -1432,6 +1432,9 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="live, over the cap — 1,089 files, the first 1,000 by path loaded">
                 <div style=PANE>{live(entry_list(over_the_cap()))}</div>
             </Cell>
+            <Cell full=true label="the page's pane, every file downloaded — the caption and its tick, as the page draws them">
+                <div style=PANE>{live(entry_list(downloaded_package()))}</div>
+            </Cell>
         </Scene>
     }
 }
