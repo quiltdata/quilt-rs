@@ -1,1 +1,110 @@
 // Styles for the gallery's old_revisions_keep_n.rs exploration only.
+
+// The Settings card, at a settings column's width.
+.g-ork-settings { width: min(560px, 100%); }
+
+// The count under the toggle, indented to the toggle's label (checkbox 17px
+// plus the row's gap) so it reads as governed by it. A real build would give
+// `ToggleRow` a body slot instead.
+.g-ork-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  padding: 0 var(--q-space-3) var(--q-space-3) calc(var(--q-space-3) + 17px + var(--q-space-2));
+}
+
+// The last-run line: a fact, quiet, with room for an inline spinner.
+.g-ork-note {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  margin: 0;
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+}
+
+.g-ork-dialog-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: var(--q-text-lead);
+}
+
+// The page arrangement from context_pane.rs: file list left, pane right.
+.g-ork-page {
+  display: flex;
+  gap: var(--q-space-3);
+  width: 992px;
+  max-width: 100%;
+}
+
+.g-ork-filelist {
+  flex: 1;
+  min-width: 0;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--q-borderColor-muted);
+  border-radius: var(--q-radius);
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+// The popover's body. 360px is the surface's max-width.
+.g-ork-surface {
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  max-width: 100%;
+}
+
+// The surface drawn flat, with the popover's border and shadow.
+.g-ork-flat {
+  width: 360px;
+  max-width: 100%;
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  box-shadow: var(--q-shadow-overlay);
+}
+
+// A RevisionRow with a mark at its end — the trailing slot the kit lacks.
+.g-ork-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.g-ork-row__rev { flex: 1; min-width: 0; }
+
+// A row the next run will take: muted as a whole, so the column splits into
+// "stays" and "goes" at a glance. Not struck through — nothing has gone yet.
+.g-ork-row--going .g-ork-row__rev { opacity: 0.55; }
+
+.g-ork-mark {
+  flex: none;
+  margin-top: 2px;
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+  white-space: nowrap;
+}
+
+.g-ork-mark--going { font-style: italic; }
+
+// The override, ruled off from the rows as a footer.
+.g-ork-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  padding: var(--q-space-3);
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+.g-ork-footnote {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
