@@ -1328,8 +1328,9 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
     here carries a muted check in the box column, in every scope, so the column fills up as \
     files land, and a folder whose files are all here carries it on its heading. Under \
     whole-package Keeping every file is downloaded, so the slot select-all leaves reads \
-    `All 53 files downloaded` behind the Success tone's tick. The last two cells are the \
-    page's own pane over this fixture, the second grown past the cap.";
+    `All 53 files downloaded` behind the Success tone's tick. The last three cells are the \
+    page's own pane: over this fixture, over it grown past the cap, and with every file \
+    downloaded.";
 
 /// The region itself, for the whole-page scene.
 ///
