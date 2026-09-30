@@ -19,22 +19,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.5-dev]
+## [v0.22.5] - 2026-09-30
 
 ### Changed
 
-- **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (<https://github.com/quiltdata/quilt-rs/pull/1020>)
-- **New design preview**: on the package page, downloaded files and fully downloaded folders show a small check in the checkbox column, and when every file is downloaded the caption above the file list carries a green check (<https://github.com/quiltdata/quilt-rs/pull/1026>)
+- **New design preview**: the package page shows which files are downloaded. Downloaded files and fully downloaded folders get a check, and when every file is downloaded the caption above the file list says so, for example "All 1,090 files downloaded" (<https://github.com/quiltdata/quilt-rs/pull/1020>, <https://github.com/quiltdata/quilt-rs/pull/1026>)
+- **New design preview**: the main page and the package page show their outline while they load, instead of a nearly blank window (<https://github.com/quiltdata/quilt-rs/pull/1028>)
 
 ### Fixed
 
-- Two changes to one package no longer drop each other's work, whatever makes them: a download, **Pull**, **Commit**, background updates, or the `quilt` CLI in a terminal. An action on a package that is busy waits behind its spinner, and background updates skip the package until its next round. Other packages are never held up (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- Changes to one package no longer overwrite each other when a download, **Pull**, **Commit**, background updates or the `quilt` CLI run at once. A busy package waits; other packages are not held up (<https://github.com/quiltdata/quilt-rs/pull/1022>)
 - On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
-- **New design preview**: opening the main page or a package page shows the page's outline while it loads, instead of a nearly blank window with a small spinner (<https://github.com/quiltdata/quilt-rs/pull/1028>)
 
 ### quilt-rs
 
-- Updated [from v0.40.0 to v0.41.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.40.0 to v0.41.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...quilt-rs/v0.41.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.4] - 2026-09-28
 
