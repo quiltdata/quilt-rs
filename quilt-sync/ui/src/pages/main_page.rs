@@ -583,8 +583,8 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
 /// `CreatePackageDialog` mounts outside the `Transition`, so one created there
 /// would close a dialog the reader is mid-typing into.
 ///
-/// One constructor, so [`MainPageSkeleton`]'s throwaway set opens on exactly
-/// the values the page does: a toolbar that drew `Group: Bucket` and then
+/// One constructor, so [`MainPageSkeleton`]'s inert set opens on exactly the
+/// values the page does: a toolbar that drew `Group: Bucket` and then
 /// `Group: None` would move under the cursor at the handover.
 #[derive(Clone, Copy)]
 struct ListControls {
@@ -612,9 +612,11 @@ impl ListControls {
 /// The queue and the list before the package rows are read: the queue/list
 /// boundary's fallback, and the same regions in [`MainPageSkeleton`].
 ///
-/// The toolbar is passed in because it is live chrome, bound to whichever
-/// signals its caller holds.
-fn regions_skeleton(toolbar: AnyView) -> AnyView {
+/// The toolbar is passed in because it is chrome bound to whichever signals its
+/// caller holds. `inert` takes the list region out of reach of pointer and
+/// keyboard without changing a box, for a caller whose controls lead nowhere —
+/// see [`MainPageSkeleton`].
+fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
     view! {
         // The queue's line, held open. Without it the list starts where the
         // queue will be and drops when the queue arrives — and the region always
@@ -626,7 +628,7 @@ fn regions_skeleton(toolbar: AnyView) -> AnyView {
         // screen with the appbar and the strip, and is never itself a skeleton.
         // The skeletons below it are the packages view's, because that is the
         // view the page opens on (R4).
-        <div class=style::list_region>
+        <div class=style::list_region inert=inert>
             {toolbar}
             <Card label="Packages" busy=true>
                 <PackageRowSkeleton />
@@ -648,9 +650,13 @@ fn regions_skeleton(toolbar: AnyView) -> AnyView {
 /// toolbar land on the pixels they already hold.
 ///
 /// The strip's two cards are their own skeletons, as the page's cards draw
-/// them until their reads answer. The toolbar is live, over signals of its
-/// own that the page does not inherit — the frame lasts one settings read, and
-/// no control in it can reach anything the page will keep.
+/// them until their reads answer. The toolbar is drawn, for its place, and
+/// inert: its signals are the frame's own and the page builds fresh ones, so a
+/// search typed or a view picked during the wait would vanish at the handover,
+/// and *Create package* would open nothing — its dialog belongs to the page.
+/// Inert rather than disabled, which would grey it and so change how the frame
+/// looks against the page that replaces it. The page's own fallback leaves the
+/// same toolbar live, over the page's signals and beside its dialog.
 ///
 /// `actions` is the appbar's, passed in because the app's Settings button
 /// navigates and the gallery, which draws this too, has no router.
@@ -662,7 +668,7 @@ pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
                 {autosync::autosync_skeleton()}
                 {accounts::accounts_skeleton()}
             </div>
-            {regions_skeleton(list_toolbar(ListControls::new()))}
+            {regions_skeleton(list_toolbar(ListControls::new()), true)}
         </PageLayout>
     }
 }
@@ -1008,7 +1014,7 @@ fn MainPageRegions(
         // across a resolve with a `Show` or a `StoredValue`, would reuse the
         // `QueueRegion` instance and with it the expander signals a refetch is
         // supposed to reset (R6).
-        <Transition fallback=move || regions_skeleton(list_toolbar(controls))>
+        <Transition fallback=move || regions_skeleton(list_toolbar(controls), false)>
             {move || Suspend::new(async move {
                 match packages.await {
                     Ok(data) => {
@@ -3207,6 +3213,38 @@ mod tests {
                 .length(),
             2,
             "and the strip is on both of its cards' skeletons, not on nothing"
+        );
+    }
+
+    /// The loading frame's toolbar is inert and the page's own fallback's is
+    /// not. The frame's controls sit over signals the page does not inherit, and
+    /// its *Create package* has no dialog to open, so anything done there would
+    /// be lost; the page's fallback is over the page's signals and dialog, where
+    /// a reader may start work before the rows arrive.
+    #[wasm_bindgen_test]
+    async fn only_the_loading_frame_s_toolbar_is_inert() {
+        let frame = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageSkeleton actions=().into_any() />
+                </leptos_router::components::Router>
+            }
+        });
+        let page = mount_regions_pending();
+        leptos::task::tick().await;
+
+        let search = |el: &web_sys::Element| {
+            el.query_selector("input[type=search], input")
+                .unwrap()
+                .expect("the toolbar's search")
+        };
+        assert!(
+            search(&frame).closest("[inert]").unwrap().is_some(),
+            "the frame's toolbar is out of reach"
+        );
+        assert!(
+            search(&page).closest("[inert]").unwrap().is_none(),
+            "the page's own fallback keeps it live"
         );
     }
 

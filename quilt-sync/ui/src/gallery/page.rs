@@ -162,8 +162,9 @@ pub fn LoadingScene() -> impl IntoView {
                   root marker predicts this one, so the frame is this page's first paint \
                   rather than a spinner of its own. The appbar with Refresh spinning, the \
                   strip's two cards on their toggle and host skeletons, the zero line held \
-                  open, the live toolbar, and three package rows. MainPageSkeleton is drawn here and by main.rs's \
-                  frame, and its regions are the page's own loading boundary, so neither \
+                  open, the toolbar — inert, since its controls lead nowhere until the \
+                  page takes over — and three package rows. MainPageSkeleton is drawn \
+                  here and by main.rs's frame, and its regions are the page's own loading boundary, so neither \
                   handover — frame to page, page to rows — moves anything. A v1 reader \
                   gets v1's own spinner instead, whose stylesheet this gallery does not \
                   load."

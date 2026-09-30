@@ -195,7 +195,12 @@ fn design_loading(label: &'static str, skeleton: fn() -> AnyView) -> AnyView {
 
 /// The appbar's controls in a loading frame: Refresh spinning, as the page
 /// draws it while its first read is out, so the bar does not change at the
-/// handover. Pressing it does nothing — there is no page yet to refresh.
+/// handover. A spinning Button is disabled, so it takes no press.
+///
+/// Settings stays live, unlike the frame's list toolbar. It navigates to a page
+/// of its own and depends on nothing the frame holds, so a reader who presses
+/// it during the wait gets exactly what they asked for; there is nothing to
+/// lose.
 fn loading_actions() -> AnyView {
     components::appbar::appbar_actions(|| (), Signal::stored(true))
 }
