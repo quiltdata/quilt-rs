@@ -58,6 +58,23 @@
   flex: 0 0 17px;
 }
 
+/* The hole with the rows' check in it (`have_mark`): every row under the
+ * heading is here. Drawn exactly as a row's, muted, because a summary of a
+ * subset is bookkeeping and the Success tone's tick is the package's alone. A
+ * statement and never a control — no hit target of its own. */
+.nobox.mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--q-fgColor-muted);
+  pointer-events: none;
+}
+
+.mark svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* Monospace, because it is a path fragment and the rows under it are paths too.
  * If the rows ever stop being monospace, this follows them — two typefaces
  * alternating down one list is worse than either. */

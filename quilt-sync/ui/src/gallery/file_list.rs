@@ -29,6 +29,14 @@
 //! because `(root)` names a directory that does not exist. They share the
 //! column, which is only visible with a group beneath them.
 //!
+//! # A file that is here carries a check
+//!
+//! Every file that is here — resting or changed — holds `EntryRow`'s muted
+//! check in its box-shaped hole, and every file that is not holds a box. The
+//! rule is the row's own, so the column reads as what you have and fills up as
+//! files land; a list with nothing left to pick is all checks. A heading whose
+//! files are all here carries the same check, so `notes/` says so even closed.
+//!
 //! # Where select-all is, and is not
 //!
 //! The list carries one here because the gutter contract is three columns and
@@ -153,6 +161,7 @@ fn row(entry: &Entry, picks: RwSignal<Vec<bool>>, opened: RwSignal<String>) -> A
                     Callback::new(move |()| opened.set(name.to_string())),
                 )
                 actions=menu()
+                have_mark=true
             />
         }
         .into_any(),
@@ -166,6 +175,7 @@ fn row(entry: &Entry, picks: RwSignal<Vec<bool>>, opened: RwSignal<String>) -> A
                     Callback::new(move |()| opened.set(name.to_string())),
                 )
                 actions=menu()
+                have_mark=true
             />
         }
         .into_any(),
@@ -200,6 +210,9 @@ fn group(
     let open = RwSignal::new(true);
     let count = entries.len();
     let mine: Vec<usize> = entries.iter().filter_map(Entry::pick).collect();
+    let all_here = entries
+        .iter()
+        .all(|e| matches!(e, Entry::Here(..) | Entry::Changed(..)));
 
     let selection = (!mine.is_empty()).then(|| {
         let derived = mine.clone();
@@ -244,7 +257,12 @@ fn group(
         }
         .into_any(),
         None => view! {
-            <EntryGroup name=name count=Signal::derive(move || count) open=open>
+            <EntryGroup
+                name=name
+                count=Signal::derive(move || count)
+                open=open
+                have_mark=all_here
+            >
                 {children}
             </EntryGroup>
         }
@@ -324,7 +342,8 @@ const NOTE: &str = "Three checkbox columns on one x — select-all's, a group's 
                     its heading go indeterminate. `notes/` has no box, because every file \
                     there is already here. Click a row: one that is here opens, one that is \
                     not ticks. Collapse a group and inspect it — the rows leave the DOM. The \
-                    headings stick, at 29px against a 32px row.";
+                    headings stick, at 29px against a 32px row. A file that is here carries a \
+                    muted check where the box would be.";
 
 #[component]
 pub fn FileListStories() -> impl IntoView {

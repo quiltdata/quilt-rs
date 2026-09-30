@@ -85,7 +85,14 @@
  * computed: the Card's 1px border stands in for the list box's own edge, then a
  * row's `space-3` inset, the gutter spacer (`--q-entry-gutter`, set by the pane,
  * `0px` when the list has no heading) and a row's `space-2` gap before its box.
- * So the two boxes share one x with or without headings. */
+ * So the two boxes share one x with or without headings.
+ *
+ * The spacers below carry a `width` as well as their flex basis. WebKit sizes
+ * this slot's content from its children's own widths and ignores their bases,
+ * so an empty 16px spacer counted for nothing and the 17px hole for its 14px
+ * tick. The slot came out 19px short, the spacers then took their real width,
+ * and `All 1,190 files downloaded` broke in two with the line otherwise empty.
+ * With the widths stated the measure and the layout agree. */
 .selectall {
   display: flex;
   align-items: center;
@@ -95,12 +102,29 @@
 
 .gutter {
   flex: 0 0 var(--q-entry-gutter, 16px);
+  width: var(--q-entry-gutter, 16px);
 }
 
 /* The box's hole, as `EntryRow`'s `.nobox` keeps it: the caption's words start
- * in the rows' name column rather than where a box would be. */
-.nobox {
+ * in the rows' name column rather than where a box would be. It holds the
+ * Success tone's tick, the column's summary when every file is here, drawn as
+ * `ZeroLine` draws it: `fg` and not `onMuted` because there is no fill under
+ * it, and legal here because the caption does not hover. Centred in the hole as
+ * the rows' check is, and no hit target — a statement, not a control. */
+.done {
+  display: flex;
   flex: 0 0 17px;
+  width: 17px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.done svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-success);
 }
 
 /* `All 1,090 files downloaded`: a statement about the package, not a control,
