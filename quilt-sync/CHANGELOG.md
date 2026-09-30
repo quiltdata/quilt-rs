@@ -21,6 +21,10 @@
 
 ## [v0.22.5-dev]
 
+### Added
+
+- **Settings → General → Free up space** deletes the downloaded files no installed package uses any more, cached package listings and leftovers of interrupted downloads, and says how much it freed, for example "Freed 630.2 kB: 6 objects, 2 cached manifests". It stops without deleting anything while a package is busy (<https://github.com/quiltdata/quilt-rs/pull/TBD>)
+
 ### Changed
 
 - **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (<https://github.com/quiltdata/quilt-rs/pull/1020>)

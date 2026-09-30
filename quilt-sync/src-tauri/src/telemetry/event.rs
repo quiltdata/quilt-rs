@@ -170,7 +170,7 @@ pub enum Failure {
 
 /// Why an operation was refused, coarsely — never the error's contents.
 ///
-/// Nine categories over thirty-odd error variants, and the grain is chosen so
+/// Ten categories over thirty-odd error variants, and the grain is chosen so
 /// each one answers *who acts*: the user, their administrator, or nobody.
 /// Anything that cannot be placed stays a fault, deliberately: a misfiled refusal
 /// is noise in one report, a misfiled fault is a bug nobody sees.
@@ -199,6 +199,9 @@ pub enum RefusalKind {
     /// The network gave no verdict. Reporting these would fill the issue list with
     /// other people's tunnels — the same reasoning the delivery rule uses.
     Unreachable,
+    /// Another writer holds what the operation needs, so it stopped before
+    /// touching anything. The user's to resolve by waiting and trying again.
+    Busy,
 }
 
 impl From<&crate::error::Error> for Failure {
@@ -302,6 +305,8 @@ impl From<&crate::quilt::Error> for Failure {
             }
 
             E::Fs(_) | E::Io(_) if err.is_not_found() => Self::Refusal(RefusalKind::Missing),
+
+            E::PackageBusy(_) => Self::Refusal(RefusalKind::Busy),
 
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same
@@ -580,6 +585,16 @@ mod tests {
             Some(RefusalKind::Missing),
             "a missing path is the user's to resolve, not a crash"
         );
+    }
+
+    /// A sweep that stops because another process holds a package's lock
+    /// deleted nothing and did nothing wrong: waiting is the fix, and it is the
+    /// user's to make.
+    #[test]
+    fn a_busy_package_is_a_refusal() {
+        let err = Error::Quilt(quilt::Error::PackageBusy(("acme", "demo").into()));
+
+        assert_eq!(refusal(&err), Some(RefusalKind::Busy));
     }
 
     /// The property that makes the refusal series comparable: `action` is exactly

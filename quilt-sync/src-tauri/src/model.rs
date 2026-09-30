@@ -481,6 +481,13 @@ pub trait QuiltModel {
         Ok(quilt.uninstall_package(namespace).await?)
     }
 
+    async fn gc(&self) -> Result<quilt::flow::GcReport, Error> {
+        // See `package_create`: the sweep reads every installed manifest and
+        // deletes what none of them uses, and other commands must not wait.
+        let quilt = self.get_quilt().lock().await.clone();
+        Ok(quilt.gc().await?)
+    }
+
     async fn package_home(&self, namespace: &quilt_uri::Namespace) -> Result<PathBuf, Error> {
         let installed_package = self
             .get_installed_package(namespace)
@@ -916,6 +923,18 @@ mod domain_lock_tests {
 
             assert_domain_lock_is_free_while_awaiting(&model, model.refresh_roles(&host)).await;
             assert_domain_lock_is_free_while_awaiting(&model, model.readable_buckets(&host)).await;
+        });
+    }
+
+    /// A sweep reads every installed manifest and deletes what none of them
+    /// uses; the app must stay usable while it does.
+    #[test]
+    fn gc_releases_the_domain_lock_before_it_awaits() {
+        runtime_with_one_blocking_thread().block_on(async {
+            let temp = TempDir::new().expect("temp dir");
+            let model = Model::create(temp.path());
+
+            assert_domain_lock_is_free_while_awaiting(&model, model.gc()).await;
         });
     }
 }
