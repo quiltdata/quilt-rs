@@ -24,7 +24,7 @@
 ### Added
 
 - `quilt home` prints the home, the folder where installed packages keep their files, and `quilt home <dir>` sets it. A relative `<dir>` is taken against the current directory, and a missing folder is created. While any package is installed, a different home is refused, because the packages' files stay in the old folder; `quilt home <dir> --overwrite` changes it anyway. `quilt home --json` prints `{"home": "<path>"}`, and a refusal has the error kind `home_in_use` (<https://github.com/quiltdata/quilt-rs/pull/1025>)
-- `quilt gc` deletes what the local store holds for nothing: the stored files no installed package uses, such as those an uninstall left, the cache of remote manifests, and files left mid-write by an interrupted command. It prints what it freed, for example `Freed 630.2 kB: 6 objects, 2 cached manifests`, or `Nothing to free`; `quilt gc --json` prints the counts and bytes, `{"objects": 6, "cached_manifests": 2, "staging": 0, "bytes": 630200}`. While another quilt process is changing a package it deletes nothing and fails with the error kind `package_busy` (<https://github.com/quiltdata/quilt-rs/pull/TBD>)
+- `quilt gc` deletes what the local store holds for nothing: the stored files no installed package uses, such as those an uninstall left, the cache of remote manifests, and files left mid-write by an interrupted command. It prints what it freed, for example `Freed 630.2 kB: 6 objects, 2 cached manifests`, or `Nothing to free`; `quilt gc --json` prints the counts and bytes, `{"objects": 6, "cached_manifests": 2, "staging": 0, "bytes": 630200}`. While another quilt process is changing a package it deletes nothing and fails with the error kind `package_busy` (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 
 ### Changed
 
