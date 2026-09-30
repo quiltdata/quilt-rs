@@ -23,7 +23,7 @@
 
 ### Added
 
-- `quilt list --fetch` checks each package's remote now and counts its changed files, showing what QuiltSync's main page shows (`latest`, `not the latest`, `3 files changed`, …). Plain `quilt list` stays offline ([#TBD])
+- `quilt list --fetch` checks each package's remote now and counts its changed files, showing what QuiltSync's main page shows (`latest`, `not the latest`, `3 files changed`, …). Plain `quilt list` stays offline (<https://github.com/quiltdata/quilt-rs/pull/1032>)
 
 ### Changed
 
