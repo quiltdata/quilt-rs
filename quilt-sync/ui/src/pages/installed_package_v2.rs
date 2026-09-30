@@ -2359,6 +2359,47 @@ mod tests {
         assert_eq!(frame(&skeleton), frame(&page));
     }
 
+    /// The file pane's toolbar is the answered pane's, spot for spot: the
+    /// select-all line on the left, which an answered pane with files always
+    /// draws, and the view controls on the right. A skeleton without the first
+    /// sat a line short of the pane that replaced it once the toolbar stacked.
+    #[wasm_bindgen_test]
+    async fn the_skeleton_keeps_select_all_s_spot() {
+        use crate::components::appbar::appbar_actions;
+
+        // The classes of the toolbar's direct children, which name the spots.
+        fn spots(el: &web_sys::Element) -> Vec<String> {
+            let bar = el
+                .query_selector("section[aria-label=Files] > [class^=listing] > :first-child")
+                .unwrap()
+                .expect("the file pane's toolbar");
+            let children = bar.children();
+            (0..children.length())
+                .map(|i| {
+                    children
+                        .item(i)
+                        .unwrap()
+                        .get_attribute("class")
+                        .unwrap_or_default()
+                })
+                .collect()
+        }
+
+        let page = screen_at("/installed-package?namespace=team%2Fdataset", settled_read).await;
+        let answered = spots(&page);
+        let skeleton = mount(|| {
+            view! {
+                <Router>
+                    <PackagePageSkeleton actions=appbar_actions(|| (), Signal::stored(true)) />
+                </Router>
+            }
+        });
+        leptos::task::tick().await;
+
+        assert_eq!(answered.len(), 2, "select-all and the views: {answered:?}");
+        assert_eq!(spots(&skeleton), answered);
+    }
+
     fn search() -> String {
         web_sys::window().unwrap().location().search().unwrap()
     }

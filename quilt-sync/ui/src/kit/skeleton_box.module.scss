@@ -40,3 +40,14 @@
     opacity: 0.75;
   }
 }
+
+/* `SkeletonText`: a line box held open by a zero-width space, and the bar sitting in
+ * it rather than replacing it, so the slot is a line of the inherited type tall. */
+.text {
+  display: block;
+}
+
+.text > .root {
+  display: inline-block;
+  vertical-align: middle;
+}

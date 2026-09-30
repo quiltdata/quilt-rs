@@ -39,6 +39,7 @@ use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
+use crate::commands::MainPageWatcherData;
 use crate::components::appbar::appbar_actions;
 use crate::routes::package_page_href;
 use crate::util;
@@ -638,7 +639,7 @@ fn regions_skeleton(toolbar: AnyView) -> AnyView {
 }
 
 /// The whole main page before any of its reads have answered: the appbar, the
-/// strip's row, and [`regions_skeleton`].
+/// strip's two cards, and [`regions_skeleton`].
 ///
 /// What `/` draws while it reads which main page the reader has switched on,
 /// when the root marker says it will be this one — see `main.rs`'s
@@ -646,9 +647,8 @@ fn regions_skeleton(toolbar: AnyView) -> AnyView {
 /// the handover to [`MainPage`] moves nothing: the appbar, the zero line and the
 /// toolbar land on the pixels they already hold.
 ///
-/// The strip's row is there and empty, because that is how the page opens:
-/// both of its cards draw nothing until their reads answer, and the row still
-/// takes its place in the column's gap. The toolbar is live, over signals of its
+/// The strip's two cards are their own skeletons, as the page's cards draw
+/// them until their reads answer. The toolbar is live, over signals of its
 /// own that the page does not inherit — the frame lasts one settings read, and
 /// no control in it can reach anything the page will keep.
 ///
@@ -658,7 +658,10 @@ fn regions_skeleton(toolbar: AnyView) -> AnyView {
 pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
     view! {
         <PageLayout heading="QuiltSync" actions=actions>
-            <div class=style::strip></div>
+            <div class=style::strip>
+                {autosync::autosync_skeleton()}
+                {accounts::accounts_skeleton()}
+            </div>
             {regions_skeleton(list_toolbar(ListControls::new()))}
         </PageLayout>
     }
@@ -813,6 +816,11 @@ fn files_view(
     .into_any()
 }
 
+/// A read of the watcher's payload, for [`MainPageRegions`]' test seam.
+type WatcherRead = fn() -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<MainPageWatcherData, String>>>,
+>;
+
 /// The page's three regions, in the order they are read: the state strip, the
 /// attention queue, then the package list. §2's arrangement, and the reason the
 /// queue sits above the list — it is what you look at first.
@@ -893,6 +901,11 @@ fn MainPageRegions(
     /// the app runs.
     #[prop(optional_no_strip)]
     fetch_files: Option<Callback<(), Result<MainPageRecentFilesData, String>>>,
+    /// Stands in for `commands::get_main_page_watcher`, the same kind of seam:
+    /// with no Tauri host the real read fails at once, so a test that wants the
+    /// Autosync card still loading has to supply a read that has not answered.
+    #[prop(optional_no_strip)]
+    fetch_watcher: Option<WatcherRead>,
 ) -> impl IntoView {
     // In the component body, NOT inside the `Suspend` closure below. A refetch
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
@@ -901,8 +914,10 @@ fn MainPageRegions(
     // Held here rather than inside the Autosync card, for the reason the accounts
     // read is: the queue joins against this payload for a paused package's message.
     let watcher_reload = Trigger::new();
-    let watcher =
-        autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher);
+    let watcher = match fetch_watcher {
+        Some(read) => autosync::watcher_resource(watcher_reload, reload, read),
+        None => autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher),
+    };
     // A signal, NOT awaited beside `hosts` below. The watcher reloads on a deadline,
     // on the window coming back and after a toggle write; awaiting it inside that
     // `Suspend` would rebuild the queue on each, re-collapsing every expanded cause
@@ -963,7 +978,7 @@ fn MainPageRegions(
         // owns when it blanks.
         <div class=style::strip>
             <autosync::AutosyncCard reload=watcher_reload watcher=watcher />
-            <Transition fallback=|| ()>
+            <Transition fallback=accounts::accounts_skeleton>
                 {move || Suspend::new(async move {
                     match accounts.await {
                         Ok(data) => {
@@ -1794,9 +1809,18 @@ mod tests {
             let accounts = LocalResource::new(|| {
                 std::future::pending::<Result<MainPageAccountsData, String>>()
             });
+            // Pending too, so the strip is on its skeletons as the app's is
+            // before its reads answer, rather than on the failure a read with
+            // no Tauri host gives at once.
+            let watcher: WatcherRead = || Box::pin(std::future::pending());
             view! {
                 <leptos_router::components::Router>
-                    <MainPageRegions packages=packages accounts=accounts reload=reload />
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        fetch_watcher=Some(watcher)
+                    />
                 </leptos_router::components::Router>
             }
         })
@@ -3151,11 +3175,8 @@ mod tests {
     /// column children in the same boxes as the page draws before its reads
     /// answer.
     ///
-    /// Two exceptions, both of which take no box. The `<dialog>` is closed, so it
-    /// is not laid out, and the strip's row is compared as a row and not as its
-    /// cards: here the watcher read fails outright for want of a Tauri host and
-    /// its card draws the failure, where in the app both cards draw nothing
-    /// until they answer.
+    /// The strip's two card skeletons included. One exception, which takes no
+    /// box: the `<dialog>` is closed, so it is not laid out.
     #[wasm_bindgen_test]
     async fn the_skeleton_is_the_page_s_first_paint() {
         use crate::test_support::shape;
@@ -3164,14 +3185,7 @@ mod tests {
             (0..children.length())
                 .map(|i| children.item(i).unwrap())
                 .filter(|child| child.tag_name() != "DIALOG")
-                .map(|child| {
-                    let class = child.get_attribute("class").unwrap_or_default();
-                    if class.contains(style::strip) {
-                        format!("<div {class}>")
-                    } else {
-                        shape(&child)
-                    }
-                })
+                .map(|child| shape(&child))
                 .collect()
         }
 
@@ -3187,6 +3201,13 @@ mod tests {
 
         let main = skeleton.query_selector("main").unwrap().unwrap();
         assert_eq!(column(&main.children()), column(&page.children()));
+        assert_eq!(
+            page.query_selector_all(&format!(".{} [aria-busy=true]", style::strip))
+                .unwrap()
+                .length(),
+            2,
+            "and the strip is on both of its cards' skeletons, not on nothing"
+        );
     }
 
     #[wasm_bindgen_test]

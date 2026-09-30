@@ -48,3 +48,28 @@ pub fn SkeletonBox(
         <span class=style::root style:width=width style:height=height aria-hidden="true" />
     }
 }
+
+/// A text bar one line of text tall, in whatever type it inherits.
+///
+/// A [`SkeletonBox`] alone is as tall as its `height`, and a line of words is
+/// as tall as its `line-height`: in a slot sized by its text — a label, a
+/// sub-line — the bare bar leaves the row a few pixels short of the one that
+/// replaces it. This keeps a line box open with a zero-width space and sits
+/// the bar in it, so the slot is exactly the height the words will be, at
+/// every font size and line height a caller sets, with no number to keep in
+/// step with them.
+///
+/// Hidden whole, space included, for the reason the box hides itself.
+#[component]
+pub fn SkeletonText(
+    /// As [`SkeletonBox`]'s.
+    #[prop(into)]
+    width: String,
+) -> impl IntoView {
+    view! {
+        <span class=style::text aria-hidden="true">
+            "\u{200b}"
+            <SkeletonBox width=width />
+        </span>
+    }
+}

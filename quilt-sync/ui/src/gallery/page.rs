@@ -161,8 +161,8 @@ pub fn LoadingScene() -> impl IntoView {
                   earlier, while it reads which main page the reader has switched on: the \
                   root marker predicts this one, so the frame is this page's first paint \
                   rather than a spinner of its own. The appbar with Refresh spinning, the \
-                  strip's row still empty, the zero line held open, the live toolbar, and \
-                  three package rows. MainPageSkeleton is drawn here and by main.rs's \
+                  strip's two cards on their toggle and host skeletons, the zero line held \
+                  open, the live toolbar, and three package rows. MainPageSkeleton is drawn here and by main.rs's \
                   frame, and its regions are the page's own loading boundary, so neither \
                   handover — frame to page, page to rows — moves anything. A v1 reader \
                   gets v1's own spinner instead, whose stylesheet this gallery does not \
@@ -175,11 +175,11 @@ pub fn LoadingScene() -> impl IntoView {
         <Scene
             title="Scene · the package page while it loads"
             note="The same for /installed-package: the appbar, the banner's empty row, the \
-                  header's two lines and both panes, before the page's one read answers. \
+                  header's two lines and both panes, select-all's spot in the file \
+                  toolbar included, before the page's one read answers. \
                   PackagePageSkeleton, shared with main.rs's frame; its body is the page's \
                   own first paint. The banner's row is there because the page always \
-                  fills that slot, which is also why the header sits 16px lower here than \
-                  in the package page's own scenes, whose frame has no banner."
+                  fills that slot, as the package page's own scenes now draw it too."
         >
             <div class="g-window">
                 <pages::PackagePageSkeleton actions=loading_actions() />

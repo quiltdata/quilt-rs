@@ -93,3 +93,14 @@
 .root.disabled .trailing {
   color: var(--q-fgColor-disabled);
 }
+
+/* `ToggleRowSkeleton`. Not a control yet, so no pointer; the box's placeholder takes
+ * the offset `Checkbox` takes above, so it sits where the box will. */
+.skeleton .main {
+  cursor: default;
+}
+
+.box_slot {
+  flex: none;
+  margin-top: 1px;
+}
