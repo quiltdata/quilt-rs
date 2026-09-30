@@ -209,29 +209,77 @@ impl DomainLineageIo {
         .await
     }
 
+    /// Point the domain at `home`, creating its folder.
+    ///
+    /// The folder is created before `data.json` is written, so a home that
+    /// can't be created is never stored. When `home` is already the stored
+    /// one, only a missing folder is created and `data.json` is not rewritten.
+    /// Refuses with
+    /// [`LineageError::HomeInUse`] and changes nothing when `home` differs and
+    /// any package is installed, because their working folders live under the
+    /// current home. [`DomainLineageIo::overwrite_home`] skips that check.
     pub async fn set_home(
         &self,
         storage: &(impl Storage + Sync),
         home: impl AsRef<Path>,
     ) -> Res<DomainLineage> {
+        self.change_home(storage, home, false).await
+    }
+
+    /// [`DomainLineageIo::set_home`] without the installed-packages check.
+    ///
+    /// Installed packages keep their entries, so they then point at folders
+    /// under the new home, where none of their files are.
+    pub async fn overwrite_home(
+        &self,
+        storage: &(impl Storage + Sync),
+        home: impl AsRef<Path>,
+    ) -> Res<DomainLineage> {
+        self.change_home(storage, home, true).await
+    }
+
+    /// Read, check and write `data.json` under the short lock, so a package
+    /// writer's splice can't land between the check and the write.
+    async fn change_home(
+        &self,
+        storage: &(impl Storage + Sync),
+        home: impl AsRef<Path>,
+        overwrite: bool,
+    ) -> Res<DomainLineage> {
         let _locked = storage.lock_exclusive(self.lock_path()).await?;
-        let lineage = match storage.read_bytes(&self.path).await {
+        match storage.read_bytes(&self.path).await {
             Ok(bytes) => {
-                let mut lineage = match DomainLineage::from_slice(&bytes) {
-                    Ok(lineage) => lineage,
+                let (mut lineage, home_missing) = match DomainLineage::from_slice(&bytes) {
+                    Ok(lineage) => (lineage, false),
                     Err(Error::Lineage(LineageError::MissingHome)) => {
-                        serde_json::from_slice(&bytes)?
+                        (serde_json::from_slice(&bytes)?, true)
                     }
                     Err(err) => return Err(err),
                 };
-                lineage.home = home.into();
-                lineage
+                let home = Home::from(home);
+                if lineage.home == home {
+                    storage.create_dir_all(home.as_ref()).await?;
+                    return Ok(lineage);
+                }
+                if !overwrite && !home_missing && !lineage.packages.is_empty() {
+                    return Err(Error::Lineage(LineageError::HomeInUse {
+                        home: lineage.home.as_ref().clone(),
+                        installed: lineage.packages.len(),
+                    }));
+                }
+                storage.create_dir_all(home.as_ref()).await?;
+                lineage.home = home;
+                self.write_unlocked(storage, &lineage).await?;
+                Ok(lineage)
             }
-            Err(_) if !storage.exists(&self.path).await => DomainLineage::new(home),
-            Err(e) => return Err(e),
-        };
-        self.write_unlocked(storage, &lineage).await?;
-        Ok(lineage)
+            Err(_) if !storage.exists(&self.path).await => {
+                storage.create_dir_all(home.as_ref()).await?;
+                let lineage = DomainLineage::new(home);
+                self.write_unlocked(storage, &lineage).await?;
+                Ok(lineage)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Replace the whole record, under the lock. For setting a domain up; a
@@ -514,6 +562,181 @@ mod tests {
 
         assert_eq!(lineage, DomainLineage::new("/home/directory"));
         Ok(())
+    }
+
+    /// The stored bytes are compact JSON and `write` pretty-prints, so any
+    /// rewrite would change them.
+    #[test(tokio::test)]
+    async fn set_home_to_the_current_home_writes_nothing() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        let stored = br#"{"packages":{},"home":"/home/directory"}"#;
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(stored))
+            .await?;
+
+        let lineage = DomainLineageIo::new(file_path.clone())
+            .set_home(&storage, "/home/directory")
+            .await?;
+
+        assert_eq!(lineage, DomainLineage::new("/home/directory"));
+        assert_eq!(storage.read_bytes(&file_path).await?, stored.to_vec());
+        assert!(
+            storage.exists("/home/directory").await,
+            "a missing folder is still created"
+        );
+        Ok(())
+    }
+
+    const ONE_INSTALLED: &[u8] =
+        br#"{"packages":{"foo/bar":{"commit":null,"base_hash":"","latest_hash":"","paths":{}}},"home":"/old/home"}"#;
+
+    #[test(tokio::test)]
+    async fn set_home_refuses_a_new_home_while_packages_are_installed() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
+            .await?;
+
+        let err = DomainLineageIo::new(file_path.clone())
+            .set_home(&storage, "/new/home")
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &err,
+                Error::Lineage(LineageError::HomeInUse { home, installed: 1 })
+                    if home == &PathBuf::from("/old/home")
+            ),
+            "{err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            "Cannot change the home: 1 package is installed in /old/home"
+        );
+        assert_eq!(
+            storage.read_bytes(&file_path).await?,
+            ONE_INSTALLED.to_vec()
+        );
+        assert!(!storage.exists("/new/home").await, "no folder is created");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn set_home_to_the_current_home_is_allowed_while_packages_are_installed() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
+            .await?;
+
+        let lineage = DomainLineageIo::new(file_path)
+            .set_home(&storage, "/old/home")
+            .await?;
+
+        assert_eq!(lineage.home, Home::from("/old/home"));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn overwrite_home_changes_the_home_while_packages_are_installed() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
+            .await?;
+        let io = DomainLineageIo::new(file_path);
+
+        io.overwrite_home(&storage, "/new/home").await?;
+
+        let lineage = io.read(&storage).await?;
+        assert_eq!(lineage.home, Home::from("/new/home"));
+        assert_eq!(lineage.namespaces(), vec![Namespace::from(("foo", "bar"))]);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn set_home_creates_the_home_folder() -> Res {
+        let storage = MockStorage::default();
+
+        DomainLineageIo::new(PathBuf::from("foo"))
+            .set_home(&storage, "/new/home")
+            .await?;
+
+        assert!(storage.exists("/new/home").await);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn changing_the_home_creates_the_new_folder() -> Res {
+        let storage = MockStorage::default();
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
+            .await?;
+
+        DomainLineageIo::new(file_path)
+            .overwrite_home(&storage, "/new/home")
+            .await?;
+
+        assert!(storage.exists("/new/home").await);
+        Ok(())
+    }
+
+    /// A file where the home's parent should be makes the folder impossible
+    /// to create.
+    #[test(tokio::test)]
+    async fn a_home_that_cannot_be_created_is_not_stored() -> Res {
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream("/blocked", ByteStream::from_static(b"a file"))
+            .await?;
+        let file_path = PathBuf::from("foo");
+        storage
+            .write_byte_stream(&file_path, ByteStream::from_static(ONE_INSTALLED))
+            .await?;
+
+        DomainLineageIo::new(file_path.clone())
+            .overwrite_home(&storage, "/blocked/home")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            storage.read_bytes(&file_path).await?,
+            ONE_INSTALLED.to_vec()
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_first_home_that_cannot_be_created_writes_no_record() -> Res {
+        let storage = MockStorage::default();
+        storage
+            .write_byte_stream("/blocked", ByteStream::from_static(b"a file"))
+            .await?;
+        let file_path = PathBuf::from("foo");
+
+        DomainLineageIo::new(file_path.clone())
+            .set_home(&storage, "/blocked/home")
+            .await
+            .unwrap_err();
+
+        assert!(!storage.exists(&file_path).await);
+        Ok(())
+    }
+
+    #[test]
+    fn home_in_use_counts_packages_in_plural() {
+        let err = LineageError::HomeInUse {
+            home: PathBuf::from("/old/home"),
+            installed: 3,
+        };
+        assert_eq!(
+            err.to_string(),
+            "Cannot change the home: 3 packages are installed in /old/home"
+        );
     }
 
     #[test(tokio::test)]

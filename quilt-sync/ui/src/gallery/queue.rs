@@ -17,6 +17,7 @@ use crate::kit::QueueRow;
 use crate::kit::Remedy;
 use crate::kit::Site;
 use crate::kit::ZeroLine;
+use crate::kit::ZeroLineSkeleton;
 use crate::kit::render;
 use quilt_sync_ui::pages::action_href;
 
@@ -109,12 +110,14 @@ fn ZeroLineStory() -> impl IntoView {
                   (acceptance criterion 8) — a full-height empty state here would push the \
                   package list below the fold in order to say that nothing is wrong. \
                   \
-                  The region's heading and count are `Card`'s, not a component of their \
-                  own: a `SectionLabel` existed here briefly and was deleted once the \
-                  regions became cards, because Card's title already had exactly that \
-                  treatment. See the Card story for the count states."
+                  It has no card; the heading and count come with a queue. \
+                  ZeroLineSkeleton holds its place while checks are out, at the same height."
         >
             <Cell full=true label="the healthy queue">
+                <ZeroLine text="Everything is Latest — 43 packages" />
+            </Cell>
+            <Cell full=true label="still checking — the placeholder directly above the line it becomes">
+                <ZeroLineSkeleton />
                 <ZeroLine text="Everything is Latest — 43 packages" />
             </Cell>
             <Cell full=true label="singular">
@@ -347,12 +350,10 @@ pub fn QueueScene() -> impl IntoView {
         <Scene
             title="Scene · nothing needs you"
             note="The same region on a working day, which is the common case with autosync \
-                  on. One line, no count — counting to zero would be noise — and the \
-                  package list starts immediately below rather than a screen down."
+                  on. One line, no card and no count — counting to zero would be noise — \
+                  and the package list starts immediately below rather than a screen down."
         >
-            <Card title="Needs your attention">
-                <ZeroLine text="Everything is Latest — 43 packages" />
-            </Card>
+            <ZeroLine text="Everything is Latest — 43 packages" />
         </Scene>
     }
 }

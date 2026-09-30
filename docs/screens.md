@@ -102,7 +102,9 @@ needs a decision, and says so in one line instead.
 - **Attention queue** — one row per package needing a decision, beside the one
   thing to do about it. Where a whole catalog or bucket is the cause, it is
   said once with a count rather than repeated per package. When nothing needs
-  you: `Everything is Latest — N packages`.
+  you: `Everything is Latest — N packages`. Until every package's check has
+  answered, a placeholder holds that line's place, so a healthy load does not
+  move the list.
 - **List** — your packages with each one's state and when it last changed,
   searchable, groupable by Bucket / Prefix / None and sortable by Changed /
   Name; or switched to a feed of recently changed files.

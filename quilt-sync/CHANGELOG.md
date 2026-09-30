@@ -21,9 +21,14 @@
 
 ## [v0.22.5-dev]
 
+### Changed
+
+- **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (<https://github.com/quiltdata/quilt-rs/pull/1020>)
+
 ### Fixed
 
 - Two changes to one package no longer drop each other's work, whatever makes them: a download, **Pull**, **Commit**, background updates, or the `quilt` CLI in a terminal. An action on a package that is busy waits behind its spinner, and background updates skip the package until its next round. Other packages are never held up (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
 
 ### quilt-rs
 

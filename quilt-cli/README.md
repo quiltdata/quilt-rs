@@ -37,6 +37,7 @@ cargo install quilt-cli
 | ----------- | ------------------------------------------------ |
 | `browse`    | Fetch and inspect a remote manifest              |
 | `create`    | Create a new local-only package                  |
+| `home`      | Print or set the folder packages keep files in   |
 | `install`   | Install a remote package locally                 |
 | `status`    | Show working-directory changes                   |
 | `commit`    | Commit a new package revision                    |
@@ -65,6 +66,14 @@ pull writes nothing for it, so a copy that installed no paths reports no files
 at all. The message that follows is the newest revision's only: a pull advances
 to `latest` in one step and may span several revisions.
 
+`home` prints the home, the folder where installed packages keep their files.
+It defaults to `~/QuiltSync` on first use. `quilt home <dir>` sets it; a
+relative `<dir>` is taken against the current directory, and a missing folder
+is created. While any package is installed, a different home is refused,
+because the packages' files stay in the old folder. `--overwrite` changes it
+anyway, and the installed packages then point at empty folders, so their files
+read as deleted. `quilt home --json` prints `{"home": "<path>"}`.
+
 Run `quilt <command> --help` for arguments.
 
 ## Global flags
@@ -74,9 +83,8 @@ Run `quilt <command> --help` for arguments.
   `com.quiltdata.quilt-sync/`, shared with QuiltSync
   (`~/.local/share/com.quiltdata.quilt-sync/` on Linux,
   `~/Library/Application Support/com.quiltdata.quilt-sync/` on macOS).
-- `--home <path>` — directory where packages keep their working files.
-  Defaults to `~/QuiltSync` on first use and is persisted in the domain
-  lineage. Pass `--home` only to store packages somewhere else.
+- `--home <path>` — deprecated, use `quilt home <path>`. It prints a warning,
+  then sets the home the same way before the command runs.
 
 Every command accepts `--json` for a machine-readable form, before or after the
 subcommand, so `quilt list --json | jq` and `quilt --json list | jq` both work.
@@ -107,9 +115,10 @@ quilt install \
 quilt status --namespace akarve/cord19
 ```
 
-Package files are stored under `~/QuiltSync` by default. Pass `--home` only
-when you want a different package directory. The namespace defaults to the one
-in the URI, so `install` needs no `--namespace` here.
+Package files are stored under `~/QuiltSync` by default. Run
+`quilt home <dir>` first when you want a different package directory. The
+namespace defaults to the one in the URI, so `install` needs no `--namespace`
+here.
 
 URIs follow the [Quilt+ URI format](https://docs.quilt.bio/quilt-platform-catalog-user/uri).
 With `&catalog=<host>`, S3 requests use the stack credentials from
