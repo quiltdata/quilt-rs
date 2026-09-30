@@ -562,9 +562,10 @@ as well as a state.
   when every file under it is here, which is what a collapsed folder can then
   say without being opened. The check judges the folder whole, not the rows the
   view shows, so a filter that hides a missing file never earns the folder a
-  check. When every file is here, the select-all slot carries the Success
-  tone's tick before `All 1,090 files downloaded`, the same tick as the main
-  page's `Everything is Latest`.
+  check, and over the list cap the folder the cut runs through shows none.
+  When every file is here, the select-all slot carries the Success tone's tick
+  before `All 1,090 files downloaded`, the same tick as the main page's
+  `Everything is Latest`; a deleted file holds the caption back too.
 
 ### Package Row
 

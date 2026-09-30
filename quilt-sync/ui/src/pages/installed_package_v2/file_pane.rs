@@ -28,6 +28,8 @@
 //!   judges the folder whole, not the rows the facet and the search leave, so
 //!   it is true whatever the view shows; the box and the count follow the
 //!   view, because the box acts on it. Under `Ignored` no heading has one.
+//!   Over the cap, a folder the cut runs through has none either: its files
+//!   past the cut were never loaded.
 //!   Under whole-package Keeping a folder still receiving files shows neither.
 //! - **The facets filter by state.** `All · Changed · Not downloaded ·
 //!   Ignored`, each with the package's count (the payload's `counts`, not the
@@ -45,7 +47,8 @@
 //!   left to download reads `All 1,090 files downloaded` where select-all
 //!   would be, under either scope, with the Success tone's tick in the box's
 //!   hole: the column's summary, the same tick as the main page's `Everything
-//!   is Latest`.
+//!   is Latest`. A deleted file is not on disk either, so while one is loaded
+//!   the slot shows what it would without the caption.
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
 //! - **Search narrows what is shown.** A case-insensitive substring of the
@@ -666,11 +669,21 @@ fn differs(differing: &Differing, path: &str) -> bool {
 /// Each heading the loaded rows draw under `grouping`, and whether every file
 /// under it is here: at least one row that is not ignored, and every such row
 /// here. Built over every loaded row rather than the shown ones, so a facet or
-/// a search that hides a missing file never earns its folder the check. Rows
-/// past the cap were never loaded and cannot be judged; the cap's banner
-/// already says the list is partial.
-fn folders_here(rows: &[Row], grouping: Grouping) -> BTreeMap<String, bool> {
+/// a search that hides a missing file never earns its folder the check.
+///
+/// Over the cap (`truncated`), a folder the cut runs through has files that
+/// were never loaded, so it gets no check whatever its loaded rows say. The
+/// backend sorts by path before it cuts, and the paths under one folder are a
+/// contiguous run of that order, so only a folder holding the last loaded path
+/// can run past the cut: every other folder ends before it or was never
+/// loaded at all. That is the one folder holding it under `TopFolder`, and
+/// that folder and each headed folder above it under `BaseFolder`. A last row
+/// at the root, or under no heading, costs no folder its check.
+fn folders_here(rows: &[Row], grouping: Grouping, truncated: bool) -> BTreeMap<String, bool> {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
+    // The greatest path rather than the last, so the rule holds even if the
+    // rows ever arrive out of order.
+    let cut = truncated.then(|| paths.iter().copied().max()).flatten();
     group(&paths, grouping)
         .into_iter()
         .filter_map(|item| match item {
@@ -683,7 +696,9 @@ fn folders_here(rows: &[Row], grouping: Grouping) -> BTreeMap<String, bool> {
                     .map(|(index, _)| &rows[*index])
                     .filter(|r| !r.ignored)
                     .peekable();
-                let all_here = tracked.peek().is_some() && tracked.all(|r| r.place.is_here());
+                let straddles = cut.is_some_and(|last| last.starts_with(heading.as_str()));
+                let all_here =
+                    !straddles && tracked.peek().is_some() && tracked.all(|r| r.place.is_here());
                 Some((heading, all_here))
             }
             Item::Row { .. } => None,
@@ -930,15 +945,16 @@ fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelec
 ///
 /// A package with nothing left to download says so here, `All 1,090 files
 /// downloaded`, under either Keeping scope and whatever the view shows: it is
-/// a fact about the package, counted as the `All` facet counts. Otherwise it
-/// is select-all, absent under whole-package scope and while nothing on
-/// screen can be ticked.
+/// a fact about the package, counted as the `All` facet counts, and it waits
+/// while a loaded file is deleted. Otherwise it is select-all, absent under
+/// whole-package scope and while nothing on screen can be ticked.
 fn left_slot(
     picking: Picking,
     shown: Signal<Vec<String>>,
     narrowed: Signal<bool>,
     headed: Signal<bool>,
     counts: &EntryCounts,
+    any_deleted: bool,
 ) -> AnyView {
     let gutter = move || {
         format!(
@@ -948,7 +964,11 @@ fn left_slot(
     };
     // The package's counts, not the view's, so a facet, a search or the cap
     // changes nothing; and not a package with nothing in `All` to speak of.
-    if counts.not_downloaded == 0 && counts.all > 0 {
+    // Nor while a file is deleted: the caption says every file is on disk,
+    // and a deleted one is not, whatever the download count says. A deleted
+    // row past the cap is not loaded and cannot be seen, the same caveat the
+    // cap notice states.
+    if counts.not_downloaded == 0 && counts.all > 0 && !any_deleted {
         let files = counts.all;
         // The box's hole, as a row with no box keeps it, so the words start
         // where the rows' names do. In it, the column's summary: a box when
@@ -1129,6 +1149,15 @@ pub fn FilePane(
     }
 }
 
+/// Whether `rows` draw at least one heading under `grouping`, which is what
+/// gives the toolbar's slot the rows' disclosure gutter.
+fn draws_a_heading(rows: &[Row], grouping: Grouping) -> bool {
+    let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
+    group(&paths, grouping)
+        .iter()
+        .any(|i| matches!(i, Item::Group { .. }))
+}
+
 // Each is one of the page's own values, which `FilePane` hands on whole.
 #[allow(clippy::too_many_arguments)]
 fn ready(
@@ -1152,6 +1181,9 @@ fn ready(
     let loaded_count = entries.len();
     let rows: Vec<Row> = entries.into_iter().map(Row::from).collect();
     let loaded = StoredValue::new(offered(&rows));
+    // Whether a loaded file is gone from disk, which holds back the
+    // all-downloaded caption (`left_slot`).
+    let any_deleted = rows.iter().any(|r| r.place == Place::Deleted);
     let rows = StoredValue::new(rows);
     let drawing = Drawing {
         on_open,
@@ -1176,16 +1208,10 @@ fn ready(
     // Whether each heading's folder is all here, over every loaded row: keyed
     // on the grouping alone, so neither the facet nor the search moves it.
     let here = Memo::new(move |_| {
-        rows.with_value(|rs| folders_here(rs, Grouping::from_label(&grouping.get())))
+        rows.with_value(|rs| folders_here(rs, Grouping::from_label(&grouping.get()), truncated))
     });
     let headed = Signal::derive(move || {
-        let g = Grouping::from_label(&grouping.get());
-        shown.with(|rs| {
-            let paths: Vec<&str> = rs.iter().map(|r| r.path.as_str()).collect();
-            group(&paths, g)
-                .iter()
-                .any(|i| matches!(i, Item::Group { .. }))
-        })
+        shown.with(|rs| draws_a_heading(rs, Grouping::from_label(&grouping.get())))
     });
 
     let body = move || {
@@ -1247,7 +1273,7 @@ fn ready(
             <div class=style::listing>
                 {toolbar(
                     grouping,
-                    left_slot(picking, shown_offered, narrowed, headed, &counts),
+                    left_slot(picking, shown_offered, narrowed, headed, &counts, any_deleted),
                     Some(facets(&counts, facet).into_any()),
                 )}
                 <Card flush=true label="Files" fill=true>
@@ -2759,6 +2785,97 @@ mod pane_tests {
         );
     }
 
+    /// A pane over `listing`, grouped by base folder, that the test can swap.
+    fn listed_pane(listing: RwSignal<Listing>, picking: Picking) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::from(listing)
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        })
+    }
+
+    /// Two folders whose loaded files are all here, `zeta/` holding the last
+    /// loaded path.
+    fn alpha_and_zeta() -> Vec<EntryData> {
+        vec![
+            entry("alpha/a.csv", "pristine"),
+            entry("alpha/b.csv", "pristine"),
+            entry("zeta/a.csv", "pristine"),
+            entry("zeta/b.csv", "modified"),
+        ]
+    }
+
+    /// Over the cap the folder the cut runs through may have files past it,
+    /// so it carries no check; a folder that ends before the cut keeps its
+    /// own. Under the cap the same rows give both folders the check.
+    #[wasm_bindgen_test]
+    fn over_the_cap_the_folder_the_cut_runs_through_has_no_check() {
+        let cut = listed_pane(
+            RwSignal::new(Listing::Ready(list(alpha_and_zeta(), 1_500, true))),
+            Picking::default(),
+        );
+        assert!(
+            has_check(&cut, "alpha/"),
+            "alpha/ ends before the cut; markup was {}",
+            cut.inner_html()
+        );
+        assert!(
+            !has_check(&cut, "zeta/"),
+            "zeta/ may run past the cut; markup was {}",
+            cut.inner_html()
+        );
+
+        let whole = listed_pane(
+            RwSignal::new(Listing::Ready(list(alpha_and_zeta(), 4, false))),
+            Picking::default(),
+        );
+        for folder in ["alpha/", "zeta/"] {
+            assert!(
+                has_check(&whole, folder),
+                "{folder} is all here; markup was {}",
+                whole.inner_html()
+            );
+        }
+    }
+
+    /// Under base-folder grouping the cut runs through every folder above the
+    /// last loaded path too: `zeta/`'s own files can sort after `zeta/deep/`.
+    #[wasm_bindgen_test]
+    fn over_the_cap_the_folders_above_the_last_path_have_no_check_either() {
+        let el = listed_pane(
+            RwSignal::new(Listing::Ready(list(
+                vec![
+                    entry("alpha/a.csv", "pristine"),
+                    entry("alpha/b.csv", "pristine"),
+                    entry("zeta/a.csv", "pristine"),
+                    entry("zeta/b.csv", "pristine"),
+                    entry("zeta/deep/a.csv", "pristine"),
+                    entry("zeta/deep/b.csv", "pristine"),
+                ],
+                1_500,
+                true,
+            ))),
+            Picking::default(),
+        );
+        assert!(has_check(&el, "alpha/"), "markup was {}", el.inner_html());
+        for folder in ["zeta/", "zeta/deep/"] {
+            assert!(
+                !has_check(&el, folder),
+                "{folder} may run past the cut; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
     /// A pane over `entries` whose search and facet the test drives.
     fn driven_pane(
         entries: Vec<EntryData>,
@@ -2822,6 +2939,53 @@ mod pane_tests {
             assert!(
                 has_check(&el, "raw/"),
                 "every heading carries the check; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    /// A deleted file is not on disk, so while one is loaded the caption
+    /// waits, under either scope, and the slot shows what it would without
+    /// it; the deleted file's folder has no check. Once the file is gone from
+    /// the list, the caption returns.
+    #[wasm_bindgen_test]
+    async fn a_deleted_file_holds_the_caption_back_in_either_scope() {
+        for whole_package in [false, true] {
+            let picking = Picking {
+                whole_package,
+                ..Picking::default()
+            };
+            let mut entries = downloaded_package();
+            entries.push(entry("raw/c.csv", "deleted"));
+            let total = entries.len();
+            let listing = RwSignal::new(Listing::Ready(list(entries, total, false)));
+            let el = listed_pane(listing, picking);
+            assert!(
+                !text(&el).contains("files downloaded"),
+                "markup was {}",
+                el.inner_html()
+            );
+            let slot = el
+                .query_selector(&format!(".{}", style::selectall))
+                .unwrap();
+            assert!(
+                slot.is_none_or(|s| s.query_selector("svg").unwrap().is_none()),
+                "no tick in the slot; markup was {}",
+                el.inner_html()
+            );
+            assert!(
+                !has_check(&el, "raw/"),
+                "raw/ holds a deleted file; markup was {}",
+                el.inner_html()
+            );
+
+            let entries = downloaded_package();
+            let total = entries.len();
+            listing.set(Listing::Ready(list(entries, total, false)));
+            leptos::task::tick().await;
+            assert!(
+                caption_has_tick(&el, "All 3 files downloaded"),
+                "the caption returns; markup was {}",
                 el.inner_html()
             );
         }

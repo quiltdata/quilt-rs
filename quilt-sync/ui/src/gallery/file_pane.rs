@@ -705,11 +705,19 @@ fn pane(p: Pane) -> AnyView {
     // download, so the slot select-all would take says so under either scope.
     let downloaded = {
         let counted = files.iter().filter(|f| f.mark != Mark::Ignored).count();
-        let missing = files.iter().any(|f| f.mark == Mark::Missing);
+        // A deleted file is not on disk either, whatever the download count
+        // says, so it holds the caption back too.
+        let missing = files
+            .iter()
+            .any(|f| matches!(f.mark, Mark::Missing | Mark::Deleted));
         (!missing && counted > 0).then_some(counted)
     };
     let fill = framing == Framing::Page;
     let boxes = !whole;
+    let shape = Shape {
+        boxes,
+        capped: body == Body::Capped,
+    };
     let footer_shown = Signal::derive(move || boxes && chosen.get() > 0);
     let marked: Vec<String> = marked.iter().map(|&p| p.to_string()).collect();
     let marked = StoredValue::new(marked);
@@ -764,7 +772,7 @@ fn pane(p: Pane) -> AnyView {
                 {roots}
                 {groups
                     .into_iter()
-                    .map(|(name, members)| group(name, members, all, picks, marked, boxes, confirm))
+                    .map(|(name, members)| group(name, members, all, picks, marked, shape, confirm))
                     .collect_view()}
             }
             .into_any()
@@ -1004,6 +1012,16 @@ fn pane(p: Pane) -> AnyView {
     .into_any()
 }
 
+/// What the whole cell decides for each heading: whether rows carry boxes,
+/// and whether the list is over the cap.
+#[derive(Clone, Copy)]
+struct Shape {
+    /// Per-file choice is on: `Keeping → Files I pick`.
+    boxes: bool,
+    /// The cap notice is drawn, so the last folder may run past the cut.
+    capped: bool,
+}
+
 /// One row, with the resolve mark looked up rather than passed down: whether a
 /// file differs is a fact about the file, so the list does not have to carry a
 /// second parallel list of booleans beside its rows.
@@ -1031,9 +1049,10 @@ fn group(
     all: StoredValue<Vec<Row>>,
     picks: RwSignal<Vec<bool>>,
     marked: StoredValue<Vec<String>>,
-    boxes: bool,
+    shape: Shape,
     confirm: Confirm,
 ) -> AnyView {
+    let Shape { boxes, capped } = shape;
     let open = RwSignal::new(true);
     let count = members.len();
     let mine: Vec<usize> =
@@ -1068,7 +1087,16 @@ fn group(
     // `Ignored` facet shows ignored rows, and it shows nothing else, so a
     // heading over nothing but those is that view's, which draws no check.
     let ignored_view = all.with_value(|rs| members.iter().all(|&i| rs[i].mark == Mark::Ignored));
+    // Over the cap the page's rule: the rows are sorted by path, so only a
+    // folder holding the last drawn path can run past the cut, and it gets no
+    // check.
+    let straddles = capped
+        && all.with_value(|rs| {
+            rs.last()
+                .is_some_and(|last| last.path.starts_with(name.as_str()))
+        });
     let all_here = !ignored_view
+        && !straddles
         && all.with_value(|rs| {
             let mut tracked = rs
                 .iter()

@@ -294,7 +294,7 @@ fn horizontal(
 )]
 mod tests {
     use super::*;
-    use crate::test_support::{mount, sleep_ms};
+    use crate::test_support::{mount, sleep_ms, unmount_earlier};
     use wasm_bindgen_test::*;
 
     fn scroll(target: &web_sys::EventTarget) {
@@ -307,6 +307,11 @@ mod tests {
     /// reader is scrolling. A scroll anywhere else still does.
     #[wasm_bindgen_test]
     async fn scrolling_inside_the_surface_keeps_it_open() {
+        // Alone on the page: what earlier tests left mounted can scroll the
+        // window once this surface opens, and that scroll closes it for a
+        // reason this test is not about. Which tests run first shifts as tests
+        // are added, so without this it passes or fails by link order.
+        unmount_earlier();
         let open = RwSignal::new(false);
         let el = mount(move || {
             view! {
