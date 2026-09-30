@@ -14,7 +14,7 @@ const NO_BUCKET: &str = "∅";
 /// Printed under the table. `list` never reads the remote, so every status is
 /// only as fresh as the last operation that wrote the remote tip to lineage.
 const LAST_SYNCED_HINT: &str = "Statuses are as of each package's last install, pull or push. \
-Run `quilt status <namespace>` to check the remote now.";
+Run `quilt status --namespace <namespace>` to check the remote now.";
 
 /// A listed package as [`model`] resolves it; [`PackageRow`] is its rendering.
 pub struct PackageEntry {
@@ -140,7 +140,7 @@ pub async fn command(m: impl Commands) -> Std {
 ///
 /// `status` is the [`UpstreamState`] cascade over the lineage's four hashes,
 /// read against the *last-known* remote tip: `list` never refreshes it.
-/// `quilt status <namespace>` does.
+/// `quilt status --namespace <namespace>` does.
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
     let domain_lineage = local_domain.get_lineage().await?;
     let mut installed_packages_list = Vec::with_capacity(domain_lineage.packages.len());
