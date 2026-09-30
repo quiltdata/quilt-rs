@@ -372,6 +372,24 @@ enum Commands {
     },
 }
 
+impl Commands {
+    /// Whether a new domain gets the default home before this command runs.
+    ///
+    /// `login`, `browse` and `role` only talk to a remote and never read the
+    /// home, so they don't set it: a default folder that can't be created must
+    /// not block them. `quilt home <dir>` sets its own, so defaulting first
+    /// would only write a home it is about to replace.
+    fn needs_default_home(&self) -> bool {
+        !matches!(
+            self,
+            Commands::Login { .. }
+                | Commands::Browse { .. }
+                | Commands::Role { .. }
+                | Commands::Home { dir: Some(_), .. }
+        )
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "cohesive top-level CLI command dispatch"
@@ -387,13 +405,11 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     let m = Model::from(root_dir);
 
     // Preserve an existing home, honor the deprecated --home, and set the
-    // default for a new domain on first use. `quilt home <dir>` sets its own,
-    // so defaulting first would only write a home it is about to replace.
-    let sets_home = matches!(args.command, Commands::Home { dir: Some(_), .. });
-    if sets_home && args.home.is_some() {
+    // default for a new domain on first use.
+    if matches!(args.command, Commands::Home { dir: Some(_), .. }) && args.home.is_some() {
         return Err(Error::HomeTwice);
     }
-    if !sets_home {
+    if args.home.is_some() || args.command.needs_default_home() {
         initialize_home(&m, args.home, &mut std::io::stderr()).await?;
     }
 
@@ -954,6 +970,66 @@ mod tests {
     fn tests_never_use_the_real_default_home() {
         let real = dirs::home_dir().map(|home| home.join(quilt_rs::DEFAULT_HOME_DIR_NAME));
         assert_ne!(get_default_home_dir().ok(), real);
+    }
+
+    /// Commands that never touch the home don't set or create one, so a home
+    /// folder that can't be created can't block them.
+    #[test(tokio::test)]
+    async fn commands_without_a_home_leave_a_new_domain_without_one() -> Result<(), Error> {
+        let commands = [
+            Commands::Login {
+                code: None,
+                host: "open.quiltdata.com".parse().expect("valid host"),
+            },
+            Commands::Browse {
+                uri: "not-a-package-uri".to_string(),
+            },
+        ];
+        for command in commands {
+            let domain = tempfile::tempdir()?;
+            let args = Args {
+                home: None,
+                domain: Some(domain.path().to_path_buf()),
+                verbose: false,
+                json: false,
+                command,
+            };
+
+            let _ = init(args).await;
+
+            let stored = quilt_rs::LocalDomain::new(domain.path()).get_home().await;
+            assert!(
+                matches!(
+                    stored,
+                    Err(quilt_rs::Error::Lineage(quilt_rs::LineageError::Missing))
+                ),
+                "no home is stored: {stored:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// The deprecated `--home` still sets the home, whatever the command.
+    #[test(tokio::test)]
+    async fn home_flag_still_sets_the_home_before_login() -> Result<(), Error> {
+        let domain = tempfile::tempdir()?;
+        let home = tempfile::tempdir()?;
+        let args = Args {
+            home: Some(home.path().to_path_buf()),
+            domain: Some(domain.path().to_path_buf()),
+            verbose: false,
+            json: false,
+            command: Commands::Login {
+                code: None,
+                host: "open.quiltdata.com".parse().expect("valid host"),
+            },
+        };
+
+        init(args).await?;
+
+        let stored = quilt_rs::LocalDomain::new(domain.path()).get_home().await?;
+        assert_eq!(stored.as_ref(), home.path());
+        Ok(())
     }
 
     #[test(tokio::test)]
