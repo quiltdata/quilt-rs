@@ -85,9 +85,17 @@
  * computed: the Card's 1px border stands in for the list box's own edge, then a
  * row's `space-3` inset, the gutter spacer (`--q-entry-gutter`, set by the pane,
  * `0px` when the list has no heading) and a row's `space-2` gap before its box.
- * So the two boxes share one x with or without headings. */
+ * So the two boxes share one x with or without headings.
+ *
+ * Never squeezed by its neighbours: the toolbar is a wrapping row, so when a
+ * line runs short the view controls take the next line, rather than this slot
+ * shrinking until `All 1,190 files downloaded` breaks in two with room to
+ * spare. Capped at the pane, so a pane narrower than the words alone (high
+ * zoom) still wraps them inside the slot instead of spilling past the edge. */
 .selectall {
   display: flex;
+  flex: 0 0 auto;
+  max-width: 100%;
   align-items: center;
   gap: var(--q-space-2);
   padding-left: calc(1px + var(--q-space-3));
