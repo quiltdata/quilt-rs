@@ -78,6 +78,14 @@ pub trait QuiltModel {
         Self::Locked::try_lock(package).await
     }
 
+    /// Takes `package`'s lock, waiting while another writer holds it, in this
+    /// process or another. A writer that reports its work in flight takes this
+    /// first and reports only once it holds the lock: while it waits it has
+    /// written nothing.
+    async fn lock_package(&self, package: &quilt::InstalledPackage) -> Result<Self::Locked, Error> {
+        Self::Locked::lock(package).await
+    }
+
     /// [`Self::get_installed_package_status`], under the held lock.
     async fn locked_package_status(
         &self,
@@ -95,7 +103,9 @@ pub trait QuiltModel {
         package.pull_outcome().await
     }
 
-    /// [`Self::package_pull`] on the held lock.
+    /// Pull the package on the held lock. `scope` is the package's stored
+    /// choice, which both callers (a user's button, the autopull tick) read
+    /// from the lineage and pass, so a mocked model can drive either path.
     async fn locked_package_pull(
         &self,
         package: &Self::Locked,
@@ -103,6 +113,23 @@ pub trait QuiltModel {
         scope: SyncScope,
     ) -> Result<quilt::flow::PullReport, Error> {
         package.pull(host_config, scope).await
+    }
+
+    /// [`Self::package_install_paths`] on the held lock.
+    async fn locked_package_install_paths(
+        &self,
+        package: &Self::Locked,
+        paths: &[PathBuf],
+    ) -> Result<quilt::flow::InstallPathsReport, Error> {
+        package.install_paths(paths).await
+    }
+
+    /// Reset the package to its remote's latest revision, on the held lock.
+    async fn locked_package_reset_local(
+        &self,
+        package: &Self::Locked,
+    ) -> Result<quilt_uri::ManifestUri, Error> {
+        package.reset_to_latest().await
     }
 
     /// [`Self::package_publish`] on the held lock. `status` is one walked on
@@ -264,19 +291,6 @@ pub trait QuiltModel {
         Ok(package.install_paths(paths).await?)
     }
 
-    /// `scope` is the package's stored choice, which both callers (a user's
-    /// button, the autopull tick) read from the lineage and pass. It is a
-    /// parameter rather than something read in here so a mocked model can
-    /// drive either path.
-    async fn package_pull(
-        &self,
-        package: &quilt::InstalledPackage,
-        host_config: Option<HostConfig>,
-        scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
-        Ok(package.pull(host_config, scope).await?)
-    }
-
     /// Persist a package's standing [`SyncScope`]. Storage only — the next
     /// pull, by hand or by the tick, applies it.
     async fn package_set_sync_scope(
@@ -408,13 +422,6 @@ pub trait QuiltModel {
         package: &quilt::InstalledPackage,
     ) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(package.certify_latest().await?)
-    }
-
-    async fn package_revision_reset_local(
-        &self,
-        package: &quilt::InstalledPackage,
-    ) -> Result<quilt_uri::ManifestUri, Error> {
-        Ok(package.reset_to_latest().await?)
     }
 
     /// Undo the package's newest local commit.
@@ -622,6 +629,8 @@ impl QuiltModel for Model {
 pub trait LockedOps: Send + Sync + Sized {
     async fn try_lock(package: &quilt::InstalledPackage) -> Result<Option<Self>, Error>;
 
+    async fn lock(package: &quilt::InstalledPackage) -> Result<Self, Error>;
+
     async fn status(
         &self,
         host_config: Option<HostConfig>,
@@ -634,6 +643,13 @@ pub trait LockedOps: Send + Sync + Sized {
         host_config: Option<HostConfig>,
         scope: SyncScope,
     ) -> Result<quilt::flow::PullReport, Error>;
+
+    async fn install_paths(
+        &self,
+        paths: &[PathBuf],
+    ) -> Result<quilt::flow::InstallPathsReport, Error>;
+
+    async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error>;
 
     async fn publish(
         &self,
@@ -648,6 +664,10 @@ pub trait LockedOps: Send + Sync + Sized {
 impl LockedOps for quilt::LockedPackage {
     async fn try_lock(package: &quilt::InstalledPackage) -> Result<Option<Self>, Error> {
         Ok(package.try_lock().await?)
+    }
+
+    async fn lock(package: &quilt::InstalledPackage) -> Result<Self, Error> {
+        Ok(package.lock().await?)
     }
 
     async fn status(
@@ -667,6 +687,17 @@ impl LockedOps for quilt::LockedPackage {
         scope: SyncScope,
     ) -> Result<quilt::flow::PullReport, Error> {
         Ok(quilt::LockedPackage::pull(self, host_config, scope).await?)
+    }
+
+    async fn install_paths(
+        &self,
+        paths: &[PathBuf],
+    ) -> Result<quilt::flow::InstallPathsReport, Error> {
+        Ok(quilt::LockedPackage::install_paths(self, paths).await?)
+    }
+
+    async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
+        Ok(quilt::LockedPackage::reset_to_latest(self).await?)
     }
 
     async fn publish(
@@ -697,6 +728,10 @@ impl LockedOps for quilt_uri::Namespace {
         unreachable!("a mocked model sets its own try-lock outcome")
     }
 
+    async fn lock(_: &quilt::InstalledPackage) -> Result<Self, Error> {
+        unreachable!("a mocked model sets its own lock")
+    }
+
     async fn status(
         &self,
         _: Option<HostConfig>,
@@ -714,6 +749,14 @@ impl LockedOps for quilt_uri::Namespace {
         _: SyncScope,
     ) -> Result<quilt::flow::PullReport, Error> {
         unreachable!("a mocked model sets its own pull")
+    }
+
+    async fn install_paths(&self, _: &[PathBuf]) -> Result<quilt::flow::InstallPathsReport, Error> {
+        unreachable!("a mocked model sets its own install")
+    }
+
+    async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
+        unreachable!("a mocked model sets its own reset")
     }
 
     async fn publish(

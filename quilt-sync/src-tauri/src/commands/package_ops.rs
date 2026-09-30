@@ -121,12 +121,29 @@ pub async fn certify_latest(
 }
 
 async fn reset_local_command(
-    m: &model::Model,
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
     namespace: &str,
 ) -> Result<quilt_uri::Namespace, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_revision_reset_local(m, namespace.clone()).await?;
+    let installed = installed_package(m, &namespace).await?;
+    // See `package_pull_command`: the flag goes up once the lock is held.
+    let locked = m.lock_package(&installed).await?;
+    let _applying = watcher.apply_guard(&namespace);
+    m.locked_package_reset_local(&locked).await?;
     Ok(namespace)
+}
+
+/// The installed package at `namespace`, or `NotInstalled` when it has gone.
+async fn installed_package(
+    m: &impl model::QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> Result<quilt::InstalledPackage, Error> {
+    m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })
 }
 
 #[tauri::command]
@@ -148,12 +165,7 @@ pub async fn reset_local(
     // page's backlog download, which catches a whole package up. Installing
     // picked paths only adds files, and a commit writes `.quilt` rather than
     // the working tree.
-    let result = {
-        let _applying = watcher.apply_guard(
-            &quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?,
-        );
-        reset_local_command(&m, &namespace).await
-    };
+    let result = reset_local_command(&*m, &watcher, &namespace).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
@@ -392,11 +404,21 @@ async fn package_pull_command(
     namespace: &str,
 ) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    // Lock before raising the flag. While another writer (the `quilt` CLI, a
+    // download) holds the package, this pull has written nothing, so quitting
+    // then loses nothing and must not ask.
+    let locked = m.lock_package(&installed).await?;
+    // The scope the package stores, read under the lock.
+    let scope = m
+        .get_installed_package_lineage(&installed)
+        .await?
+        .sync_scope;
     // A hand-pressed pull writes working files exactly as the tick's does, so
     // it raises the same in-flight flag — otherwise quitting during one would
     // interrupt it without asking.
     let _applying = watcher.apply_guard(&namespace);
-    let report = model::package_pull(m, &namespace, None).await?;
+    let report = m.locked_package_pull(&locked, None, scope).await?;
     Ok((namespace, report))
 }
 
@@ -997,6 +1019,121 @@ mod tests {
             .pause_for_test(ns.clone(), PausedReason::Diverged)
             .await;
         watcher
+    }
+
+    /// Start `write` while another writer holds the package's lock, and
+    /// assert it waits without reporting an apply: it has written nothing yet,
+    /// so quitting then loses nothing and must not ask. Then let the other
+    /// writer go and let `write` finish, whatever it returns.
+    async fn assert_nothing_applies_while_another_writer_holds<T>(
+        watcher: &Watcher,
+        package: &quilt::InstalledPackage,
+        write: impl std::future::Future<Output = T>,
+    ) {
+        // Another writer of the package, the `quilt` CLI say, holds its lock.
+        let other_writer = package.lock().await.expect("lock");
+        let mut write = std::pin::pin!(write);
+        let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut write).await;
+        assert!(early.is_err(), "the write waits for the other writer");
+        assert!(
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "nothing is applying while the write waits for the lock"
+        );
+
+        drop(other_writer);
+        tokio::time::timeout(std::time::Duration::from_secs(5), write)
+            .await
+            .expect("the write runs once the other writer lets go");
+    }
+
+    async fn created_package(
+        dir: &tempfile::TempDir,
+    ) -> (crate::model::Model, quilt::InstalledPackage) {
+        use crate::model::QuiltModel;
+        let model = crate::model::Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await.expect("home");
+        let package = model
+            .package_create(("acme", "demo").into(), None, None)
+            .await
+            .expect("create");
+        (model, package)
+    }
+
+    /// The Pull button takes the package's lock with the flag still down,
+    /// then pulls with the flag up and the scope the package stores.
+    #[tokio::test]
+    async fn a_pull_raises_the_apply_flag_once_it_holds_the_lock() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let aggregator = watcher.inner_for_test().aggregator.clone();
+        let locking = aggregator.clone();
+        let mut model = installed_model();
+        model.expect_get_installed_package_lineage().returning(|_| {
+            Ok(quilt::lineage::PackageLineage {
+                sync_scope: quilt::lineage::SyncScope::EntirePackage,
+                ..Default::default()
+            })
+        });
+        model.expect_lock_package().times(1).returning(move |p| {
+            assert!(!locking.apply_in_progress(), "down while taking the lock");
+            Ok(p.namespace.clone())
+        });
+        model
+            .expect_locked_package_pull()
+            .withf(|_, _, scope| *scope == quilt::lineage::SyncScope::EntirePackage)
+            .times(1)
+            .returning(move |_, _, _| {
+                assert!(aggregator.apply_in_progress(), "up while pulling");
+                Ok(quilt::flow::PullReport {
+                    manifest_uri: quilt_uri::ManifestUri {
+                        bucket: "bucket".to_string(),
+                        namespace: ("acme", "demo").into(),
+                        hash: "h1".to_string(),
+                        origin: None,
+                    },
+                    added: Vec::new(),
+                    added_not_fetched: Vec::new(),
+                    updated: Vec::new(),
+                    removed: Vec::new(),
+                    message: None,
+                })
+            });
+
+        super::package_pull_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("pull");
+
+        assert!(
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "and down again once it returns"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pull_waiting_for_the_package_lock_reports_nothing_applying() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let (model, package) = created_package(&dir).await;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+
+        assert_nothing_applies_while_another_writer_holds(
+            &watcher,
+            &package,
+            Box::pin(super::package_pull_command(&model, &watcher, "acme/demo")),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_reset_waiting_for_the_package_lock_reports_nothing_applying() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let (model, package) = created_package(&dir).await;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+
+        assert_nothing_applies_while_another_writer_holds(
+            &watcher,
+            &package,
+            Box::pin(super::reset_local_command(&model, &watcher, "acme/demo")),
+        )
+        .await;
     }
 
     fn installed_model() -> MockQuiltModel {

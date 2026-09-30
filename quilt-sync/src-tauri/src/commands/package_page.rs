@@ -743,16 +743,21 @@ async fn download_backlog_from_model(
     namespace: &quilt_uri::Namespace,
     paths: &[String],
 ) -> Result<Vec<PathBuf>, Error> {
-    // A whole-package catch-up, so it raises the in-flight flag a pull does:
-    // quitting mid-download would leave files in place that the lineage never records.
-    let _applying = watcher.apply_guard(namespace);
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
             namespace.to_owned(),
         ))
     })?;
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-    Ok(m.package_install_paths(&installed, &paths).await?.skipped)
+    // Lock before raising the flag: while another writer holds the package,
+    // the download has written nothing, so quitting then loses nothing.
+    let locked = m.lock_package(&installed).await?;
+    // A whole-package catch-up, so it raises the in-flight flag a pull does:
+    // quitting mid-download would leave files in place that the lineage never records.
+    let _applying = watcher.apply_guard(namespace);
+    Ok(m.locked_package_install_paths(&locked, &paths)
+        .await?
+        .skipped)
 }
 
 #[cfg(test)]
@@ -1794,7 +1799,8 @@ mod tests {
     }
 
     /// The download writes working files like a pull, so it holds the flag
-    /// that makes quitting ask first, and only while it writes.
+    /// that makes quitting ask first, and only while it writes: not while it
+    /// takes the package's lock.
     #[tokio::test]
     async fn the_download_holds_the_apply_flag_while_it_writes() {
         let watcher = test_watcher();
@@ -1802,7 +1808,12 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths()
+        let locking = aggregator.clone();
+        m.expect_lock_package().times(1).returning(move |p| {
+            assert!(!locking.apply_in_progress(), "down while taking the lock");
+            Ok(p.namespace.clone())
+        });
+        m.expect_locked_package_install_paths()
             .times(1)
             .returning(move |_, _| {
                 assert!(aggregator.apply_in_progress(), "held while installing");
@@ -1820,13 +1831,49 @@ mod tests {
         );
     }
 
+    /// While another writer holds the package, the download waits having
+    /// written nothing, so it must not report an apply: quitting then loses
+    /// nothing and must not ask.
+    #[tokio::test]
+    async fn a_download_waiting_for_the_package_lock_reports_nothing_applying() {
+        use crate::model::QuiltModel;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let m = crate::model::Model::create(dir.path());
+        m.set_home(dir.path().join("home")).await.expect("home");
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+        let package = m
+            .package_create(ns.clone(), None, None)
+            .await
+            .expect("create");
+        let watcher = test_watcher();
+
+        // Another writer of the package, the `quilt` CLI say, holds its lock.
+        let other_writer = package.lock().await.expect("lock");
+        let paths = ["plate/b.csv".to_string()];
+        let mut download = std::pin::pin!(download_backlog_from_model(&m, &watcher, &ns, &paths));
+        let early =
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut download).await;
+        assert!(early.is_err(), "the download waits for the other writer");
+        assert!(
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "nothing is applying while the download waits for the lock"
+        );
+
+        drop(other_writer);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), download)
+            .await
+            .expect("the download runs once the other writer lets go");
+    }
+
     /// A download mock that asserts it installs `expected` and never opens
     /// the file browser, as v1's install path does after every install.
     fn mock_download(expected: &'static [&'static str]) -> crate::model::MockQuiltModel {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths()
+        m.expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        m.expect_locked_package_install_paths()
             .times(1)
             .returning(move |_, paths| {
                 assert_eq!(
@@ -1872,7 +1919,9 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths().returning(|_, _| {
+        m.expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        m.expect_locked_package_install_paths().returning(|_, _| {
             Ok(quilt::flow::InstallPathsReport {
                 skipped: vec![PathBuf::from("plate/c.csv")],
                 ..Default::default()
@@ -1897,7 +1946,9 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_install_paths()
+        m.expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        m.expect_locked_package_install_paths()
             .returning(|_, _| Err(access_denied_error()));
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 

@@ -175,20 +175,6 @@ pub async fn package_revision_certify_latest(
     Ok(())
 }
 
-pub async fn package_revision_reset_local(
-    model: &impl QuiltModel,
-    namespace: quilt_uri::Namespace,
-) -> Result<(), Error> {
-    let installed_package = model
-        .get_installed_package(&namespace)
-        .await?
-        .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    model
-        .package_revision_reset_local(&installed_package)
-        .await?;
-    Ok(())
-}
-
 pub async fn package_undo_commit(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
@@ -336,24 +322,6 @@ pub async fn package_publish(
 }
 
 /// Pull with the package's stored scope, which both pull paths honour.
-pub async fn package_pull(
-    model: &impl QuiltModel,
-    namespace: &quilt_uri::Namespace,
-    host_config: Option<HostConfig>,
-) -> Result<quilt_rs::flow::PullReport, Error> {
-    let installed_package = model
-        .get_installed_package(namespace)
-        .await?
-        .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    let scope = model
-        .get_installed_package_lineage(&installed_package)
-        .await?
-        .sync_scope;
-    model
-        .package_pull(&installed_package, host_config, scope)
-        .await
-}
-
 /// Set the package's remote. Returns `Some(reason)` when the remote was set but
 /// the bucket's default workflow could not be resolved (best-effort path), so
 /// the command layer can surface the warning to the user; `None` otherwise.
@@ -643,48 +611,6 @@ mod tests {
 
         let origin: quilt_uri::Host = "test.quilt.dev".parse().unwrap();
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
-        Ok(())
-    }
-
-    /// The Pull button passes the scope the package stores, with the
-    /// experiment nowhere in the call.
-    #[tokio::test]
-    async fn the_pull_button_applies_the_stored_scope() -> Result<(), Error> {
-        let ns: quilt_uri::Namespace = ("acme", "demo").into();
-        let mut model = MockQuiltModel::new();
-        model.expect_get_installed_package().returning(|_| {
-            Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into()),
-            ))
-        });
-        model.expect_get_installed_package_lineage().returning(|_| {
-            Ok(quilt::lineage::PackageLineage {
-                sync_scope: quilt::lineage::SyncScope::EntirePackage,
-                ..Default::default()
-            })
-        });
-        model
-            .expect_package_pull()
-            .withf(|_, _, scope| *scope == quilt::lineage::SyncScope::EntirePackage)
-            .times(1)
-            .returning(|_, _, _| {
-                Ok(quilt_rs::flow::PullReport {
-                    manifest_uri: ManifestUri {
-                        bucket: "bucket".to_string(),
-                        namespace: ("acme", "demo").into(),
-                        hash: "h1".to_string(),
-                        origin: None,
-                    },
-                    added: Vec::new(),
-                    added_not_fetched: Vec::new(),
-                    updated: Vec::new(),
-                    removed: Vec::new(),
-                    message: None,
-                })
-            });
-
-        package_pull(&model, &ns, None).await?;
         Ok(())
     }
 }
