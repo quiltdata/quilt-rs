@@ -17,6 +17,7 @@ mod browse;
 mod commit;
 mod create;
 mod history;
+mod home;
 mod install;
 mod list;
 mod login;
@@ -33,6 +34,7 @@ mod uninstall;
 #[cfg(test)]
 mod fixtures;
 
+use model::Commands as _;
 use model::Model;
 pub use output::Format;
 pub use output::Std;
@@ -81,14 +83,49 @@ fn get_domain_dir(dir_arg: Option<PathBuf>) -> Result<PathBuf, Error> {
 }
 
 fn get_default_home_dir() -> Result<PathBuf, Error> {
-    dirs::home_dir()
+    default_home_dir_under(user_home_dir())
+}
+
+fn default_home_dir_under(user_home: Option<PathBuf>) -> Result<PathBuf, Error> {
+    user_home
         .map(|user_home| user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME))
         .ok_or(Error::Home)
 }
 
-async fn initialize_home(model: &Model, home: Option<PathBuf>) -> Result<(), Error> {
+#[cfg(not(test))]
+fn user_home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
+/// A temporary folder stands in for the user's home under test: setting the
+/// home creates its folder, and a test must not create the real `~/QuiltSync`.
+#[cfg(test)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the real lookup it stands in for"
+)]
+fn user_home_dir() -> Option<PathBuf> {
+    static USER_HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let user_home = USER_HOME
+        .get_or_init(|| tempfile::tempdir().expect("a temporary folder for the user home"));
+    Some(user_home.path().to_path_buf())
+}
+
+/// Make sure the domain has a home before a command runs.
+///
+/// `home` is the deprecated global `--home`: it warns on `stderr`, then does
+/// what `quilt home <dir>` does without `--overwrite`.
+async fn initialize_home(
+    model: &Model,
+    home: Option<PathBuf>,
+    stderr: &mut impl std::io::Write,
+) -> Result<(), Error> {
     if let Some(dir) = home {
-        model.set_home(dir).await?;
+        writeln!(
+            stderr,
+            "warning: --home is deprecated; use \"quilt home <dir>\""
+        )?;
+        home::set(model.get_local_domain(), &dir, false, home::Via::HomeFlag).await?;
     } else {
         match model.get_home().await {
             Ok(_) => {}
@@ -142,9 +179,9 @@ pub struct Args {
     #[command(subcommand)]
     command: Commands,
 
-    /// Absolute path for the directory, where all packages will store their mutable files.
-    /// Defaults to `~/QuiltSync` on first use. Ex. /home/user/QuiltSync
-    #[arg(long)]
+    /// Deprecated: use `quilt home <dir>`. Sets the home before the command,
+    /// as `quilt home <dir>` does without `--overwrite`.
+    #[arg(long, value_name = "DIR")]
     home: Option<PathBuf>,
 
     /// Path to local domain
@@ -216,6 +253,28 @@ enum Commands {
         /// Commit with no workflow (explicit opt-out)
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
+    },
+    /// Print the home, or set it with `quilt home <dir>`
+    ///
+    /// The home is the folder where installed packages keep their files, one
+    /// `<prefix>/<name>` folder each. On first use it defaults to `~/QuiltSync`.
+    /// `<dir>` may be relative to the current directory, and is created if
+    /// missing.
+    ///
+    /// Changing the home is refused while any package is installed, since
+    /// their folders live under the current one.
+    Home {
+        /// Folder to use as the home
+        #[arg(value_name = "DIR")]
+        dir: Option<PathBuf>,
+        /// Change the home even while packages are installed.
+        ///
+        /// Their files are not moved: each installed package then points at an
+        /// empty folder under the new home, and its files read as deleted. An
+        /// app or another `quilt` writing a package at the same time finishes
+        /// under the old folder.
+        #[arg(long, requires = "dir")]
+        overwrite: bool,
     },
     /// Install package locally
     Install {
@@ -313,6 +372,24 @@ enum Commands {
     },
 }
 
+impl Commands {
+    /// Whether a new domain gets the default home before this command runs.
+    ///
+    /// `login`, `browse` and `role` only talk to a remote and never read the
+    /// home, so they don't set it: a default folder that can't be created must
+    /// not block them. `quilt home <dir>` sets its own, so defaulting first
+    /// would only write a home it is about to replace.
+    fn needs_default_home(&self) -> bool {
+        !matches!(
+            self,
+            Commands::Login { .. }
+                | Commands::Browse { .. }
+                | Commands::Role { .. }
+                | Commands::Home { dir: Some(_), .. }
+        )
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "cohesive top-level CLI command dispatch"
@@ -327,9 +404,14 @@ pub async fn init(args: Args) -> Result<Std, Error> {
     let root_dir = get_domain_dir(args.domain)?;
     let m = Model::from(root_dir);
 
-    // Preserve an existing home, honor an explicit --home override, and set
-    // the default for a new domain on first use.
-    initialize_home(&m, args.home).await?;
+    // Preserve an existing home, honor the deprecated --home, and set the
+    // default for a new domain on first use.
+    if matches!(args.command, Commands::Home { dir: Some(_), .. }) && args.home.is_some() {
+        return Err(Error::HomeTwice);
+    }
+    if args.home.is_some() || args.command.needs_default_home() {
+        initialize_home(&m, args.home, &mut std::io::stderr()).await?;
+    }
 
     match args.command {
         Commands::Browse { uri } => {
@@ -382,6 +464,12 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
+        }
+        Commands::Home { dir, overwrite } => {
+            let args = home::Input { dir, overwrite };
+
+            log::debug!("Home {args:?}");
+            Ok(home::command(m, args).await)
         }
         Commands::Install {
             namespace,
@@ -494,8 +582,14 @@ pub enum Error {
     #[error("Domain directory is required. We store files and credentials there")]
     Domain,
 
-    #[error("Could not determine the home directory. Pass --home to specify one")]
+    #[error("Could not determine the default home directory. Run \"quilt home <dir>\" to set one")]
     Home,
+
+    #[error("{reason}. Moving the home isn't supported yet. {retry}")]
+    HomeInUse { reason: String, retry: home::Retry },
+
+    #[error("--home and \"quilt home <dir>\" both set the home; pass only \"quilt home <dir>\"")]
+    HomeTwice,
 
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
@@ -562,6 +656,8 @@ impl Error {
         match self {
             Error::Domain => "domain",
             Error::Home => "home",
+            Error::HomeInUse { .. } => "home_in_use",
+            Error::HomeTwice => "home_twice",
             Error::Quilt(err) => match err {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",
@@ -618,6 +714,14 @@ mod tests {
         let cases: Vec<(Error, &str)> = vec![
             (Error::Domain, "domain"),
             (Error::Home, "home"),
+            (
+                Error::HomeInUse {
+                    reason: "busy".to_string(),
+                    retry: home::Retry::OverwriteFlag,
+                },
+                "home_in_use",
+            ),
+            (Error::HomeTwice, "home_twice"),
             (Error::NamespaceRequired, "namespace_required"),
             (Error::WorkflowEmpty, "workflow_empty"),
             (Error::WorkflowRequiresBucket, "workflow_requires_bucket"),
@@ -852,12 +956,79 @@ mod tests {
     }
 
     #[test]
-    fn test_get_default_home_dir() -> Result<(), Error> {
-        let user_home = dirs::home_dir().ok_or(Error::Home)?;
+    fn default_home_dir_is_quiltsync_under_the_user_home() {
         assert_eq!(
-            get_default_home_dir()?,
-            user_home.join(quilt_rs::DEFAULT_HOME_DIR_NAME)
+            default_home_dir_under(Some(PathBuf::from("/home/ann"))).unwrap(),
+            PathBuf::from("/home/ann/QuiltSync")
         );
+        assert!(matches!(default_home_dir_under(None), Err(Error::Home)));
+    }
+
+    /// `set_home` creates the folder, so a test that sets the default home
+    /// must not reach the real one.
+    #[test]
+    fn tests_never_use_the_real_default_home() {
+        let real = dirs::home_dir().map(|home| home.join(quilt_rs::DEFAULT_HOME_DIR_NAME));
+        assert_ne!(get_default_home_dir().ok(), real);
+    }
+
+    /// Commands that never touch the home don't set or create one, so a home
+    /// folder that can't be created can't block them.
+    #[test(tokio::test)]
+    async fn commands_without_a_home_leave_a_new_domain_without_one() -> Result<(), Error> {
+        let commands = [
+            Commands::Login {
+                code: None,
+                host: "open.quiltdata.com".parse().expect("valid host"),
+            },
+            Commands::Browse {
+                uri: "not-a-package-uri".to_string(),
+            },
+        ];
+        for command in commands {
+            let domain = tempfile::tempdir()?;
+            let args = Args {
+                home: None,
+                domain: Some(domain.path().to_path_buf()),
+                verbose: false,
+                json: false,
+                command,
+            };
+
+            let _ = init(args).await;
+
+            let stored = quilt_rs::LocalDomain::new(domain.path()).get_home().await;
+            assert!(
+                matches!(
+                    stored,
+                    Err(quilt_rs::Error::Lineage(quilt_rs::LineageError::Missing))
+                ),
+                "no home is stored: {stored:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// The deprecated `--home` still sets the home, whatever the command.
+    #[test(tokio::test)]
+    async fn home_flag_still_sets_the_home_before_login() -> Result<(), Error> {
+        let domain = tempfile::tempdir()?;
+        let home = tempfile::tempdir()?;
+        let args = Args {
+            home: Some(home.path().to_path_buf()),
+            domain: Some(domain.path().to_path_buf()),
+            verbose: false,
+            json: false,
+            command: Commands::Login {
+                code: None,
+                host: "open.quiltdata.com".parse().expect("valid host"),
+            },
+        };
+
+        init(args).await?;
+
+        let stored = quilt_rs::LocalDomain::new(domain.path()).get_home().await?;
+        assert_eq!(stored.as_ref(), home.path());
         Ok(())
     }
 
@@ -895,7 +1066,7 @@ mod tests {
         std::fs::create_dir_all(paths.dot_quilt_dir())?;
         std::fs::write(paths.lineage(), br#"{"packages":{},"home":""}"#)?;
 
-        initialize_home(&model, None).await?;
+        initialize_home(&model, None, &mut Vec::new()).await?;
 
         assert_eq!(model.get_home().await?.as_ref(), &get_default_home_dir()?);
         Ok(())
@@ -907,7 +1078,7 @@ mod tests {
         let home_temp_dir = tempfile::tempdir()?;
         model.set_home(home_temp_dir.path()).await?;
 
-        initialize_home(&model, None).await?;
+        initialize_home(&model, None, &mut Vec::new()).await?;
 
         assert_eq!(
             model.get_home().await?.as_ref(),

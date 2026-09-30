@@ -19,6 +19,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.5-dev]
+
+### Changed
+
+- **New design preview**: when every file of a package is downloaded, the package page says so above the file list, for example "All 1,090 files downloaded". The controls above the file list are now evenly spaced (<https://github.com/quiltdata/quilt-rs/pull/1020>)
+- **New design preview**: on the package page, downloaded files and fully downloaded folders show a small check in the checkbox column, and when every file is downloaded the caption above the file list carries a green check (<https://github.com/quiltdata/quilt-rs/pull/1026>)
+
+### Fixed
+
+- On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
+
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.40.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.22.4] - 2026-09-28
 
 ### Changed

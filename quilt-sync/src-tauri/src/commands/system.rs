@@ -452,13 +452,8 @@ pub async fn copy_to_clipboard(
         .map(copy_to_clipboard_command(&app, &text), msg_ok, msg_err)
 }
 
+/// Stores `directory` as the home. quilt-rs creates the folder.
 async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {
-    if let Err(err) = fs::create_dir_all(directory)
-        && err.kind() != std::io::ErrorKind::AlreadyExists
-    {
-        return Err(Error::from(err));
-    }
-
     m.set_home(&directory).await
 }
 
@@ -556,6 +551,23 @@ pub fn report_ui_panic(message: String, tracing: tauri::State<'_, crate::telemet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The first-run pick creates the folder it picks and stores it as the
+    /// home, so the first install has somewhere to go.
+    #[tokio::test]
+    async fn setup_creates_the_picked_folder_and_stores_it() {
+        let domain = tempfile::tempdir().expect("temp domain");
+        let parent = tempfile::tempdir().expect("temp parent");
+        let picked = parent.path().join("not/yet/there");
+        let m = model::Model::create(domain.path());
+
+        let home = setup_command(&m, picked.to_str().expect("utf-8 path"))
+            .await
+            .expect("setup succeeds");
+
+        assert_eq!(home.as_ref(), &picked);
+        assert!(picked.is_dir());
+    }
 
     /// *Copy path* asks where the file is, and gets the path opening the file
     /// would open: the package's home joined with its path inside it.

@@ -841,6 +841,7 @@ mod tests {
                 changed: 700,
                 not_downloaded: 700,
                 ignored: 10,
+                deleted: 200,
             }
         );
         assert_eq!(data.total, data.counts.all + data.counts.ignored);
@@ -866,6 +867,7 @@ mod tests {
                 changed: 6,
                 not_downloaded: 5,
                 ignored: 6,
+                deleted: 3,
             }
         );
         assert_eq!(data.total, 21);
@@ -901,10 +903,11 @@ mod tests {
             changed: 700,
             not_downloaded: 700,
             ignored: 10,
+            deleted: 200,
         };
         assert_eq!(
             serde_json::to_string(&counts).unwrap(),
-            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10}"#,
+            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10,"deleted":200}"#,
         );
     }
 

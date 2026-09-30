@@ -25,6 +25,7 @@ use crate::kit::QueueRow;
 use crate::kit::Remedy;
 use crate::kit::Site;
 use crate::kit::ZeroLine;
+use crate::kit::ZeroLineSkeleton;
 use crate::kit::render;
 use crate::routes::sign_in_href;
 
@@ -555,38 +556,22 @@ pub fn QueueRegion(
     });
 
     let shape = Memo::new(move |_| {
+        if items.with(Vec::is_empty) && in_flight.get() && total.get() > 0 {
+            // Calls still out and nothing queued: the answer is unknown, so hold
+            // the zero line's place (skeleton_box.rs: unknown, not provisional).
+            return Shape::Pending;
+        }
         if packages.with(Vec::is_empty) && unchecked.with(Vec::is_empty) {
-            // Nothing to speak for. Two ways to get here: a fresh install with
-            // no packages at all, and — since the caller began handing in the
-            // resolved list — every page load, until the first row settles.
-            // "Everything is Latest — 0 packages" is a non-sequitur in both
-            // cases; it invents copy for a case the zero line was never meant to
-            // speak for. The empty-install story belongs to the list's own
-            // blankslate, which a later plan owns.
-            //
-            // `unchecked` is what keeps the offline case out of here (qhq-8mgw.51):
-            // with every call failed the settled list is empty too, and bailing on
-            // that alone left the region ABSENT — no card, no heading, no zero
-            // line — over a page of rows the app could not read.
+            // A fresh install: "Everything is Latest — 0 packages" would be a
+            // non-sequitur, and the list's blankslate speaks for it. `unchecked`
+            // keeps the all-failed case, whose settled list is empty too, out.
             return Shape::Nothing;
         }
         if items.with(Vec::is_empty) {
-            if in_flight.get() || packages.with(Vec::len) < total.get() {
-                // Nothing known, and the page is not entitled to say so. Two
-                // doors reach this: a call still outstanding, and a call that
-                // answered with an error. `outstanding` decrements on failure by
-                // design (R3: a queue that waited on a failed refresh would go
-                // silent forever), and a failed row stays provisional, so R2
-                // drops it from `packages` — which is why "no call outstanding"
-                // was never the same question as "every package accounted for".
-                // A signed-out host is the ordinary way to reach the second
-                // door, and announcing an all-clear over three packages the app
-                // could not read is qhq-8mgw.35 by another route.
-                //
-                // Not a skeleton either: see `kit/skeleton_box.rs`'s own doc, and
-                // the settling rows in the list below are the activity signal it
-                // points at — which is also where "we could not tell" belongs,
-                // as a row that stays dashed.
+            if packages.with(Vec::len) < total.get() {
+                // Every call answered, some package unread (a failed call
+                // decrements `outstanding` but stays out of `packages`, R2/R3):
+                // no all-clear, and no skeleton, since nothing more is coming.
                 return Shape::Silent;
             }
             return Shape::Zero;
@@ -596,6 +581,7 @@ pub fn QueueRegion(
 
     move || match shape.get() {
         Shape::Nothing | Shape::Silent => ().into_any(),
+        Shape::Pending => view! { <ZeroLineSkeleton /> }.into_any(),
         // Acceptance criterion 8, unchanged. The count is the light total,
         // not `packages.len()`: the sentence speaks for every package the
         // list draws. `shape`'s guard makes the two equal wherever this line is
@@ -665,7 +651,9 @@ pub fn QueueRegion(
 enum Shape {
     /// No region: nothing to speak for.
     Nothing,
-    /// No region: something to speak for, and no right to speak yet.
+    /// The zero line's placeholder: calls still out, nothing queued.
+    Pending,
+    /// No region: every call answered, some package still unread.
     Silent,
     /// One line, no card.
     Zero,
@@ -1237,6 +1225,90 @@ mod tests {
             "",
             "the region says nothing while a call is outstanding"
         );
+        assert!(
+            placeholder(&el).is_some(),
+            "but it holds the zero line's place while it waits"
+        );
+    }
+
+    /// `ZeroLineSkeleton`, found by its own class.
+    fn placeholder(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("[class*=placeholder]").unwrap()
+    }
+
+    #[wasm_bindgen_test]
+    fn a_load_with_nothing_settled_yet_holds_the_line_open() {
+        let el = mount_region_of(
+            Signal::stored(vec![]),
+            one_signed_in(),
+            Signal::stored(true),
+            Signal::stored(3),
+            Signal::stored(Vec::new()),
+            Callback::new(|_| ()),
+        );
+        let line = placeholder(&el).expect("the zero line's place, held open");
+        assert_eq!(
+            line.get_attribute("aria-busy").as_deref(),
+            Some("true"),
+            "the region is busy, not the bars inside it (skeleton_box.rs)"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_fresh_install_holds_no_line_open_even_while_in_flight() {
+        let el = mount_region_of(
+            Signal::stored(vec![]),
+            one_signed_in(),
+            Signal::stored(true),
+            Signal::stored(0),
+            Signal::stored(Vec::new()),
+            Callback::new(|_| ()),
+        );
+        assert!(placeholder(&el).is_none(), "no packages, no placeholder");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_check_that_answered_with_nothing_holds_no_line_open() {
+        let el = mount_region_of(
+            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            one_signed_in(),
+            Signal::stored(false),
+            Signal::stored(2),
+            Signal::stored(Vec::new()),
+            Callback::new(|_| ()),
+        );
+        assert!(placeholder(&el).is_none(), "silent, and not waiting");
+        assert!(
+            !el.text_content().unwrap().contains("Everything is Latest"),
+            "and still no all-clear"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_that_needs_a_decision_replaces_the_held_line() {
+        let packages = RwSignal::new(vec![]);
+        let el = mount_region_of(
+            packages.into(),
+            one_signed_in(),
+            Signal::stored(true),
+            Signal::stored(2),
+            Signal::stored(Vec::new()),
+            Callback::new(|_| ()),
+        );
+        assert!(
+            placeholder(&el).is_some(),
+            "held open while nothing is known"
+        );
+
+        packages.set(vec![pkg("a/one", PackageState::Diverged, Some("h.io"))]);
+        leptos::task::tick().await;
+
+        assert!(placeholder(&el).is_none(), "the card, not the placeholder");
+        assert!(
+            el.text_content().unwrap().contains("Needs your attention"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
     }
 
     #[wasm_bindgen_test]
@@ -1267,9 +1339,18 @@ mod tests {
             in_flight.into(),
         );
         assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+        assert!(
+            placeholder(&el).is_some(),
+            "the line is held while it waits"
+        );
 
         in_flight.set(false);
         leptos::task::tick().await;
+
+        assert!(
+            placeholder(&el).is_none(),
+            "the zero line takes the placeholder's place, not a line below it"
+        );
 
         assert!(
             el.text_content()

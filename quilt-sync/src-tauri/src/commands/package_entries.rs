@@ -39,6 +39,9 @@ pub struct EntryCounts {
     pub not_downloaded: usize,
     /// Matched by `.quiltignore` in the local walk.
     pub ignored: usize,
+    /// Also inside `changed`; on its own because the v2 pane's all-downloaded
+    /// caption must know about a deleted file past the list cap.
+    pub deleted: usize,
 }
 
 impl EntryCounts {
@@ -51,7 +54,11 @@ impl EntryCounts {
             }
             counts.all += 1;
             match entry.status.as_str() {
-                "added" | "modified" | "deleted" => counts.changed += 1,
+                "added" | "modified" => counts.changed += 1,
+                "deleted" => {
+                    counts.changed += 1;
+                    counts.deleted += 1;
+                }
                 "remote" => counts.not_downloaded += 1,
                 _ => {}
             }

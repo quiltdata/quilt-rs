@@ -11,7 +11,7 @@ body {
   background: var(--q-bgColor-page);
 }
 
-/* Sticky index beside one long scroll, rather than tabs.
+/* Sticky index beside the routed page, rather than tabs (see `Route`).
  *
  * The shell is wider than the page cap ON PURPOSE: the index and its gap are
  * added to `--q-container`, not taken out of it. Otherwise the nav eats ~200px of
@@ -82,8 +82,6 @@ body {
 
 .g-main { flex: 1 1 auto; min-width: 0; max-width: var(--q-container); }
 
-/* Jumping to a section should not put its heading flush against the top. */
-.g-anchor { scroll-margin-top: var(--q-space-6); }
 .g-head { margin-bottom: var(--q-space-8); }
 
 .g-head h1 { font-size: var(--q-text-title); margin: 0 0 4px; font-weight: 600; }
@@ -150,6 +148,61 @@ body {
 .g-nav ul {
   margin-top: 0;
 }
+
+/* The filter stays with the theme toggle, above the index that scrolls. A flex
+ * row so `SearchInput`'s own `flex: 1` fills the nav, and a zero floor on the
+ * field, whose intrinsic 20-character width is wider than the nav is. */
+.g-nav__filter { display: flex; margin: var(--q-space-3) 0 0; }
+.g-nav__filter input { width: 100%; min-width: 0; }
+
+/* A scene's page, inside the Scenes tier. Quieter than the tier: it groups the
+ * links under it, it is not a place to go. */
+.g-nav__area {
+  padding: var(--q-space-2) var(--q-space-3) 2px;
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  color: var(--q-fgColor-default);
+}
+
+.g-nav__empty {
+  margin: var(--q-space-4) 0 0;
+  padding-left: var(--q-space-3);
+  color: var(--q-fgColor-muted);
+}
+
+/* Where the route is. The same left rule as hover, held, so the two agree. */
+.g-nav li a[aria-current="page"] {
+  color: var(--q-fgColor-default);
+  border-left-color: var(--q-borderColor-emphasis);
+  font-weight: 600;
+}
+
+.g-nav__tier a[aria-current="page"] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The page a run of scenes belongs to, in the page itself. Not a heading: the
+ * outline is page -> tier -> section, and a level between would push every
+ * section's `h3` down to an `h4`. */
+.g-area {
+  margin: var(--q-space-6) 0 var(--q-space-4);
+  font-size: var(--q-text-lead);
+  color: var(--q-fgColor-muted);
+}
+
+/* The story file above each section, and a link to that section alone. Mono,
+ * like a cell label, because it is a name in the source rather than prose. */
+.g-entry__source {
+  display: inline-block;
+  margin-bottom: 2px;
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  text-decoration: none;
+}
+
+.g-entry__source:hover { text-decoration: underline; }
 .g-note { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 80ch; }
 
 .g-grid {
@@ -281,6 +334,24 @@ body {
   .g-fp-footer { animation: none; }
 }
 
+/* The gallery scene's all-downloaded tick, in the box's hole before `All 53 files
+ * downloaded`. The page's own pane draws it with `file_pane.module.scss`'s
+ * `.done`, which this chrome mirrors; keep the two in step. */
+.g-fp-done {
+  display: flex;
+  flex: 0 0 17px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.g-fp-done svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-success);
+}
+
 /* The installed package page's two-pane shell. Page layout rather than gallery
  * chrome, here until the page's own region is written, and it moves with it.
  *
@@ -409,4 +480,11 @@ body {
     --q-pane-divider-above: 0;
     --q-pane-divider-below: var(--q-space-7);
   }
+}
+
+/* Two whole-page windows side by side, so their rows can be compared. */
+.g-window-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--q-space-3);
 }

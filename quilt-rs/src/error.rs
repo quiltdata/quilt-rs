@@ -218,6 +218,15 @@ pub enum LineageError {
 
     #[error("Operation requires a remote origin, but this is a local-only package")]
     NoRemote,
+
+    /// The home can't move while packages are installed: their working
+    /// folders live under the current one.
+    #[error(
+        "Cannot change the home: {installed} {} installed in {}",
+        if *installed == 1 { "package is" } else { "packages are" },
+        home.display()
+    )]
+    HomeInUse { home: PathBuf, installed: usize },
 }
 
 #[derive(Error, Debug, PartialEq)]

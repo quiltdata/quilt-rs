@@ -4,10 +4,7 @@
  * first words carry the meaning, and the tail is a count.
  */
 
-/* `.placeholder` shares the whole rule, listed here rather than `composes`-ed below:
- * stylance copies `composes` through as an unknown property, so the skeleton got none
- * of this and drew as a bare `<p>` — the square above the bar, inside the UA's
- * margins, and a jump when the real line replaced it. */
+/* Shared with `.placeholder`: stylance leaves `composes` untranslated. */
 .root,
 .placeholder {
   display: flex;
@@ -50,12 +47,10 @@
  * by less, and it shifts to show something worth seeing.
  *
  * Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
- * already use — a test looking for this one has to be able to say so. Its rule is
- * `.root`'s, above. */
-
-/* The bar is a block, so the text slot would be the bar's 12px and the line 3.5px
- * shorter than the one that replaces it. The slot keeps a line of text's height and
- * centres the bar in it, as the words would sit. */
+ * already use — a test looking for this one has to be able to say so.
+ *
+ * The bar is a block and forms no line box, so the text's line height is set
+ * explicitly to match `.root .text`. */
 .placeholder .text {
   display: flex;
   align-items: center;

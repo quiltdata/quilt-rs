@@ -14,12 +14,13 @@
 //!
 //! Two versions, because they are the two days a user has. The busy page is the
 //! worst case — 19 things needing decisions — and the calm page is the common one,
-//! where `ZeroLine` collapses the whole region to a line.
+//! where `ZeroLine` collapses the whole region to a line. A third pairs the calm
+//! page still checking with the page it settles into.
 //!
-//! The last two are the pages before they have anything to show, and they are the
-//! app's own components rather than compositions: `MainPageSkeleton` and
+//! [`LoadingScene`] is the pages before they have anything to show, and those are
+//! the app's own components rather than compositions: `MainPageSkeleton` and
 //! `PackagePageSkeleton` are what `main.rs` draws while a route decides between v1
-//! and v2, so a scene here is the frame the reader sees.
+//! and v2, so a scene there is the frame the reader sees.
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -32,9 +33,9 @@ use crate::kit::Activities;
 use crate::kit::Activity;
 use crate::kit::ActivityKind;
 use crate::kit::Button;
-use crate::kit::Card;
 use crate::kit::PageLayout;
 use crate::kit::ZeroLine;
+use crate::kit::ZeroLineSkeleton;
 use crate::kit::icons;
 use crate::pages;
 
@@ -106,20 +107,13 @@ pub fn PageScene() -> impl IntoView {
             <div class="g-window">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>
                     <StateStripRegion />
-                    // The queue region collapsed. Composed here rather than hidden inside
-                    // `QueueRegion` behind a flag — "is anything wrong" is the caller's
-                    // question, and a region that answered it for itself would need the
-                    // data this gallery does not have.
-                    //
-                    // No count: counting to zero is noise, and `Card`'s count is optional
-                    // for exactly this row of the design.
-                    <Card title="Needs your attention">
-                        <ZeroLine text="Everything is Latest — 43 packages" />
-                    </Card>
+                    // Bare, with no card, as `QueueRegion` draws it.
+                    <ZeroLine text="Everything is Latest — 43 packages" />
                     <PackagesRegion view_name="normal-day-view" />
                 </PageLayout>
             </div>
         </Scene>
+        <CheckingScene />
         <Scene
             title="Scene · the appbar alone"
             note="The two chrome buttons on the brand ground, with nothing under them to \
@@ -189,6 +183,36 @@ pub fn LoadingScene() -> impl IntoView {
         >
             <div class="g-window">
                 <pages::PackagePageSkeleton actions=loading_actions() />
+            </div>
+        </Scene>
+    }
+}
+
+/// The calm page still checking, beside the page it settles into.
+#[component]
+fn CheckingScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · the whole page, still checking"
+            note="The calm day before its checks answer, beside the page it settles into: \
+                  rows dimmed, the zero line's placeholder in the queue's place. The first \
+                  package row must start at the same height in both windows."
+        >
+            <div class="g-window-pair">
+                <div class="g-window">
+                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                        <StateStripRegion />
+                        <ZeroLineSkeleton />
+                        <PackagesRegion view_name="checking-view" provisional=true />
+                    </PageLayout>
+                </div>
+                <div class="g-window">
+                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                        <StateStripRegion />
+                        <ZeroLine text="Everything is Latest — 43 packages" />
+                        <PackagesRegion view_name="checked-view" />
+                    </PageLayout>
+                </div>
             </div>
         </Scene>
     }
