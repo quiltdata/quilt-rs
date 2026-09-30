@@ -19,23 +19,23 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.34.0-dev]
+## [v0.34.0] - 2026-09-30
 
 ### Added
 
-- `quilt home` prints the home, the folder where installed packages keep their files, and `quilt home <dir>` sets it. A relative `<dir>` is taken against the current directory, and a missing folder is created. While any package is installed, a different home is refused, because the packages' files stay in the old folder; `quilt home <dir> --overwrite` changes it anyway. `quilt home --json` prints `{"home": "<path>"}`, and a refusal has the error kind `home_in_use` (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+- `quilt home` prints the folder where installed packages keep their files, and `quilt home <dir>` sets it. While packages are installed, a different home is refused unless you pass `--overwrite` (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### Changed
 
-- A command that changes a package another quilt process is changing, such as QuiltSync downloading its files, waits for it and prints `waiting for another quilt process…` to stderr, then runs. It used to run at once, and one of the two could drop what the other recorded (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- A command on a package that another quilt process, such as QuiltSync, is changing waits for it and prints `waiting for another quilt process…` to stderr. It used to run at once, and one side's changes could be lost (<https://github.com/quiltdata/quilt-rs/pull/1022>)
 
 ### Deprecated
 
-- `--home <dir>` is deprecated in favor of `quilt home <dir>`. It prints a warning, then sets the home the same way, so it now refuses a different home while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+- `--home <dir>` is deprecated in favor of `quilt home <dir>`. It still works with a warning, and now refuses a different home while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### quilt-rs
 
-- Updated [from v0.40.0 to v0.41.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.40.0 to v0.41.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...quilt-rs/v0.41.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.33.0] - 2026-09-28
 
