@@ -152,9 +152,9 @@ pub(crate) async fn objects_in_use(
     mut candidates: BTreeSet<String>,
 ) -> Res<BTreeSet<String>> {
     let mut in_use = BTreeSet::new();
-    for owner in list_entries(storage, &paths.installed_dir()).await? {
-        for package in list_entries(storage, &owner.path).await? {
-            for (_, manifest_path, _) in list_files(storage, &package.path).await? {
+    for owner in list_dirs(storage, &paths.installed_dir()).await? {
+        for package in list_dirs(storage, &owner).await? {
+            for (_, manifest_path, _) in list_files(storage, &package).await? {
                 if candidates.is_empty() {
                     return Ok(in_use);
                 }
@@ -200,12 +200,12 @@ async fn lock_every_package(
     lineage: &DomainLineage,
 ) -> Res<Vec<LockGuard>> {
     let mut namespaces: BTreeSet<Namespace> = lineage.namespaces().into_iter().collect();
-    for owner_dir in list_entries(storage, &paths.locks_dir()).await? {
-        let Some(owner) = owner_dir.path.file_name() else {
+    for owner_dir in list_dirs(storage, &paths.locks_dir()).await? {
+        let Some(owner) = owner_dir.file_name() else {
             continue;
         };
         let owner = owner.to_string_lossy();
-        for (lock_file, _, _) in list_files(storage, &owner_dir.path).await? {
+        for (lock_file, _, _) in list_files(storage, &owner_dir).await? {
             if let Some(name) = lock_file.strip_suffix(".lock") {
                 namespaces.insert((owner.as_ref(), name).into());
             }
@@ -246,6 +246,17 @@ async fn list_entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<En
     }
     found.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(found)
+}
+
+/// The subdirectories of `dir`: a stray file beside them, such as the OS's
+/// own, is not one.
+async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathBuf>> {
+    Ok(list_entries(storage, dir)
+        .await?
+        .into_iter()
+        .filter(|entry| entry.is_dir)
+        .map(|entry| entry.path)
+        .collect())
 }
 
 /// The visible files of `dir` as `(name, path, length)`, or none if it does
@@ -498,6 +509,20 @@ mod tests {
         assert_eq!(format_bytes(999_960), "1.0 MB");
         assert_eq!(format_bytes(2_560_000), "2.6 MB");
         assert_eq!(format_bytes(3_000_000_000), "3.0 GB");
+    }
+
+    /// A stray file where a package dir or an owner dir belongs is skipped,
+    /// not read as one.
+    #[test(tokio::test)]
+    async fn a_stray_file_among_the_dirs_is_skipped() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
+        std::fs::write(paths.installed_dir().join(".DS_Store"), "")?;
+        std::fs::write(paths.installed_dir().join("acme/.DS_Store"), "")?;
+        std::fs::write(paths.locks_dir().join(".DS_Store"), "")?;
+
+        assert!(domain.gc().await?.is_empty());
+        Ok(())
     }
 
     /// A key elsewhere on disk, or not a file URL, names no object.
