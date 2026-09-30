@@ -21,6 +21,10 @@
 
 ## [v0.34.1-dev]
 
+### Added
+
+- `quilt list --fetch` checks each package's remote now and counts its changed files, showing what QuiltSync's main page shows (`latest`, `not the latest`, `3 files changed`, …). Plain `quilt list` stays offline ([#TBD])
+
 ### Changed
 
 - `quilt list` names its status column `last synced`, words each status as of the package's last install, pull or push (`synced`, `unpushed commit`, `never pushed`, `local only`, …), and ends with a hint to run `quilt status` for a fresh check. `--json` output is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1031>)
