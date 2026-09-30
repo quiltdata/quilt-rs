@@ -11,6 +11,7 @@ use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::create;
 use crate::cli::history;
+use crate::cli::home;
 use crate::cli::install;
 use crate::cli::list;
 use crate::cli::login;
@@ -41,6 +42,11 @@ pub trait Commands {
     async fn commit(&self, args: commit::Input) -> Result<commit::Output, Error> {
         let local_domain = self.get_local_domain();
         commit::model(local_domain, args).await
+    }
+
+    async fn home(&self, args: home::Input) -> Result<home::Output, Error> {
+        let local_domain = self.get_local_domain();
+        home::model(local_domain, args).await
     }
 
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
