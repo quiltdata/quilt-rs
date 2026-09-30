@@ -65,6 +65,10 @@ mod gallery {
     pub mod installed_package;
     pub mod list_toolbar;
     pub mod load_failure;
+    pub mod old_revisions_dialog;
+    pub mod old_revisions_inline;
+    pub mod old_revisions_keep_n;
+    pub mod old_revisions_settings;
     pub mod package_header;
     pub mod packages;
     pub mod page;
@@ -295,6 +299,26 @@ const ENTRIES: &[Entry] = &[
         Scenes / "Installed package",
         "File pane",
         file_pane::FilePaneScene
+    ),
+    entry!(
+        Scenes / "Old revisions (options)",
+        "Option A · remove from the popover",
+        old_revisions_inline::OldRevisionsInlineScene
+    ),
+    entry!(
+        Scenes / "Old revisions (options)",
+        "Option B · a Manage revisions dialog",
+        old_revisions_dialog::OldRevisionsDialogScene
+    ),
+    entry!(
+        Scenes / "Old revisions (options)",
+        "Option C · Settings Storage section",
+        old_revisions_settings::OldRevisionsSettingsScene
+    ),
+    entry!(
+        Scenes / "Old revisions (options)",
+        "Option D · keep the last N automatically",
+        old_revisions_keep_n::OldRevisionsKeepNScene
     ),
     entry!(Scenes / "Dialogs", "The three dialogs", forms::DialogScene),
     entry!(
