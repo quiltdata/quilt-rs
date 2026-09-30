@@ -262,22 +262,23 @@ pub async fn package_push(
 }
 
 async fn package_publish_command(
-    m: &model::Model,
+    m: &impl model::QuiltModel,
     settings: &SharedPublishSettings,
     namespace: &str,
 ) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    let installed = m
-        .get_installed_package(&namespace)
-        .await?
-        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
-    let status = m.get_installed_package_status(&installed, None).await?;
+    let installed = installed_package(m, &namespace).await?;
+    // The message names the changes of the status walked under the lock, and
+    // the publish commits that same walk. A download or pull that lands while
+    // Publish waits for the lock is then in both, as the tick does it.
+    let locked = m.lock_package(&installed).await?;
+    let status = m.locked_package_status(&locked, None).await?;
 
     let settings = settings.read().await.clone();
     // Box the publish future — the commit+push state machine exceeds the
     // `large_futures` budget (see `clippy.toml`).
-    let (outcome, _message) = Box::pin(model::publish_with_settings(
-        m, &namespace, &settings, status,
+    let (outcome, _message) = Box::pin(model::publish_locked_with_settings(
+        m, &locked, &installed, &settings, status,
     ))
     .await?;
     Ok((namespace, outcome))
@@ -293,7 +294,7 @@ pub async fn package_publish(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
-    let result = package_publish_command(&m, &settings, &namespace).await;
+    let result = package_publish_command(&*m, &settings, &namespace).await;
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
     }
@@ -1134,6 +1135,124 @@ mod tests {
             Box::pin(super::reset_local_command(&model, &watcher, "acme/demo")),
         )
         .await;
+    }
+
+    /// A model that commits for real and has no remote to push to: a publish
+    /// is its commit. Hand-written rather than mocked, so the lock it takes and
+    /// the tree it walks are the package's own.
+    struct CommitOnlyPublisher {
+        domain: tokio::sync::Mutex<quilt::LocalDomain>,
+    }
+
+    impl CommitOnlyPublisher {
+        async fn created(dir: &tempfile::TempDir) -> (Self, quilt::InstalledPackage) {
+            use crate::model::QuiltModel;
+            let model = Self {
+                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(dir.path())),
+            };
+            model
+                .domain
+                .lock()
+                .await
+                .set_home(dir.path().join("home"))
+                .await
+                .expect("home");
+            let package = model
+                .package_create(("acme", "demo").into(), None, None)
+                .await
+                .expect("create");
+            (model, package)
+        }
+    }
+
+    fn committed(
+        namespace: &quilt_uri::Namespace,
+        commit: &quilt::lineage::CommitState,
+    ) -> quilt::PublishOutcome {
+        quilt::PublishOutcome::CommittedAndPushed(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: String::new(),
+                namespace: namespace.clone(),
+                hash: commit.hash.clone(),
+                origin: None,
+            },
+            certified_latest: true,
+        })
+    }
+
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "`locked_package_publish` awaits; `resolve_workflow` does not — see `SilentHost` in `package_list.rs`."
+    )]
+    impl crate::model::QuiltModel for CommitOnlyPublisher {
+        type Locked = quilt::LockedPackage;
+
+        fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
+            &self.domain
+        }
+
+        async fn resolve_workflow(
+            &self,
+            _: &quilt::InstalledPackage,
+            _: super::WorkflowIntent,
+        ) -> Result<Option<quilt::manifest::Workflow>, Error> {
+            Ok(None)
+        }
+
+        async fn locked_package_publish(
+            &self,
+            package: &quilt::LockedPackage,
+            message: String,
+            metadata: quilt_rs::flow::UserMeta,
+            workflow: Option<quilt::manifest::Workflow>,
+            host_config: Option<quilt_rs::io::remote::HostConfig>,
+            _: Option<quilt::lineage::InstalledPackageStatus>,
+        ) -> Result<quilt::PublishOutcome, Error> {
+            let commit = package
+                .commit(message, metadata, workflow, host_config)
+                .await?;
+            Ok(committed(&("acme", "demo").into(), &commit))
+        }
+    }
+
+    /// A file that lands while Publish waits for another writer is in the
+    /// revision, so the revision's message must name it too: Publish reads
+    /// the changes it describes only once it holds the lock.
+    #[tokio::test]
+    async fn a_publish_waiting_for_the_package_lock_names_what_it_commits() {
+        use crate::model::QuiltModel;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let (model, package) = CommitOnlyPublisher::created(&dir).await;
+        let home = model.package_home(&package.namespace).await.expect("home");
+        let settings: crate::publish_settings::SharedPublishSettings = Arc::new(
+            tokio::sync::RwLock::new(crate::publish_settings::PublishSettings::default()),
+        );
+
+        // Another writer of the package, a download say, holds its lock.
+        let other_writer = package.lock().await.expect("lock");
+        let mut publish = std::pin::pin!(Box::pin(super::package_publish_command(
+            &model,
+            &settings,
+            "acme/demo"
+        )));
+        let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut publish).await;
+        assert!(early.is_err(), "the publish waits for the other writer");
+        std::fs::write(home.join("data.csv"), "a,b\n").expect("write");
+        drop(other_writer);
+        tokio::time::timeout(std::time::Duration::from_secs(5), publish)
+            .await
+            .expect("the publish runs once the other writer lets go")
+            .expect("publish");
+
+        let revision = package.manifest().await.expect("manifest");
+        assert!(
+            revision
+                .rows
+                .iter()
+                .any(|row| row.logical_key == std::path::Path::new("data.csv")),
+            "the revision holds the file"
+        );
+        assert_eq!(revision.header.message.as_deref(), Some("Add data.csv"));
     }
 
     fn installed_model() -> MockQuiltModel {

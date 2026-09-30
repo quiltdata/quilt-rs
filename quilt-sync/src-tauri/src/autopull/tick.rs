@@ -525,8 +525,8 @@ pub(crate) async fn refresh_then_maybe_sync(
                 edited_at + quiet_window,
             )));
         }
-        // `publish_locked_with_settings` renders the settings as the manual
-        // one-click Publish command does, so a change to publish settings (new
+        // `publish_locked_with_settings` is the manual one-click Publish
+        // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who
         // triggered the publish. It publishes on the held lock and reuses
         // `status`, walked under it.

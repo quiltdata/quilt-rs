@@ -233,36 +233,11 @@ fn publish_inputs(
     (message, metadata, workflow)
 }
 
-/// Render `PublishSettings` into a message / metadata / workflow triple
-/// and route through [`package_publish`]: the manual one-click Publish.
-///
-/// `status` only names the changes in the message. The publish takes the
-/// package's lock and walks the tree again under it, since a download may
-/// have landed since `status` was read. Returns the outcome paired with the
-/// rendered commit message.
-pub async fn publish_with_settings(
-    model: &impl QuiltModel,
-    namespace: &quilt_uri::Namespace,
-    settings: &PublishSettings,
-    status: quilt::lineage::InstalledPackageStatus,
-) -> Result<(quilt::PublishOutcome, String), Error> {
-    let (message, metadata, workflow) = publish_inputs(namespace, settings, &status);
-    let outcome = package_publish(
-        model,
-        namespace.clone(),
-        &message,
-        &metadata,
-        workflow,
-        None,
-    )
-    .await?;
-    Ok((outcome, message))
-}
-
-/// [`publish_with_settings`] for the autosync tick, on the lock it has held
-/// since it walked `status`, so the publish reuses that walk. Returns the
-/// outcome paired with the rendered message, which the tick's
-/// `autosync-published` event carries.
+/// Publish with what `settings` say, on the lock held since `status` was
+/// walked, so the message names the changes the revision commits and the
+/// publish reuses that walk. Both publish paths, the manual one-click Publish
+/// and the autosync tick, come here. Returns the outcome paired with the
+/// rendered message, which the tick's `autosync-published` event carries.
 pub async fn publish_locked_with_settings<M: QuiltModel>(
     model: &M,
     locked: &M::Locked,
@@ -481,62 +456,57 @@ mod tests {
         })
     }
 
-    /// A `MockQuiltModel` that asserts `publish_with_settings` resolves the
-    /// workflow with exactly `expected` and then publishes once.
+    /// A `MockQuiltModel` that asserts `publish_locked_with_settings` resolves
+    /// the workflow with exactly `expected` and then publishes once.
     fn model_expecting_intent(expected: WorkflowIntent) -> MockQuiltModel {
         let mut model = MockQuiltModel::new();
-        model.expect_get_installed_package().returning(|_| {
-            Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into()),
-            ))
-        });
         model
             .expect_resolve_workflow()
             .times(1)
             .with(always(), eq(expected))
             .returning(|_, _| Ok(None));
         model
-            .expect_package_publish()
+            .expect_locked_package_publish()
             .times(1)
-            .returning(|_, _, _, _, _| Ok(fake_publish_outcome(&("acme", "demo").into())));
+            .returning(|_, _, _, _, _, _| Ok(fake_publish_outcome(&("acme", "demo").into())));
         model
     }
 
-    #[tokio::test]
-    async fn publish_with_settings_empty_maps_to_bucket_default() -> Result<(), Error> {
-        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
-        let model = model_expecting_intent(WorkflowIntent::BucketDefault);
-        let settings = PublishSettings::default();
+    /// Publish `settings` through `model` on a mocked lock.
+    async fn publish_with(model: &MockQuiltModel, settings: &PublishSettings) -> Result<(), Error> {
+        let installed = quilt::LocalDomain::new(std::path::PathBuf::new())
+            .create_installed_package(("acme", "demo").into());
+        let locked = installed.namespace.clone();
         let status = quilt::lineage::InstalledPackageStatus::default();
-        publish_with_settings(&model, &namespace, &settings, status).await?;
+        publish_locked_with_settings(model, &locked, &installed, settings, status).await?;
         Ok(())
     }
 
     #[tokio::test]
-    async fn publish_with_settings_named_workflow() -> Result<(), Error> {
-        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+    async fn publish_locked_with_settings_empty_maps_to_bucket_default() -> Result<(), Error> {
+        let model = model_expecting_intent(WorkflowIntent::BucketDefault);
+        let settings = PublishSettings::default();
+        publish_with(&model, &settings).await
+    }
+
+    #[tokio::test]
+    async fn publish_locked_with_settings_named_workflow() -> Result<(), Error> {
         let model = model_expecting_intent(WorkflowIntent::Named("x".to_string()));
         let settings = PublishSettings {
             default_workflow: Some("x".to_string()),
             ..PublishSettings::default()
         };
-        let status = quilt::lineage::InstalledPackageStatus::default();
-        publish_with_settings(&model, &namespace, &settings, status).await?;
-        Ok(())
+        publish_with(&model, &settings).await
     }
 
     #[tokio::test]
-    async fn publish_with_settings_whitespace_maps_to_bucket_default() -> Result<(), Error> {
-        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+    async fn publish_locked_with_settings_whitespace_maps_to_bucket_default() -> Result<(), Error> {
         let model = model_expecting_intent(WorkflowIntent::BucketDefault);
         let settings = PublishSettings {
             default_workflow: Some("   ".into()),
             ..PublishSettings::default()
         };
-        let status = quilt::lineage::InstalledPackageStatus::default();
-        publish_with_settings(&model, &namespace, &settings, status).await?;
-        Ok(())
+        publish_with(&model, &settings).await
     }
 
     /// A workflow-rejection error from `quilt-rs` must propagate through the
