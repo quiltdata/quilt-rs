@@ -44,6 +44,50 @@ impl GcReport {
     }
 }
 
+/// One sentence for every surface that reports a gc: "Freed 630.2 kB: 6
+/// objects, 2 cached manifests", naming only what was removed, or "Nothing
+/// to free".
+impl std::fmt::Display for GcReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_empty() {
+            return write!(f, "Nothing to free");
+        }
+        let parts: Vec<String> = [
+            (self.objects, "object", "objects"),
+            (self.cached_manifests, "cached manifest", "cached manifests"),
+            (self.staging, "staging dir", "staging dirs"),
+        ]
+        .into_iter()
+        .filter(|(count, _, _)| *count > 0)
+        .map(|(count, one, many)| format!("{count} {}", if count == 1 { one } else { many }))
+        .collect();
+        write!(
+            f,
+            "Freed {}: {}",
+            format_bytes(self.bytes),
+            parts.join(", ")
+        )
+    }
+}
+
+/// Decimal units, as Finder counts them, with one decimal past bytes.
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
+    if bytes < 1000 {
+        return format!("{bytes} B");
+    }
+    // Display rounding only.
+    #[allow(clippy::cast_precision_loss)]
+    let mut value = bytes as f64 / 1000.0;
+    for unit in &UNITS[..UNITS.len() - 1] {
+        if value < 999.95 {
+            return format!("{value:.1} {unit}");
+        }
+        value /= 1000.0;
+    }
+    format!("{value:.1} {}", UNITS[UNITS.len() - 1])
+}
+
 /// Delete every object no installed manifest uses, everything in the
 /// `packages/` cache and everything in `staging/`.
 ///
@@ -423,6 +467,37 @@ mod tests {
 
         assert_eq!(in_use, [digest, "old-name".to_string()].into());
         Ok(())
+    }
+
+    #[test]
+    fn the_report_names_only_what_was_removed() {
+        assert_eq!(GcReport::default().to_string(), "Nothing to free");
+        let report = GcReport {
+            objects: 6,
+            cached_manifests: 2,
+            staging: 0,
+            bytes: 630_200,
+        };
+        assert_eq!(
+            report.to_string(),
+            "Freed 630.2 kB: 6 objects, 2 cached manifests"
+        );
+        let report = GcReport {
+            objects: 1,
+            cached_manifests: 0,
+            staging: 1,
+            bytes: 12,
+        };
+        assert_eq!(report.to_string(), "Freed 12 B: 1 object, 1 staging dir");
+    }
+
+    #[test]
+    fn bytes_read_in_decimal_units() {
+        assert_eq!(format_bytes(999), "999 B");
+        assert_eq!(format_bytes(1000), "1.0 kB");
+        assert_eq!(format_bytes(999_960), "1.0 MB");
+        assert_eq!(format_bytes(2_560_000), "2.6 MB");
+        assert_eq!(format_bytes(3_000_000_000), "3.0 GB");
     }
 
     /// A key elsewhere on disk, or not a file URL, names no object.
