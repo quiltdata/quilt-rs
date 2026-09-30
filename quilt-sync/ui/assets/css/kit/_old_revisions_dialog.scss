@@ -1,1 +1,209 @@
 // Styles for the gallery's old_revisions_dialog.rs exploration only.
+
+/* The states side by side. Two columns of the modal's width where the gallery has room,
+ * one where it does not. */
+.g-ord-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--q-space-2);
+}
+
+/* The dialog inline. Mirrors `dialog.module.scss` — width, padding, edge, title, footer —
+ * without the top layer, and without the shadow: it is not above anything here. */
+.g-ord-dialog {
+  width: min(440px, 100%);
+  padding: var(--q-space-4);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+}
+
+.g-ord-dialog__title {
+  margin: 0 0 var(--q-space-3);
+  font-size: var(--q-text-lead);
+  font-weight: 600;
+}
+
+.g-ord-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}
+
+.g-ord-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--q-space-2);
+  margin-top: var(--q-space-5);
+}
+
+/* The package and the order, once, under the title — so no row has to say `obtained`. */
+.g-ord-caption {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+/* The UA's fieldset box stated away: it is here to seal the boxes, not to draw a group. */
+.g-ord-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* Select all on the left, the total on the right, one line that never wraps: the text on
+ * both sides changes as boxes are ticked. */
+.g-ord-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: 0 2px var(--q-space-1);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+}
+
+.g-ord-selectall {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  font-size: var(--q-text-body);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.g-ord-total-slot {
+  margin-left: auto;
+  flex: none;
+}
+
+/* Default ink, tabular: it is the number the reader is deciding on. */
+.g-ord-total {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-1);
+  font-size: var(--q-text-body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.g-ord-total--measuring {
+  color: var(--q-fgColor-muted);
+}
+
+.g-ord-rows {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The box beside the revision, lifted 3px onto the message's baseline, as the file rows
+ * put theirs. */
+.g-ord-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  min-width: 0;
+  padding: var(--q-space-1) 2px;
+  border-radius: var(--q-radius);
+  cursor: pointer;
+
+  > :first-child { margin-top: 3px; flex: none; }
+}
+
+label.g-ord-row:hover { background: var(--q-overlay-hover); }
+
+.g-ord-row--kept { cursor: default; }
+
+/* Muted, on the right, never shrinking: the message truncates first. */
+.g-ord-reason {
+  flex: none;
+  margin-left: auto;
+  padding-left: var(--q-space-2);
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+  white-space: nowrap;
+}
+
+/* The popover as it hangs open, at its real width — `anchored_overlay.module.scss`'s
+ * surface without `position: fixed`. */
+.g-ord-popover {
+  width: 280px;
+  padding: var(--q-space-3);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  box-shadow: var(--q-shadow-overlay);
+}
+
+/* A footer is a rule and one link. The kit's surface has no footer slot. */
+.g-ord-popover__footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--q-space-2);
+  padding-top: var(--q-space-2);
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+/* A link that is a button: it opens something rather than going somewhere. The kit has
+ * no such variant; the real build would want one on `Button`. */
+.g-ord-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--q-fgColor-accent);
+  font: inherit;
+  font-size: var(--q-text-body);
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+  &:focus-visible {
+    outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+    outline-offset: var(--q-focus-outlineOffset);
+  }
+}
+
+/* `ActionMenu`'s open surface, copied: its own is private to the kit. */
+.g-ord-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: var(--q-space-1);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  box-shadow: var(--q-shadow-overlay);
+}
+
+.g-ord-menu__item {
+  padding: var(--q-space-1) var(--q-space-2);
+  border: 0;
+  border-radius: var(--q-radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--q-text-body);
+  text-align: left;
+  cursor: pointer;
+
+  &:hover { background: var(--q-overlay-hover); }
+}
+
+.g-ord-menu__item--danger { color: var(--q-fgColor-danger); }
+
+.g-ord-menu__rule {
+  height: 1px;
+  margin: var(--q-space-1) 0;
+  background: var(--q-borderColor-muted);
+}
+
+.g-ord-result { width: min(440px, 100%); }
+
+.g-ord-live {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  margin-top: var(--q-space-4);
+}
