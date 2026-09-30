@@ -23,7 +23,7 @@ dunce = "1"
 # quilt-rs owns the loading and matching (`quilt::quiltignore`).
 ignore.workspace = true
 mockall = "0.15.0"
-opener = { version = "0.8.5", features = ["reveal"] }
+opener = { version = "0.9.0", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
 quilt-uri = { path = "../../quilt-uri" }
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
