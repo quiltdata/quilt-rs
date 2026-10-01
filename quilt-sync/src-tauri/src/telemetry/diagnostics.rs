@@ -352,7 +352,7 @@ mod tests {
 
         let parsed: DiagnosticMetadata =
             serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
-        assert!(parsed.authenticated_hosts.is_empty());
+        assert_eq!(parsed.authenticated_hosts, [] as [String; 0]);
         assert_eq!(parsed, DiagnosticMetadata::from_info(&info));
     }
 

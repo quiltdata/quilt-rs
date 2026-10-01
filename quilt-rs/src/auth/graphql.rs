@@ -413,7 +413,7 @@ mod tests {
         };
         let buckets = query_buckets(&client, &get_registry_host(), ACCESS_TOKEN).await?;
 
-        assert!(buckets.is_empty());
+        assert_eq!(buckets, [] as [String; 0]);
         Ok(())
     }
 
@@ -519,7 +519,7 @@ mod tests {
         )
         .await?;
 
-        assert!(listed.is_empty());
+        assert_eq!(listed, [] as [String; 0]);
         assert_eq!(client.package_queries_seen.lock().unwrap().len(), 1);
         Ok(())
     }

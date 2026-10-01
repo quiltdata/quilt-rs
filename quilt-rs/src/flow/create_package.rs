@@ -216,8 +216,8 @@ mod tests {
         assert!(pkg.commit.is_some());
         assert!(pkg.remote_uri.is_none());
         assert!(pkg.paths.is_empty());
-        assert!(pkg.base_hash.is_empty());
-        assert!(pkg.latest_hash.is_empty());
+        assert_eq!(pkg.base_hash, "");
+        assert_eq!(pkg.latest_hash, "");
         Ok(())
     }
 

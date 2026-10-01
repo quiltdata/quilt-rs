@@ -240,8 +240,8 @@ mod tests {
     /// reading someone else's recording.
     #[test]
     fn only_the_recorder_reports() {
-        assert!(Faults::Live.reported().is_empty());
-        assert!(Faults::DryRun.reported().is_empty());
+        assert_eq!(Faults::Live.reported(), [] as [String; 0]);
+        assert_eq!(Faults::DryRun.reported(), [] as [String; 0]);
     }
 
     /// The three options this unit exists for, asserted on the built value rather
