@@ -22,8 +22,12 @@ const LAST_SYNCED_HINT: &str = "Statuses are as of each package's last install, 
 Run `quilt status --namespace <namespace>` to check the remote now.";
 
 /// Printed under a `--fetch` table in place of [`LAST_SYNCED_HINT`].
-const FETCHED_HINT: &str = "Statuses were checked against each package's remote just now. \
-Changed files are ones not committed yet.";
+const FETCHED_HINT: &str = "Statuses were checked against each package's remote just now, \
+except where marked unreachable. Changed files are ones not committed yet.";
+
+/// Appended to a `--fetch` row whose remote could not be read, so its status
+/// is as of the last sync. See [`Fetched::remote_checked`].
+const UNREACHABLE_SUFFIX: &str = " (remote unreachable)";
 
 #[derive(Debug, Default)]
 pub struct Input {
@@ -53,6 +57,12 @@ pub struct Fetched {
     pub changed_files: Option<usize>,
     /// The remote refused the active role.
     pub access_denied: bool,
+    /// The remote's `latest` tip was read in this run
+    /// ([`InstalledPackageStatus::latest_refreshed`]). `false` for a package
+    /// with no remote or a misconfigured one, a denial, a failed status call,
+    /// and a status call that could not reach the remote and answered from the
+    /// last-known tip: that last row is the only one marked unreachable.
+    pub remote_checked: bool,
 }
 
 pub struct Output {
@@ -153,6 +163,12 @@ fn fetched_state(entry: &PackageEntry, fetched: &Fetched) -> Cow<'static, str> {
 
 fn state(entry: &PackageEntry) -> Cow<'static, str> {
     match &entry.fetched {
+        // A file count means the status call answered; without the remote, it
+        // answered from the last-known tip, so the word is qualified rather
+        // than passed off as fresh.
+        Some(fetched) if fetched.changed_files.is_some() && !fetched.remote_checked => {
+            format!("{}{UNREACHABLE_SUFFIX}", fetched_state(entry, fetched)).into()
+        }
         Some(fetched) => fetched_state(entry, fetched),
         None => last_synced(entry).into(),
     }
@@ -209,8 +225,9 @@ impl Render for Output {
                     "status": package.status,
                 });
                 // Added, never changed, so a plain listing's JSON stays as it was.
+                // `fetched` is whether this row's remote tip was read just now.
                 if let Some(fetched) = &package.fetched {
-                    row["fetched"] = true.into();
+                    row["fetched"] = fetched.remote_checked.into();
                     if let Some(files) = fetched.changed_files {
                         row["changed_files"] = files.into();
                     }
@@ -322,7 +339,8 @@ fn misconfigured_remote(lineage: &PackageLineage) -> bool {
 /// The fetched tip is not written back to lineage, as `QuiltSync` does not either.
 ///
 /// When the remote cannot be reached, `status` itself warns and answers from
-/// the last-known tip, so that row is only as fresh as a plain listing. Any
+/// the last-known tip, so that row is only as fresh as a plain listing and is
+/// marked unreachable ([`Fetched::remote_checked`] stays `false`). Any
 /// error it does return is logged and shows as `unknown` for that row alone,
 /// except a denial, which is its own state.
 async fn fetch_entry<F, Fut>(
@@ -347,6 +365,7 @@ where
         match status().await {
             Ok(status) => {
                 fetched.changed_files = Some(status.changes.len());
+                fetched.remote_checked = status.latest_refreshed;
                 status.upstream_state
             }
             Err(err) if err.is_access_denied() => {
@@ -531,10 +550,21 @@ mod tests {
         assert!(!format!("{empty}").contains(LAST_SYNCED_HINT));
     }
 
+    /// A row as `fetch_entry` builds it when the status call reaches the
+    /// remote: a file count comes with a checked tip, no count with none.
     fn fetched(changed_files: Option<usize>) -> Fetched {
         Fetched {
             changed_files,
+            remote_checked: changed_files.is_some(),
             ..Fetched::default()
+        }
+    }
+
+    /// A row whose status call answered from the last-known tip.
+    fn unreachable(changed_files: usize) -> Fetched {
+        Fetched {
+            remote_checked: false,
+            ..fetched(Some(changed_files))
         }
     }
 
@@ -628,6 +658,54 @@ mod tests {
         }
     }
 
+    /// A status call that could not reach the remote keeps its word but says
+    /// so. Rows that never asked the remote, or got no answer, are not marked:
+    /// their words already say what is known.
+    #[test]
+    fn test_display_marks_rows_whose_remote_was_unreachable() {
+        let bucket = Some("acme-research");
+        let cases = [
+            (
+                bucket,
+                UpstreamState::UpToDate,
+                unreachable(0),
+                "latest (remote unreachable)",
+            ),
+            (
+                bucket,
+                UpstreamState::UpToDate,
+                unreachable(1),
+                "1 file changed (remote unreachable)",
+            ),
+            (
+                bucket,
+                UpstreamState::Behind,
+                unreachable(0),
+                "not the latest (remote unreachable)",
+            ),
+            (
+                None,
+                UpstreamState::Local,
+                fetched(None),
+                "no S3 bucket yet",
+            ),
+            (bucket, UpstreamState::Error, fetched(None), "unknown"),
+            (
+                bucket,
+                UpstreamState::Error,
+                Fetched {
+                    access_denied: true,
+                    ..fetched(None)
+                },
+                "no access",
+            ),
+        ];
+        for (bucket, status, fetched, expected) in cases {
+            let entry = fetched_entry(bucket, "one", status, fetched);
+            assert_eq!(state(&entry), expected, "{status:?} {:?}", entry.fetched);
+        }
+    }
+
     /// The column and the hint say which question the table answers.
     #[test]
     fn test_display_names_the_fetched_column_and_hint() {
@@ -652,7 +730,8 @@ mod tests {
     }
 
     /// Fetch mode only adds keys; `status` keeps its values, and a key with
-    /// nothing to say is left out rather than sent as null.
+    /// nothing to say is left out rather than sent as null. `fetched` is on
+    /// every row and is `true` only where the remote tip was read just now.
     #[test]
     fn test_json_adds_fetched_fields() {
         let output = Output::new(
@@ -672,6 +751,12 @@ mod tests {
                         ..fetched(None)
                     },
                 ),
+                fetched_entry(
+                    Some("acme-research"),
+                    "three",
+                    UpstreamState::UpToDate,
+                    unreachable(1),
+                ),
                 fetched_entry(None, "scratch", UpstreamState::Local, fetched(None)),
             ],
             true,
@@ -679,7 +764,7 @@ mod tests {
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date","fetched":true,"changed_files":2},{"bucket":"acme-research","namespace":"example/two","status":"error","fetched":true,"access_denied":true},{"bucket":null,"namespace":"example/scratch","status":"local","fetched":true}]}"#
+            r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date","fetched":true,"changed_files":2},{"bucket":"acme-research","namespace":"example/three","status":"up_to_date","fetched":false,"changed_files":1},{"bucket":"acme-research","namespace":"example/two","status":"error","fetched":false,"access_denied":true},{"bucket":null,"namespace":"example/scratch","status":"local","fetched":false}]}"#
         );
     }
 
@@ -701,7 +786,8 @@ mod tests {
         quilt_rs::Error::S3(quilt_rs::S3Error::new(kind))
     }
 
-    /// The status call's answer is the row's: its state, and its file count.
+    /// The status call's answer is the row's: its state, its file count, and
+    /// whether it reached the remote.
     #[test(tokio::test)]
     async fn test_fetch_entry_takes_the_status_calls_answer() {
         let row = |key: &str| quilt_rs::manifest::ManifestRow {
@@ -724,7 +810,12 @@ mod tests {
         let entry = fetch_entry(
             ("example", "one").into(),
             remote_lineage(Some("example.com")),
-            || async { Ok(InstalledPackageStatus::new(UpstreamState::Behind, changes)) },
+            || async {
+                Ok(InstalledPackageStatus {
+                    latest_refreshed: true,
+                    ..InstalledPackageStatus::new(UpstreamState::Behind, changes)
+                })
+            },
         )
         .await;
 
@@ -732,6 +823,20 @@ mod tests {
         assert_eq!(entry.status, UpstreamState::Behind);
         assert_eq!(entry.fetched, Some(fetched(Some(2))));
         assert_eq!(state(&entry), "not the latest");
+
+        let stale = fetch_entry(
+            ("example", "one").into(),
+            remote_lineage(Some("example.com")),
+            || async {
+                Ok(InstalledPackageStatus::new(
+                    UpstreamState::UpToDate,
+                    quilt_rs::lineage::ChangeSet::new(),
+                ))
+            },
+        )
+        .await;
+        assert_eq!(stale.fetched, Some(unreachable(0)));
+        assert_eq!(state(&stale), "latest (remote unreachable)");
     }
 
     /// A denial is a state of its own; any other failure is `unknown` for that
