@@ -21,17 +21,18 @@ jobs:
     name: Markdown Linting
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
       # The project's own action downloads the release binary and checks its
-      # sha256, where `cargo install` spent minutes compiling it. Keep the two
-      # versions equal: Renovate bumps the `uses:` tag but not `version:`.
+      # sha256. Pinned by commit: it is third-party code. It installs the
+      # latest rumdl, as a local `cargo install rumdl` does.
       - name: Install rumdl
-        uses: rvben/rumdl@v0.2.78
+        uses: rvben/rumdl@9c4cc2a2ebe176de68e1788106e25af8a9bd3899 # v0.2.78
         with:
-          version: 0.2.78
           install-only: true
 
       - name: Lint markdown files
