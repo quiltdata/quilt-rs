@@ -204,7 +204,7 @@ mod tests {
 
         let id = InstallId::load(dir.path()).expect("a replacement id");
 
-        assert!(!id.as_str().is_empty());
+        assert_ne!(id.as_str(), "");
         assert!(Uuid::parse_str(id.as_str()).is_ok());
     }
 

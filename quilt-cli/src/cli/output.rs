@@ -209,6 +209,6 @@ mod tests {
         .expect("write succeeds");
 
         assert_eq!(String::from_utf8(stdout).expect("utf8"), "human text\n");
-        assert!(stderr.is_empty());
+        assert_eq!(stderr, [] as [u8; 0]);
     }
 }
