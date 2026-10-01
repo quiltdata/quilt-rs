@@ -194,6 +194,11 @@ fn row_objects(
 /// Try-lock every package in the lineage and every package with a lock
 /// file. An install takes its lock before its lineage entry exists, so the
 /// files catch one in flight.
+///
+/// A package created or first installed after this scan takes a lock that
+/// is not held here, so its new objects are not protected. That is by
+/// design: only the user starts a new package, background updates touch
+/// only installed ones, and starting one while gc runs is unsupported.
 async fn lock_every_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
