@@ -295,6 +295,11 @@ struct Flow {
     /// The confirmation: what it asks, and whether it is open.
     ask: RwSignal<Option<Ask>>,
     open: RwSignal<bool>,
+    /// Bumped by each removal and by Reset. A stub removal that wakes to a
+    /// newer number was overtaken, and does nothing.
+    removal_run: StoredValue<u64>,
+    /// The same for the stub sync.
+    sync_run: StoredValue<u64>,
 }
 
 impl Flow {
@@ -307,14 +312,22 @@ impl Flow {
             toast: RwSignal::new(None),
             ask: RwSignal::new(None),
             open: RwSignal::new(false),
+            removal_run: StoredValue::new(0),
+            sync_run: StoredValue::new(0),
         }
+    }
+
+    /// A new run of `counter`, whose number a task holds through its delay.
+    fn bump(counter: StoredValue<u64>) -> u64 {
+        counter.update_value(|run| *run += 1);
+        counter.get_value()
     }
 
     /// Held mid-removal of `set`, for a cell to show still.
     fn removing(remaining: &[usize], set: &[usize]) -> Self {
         let flow = Self::new(remaining);
         flow.removing.set(Some(set.to_vec()));
-        flow.say(Some(Self::progress(set.len())));
+        flow.say();
         flow
     }
 
@@ -322,7 +335,7 @@ impl Flow {
     fn syncing(remaining: &[usize]) -> Self {
         let flow = Self::new(remaining);
         flow.syncing.set(true);
-        flow.say(Some(format!("Getting latest for {NAMESPACE}\u{2026}")));
+        flow.say();
         flow
     }
 
@@ -347,15 +360,26 @@ impl Flow {
         )
     }
 
-    /// The appbar's line. The kind is a stub: see the module comment.
-    fn say(self, label: Option<String>) {
+    /// The appbar's line, drawn from what is running now: a sync's entry and a
+    /// removal's each come from their own state, so the end of one never wipes
+    /// the other's. The kind is a stub: see the module comment.
+    fn say(self) {
+        let syncing = self
+            .syncing
+            .get_untracked()
+            .then(|| format!("Getting latest for {NAMESPACE}\u{2026}"));
+        let removing = self
+            .removing
+            .get_untracked()
+            .map(|set| Self::progress(set.len()));
         self.activities.set(
-            label
+            syncing
+                .into_iter()
+                .chain(removing)
                 .map(|label| Activity {
                     kind: ActivityKind::Autopull,
                     label,
                 })
-                .into_iter()
                 .collect(),
         );
     }
@@ -368,16 +392,20 @@ impl Flow {
     /// Starts removing `set` and returns, as the verb's action does: the dialog
     /// closes, the line takes over, and the notification ends it.
     fn start(self, set: Vec<usize>) {
+        let run = Self::bump(self.removal_run);
         self.removing.set(Some(set.clone()));
         self.toast.set(None);
-        self.say(Some(Self::progress(set.len())));
+        self.say();
         leptos::task::spawn_local(async move {
             after_a_beat(REMOVING_MS).await;
+            if self.removal_run.get_value() != run {
+                return;
+            }
             let freed = freed(&set, &self.remaining.get_untracked());
             self.remaining
                 .update(|rows| rows.retain(|i| !set.contains(i)));
             self.removing.set(None);
-            self.say(None);
+            self.say();
             self.toast.set(Some(format!(
                 "Removed {} of {NAMESPACE} · freed {}",
                 plural(set.len(), "old revision", "old revisions"),
@@ -388,23 +416,29 @@ impl Flow {
 
     /// The stub sync: the lock for a few seconds, and autopull's own line.
     fn sync(self) {
+        let run = Self::bump(self.sync_run);
         self.syncing.set(true);
-        self.say(Some(format!("Getting latest for {NAMESPACE}\u{2026}")));
+        self.say();
         leptos::task::spawn_local(async move {
             after_a_beat(SYNCING_MS).await;
-            self.syncing.set(false);
-            if self.removing.get_untracked().is_none() {
-                self.say(None);
+            if self.sync_run.get_value() != run {
+                return;
             }
+            self.syncing.set(false);
+            self.say();
         });
     }
 
+    /// Back to the start. Bumping both runs is what makes a removal or a sync
+    /// still in its delay give up instead of landing on the fresh list.
     fn reset(self) {
+        Self::bump(self.removal_run);
+        Self::bump(self.sync_run);
         self.remaining.set(ALL.to_vec());
         self.removing.set(None);
         self.syncing.set(false);
         self.toast.set(None);
-        self.say(None);
+        self.say();
     }
 }
 
