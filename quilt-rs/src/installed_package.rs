@@ -362,6 +362,17 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
+        let (_, status) = self.status_with_lineage(host_config_opt).await?;
+        Ok(status)
+    }
+
+    /// [`Self::status`] and the lineage it was computed from — one read, so a
+    /// caller that needs more of the lineage (the local commit) cannot pair the
+    /// status with a different snapshot.
+    async fn status_with_lineage(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         // Only refresh latest hash if we have a remote
@@ -408,7 +419,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        let (_, status) = flow::status(
+        let (lineage, status) = flow::status(
             lineage,
             &self.storage,
             &manifest,
@@ -416,10 +427,13 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        Ok(InstalledPackageStatus {
-            latest_refreshed,
-            ..status
-        })
+        Ok((
+            lineage,
+            InstalledPackageStatus {
+                latest_refreshed,
+                ..status
+            },
+        ))
     }
 
     /// This package's [`PackageState`](lineage::PackageState), as every front
@@ -440,13 +454,16 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         if let Some(report) = lineage::PackageStateReport::without_remote(&lineage) {
             return Ok(report);
         }
-        let status = self.status(None).await?;
+        // The commit flag comes from the lineage the status was computed from,
+        // not the read above: a push landing in between would otherwise pair a
+        // fresh `UpToDate` with a stale commit and say "revision not published".
+        let (lineage, status) = self.status_with_lineage(None).await?;
         let changed_files = status.changes.len();
         Ok(lineage::PackageStateReport {
             state: lineage::PackageState::resolve(
                 status.upstream_state,
                 lineage.commit.is_some(),
-                true,
+                lineage.remote_uri.is_some(),
                 Some(changed_files),
             ),
             upstream_state: status.upstream_state,
