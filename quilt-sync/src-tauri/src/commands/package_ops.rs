@@ -686,10 +686,10 @@ pub async fn package_create(
     // A package created here has no remote yet, so it belongs to no deployment.
     let msg_init = format!("Creating package {namespace}");
     let msg_ok = format!("Successfully created package {namespace}");
-    // `user_facing`, not `{err}`: the dialog this lands in is titled `Create
-    // package` and stays open, so "Quilt error:" in front of the sentence that
-    // informs is pure framing (qhq-8mgw.59). The command's own prefix stays —
-    // the same string is this call's log line, where it is the only context.
+    // `user_facing`, not `{err}`: the message is shown in the open `Create
+    // package` dialog, where a "Quilt error:" prefix adds nothing. The "Failed to
+    // create package:" prefix stays, because the same string is the log line,
+    // where it is the only context.
     let msg_err = |err: &Error| format!("Failed to create package: {}", err.user_facing());
 
     Notify::new(msg_init)

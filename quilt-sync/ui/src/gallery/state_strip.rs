@@ -227,14 +227,13 @@ fn PausedStale() -> impl IntoView {
     view! {
         <Scene
             title="Scene · paused with nothing to fix — the 2026-07-11 bug"
-            note="The failure state, rendered rather than described: the card says paused \
-                  and the queue says everything is Latest. That is what the 2026-07-11 \
-                  bundle showed — all 13 packages fully synced while the pause persisted in \
-                  memory, with restarting the app as the only recovery. It cannot self-heal, \
-                  because autopull's tick skips any namespace already in the paused set. The \
-                  fix is not a button: this state should not be reachable, and `qhq-usw0` is \
-                  the bug. An escape hatch drawn here would make a backend defect look like \
-                  a feature."
+            note="The failure state: the card says paused and the queue says everything \
+                  is Latest. The 2026-07-11 support bundle showed this: all 13 packages \
+                  fully synced while the pause stayed in memory, and only restarting the \
+                  app cleared it. It does not clear by itself, because autopull's tick \
+                  skips any namespace already in the paused set. This state should not be \
+                  reachable, so the scene has no button to leave it: a button here would \
+                  make a backend defect look like a feature."
         >
             <div class="g-strip">
                 <Card title="Autosync">

@@ -34,13 +34,13 @@
 //!
 //! # What this scene draws ahead of its data
 //!
-//! One cell states a fact the backend cannot currently produce, deliberately, so
-//! that the copy is the target rather than a guess made later:
+//! One cell shows data the backend cannot produce yet, so that its wording is
+//! the target the backend has to meet:
 //!
-//! - **The marked rows.** Which files differ between two diverged revisions is
-//!   computed nowhere — `MergeData` carries a namespace and a URI, and the
-//!   working-tree changes are local edits against the installed manifest, not
-//!   mine against published (`qhq-mrzt`).
+//! - **The marked rows.** Nothing computes which files differ between two
+//!   diverged revisions. `MergeData` carries only a namespace and a URI, and the
+//!   working-tree changes compare local edits with the installed manifest, not
+//!   the local revision with the published one.
 //!
 //! # What the render settled, none of it reasoned first
 //!
@@ -1185,11 +1185,10 @@ fn stop_keeping(confirm: Confirm) -> AnyView {
 
 /// The resolve confirm, from the context pane's destructive action.
 ///
-/// The sentence verdict 8 requires is the one thing here that has no source:
-/// the revision count needs `list_revisions` and the file count needs a
-/// row-by-row comparison of two diverged manifests, which is computed nowhere
-/// (`qhq-mrzt`). Drawn anyway, with the numbers a fixture, because a dialog that
-/// cannot count is a dialog that lies and this is what the backend has to grow.
+/// Its sentence needs two numbers the backend does not produce yet: the
+/// revision count needs `list_revisions`, and the file count needs a row-by-row
+/// comparison of two diverged manifests, which nothing computes. The scene uses
+/// fixture numbers to show the wording the backend has to support.
 fn replace_mine(open: RwSignal<bool>) -> AnyView {
     view! {
         <Dialog

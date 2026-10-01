@@ -548,16 +548,14 @@ mod tests {
     }
     #[wasm_bindgen_test]
     fn a_card_with_no_hosts_says_so_rather_than_drawing_an_empty_box() {
-        // qhq-8mgw.57, found by the operator on a profile with no auth and no
-        // packages: the card drew its chrome around nothing. The host set is the
-        // union of the catalogs the roster points at and the hosts you have
-        // signed into (`account_hosts`), so with neither it is empty — and an
-        // empty box is the blank cell the other two regions already refuse.
+        // A profile with no sign-ins and no packages. The host set is the union
+        // of the catalogs the roster points at and the hosts you have signed
+        // into (`account_hosts`), so here it is empty. The card must say so
+        // instead of drawing an empty box, as the other two regions do.
         //
-        // NO ACTION, and the absence is the point: signing in needs a host
-        // named, and a host is named by giving a package an S3 bucket. There is
-        // genuinely nothing to press from here, so a button would be a lie about
-        // what this card can do. The same rule the search blankslate follows.
+        // No button: signing in needs a host, and a host comes from giving a
+        // package an S3 bucket, so this card offers no action. The search
+        // blankslate follows the same rule.
         let el = mount_body(MainPageAccountsData { hosts: Vec::new() });
 
         let text = el.text_content().unwrap_or_default();

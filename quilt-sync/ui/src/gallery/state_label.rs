@@ -9,21 +9,20 @@ use crate::kit::StateLabel;
 use crate::kit::StateTone;
 
 /// Every label the page can put on a row, in the order the vocabulary lists them.
-/// Reviewing this list *is* reviewing the vocabulary: words that read badly here
-/// read badly on the page.
+/// Reviewing this list is reviewing the vocabulary: a word that reads badly here
+/// reads badly on the page.
 ///
-/// Eleven labels, one per state, and all of them the list's. The queue words the
-/// same states as clauses and draws them as prose rather than in a chip, so none of
-/// its wordings can appear in this component at all.
+/// Eleven labels, one per state, all from the package list. The queue words the
+/// same states as clauses in prose, not in a chip, so none of its wordings appear
+/// in this component.
 ///
-/// The last two are the pair worth reading together, because they are one word apart
-/// and claim different things: `Sync paused` says the syncing stopped for this
-/// package, `Sync stopped` that its upstream state could not be read at all. Neither
-/// offers an action, and neither can — there is no resume.
+/// Read the last two together: they differ by one word and mean different things.
+/// `Sync paused` says syncing stopped for this package; `Sync stopped` says its
+/// upstream state could not be read. Neither offers an action, because there is
+/// no resume.
 ///
-/// This list is hand-maintained, so a state can be added to `kit::render` without
-/// reaching it: `Sync stopped` was missing here until 2026-09-09, having shipped in
-/// the vocabulary from the start. See qhq-8mgw.53.
+/// This list is maintained by hand, so a state added to `kit::render` does not
+/// appear here by itself. Keep the two in sync.
 const STATES: &[(&str, StateTone)] = &[
     ("Latest", StateTone::Success),
     ("Not the latest", StateTone::Attention),

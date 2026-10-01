@@ -44,15 +44,13 @@ fmt:
     # `rumdl fmt` looks equivalent but exits 0 with unfixable issues outstanding
     git ls-files -z '*.md' | xargs -0 rumdl check --fix
 
-# Every crate that tests on the host — `quilt-uri` is not a default member, so a
-# bare `cargo test` does not cover the workspace on its own.
+# Every crate that tests on the host. `quilt-uri` is not a default member, so a
+# bare `cargo test` does not cover the whole workspace.
 #
-# `quilt-sync-ui` is IN. It is not wasm-only, whatever this line used to say: the
-# crate has two test flavours on two targets and neither harness sees the other,
-# so its 124 `#[test]` functions run here and its `#[wasm_bindgen_test]` ones run
-# in `test-frontend`. Excluding it meant a green `just test` said nothing about
-# any of them — qhq-8mgw.27, the same hole CI had until the `Test (host target)`
-# step closed it.
+# `quilt-sync-ui` is included. It has tests for two targets, and neither harness
+# runs the other's: its `#[test]` functions run here, and its
+# `#[wasm_bindgen_test]` ones run in `test-frontend`. CI runs the same host tests
+# in its `Test (host target)` step.
 scope := "--workspace --all-targets"
 
 # Run every test (the live_* fixture tests need AWS credentials)

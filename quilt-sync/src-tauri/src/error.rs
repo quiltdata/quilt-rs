@@ -345,9 +345,9 @@ mod tests {
 
     #[test]
     fn user_facing_drops_the_quilt_wrapper_and_keeps_the_sentence() {
-        // qhq-8mgw.59. The dialog read "Failed to create package: Quilt error:
-        // The package proj/process is already installed." — three clauses, one
-        // of which informs.
+        // With `to_string()`, the create dialog would read "Failed to create
+        // package: Quilt error: The package proj/process is already installed."
+        // Only the last part is useful to the user.
         let err = Error::Quilt(quilt::Error::InstallPackage(
             quilt::InstallPackageError::AlreadyInstalled(quilt_uri::Namespace::from((
                 "proj", "process",
