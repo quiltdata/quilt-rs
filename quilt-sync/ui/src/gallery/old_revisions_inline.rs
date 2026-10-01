@@ -14,12 +14,13 @@
 //! verb is the Danger `Remove`, so the kit's rule — only `ConfirmDialog` draws a
 //! Danger button — holds without an exception.
 //!
-//! **The popover stays open behind the dialog.** `showModal()` hides every
-//! `auto` popover *except the dialog's own popover ancestors*, and a click inside
-//! the dialog is a click inside its popover ancestor, so light dismiss leaves it
-//! alone too. So the dialog is mounted inside the popover's body, and the list it
-//! was asked about is still there when it closes — the rows go disabled, then
-//! update in place.
+//! **The dialog lives outside the popover.** The popover closes on light
+//! dismiss — any scroll or resize, as well as `showModal()` hiding every `auto`
+//! popover that is not the dialog's ancestor. A dialog mounted inside it would
+//! be unmounted mid-question. So the dialog and the question it asks belong to
+//! the pane, and the popover may close under it: Remove still runs, the
+//! notification reports it, and the popover, reopened, shows the list as it
+//! stands — every remove button disabled while the removal runs.
 //!
 //! # The dialog closes on Remove; the work shows elsewhere
 //!
@@ -538,8 +539,8 @@ fn footer(flow: Flow) -> impl IntoView {
 }
 
 /// The real confirmation, rebuilt for each question — `ConfirmDialog` takes its
-/// words once. Mounted inside the surface's body, which is what keeps the
-/// popover open behind it (see the module comment).
+/// words once. Mounted beside the surface, never inside the popover, so the
+/// popover's light dismiss cannot take it away (see the module comment).
 fn dialog(flow: Flow) -> impl IntoView {
     move || {
         flow.ask.get().map(|ask| {
@@ -582,7 +583,6 @@ fn body(flow: Flow) -> AnyView {
                 </div>
             </PaneSection>
             {footer(flow)}
-            {dialog(flow)}
         </div>
     }
     .into_any()
@@ -592,7 +592,11 @@ fn body(flow: Flow) -> AnyView {
 /// padding and shadow the overlay's surface draws, so the stills read as the
 /// popover they are copies of.
 fn surface(flow: Flow) -> AnyView {
-    view! { <div class="g-ori-surface">{body(flow)}</div> }.into_any()
+    view! {
+        <div class="g-ori-surface">{body(flow)}</div>
+        {dialog(flow)}
+    }
+    .into_any()
 }
 
 fn appbar_actions() -> AnyView {
@@ -660,7 +664,8 @@ fn staged(flow: Flow) -> AnyView {
 }
 
 /// The pane with the real trigger and the real popover, beside a stand-in for
-/// the file list — the surface opens leftwards over it, as on the page.
+/// the file list — the surface opens leftwards over it, as on the page. The
+/// confirmation is the pane's, outside the popover.
 fn pane(flow: Flow) -> AnyView {
     let open = RwSignal::new(false);
     let trigger = move |surface_id: String| {
@@ -693,6 +698,7 @@ fn pane(flow: Flow) -> AnyView {
                     </PaneSection>
                 </Card>
             </aside>
+            {dialog(flow)}
         </div>
     }
     .into_any()
@@ -772,8 +778,9 @@ const NOTE: &str = "Removal where the list already is: the context pane's \"Revi
     Protected rows say why in a muted tag; hover it for the sentence. \
     \
     The footer and every trash open the kit's ConfirmDialog, which says what goes and what it \
-    frees, Cancel first and the Danger Remove last. The dialog is mounted inside the popover, \
-    so the popover stays open behind it. Remove closes the dialog; while the removal runs the \
+    frees, Cancel first and the Danger Remove last. The dialog belongs to the pane, not the \
+    popover, so the popover closing under it never takes the question away. Remove closes \
+    the dialog; while the removal runs the \
     appbar says so and every remove button refuses, as it does while the package syncs. The \
     end is a notification from the stack, and the list drops to what is left. \
     \
