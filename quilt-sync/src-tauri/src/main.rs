@@ -236,6 +236,7 @@ fn main() {
             commands::debug_logs,
             commands::open_data_dir,
             commands::open_home_dir,
+            commands::run_gc,
             commands::collect_diagnostic_logs,
             commands::send_crash_report,
             commands::login,

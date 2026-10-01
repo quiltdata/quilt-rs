@@ -362,12 +362,23 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
+        let (_, status) = self.status_with_lineage(host_config_opt).await?;
+        Ok(status)
+    }
+
+    /// [`Self::status`] and the lineage it was computed from — one read, so a
+    /// caller that needs more of the lineage (the local commit) cannot pair the
+    /// status with a different snapshot.
+    async fn status_with_lineage(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         // Only refresh latest hash if we have a remote
-        let lineage = match lineage.remote_uri.as_ref() {
+        let (lineage, latest_refreshed) = match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
-                Ok(lineage) => lineage,
+                Ok(lineage) => (lineage, true),
                 Err(Error::Login(LoginError::NoSession(_))) => {
                     return Err(Error::Login(LoginError::NoSession(
                         lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
@@ -385,12 +396,16 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 // Nor is a rejected credential: the session is dead, and
                 // stale lineage would report the package as fine.
                 Err(err) if err.is_session_absent() => return Err(err),
+                // No `latest` tag, and none ever seen: the remote answered,
+                // and its answer is that nothing was published yet. That is
+                // a read, not an outage, so the verdict is fresh.
+                Err(err) if err.is_not_found() && lineage.latest_hash.is_empty() => (lineage, true),
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
-                    lineage
+                    (lineage, false)
                 }
             },
-            None => lineage,
+            None => (lineage, false),
         };
         let manifest = self.manifest().await?;
 
@@ -404,7 +419,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        let (_, status) = flow::status(
+        let (lineage, status) = flow::status(
             lineage,
             &self.storage,
             &manifest,
@@ -412,7 +427,49 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        Ok(status)
+        Ok((
+            lineage,
+            InstalledPackageStatus {
+                latest_refreshed,
+                ..status
+            },
+        ))
+    }
+
+    /// This package's [`PackageState`](lineage::PackageState), as every front
+    /// end shows it.
+    ///
+    /// Asks the remote only when there is something to ask: a remote with no
+    /// catalog host is `Unknown` and a package with no remote is resolved from
+    /// its lineage, both without the network or a working-tree walk. Otherwise
+    /// this is [`Self::status`] — the remote's `latest` tip plus the working
+    /// tree — resolved by [`PackageState::resolve`](lineage::PackageState::resolve).
+    /// The fetched tip is not written back to lineage.
+    ///
+    /// Errors are `status`'s, returned as they are: a denial
+    /// ([`Error::is_access_denied`]), a missing or rejected session, or any other
+    /// failure. What a front end shows for each is its own policy.
+    pub async fn state(&self) -> Res<lineage::PackageStateReport> {
+        let lineage = self.lineage().await?;
+        if let Some(report) = lineage::PackageStateReport::without_remote(&lineage) {
+            return Ok(report);
+        }
+        // The commit flag comes from the lineage the status was computed from,
+        // not the read above: a push landing in between would otherwise pair a
+        // fresh `UpToDate` with a stale commit and say "revision not published".
+        let (lineage, status) = self.status_with_lineage(None).await?;
+        let changed_files = status.changes.len();
+        Ok(lineage::PackageStateReport {
+            state: lineage::PackageState::resolve(
+                status.upstream_state,
+                lineage.commit.is_some(),
+                lineage.remote_uri.is_some(),
+                Some(changed_files),
+            ),
+            upstream_state: status.upstream_state,
+            changed_files: Some(changed_files),
+            latest_refreshed: status.latest_refreshed,
+        })
     }
 
     /// Downloads `paths` and starts tracking them. A path whose bytes the

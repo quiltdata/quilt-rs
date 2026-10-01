@@ -16,6 +16,7 @@ use quilt_uri::Namespace;
 mod browse;
 mod commit;
 mod create;
+mod gc;
 mod history;
 mod home;
 mod install;
@@ -185,7 +186,7 @@ pub struct Args {
     home: Option<PathBuf>,
 
     /// Path to local domain
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     domain: Option<PathBuf>,
 
     /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
@@ -254,6 +255,13 @@ enum Commands {
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
+    /// Delete what the local store holds for nothing, and print what was freed
+    ///
+    /// Deletes the objects no installed package uses, such as those an
+    /// uninstall left, the cache of remote manifests, and files left mid-write
+    /// by an interrupted command. Stops without deleting anything if another
+    /// quilt process, such as `QuiltSync`, is changing a package.
+    Gc,
     /// Print the home, or set it with `quilt home <dir>`
     ///
     /// The home is the folder where installed packages keep their files, one
@@ -299,7 +307,15 @@ enum Commands {
         host: Host,
     },
     /// List installed packages
-    List,
+    ///
+    /// Without `--fetch`, reads only what this machine recorded, so each status
+    /// is as of the package's last install, pull or push.
+    List {
+        /// Check each package's remote now, and count files changed since the
+        /// last commit. Reads the remotes; leaves local packages unchanged.
+        #[arg(long)]
+        fetch: bool,
+    },
     /// List the revisions of a package this copy has, newest first.
     ///
     /// Ordered by when this copy obtained each revision, which is all that is
@@ -476,6 +492,10 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Committing {args:?}");
             Ok(commit::command(m, args).await)
         }
+        Commands::Gc => {
+            log::debug!("Collecting garbage");
+            Ok(gc::command(m).await)
+        }
         Commands::Home { dir, overwrite } => {
             let args = home::Input { dir, overwrite };
 
@@ -507,9 +527,11 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List => {
-            log::info!("Listing installed packages");
-            Ok(list::command(m).await)
+        Commands::List { fetch } => {
+            let args = list::Input { fetch };
+
+            log::info!("Listing installed packages {args:?}");
+            Ok(list::command(m, args).await)
         }
         Commands::Log { pkg } => {
             let namespace = pkg.resolve(&m).await?;
@@ -602,6 +624,9 @@ pub enum Error {
     #[error("--home and \"quilt home <dir>\" both set the home; pass only \"quilt home <dir>\"")]
     HomeTwice,
 
+    #[error("Cannot free space: {0} is busy in another quilt process. Try again once it finishes")]
+    PackageBusy(Namespace),
+
     #[error("quilt_rs error: {0}")]
     Quilt(quilt_rs::Error),
 
@@ -669,6 +694,7 @@ impl Error {
             Error::Home => "home",
             Error::HomeInUse { .. } => "home_in_use",
             Error::HomeTwice => "home_twice",
+            Error::PackageBusy(_) => "package_busy",
             Error::Quilt(err) => match err {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",
@@ -906,11 +932,11 @@ mod tests {
     fn json_flag_parses_before_or_after_the_subcommand() {
         let after = Args::try_parse_from(["quilt", "list", "--json"]).expect("parses");
         assert!(after.json);
-        assert!(matches!(after.command, Commands::List));
+        assert!(matches!(after.command, Commands::List { fetch: false }));
 
         let before = Args::try_parse_from(["quilt", "--json", "list"]).expect("parses");
         assert!(before.json);
-        assert!(matches!(before.command, Commands::List));
+        assert!(matches!(before.command, Commands::List { fetch: false }));
 
         let status = Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"])
             .expect("parses");
@@ -918,6 +944,46 @@ mod tests {
 
         let default = Args::try_parse_from(["quilt", "list"]).expect("parses");
         assert!(!default.json);
+    }
+
+    /// `global = true` keeps the shipped spelling working and adds the other.
+    #[test]
+    fn domain_flag_parses_before_or_after_the_subcommand() {
+        let domain = Some(PathBuf::from("/tmp/quilt-domain"));
+
+        for argv in [
+            ["quilt", "--domain", "/tmp/quilt-domain", "list"],
+            ["quilt", "-d", "/tmp/quilt-domain", "list"],
+            ["quilt", "list", "--domain", "/tmp/quilt-domain"],
+            ["quilt", "list", "-d", "/tmp/quilt-domain"],
+        ] {
+            let args = Args::try_parse_from(argv).expect("parses");
+            assert_eq!(args.domain, domain, "{argv:?}");
+            assert!(
+                matches!(args.command, Commands::List { fetch: false }),
+                "{argv:?}"
+            );
+        }
+
+        let status = Args::try_parse_from([
+            "quilt",
+            "status",
+            "-n",
+            "demo/sales",
+            "--domain",
+            "/tmp/quilt-domain",
+        ])
+        .expect("parses");
+        assert_eq!(status.domain, domain);
+        assert!(matches!(
+            status.command,
+            Commands::Status {
+                pkg: PackageRef { namespace: Some(namespace) },
+            } if namespace == "demo/sales"
+        ));
+
+        let default = Args::try_parse_from(["quilt", "list"]).expect("parses");
+        assert_eq!(default.domain, None);
     }
 
     #[test]
@@ -1085,7 +1151,7 @@ mod tests {
             domain: Some(domain_temp_dir.path().to_path_buf()),
             verbose: false,
             json: false,
-            command: Commands::List,
+            command: Commands::List { fetch: false },
         };
 
         let mut output = Vec::new();
@@ -2033,7 +2099,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             json: false,
-            command: Commands::List,
+            command: Commands::List { fetch: false },
         };
 
         // Default home initialization now reaches the same write-protected
@@ -2054,7 +2120,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             json: false,
-            command: Commands::List,
+            command: Commands::List { fetch: false },
         };
 
         // Test init with empty domain
@@ -2104,7 +2170,7 @@ mod tests {
                     message: Some("first".to_string()),
                 },
             ),
-            ("list", Commands::List),
+            ("list", Commands::List { fetch: false }),
             ("status", Commands::Status { pkg: pkg() }),
             (
                 "commit",

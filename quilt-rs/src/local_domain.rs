@@ -250,6 +250,15 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         Ok(())
     }
 
+    /// Delete what `.quilt/` holds for nothing: objects no installed
+    /// manifest uses, the remote-manifest cache and stranded staging dirs.
+    /// See [`flow::gc`]; a package busy in another writer stops it with
+    /// [`Error::PackageBusy`] and nothing deleted.
+    pub async fn gc(&self) -> Res<flow::GcReport> {
+        let lineage = self.lineage.read(&self.storage).await?;
+        flow::gc(&self.paths, &self.storage, &lineage).await
+    }
+
     /// Splices the one entry an install or a create made into the record as
     /// it is now, leaving every other package's entry as another writer may
     /// have changed it meanwhile. The caller holds the package's lock.

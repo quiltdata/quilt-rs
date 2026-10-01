@@ -2,6 +2,8 @@ name: Lint Markdown
 
 on:
   push:
+    # Only `main` — see test-quilt-rs.yaml.
+    branches: [main]
     paths:
       - '**/*.md'
       - '.github/workflows/lint-markdown.yaml'
@@ -18,15 +20,20 @@ jobs:
   lint-markdown:
     name: Markdown Linting
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Setup Rust for development
-        uses: ./.github/actions/setup-rust-dev
-
+      # The project's own action downloads the release binary and checks its
+      # sha256. Pinned by commit: it is third-party code. It installs the
+      # latest rumdl, as a local `cargo install rumdl` does.
       - name: Install rumdl
-        run: cargo install rumdl
+        uses: rvben/rumdl@9c4cc2a2ebe176de68e1788106e25af8a9bd3899 # v0.2.78
+        with:
+          install-only: true
 
       - name: Lint markdown files
         run: rumdl check .

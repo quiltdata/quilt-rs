@@ -1,7 +1,13 @@
+use std::borrow::Cow;
+
+use quilt_rs::lineage::PackageLineage;
+use quilt_rs::lineage::PackageState;
+use quilt_rs::lineage::PackageStateReport;
 use quilt_rs::lineage::UpstreamState;
 use quilt_uri::Namespace;
 use tabled::settings::Modify;
 use tabled::settings::Span;
+use tracing::log;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
@@ -16,18 +22,86 @@ const NO_BUCKET: &str = "∅";
 const LAST_SYNCED_HINT: &str = "Statuses are as of each package's last install, pull or push. \
 Run `quilt status --namespace <namespace>` to check the remote now.";
 
-/// A listed package as [`model`] resolves it; [`PackageRow`] is its rendering.
+/// Printed under a `--fetch` table in place of [`LAST_SYNCED_HINT`].
+const FETCHED_HINT: &str = "Statuses were checked against each package's remote just now, \
+except where marked unreachable. Changed files are ones not committed yet.";
+
+/// Appended to a `--fetch` row whose remote could not be read, so its status
+/// is as of the last sync. See [`Fetched::remote_checked`].
+const UNREACHABLE_SUFFIX: &str = " (remote unreachable)";
+
+/// How many packages `--fetch` checks at once. Each check is a remote round
+/// trip plus a working-tree walk, so an unbounded fan-out over a large domain
+/// would open as many connections and directory scans as there are packages.
+const FETCH_CONCURRENCY: usize = 8;
+
+#[derive(Debug, Default)]
+pub struct Input {
+    /// Ask each package's remote for its current state, and count the files
+    /// changed since the last commit, instead of reading lineage alone.
+    pub fetch: bool,
+}
+
+/// A listed package as [`model`] resolves it; [`state`] words it.
 pub struct PackageEntry {
     /// `None` for a local-only package — no remote, or a remote with no bucket.
     pub bucket: Option<String>,
     pub namespace: Namespace,
     pub status: UpstreamState,
+    /// `Some` on every row of a `--fetch` listing, `None` on a plain one.
+    pub fetched: Option<Fetched>,
+}
+
+/// What `--fetch` learned about a package beyond its [`UpstreamState`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fetched {
+    /// The state `quilt-rs` resolved ([`InstalledPackage::state`]), the one
+    /// `QuiltSync`'s main page shows. `Unknown` when the check failed.
+    ///
+    /// [`InstalledPackage::state`]: quilt_rs::InstalledPackage::state
+    pub state: PackageState,
+    /// Files changed since the last commit. `None` when the working tree was
+    /// not scanned: no remote, a misconfigured one, or a failed check.
+    pub changed_files: Option<usize>,
+    /// The remote refused the active role.
+    pub access_denied: bool,
+    /// The remote's `latest` tip was read in this run
+    /// ([`PackageStateReport::latest_refreshed`]). `false` for a package with
+    /// no remote or a misconfigured one, a denial, a failed check, and a check
+    /// that could not reach the remote and answered from the last-known tip:
+    /// that last row is the only one marked unreachable.
+    pub remote_checked: bool,
+}
+
+impl Fetched {
+    /// A row whose check returned an error, or never returned.
+    fn failed() -> Self {
+        Self {
+            state: PackageState::Unknown,
+            changed_files: None,
+            access_denied: false,
+            remote_checked: false,
+        }
+    }
+}
+
+impl From<PackageStateReport> for Fetched {
+    fn from(report: PackageStateReport) -> Self {
+        Self {
+            state: report.state,
+            changed_files: report.changed_files,
+            access_denied: false,
+            remote_checked: report.latest_refreshed,
+        }
+    }
 }
 
 pub struct Output {
     /// Grouped by bucket. Only [`Output::new`] builds this, because
     /// [`Display`](std::fmt::Display) cannot restore the order it needs.
     installed_packages_list: Vec<PackageEntry>,
+    /// Built by `--fetch`: renders the live column and hint.
+    fetched: bool,
 }
 
 impl Output {
@@ -36,7 +110,7 @@ impl Output {
     /// `Display` spans a bucket's cell over a *run* of adjacent rows, so a
     /// bucket reached in two runs would be named twice, in two spans. Sorting
     /// here rather than trusting the caller is what makes that unreachable.
-    fn new(mut installed_packages_list: Vec<PackageEntry>) -> Self {
+    fn new(mut installed_packages_list: Vec<PackageEntry>, fetched: bool) -> Self {
         installed_packages_list.sort_by(|a, b| {
             (a.bucket.is_none(), &a.bucket, &a.namespace).cmp(&(
                 b.bucket.is_none(),
@@ -46,16 +120,25 @@ impl Output {
         });
         Self {
             installed_packages_list,
+            fetched,
         }
     }
-}
 
-#[derive(tabled::Tabled)]
-struct PackageRow {
-    bucket: String,
-    namespace: String,
-    #[tabled(rename = "last synced")]
-    status: &'static str,
+    fn column(&self) -> &'static str {
+        if self.fetched {
+            "status"
+        } else {
+            "last synced"
+        }
+    }
+
+    fn hint(&self) -> &'static str {
+        if self.fetched {
+            FETCHED_HINT
+        } else {
+            LAST_SYNCED_HINT
+        }
+    }
 }
 
 /// Worded for `list` alone, not [`UpstreamState`]'s `Display`: the state here is
@@ -73,13 +156,42 @@ fn last_synced(entry: &PackageEntry) -> &'static str {
     }
 }
 
-impl From<&PackageEntry> for PackageRow {
-    fn from(entry: &PackageEntry) -> Self {
-        Self {
-            bucket: entry.bucket.as_deref().unwrap_or(NO_BUCKET).to_string(),
-            namespace: entry.namespace.to_string(),
-            status: last_synced(entry),
+/// Worded to match `QuiltSync`'s main page (`kit::package_state::render` at
+/// `Site::ListRow`, lowercased), because `--fetch` answers the question that page
+/// answers. The state is decided once, by `quilt-rs`
+/// ([`PackageState::resolve`]), for both surfaces, so they cannot disagree about
+/// a package; only the words are the CLI's.
+///
+/// Two departures. `QuiltSync`'s "Sync stopped" is `unknown` here, since the CLI
+/// has no sync to stop. The app-only states (a paused sync, a pull conflict)
+/// come from its watcher, which the CLI does not run.
+fn fetched_state(fetched: &Fetched) -> Cow<'static, str> {
+    if fetched.access_denied {
+        return "no access".into();
+    }
+    match fetched.state {
+        PackageState::Latest => "latest".into(),
+        PackageState::PendingCommit => "revision not published".into(),
+        PackageState::PendingChanges { files: 1 } => "1 file changed".into(),
+        PackageState::PendingChanges { files } => format!("{files} files changed").into(),
+        PackageState::Behind => "not the latest".into(),
+        PackageState::Diverged => "changed in both places".into(),
+        PackageState::Unpublished => "not published yet".into(),
+        PackageState::NoRemote => "no S3 bucket yet".into(),
+        PackageState::Unknown => "unknown".into(),
+    }
+}
+
+fn state(entry: &PackageEntry) -> Cow<'static, str> {
+    match &entry.fetched {
+        // A file count means the status call answered; without the remote, it
+        // answered from the last-known tip, so the word is qualified rather
+        // than passed off as fresh.
+        Some(fetched) if fetched.changed_files.is_some() && !fetched.remote_checked => {
+            format!("{}{UNREACHABLE_SUFFIX}", fetched_state(fetched)).into()
         }
+        Some(fetched) => fetched_state(fetched),
+        None => last_synced(entry).into(),
     }
 }
 
@@ -89,8 +201,16 @@ impl std::fmt::Display for Output {
             return write!(f, "No installed packages");
         }
 
-        let mut table =
-            tabled::Table::new(self.installed_packages_list.iter().map(PackageRow::from));
+        let mut builder = tabled::builder::Builder::default();
+        builder.push_record(["bucket", "namespace", self.column()]);
+        for entry in &self.installed_packages_list {
+            builder.push_record([
+                Cow::Borrowed(entry.bucket.as_deref().unwrap_or(NO_BUCKET)),
+                Cow::Owned(entry.namespace.to_string()),
+                state(entry),
+            ]);
+        }
+        let mut table = builder.build();
 
         // Span each bucket's cell over its packages' rows. Not
         // `Merge::vertical()`, the built-in for this: it merges *every*
@@ -110,7 +230,7 @@ impl std::fmt::Display for Output {
             row += group.len();
         }
 
-        write!(f, "{table}\n{LAST_SYNCED_HINT}")
+        write!(f, "{table}\n{}", self.hint())
     }
 }
 
@@ -120,47 +240,150 @@ impl Render for Output {
             .installed_packages_list
             .iter()
             .map(|package| {
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "bucket": package.bucket.as_deref(),
                     "namespace": package.namespace.to_string(),
                     "status": package.status,
-                })
+                });
+                // Added, never changed, so a plain listing's JSON stays as it was.
+                // `fetched` is whether this row's remote tip was read just now.
+                if let Some(fetched) = &package.fetched {
+                    row["fetched"] = fetched.remote_checked.into();
+                    if let Some(files) = fetched.changed_files {
+                        row["changed_files"] = files.into();
+                    }
+                    if fetched.access_denied {
+                        row["access_denied"] = true.into();
+                    }
+                }
+                row
             })
             .collect();
         serde_json::json!({ "packages": packages })
     }
 }
 
-pub async fn command(m: impl Commands) -> Std {
-    Std::from_result(m.list().await)
+pub async fn command(m: impl Commands, args: Input) -> Std {
+    Std::from_result(m.list(args).await)
 }
 
-/// Lists installed packages from the local domain — no network, one read of
-/// the lineage record for the whole listing.
+/// The bucket cell of a row: `None` for a local-only package — no remote, or a
+/// remote with no bucket.
+fn bucket(lineage: &PackageLineage) -> Option<String> {
+    // An empty bucket is what the cascade already reads as local-only, so it
+    // renders like a package with no remote at all.
+    lineage
+        .remote_uri
+        .as_ref()
+        .map(|remote| remote.bucket.clone())
+        .filter(|bucket| !bucket.is_empty())
+}
+
+/// Lists installed packages from the local domain, one read of the lineage
+/// record for the whole listing.
 ///
-/// `status` is the [`UpstreamState`] cascade over the lineage's four hashes,
-/// read against the *last-known* remote tip: `list` never refreshes it.
-/// `quilt status --namespace <namespace>` does.
-pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
+/// Plain, it never touches the network: `status` is the [`UpstreamState`]
+/// cascade over the lineage's four hashes, read against the *last-known* remote
+/// tip. With `fetch`, each package is checked the way `QuiltSync`'s main page
+/// checks it, all at once; see [`fetch_entry`].
+pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<Output, Error> {
     let domain_lineage = local_domain.get_lineage().await?;
     let mut installed_packages_list = Vec::with_capacity(domain_lineage.packages.len());
 
-    for (namespace, lineage) in domain_lineage.packages {
-        // An empty bucket is what the cascade already reads as local-only, so
-        // it renders like a package with no remote at all.
-        let bucket = lineage
-            .remote_uri
-            .as_ref()
-            .map(|remote| remote.bucket.clone())
-            .filter(|bucket| !bucket.is_empty());
-        installed_packages_list.push(PackageEntry {
-            status: UpstreamState::from(lineage),
-            namespace,
-            bucket,
-        });
+    if !args.fetch {
+        for (namespace, lineage) in domain_lineage.packages {
+            installed_packages_list.push(PackageEntry {
+                bucket: bucket(&lineage),
+                status: UpstreamState::from(lineage),
+                namespace,
+                fetched: None,
+            });
+        }
+        return Ok(Output::new(installed_packages_list, false));
     }
 
-    Ok(Output::new(installed_packages_list))
+    // Spawned rather than awaited in turn: each package is a round trip to its
+    // remote plus a walk of its working tree. At most `FETCH_CONCURRENCY` run
+    // at once. The order they finish in does not matter, since `Output::new`
+    // sorts.
+    let limit = std::sync::Arc::new(tokio::sync::Semaphore::new(FETCH_CONCURRENCY));
+    let mut tasks = tokio::task::JoinSet::new();
+    let mut spawned = std::collections::HashMap::new();
+    for (namespace, lineage) in domain_lineage.packages {
+        let installed_package = local_domain.create_installed_package(namespace.clone());
+        let bucket = bucket(&lineage);
+        let fallback = PackageEntry {
+            bucket: bucket.clone(),
+            namespace: namespace.clone(),
+            status: UpstreamState::Error,
+            fetched: Some(Fetched::failed()),
+        };
+        let limit = limit.clone();
+        let task = tasks.spawn(async move {
+            // Held until the check ends. The semaphore is never closed, so
+            // this always holds a permit.
+            let _permit = limit.acquire_owned().await;
+            fetch_entry(namespace, bucket, || installed_package.state()).await
+        });
+        spawned.insert(task.id(), fallback);
+    }
+    while let Some(joined) = tasks.join_next_with_id().await {
+        match joined {
+            Ok((id, entry)) => {
+                spawned.remove(&id);
+                installed_packages_list.push(entry);
+            }
+            // A task that panicked is one package's failure, like any other.
+            Err(err) => {
+                if let Some(fallback) = spawned.remove(&err.id()) {
+                    log::warn!("Failed to check {}: {err}", fallback.namespace);
+                    installed_packages_list.push(fallback);
+                }
+            }
+        }
+    }
+    Ok(Output::new(installed_packages_list, true))
+}
+
+/// One `--fetch` row: [`InstalledPackage::state`], worded by [`state`].
+///
+/// `state` asks the remote for its `latest` tag and scans the working tree,
+/// except for a package with no remote or a misconfigured one, which it answers
+/// without the network. The fetched tip is not written back to lineage, as
+/// `QuiltSync` does not either.
+///
+/// When the remote cannot be reached, the status call warns and answers from
+/// the last-known tip, so that row is only as fresh as a plain listing and is
+/// marked unreachable ([`Fetched::remote_checked`] stays `false`). Any error
+/// `state` returns is logged and shows as `unknown` for that row alone, except
+/// a denial, which is its own state.
+///
+/// [`InstalledPackage::state`]: quilt_rs::InstalledPackage::state
+async fn fetch_entry<F, Fut>(namespace: Namespace, bucket: Option<String>, state: F) -> PackageEntry
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<PackageStateReport, quilt_rs::Error>>,
+{
+    let (status, fetched) = match state().await {
+        Ok(report) => (report.upstream_state, Fetched::from(report)),
+        Err(err) if err.is_access_denied() => (
+            UpstreamState::Error,
+            Fetched {
+                access_denied: true,
+                ..Fetched::failed()
+            },
+        ),
+        Err(err) => {
+            log::warn!("Failed to check {namespace}: {err}");
+            (UpstreamState::Error, Fetched::failed())
+        }
+    };
+    PackageEntry {
+        bucket,
+        namespace,
+        status,
+        fetched: Some(fetched),
+    }
 }
 
 #[cfg(test)]
@@ -179,6 +402,19 @@ mod tests {
             bucket: bucket.map(str::to_owned),
             namespace: ("example", name).into(),
             status,
+            fetched: None,
+        }
+    }
+
+    fn fetched_entry(
+        bucket: Option<&str>,
+        name: &str,
+        status: UpstreamState,
+        fetched: Fetched,
+    ) -> PackageEntry {
+        PackageEntry {
+            fetched: Some(fetched),
+            ..entry(bucket, name, status)
         }
     }
 
@@ -187,7 +423,7 @@ mod tests {
         let (m, _temp_dir) = create_model_in_temp_dir().await?;
         {
             let local_domain = m.get_local_domain();
-            let empty_output = model(local_domain).await?;
+            let empty_output = model(local_domain, Input::default()).await?;
             assert!(empty_output.installed_packages_list.is_empty());
             assert_eq!(format!("{empty_output}"), "No installed packages");
         }
@@ -196,17 +432,20 @@ mod tests {
 
     #[test]
     fn test_json_empty_list() {
-        let output = Output::new(Vec::new());
+        let output = Output::new(Vec::new(), false);
 
         assert_eq!(output.to_json().to_string(), r#"{"packages":[]}"#);
     }
 
     #[test]
     fn test_json_includes_bucket_namespace_and_status() {
-        let output = Output::new(vec![
-            entry(Some("acme-research"), "one", UpstreamState::UpToDate),
-            entry(None, "scratch", UpstreamState::Local),
-        ]);
+        let output = Output::new(
+            vec![
+                entry(Some("acme-research"), "one", UpstreamState::UpToDate),
+                entry(None, "scratch", UpstreamState::Local),
+            ],
+            false,
+        );
 
         assert_eq!(
             output.to_json().to_string(),
@@ -219,13 +458,16 @@ mod tests {
     /// middle. Each bucket must still be named exactly once, in one span.
     #[test]
     fn test_display_groups_interleaved_buckets() {
-        let output = Output::new(vec![
-            entry(Some("zulu-bucket"), "late", UpstreamState::Behind),
-            entry(Some("acme-research"), "two", UpstreamState::UpToDate),
-            entry(None, "scratch", UpstreamState::Local),
-            entry(Some("acme-research"), "one", UpstreamState::UpToDate),
-            entry(Some("zulu-bucket"), "early", UpstreamState::Ahead),
-        ]);
+        let output = Output::new(
+            vec![
+                entry(Some("zulu-bucket"), "late", UpstreamState::Behind),
+                entry(Some("acme-research"), "two", UpstreamState::UpToDate),
+                entry(None, "scratch", UpstreamState::Local),
+                entry(Some("acme-research"), "one", UpstreamState::UpToDate),
+                entry(Some("zulu-bucket"), "early", UpstreamState::Ahead),
+            ],
+            false,
+        );
 
         let rendered = format!("{output}");
         assert_eq!(rendered.matches("acme-research").count(), 1, "one span");
@@ -244,12 +486,15 @@ mod tests {
     /// remote names that absence.
     #[test]
     fn test_display_spans_repeated_buckets() {
-        let output = Output::new(vec![
-            entry(Some("acme-research"), "one", UpstreamState::UpToDate),
-            entry(Some("acme-research"), "two", UpstreamState::UpToDate),
-            entry(Some("zulu-bucket"), "late", UpstreamState::Behind),
-            entry(None, "scratch", UpstreamState::Local),
-        ]);
+        let output = Output::new(
+            vec![
+                entry(Some("acme-research"), "one", UpstreamState::UpToDate),
+                entry(Some("acme-research"), "two", UpstreamState::UpToDate),
+                entry(Some("zulu-bucket"), "late", UpstreamState::Behind),
+                entry(None, "scratch", UpstreamState::Local),
+            ],
+            false,
+        );
 
         let rendered = format!("{output}");
         assert_eq!(rendered.matches("acme-research").count(), 1, "named once");
@@ -295,15 +540,263 @@ mod tests {
     /// An empty listing has no statuses to qualify, so it prints no hint.
     #[test]
     fn test_display_ends_with_last_synced_hint() {
-        let output = Output::new(vec![entry(
-            Some("acme-research"),
-            "one",
-            UpstreamState::UpToDate,
-        )]);
+        let output = Output::new(
+            vec![entry(Some("acme-research"), "one", UpstreamState::UpToDate)],
+            false,
+        );
         assert!(format!("{output}").ends_with(LAST_SYNCED_HINT));
 
-        let empty = Output::new(Vec::new());
+        let empty = Output::new(Vec::new(), false);
         assert!(!format!("{empty}").contains(LAST_SYNCED_HINT));
+    }
+
+    /// A row as `fetch_entry` builds it when the check reaches the remote: a
+    /// file count comes with a checked tip, no count with none.
+    fn fetched(state: PackageState, changed_files: Option<usize>) -> Fetched {
+        Fetched {
+            state,
+            changed_files,
+            remote_checked: changed_files.is_some(),
+            ..Fetched::failed()
+        }
+    }
+
+    /// A row whose check answered from the last-known tip.
+    fn unreachable(state: PackageState, changed_files: usize) -> Fetched {
+        Fetched {
+            remote_checked: false,
+            ..fetched(state, Some(changed_files))
+        }
+    }
+
+    fn denied() -> Fetched {
+        Fetched {
+            access_denied: true,
+            ..Fetched::failed()
+        }
+    }
+
+    /// Each state reads as `QuiltSync`'s main page words it, lowercased, and a
+    /// denial outranks everything.
+    #[test]
+    fn test_display_words_each_fetched_state_as_quilt_sync_does() {
+        let cases = [
+            (fetched(PackageState::Latest, Some(0)), "latest"),
+            (fetched(PackageState::Latest, None), "latest"),
+            (
+                fetched(PackageState::PendingCommit, Some(0)),
+                "revision not published",
+            ),
+            (
+                fetched(PackageState::PendingChanges { files: 1 }, Some(1)),
+                "1 file changed",
+            ),
+            (
+                fetched(PackageState::PendingChanges { files: 3 }, Some(3)),
+                "3 files changed",
+            ),
+            (fetched(PackageState::Behind, Some(2)), "not the latest"),
+            (
+                fetched(PackageState::Diverged, Some(2)),
+                "changed in both places",
+            ),
+            (
+                fetched(PackageState::Unpublished, Some(2)),
+                "not published yet",
+            ),
+            (fetched(PackageState::NoRemote, None), "no S3 bucket yet"),
+            (fetched(PackageState::Unknown, None), "unknown"),
+            (denied(), "no access"),
+        ];
+        for (fetched, expected) in cases {
+            let entry = fetched_entry(Some("acme-research"), "one", UpstreamState::Error, fetched);
+            assert_eq!(state(&entry), expected, "{:?}", entry.fetched);
+        }
+    }
+
+    /// A check that could not reach the remote keeps its word but says so.
+    /// Rows that never asked the remote, or got no answer, are not marked:
+    /// their words already say what is known.
+    #[test]
+    fn test_display_marks_rows_whose_remote_was_unreachable() {
+        let cases = [
+            (
+                unreachable(PackageState::Latest, 0),
+                "latest (remote unreachable)",
+            ),
+            (
+                unreachable(PackageState::PendingChanges { files: 1 }, 1),
+                "1 file changed (remote unreachable)",
+            ),
+            (
+                unreachable(PackageState::Behind, 0),
+                "not the latest (remote unreachable)",
+            ),
+            (fetched(PackageState::NoRemote, None), "no S3 bucket yet"),
+            (fetched(PackageState::Unknown, None), "unknown"),
+            (denied(), "no access"),
+        ];
+        for (fetched, expected) in cases {
+            let entry = fetched_entry(Some("acme-research"), "one", UpstreamState::Error, fetched);
+            assert_eq!(state(&entry), expected, "{:?}", entry.fetched);
+        }
+    }
+
+    /// The column and the hint say which question the table answers.
+    #[test]
+    fn test_display_names_the_fetched_column_and_hint() {
+        let output = Output::new(
+            vec![fetched_entry(
+                Some("acme-research"),
+                "one",
+                UpstreamState::UpToDate,
+                fetched(PackageState::Latest, Some(0)),
+            )],
+            true,
+        );
+        let rendered = format!("{output}");
+        assert!(rendered.ends_with(FETCHED_HINT));
+        assert!(!rendered.contains(LAST_SYNCED_HINT));
+        assert!(!rendered.contains("last synced"));
+        assert!(rendered.contains("| status"));
+        assert!(rendered.contains("| latest"));
+
+        let empty = Output::new(Vec::new(), true);
+        assert_eq!(format!("{empty}"), "No installed packages");
+    }
+
+    /// Fetch mode only adds keys; `status` keeps its values, and a key with
+    /// nothing to say is left out rather than sent as null. `fetched` is on
+    /// every row and is `true` only where the remote tip was read just now.
+    #[test]
+    fn test_json_adds_fetched_fields() {
+        let output = Output::new(
+            vec![
+                fetched_entry(
+                    Some("acme-research"),
+                    "one",
+                    UpstreamState::UpToDate,
+                    fetched(PackageState::PendingChanges { files: 2 }, Some(2)),
+                ),
+                fetched_entry(Some("acme-research"), "two", UpstreamState::Error, denied()),
+                fetched_entry(
+                    Some("acme-research"),
+                    "three",
+                    UpstreamState::UpToDate,
+                    unreachable(PackageState::PendingChanges { files: 1 }, 1),
+                ),
+                fetched_entry(
+                    None,
+                    "scratch",
+                    UpstreamState::Local,
+                    fetched(PackageState::NoRemote, None),
+                ),
+            ],
+            true,
+        );
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date","fetched":true,"changed_files":2},{"bucket":"acme-research","namespace":"example/three","status":"up_to_date","fetched":false,"changed_files":1},{"bucket":"acme-research","namespace":"example/two","status":"error","fetched":false,"access_denied":true},{"bucket":null,"namespace":"example/scratch","status":"local","fetched":false}]}"#
+        );
+    }
+
+    fn s3_error(kind: quilt_rs::S3ErrorKind) -> quilt_rs::Error {
+        quilt_rs::Error::S3(quilt_rs::S3Error::new(kind))
+    }
+
+    /// The check's answer is the row's: its state, its upstream state for
+    /// `--json`, its file count, and whether it reached the remote.
+    #[test(tokio::test)]
+    async fn test_fetch_entry_takes_the_checks_answer() {
+        let entry = fetch_entry(
+            ("example", "one").into(),
+            Some("acme-research".to_string()),
+            || async {
+                Ok(PackageStateReport {
+                    state: PackageState::Behind,
+                    upstream_state: UpstreamState::Behind,
+                    changed_files: Some(2),
+                    latest_refreshed: true,
+                })
+            },
+        )
+        .await;
+
+        assert_eq!(entry.bucket.as_deref(), Some("acme-research"));
+        assert_eq!(entry.status, UpstreamState::Behind);
+        assert_eq!(entry.fetched, Some(fetched(PackageState::Behind, Some(2))));
+        assert_eq!(state(&entry), "not the latest");
+
+        let stale = fetch_entry(
+            ("example", "one").into(),
+            Some("acme-research".to_string()),
+            || async {
+                Ok(PackageStateReport {
+                    state: PackageState::Latest,
+                    upstream_state: UpstreamState::UpToDate,
+                    changed_files: Some(0),
+                    latest_refreshed: false,
+                })
+            },
+        )
+        .await;
+        assert_eq!(stale.fetched, Some(unreachable(PackageState::Latest, 0)));
+        assert_eq!(state(&stale), "latest (remote unreachable)");
+    }
+
+    /// A denial is a state of its own; any other failure is `unknown` for that
+    /// row, not an error for the listing.
+    #[test(tokio::test)]
+    async fn test_fetch_entry_falls_back_per_row_on_error() {
+        let denied_row = fetch_entry(
+            ("example", "one").into(),
+            Some("acme-research".to_string()),
+            || async {
+                Err(s3_error(quilt_rs::S3ErrorKind::AccessDenied(
+                    "denied".to_string(),
+                )))
+            },
+        )
+        .await;
+        assert_eq!(denied_row.status, UpstreamState::Error);
+        assert_eq!(denied_row.fetched, Some(denied()));
+        assert_eq!(state(&denied_row), "no access");
+
+        for err in [
+            s3_error(quilt_rs::S3ErrorKind::GetObject("boom".to_string())),
+            quilt_rs::Error::Login(quilt_rs::LoginError::NoSession(None)),
+        ] {
+            let failed = fetch_entry(
+                ("example", "one").into(),
+                Some("acme-research".to_string()),
+                || async { Err(err) },
+            )
+            .await;
+            assert_eq!(failed.status, UpstreamState::Error);
+            assert_eq!(failed.fetched, Some(Fetched::failed()));
+            assert_eq!(state(&failed), "unknown");
+        }
+    }
+
+    /// End to end over a real domain, which needs no network for a package
+    /// with no remote.
+    #[test(tokio::test)]
+    async fn test_model_fetch_with_local_package() -> Result<(), Error> {
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        m.create(crate::cli::create::Input {
+            namespace: ("example", "local").into(),
+            source: None,
+            message: None,
+        })
+        .await?;
+
+        let output = m.list(Input { fetch: true }).await?;
+        assert_eq!(output.installed_packages_list.len(), 1);
+        let rendered = format!("{output}");
+        assert!(rendered.contains("| no S3 bucket yet"));
+        assert!(rendered.ends_with(FETCHED_HINT));
+        Ok(())
     }
 
     #[test(tokio::test)]
@@ -316,7 +809,7 @@ mod tests {
         })
         .await?;
 
-        let output = model(m.get_local_domain()).await?;
+        let output = model(m.get_local_domain(), Input::default()).await?;
         let entry = &output.installed_packages_list[0];
         assert_eq!(entry.bucket, None);
         assert_eq!(entry.namespace, ("example", "local").into());
@@ -341,7 +834,7 @@ mod tests {
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
         {
             let local_domain = m.get_local_domain();
-            let output = model(local_domain).await?;
+            let output = model(local_domain, Input::default()).await?;
 
             let entry = &output.installed_packages_list[0];
             assert_eq!(entry.bucket.as_deref(), Some(pkg::BUCKET));
@@ -370,7 +863,7 @@ mod tests {
         let uri = format!("{}&path={}", pkg::URI_LATEST, pkg::README_LK_ESCAPED);
         let (m, _, _temp_dir) = install_package_into_temp_dir(&uri).await?;
 
-        if let Std::Out(output) = command(m).await {
+        if let Std::Out(output) = command(m, Input::default()).await {
             let output = output.to_string();
             assert!(output.contains(pkg::BUCKET));
             assert!(output.contains(pkg::NAMESPACE_STR));

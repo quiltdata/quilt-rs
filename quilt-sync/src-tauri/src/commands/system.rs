@@ -1,5 +1,5 @@
 //! OS-integration commands: setup, directory pickers, file browser,
-//! diagnostics, and auto-update.
+//! diagnostics, local storage cleanup, and auto-update.
 
 use std::fs;
 use std::path::PathBuf;
@@ -202,6 +202,23 @@ pub async fn open_data_dir(
     Notify::new(msg_init)
         .on_success(&tracing, MixpanelEvent::DataDirOpened)
         .map(open_data_dir_command(&app_handle), msg_ok, msg_err)
+}
+
+async fn run_gc_command(m: &impl QuiltModel) -> Result<String, String> {
+    // Made before the sweep so its line logs first, as everywhere else; the
+    // success message is the report's own sentence, known only once it ends.
+    let notify = Notify::new("Freeing up space".to_string());
+    let result = m.gc().await;
+    let msg_ok = result.as_ref().map(ToString::to_string).unwrap_or_default();
+    let msg_err = |err: &Error| format!("Failed to free up space: {}", err.user_facing());
+
+    notify.map(result, msg_ok, msg_err)
+}
+
+/// Delete what the domain holds for nothing, answering with what was freed.
+#[tauri::command]
+pub async fn run_gc(m: tauri::State<'_, model::Model>) -> Result<String, String> {
+    run_gc_command(&*m).await
 }
 
 async fn collect_diagnostic_logs_command(
@@ -603,6 +620,42 @@ mod tests {
             package_file_path_command(&m, "team/plate", "raw/gone.csv")
                 .await
                 .is_err()
+        );
+    }
+
+    /// The toast says what the sweep freed, in the report's own words.
+    #[tokio::test]
+    async fn freeing_up_space_answers_with_what_it_freed() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_gc().returning(|| {
+            Ok(quilt::flow::GcReport {
+                objects: 6,
+                cached_manifests: 2,
+                staging: 0,
+                bytes: 630_200,
+            })
+        });
+
+        assert_eq!(
+            run_gc_command(&m).await,
+            Ok("Freed 630.2 kB: 6 objects, 2 cached manifests".to_string())
+        );
+    }
+
+    /// A package busy elsewhere stops the sweep, and the message names it.
+    #[tokio::test]
+    async fn freeing_up_space_while_a_package_is_busy_says_which() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_gc()
+            .returning(|| Err(quilt::Error::PackageBusy(("acme", "demo").into()).into()));
+
+        assert_eq!(
+            run_gc_command(&m).await,
+            Err(
+                "Failed to free up space: acme/demo is busy in another quilt process; \
+                 try again once it finishes"
+                    .to_string()
+            )
         );
     }
 
