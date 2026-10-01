@@ -669,7 +669,9 @@ fn build_package_menu(
         let uri = uri_for_uninstall.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::package_uninstall(ns.to_string(), uri).await {
+            // No confirmation here to hold the choice, so the
+            // confirmation's default: delete the downloaded files too.
+            match commands::package_uninstall(ns.to_string(), uri, true).await {
                 Ok(msg) => {
                     ui_locked.set(false);
                     notification.set(Some(Notification::Success(msg)));

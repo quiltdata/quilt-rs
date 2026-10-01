@@ -102,6 +102,7 @@ pub use checkbox::Checkbox;
 pub use choice_group::Choice;
 pub use choice_group::ChoiceGroup;
 pub use confirm_dialog::ConfirmDialog;
+pub use confirm_dialog::ConfirmOption;
 pub use countdown::Countdown;
 pub use dialog::Dialog;
 pub use entry_group::EntryGroup;
