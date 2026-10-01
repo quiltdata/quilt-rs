@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.1-dev]
+
+### Changed
+
+- `quilt list` names its status column `last synced`, words each status as of the package's last install, pull or push (`synced`, `unpushed commit`, `never pushed`, `local only`, …), and ends with a hint to run `quilt status` for a fresh check. `--json` output is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1031>)
+
 ## [v0.34.0] - 2026-09-30
 
 ### Added
