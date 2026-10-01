@@ -19,6 +19,13 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.42.0-dev]
+
+### Added
+
+- `InstalledPackageStatus::latest_refreshed` is `true` when `InstalledPackage::status` read the remote's `latest` tip in that call (a package never published reads as no tip, which also counts), and `false` when the package has no remote or the remote could not be reached and the status fell back to the last-known tip (<https://github.com/quiltdata/quilt-rs/pull/1032>)
+- `PackageState` resolves a package's state in the words front ends show it (`Latest`, `PendingCommit`, `PendingChanges`, `Behind`, `Diverged`, `Unpublished`, `NoRemote`, `Unknown`) from its `UpstreamState`, with `PackageState::resolve`; `PackageLineage::misconfigured_remote` says a remote has a bucket but no catalog host; and `InstalledPackage::state` checks a package's remote and working tree and resolves the result into a `PackageStateReport`, asking nothing for a package with no remote or a misconfigured one (<https://github.com/quiltdata/quilt-rs/pull/1032>)
+
 ## [v0.41.0] - 2026-09-30
 
 ### Added

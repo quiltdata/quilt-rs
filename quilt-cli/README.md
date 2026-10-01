@@ -56,6 +56,17 @@ records so listing stays offline. It is not the package's overall state —
 uncommitted edits are invisible to it, so a package with local changes still
 shows `synced`. `quilt status` reads the working copy and checks the remote now.
 
+`quilt list --fetch` asks each package's remote now and counts its changed
+files, giving the answer QuiltSync's main page gives, in its words: `latest`,
+`not the latest`, `3 files changed`, `revision not published`, `changed in both
+places`, `not published yet`, `no S3 bucket yet`, `no access`, `unknown`. It
+leaves local packages unchanged, so a plain `list` afterwards still shows the
+last sync. When a remote cannot be reached, that row falls back to what was
+last recorded and says so, as in `latest (remote unreachable)`. Under `--json`
+each row adds `fetched`, `true` only when the remote was read just now, a
+`changed_files` count when the files were scanned, and `"access_denied": true`
+when the remote refused your role; `status` keeps its values.
+
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
 `&path=` parameter in the URI.

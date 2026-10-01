@@ -1198,3 +1198,232 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
 
     Ok(())
 }
+
+/// `latest_refreshed` says whether `status` read the remote's `latest` tip
+/// this call, or fell back to the last-known one. A caller that shows the
+/// status as fresh needs it: the fallback is silent, only a warning in the log.
+#[test(tokio::test)]
+async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
+    async fn status_with(
+        tag: Option<&str>,
+        commit_json: &str,
+        remote_json: &str,
+        latest_hash: &str,
+    ) -> Res<InstalledPackageStatus> {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "refreshed").into();
+        let hash = "abcdef";
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/refreshed": {{
+                        "commit": {commit_json},
+                        "remote": {remote_json},
+                        "base_hash": "{hash}",
+                        "latest_hash": "{latest_hash}",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": "{}"
+            }}"#,
+            home.as_ref().display(),
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+        storage
+            .write_byte_stream(
+                paths.installed_manifest(&namespace, hash),
+                ByteStream::from_static(br#"{"version": "v0"}"#),
+            )
+            .await?;
+        if let Some(tag) = tag {
+            remote
+                .put_object(
+                    None,
+                    &S3Uri::try_from("s3://bkt/.quilt/named_packages/test/refreshed/latest")?,
+                    tag.as_bytes().to_vec(),
+                )
+                .await?;
+        }
+
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
+            paths,
+            remote: std::sync::Arc::new(remote),
+            storage,
+            namespace,
+        };
+        package.status(None).await
+    }
+
+    let remote_json = r#"{
+        "bucket": "bkt",
+        "namespace": "test/refreshed",
+        "hash": "abcdef",
+        "catalog": "test.quilt.dev"
+    }"#;
+
+    let reached = status_with(Some("abcdef"), "null", remote_json, "abcdef").await?;
+    assert!(reached.latest_refreshed, "the tip was read this call");
+    assert_eq!(reached.upstream_state, UpstreamState::UpToDate);
+
+    // No `latest` tag to read: the refresh fails, is swallowed, and the
+    // verdict comes from the last-known tip.
+    let unreachable = status_with(None, "null", remote_json, "abcdef").await?;
+    assert!(!unreachable.latest_refreshed, "the tip was not read");
+    assert_eq!(unreachable.upstream_state, UpstreamState::UpToDate);
+
+    // No `latest` tag, and none ever seen: the remote was read and says the
+    // package was never published, which is a fresh answer, not an outage.
+    let committed_json = r#"{
+        "timestamp": "2024-01-01T00:00:00Z",
+        "hash": "abcdef",
+        "prev_hashes": []
+    }"#;
+    let unpublished_json = r#"{
+        "bucket": "bkt",
+        "namespace": "test/refreshed",
+        "hash": "",
+        "catalog": "test.quilt.dev"
+    }"#;
+    let unpublished = status_with(None, committed_json, unpublished_json, "").await?;
+    assert!(unpublished.latest_refreshed, "the missing tag was read");
+    assert_eq!(unpublished.upstream_state, UpstreamState::Local);
+
+    let local = status_with(None, "null", "null", "abcdef").await?;
+    assert!(!local.latest_refreshed, "no remote, nothing to read");
+
+    Ok(())
+}
+
+/// The package's state, and how many times its `latest` tag was read.
+async fn state_with(
+    tag: Option<&str>,
+    remote_json: &str,
+) -> Res<(crate::lineage::PackageStateReport, usize)> {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "state").into();
+    let hash = "abcdef";
+    let tag_uri = "s3://bkt/.quilt/named_packages/test/state/latest";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/state": {{
+                    "commit": null,
+                    "remote": {remote_json},
+                    "base_hash": "{hash}",
+                    "latest_hash": "{hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+    if let Some(tag) = tag {
+        remote
+            .put_object(None, &S3Uri::try_from(tag_uri)?, tag.as_bytes().to_vec())
+            .await?;
+    }
+
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(remote),
+        storage,
+        namespace,
+    };
+    let report = package.state().await?;
+    Ok((report, package.remote.get_object_count(tag_uri)))
+}
+
+/// `state` asks the remote only when there is something to ask, and resolves
+/// what it learns through `PackageState::resolve`.
+#[test(tokio::test)]
+async fn test_state_short_circuits_and_resolves_the_status() -> Res {
+    use crate::lineage::PackageState;
+    use crate::lineage::PackageStateReport;
+
+    let (latest, reads) = state_with(
+        Some("abcdef"),
+        r#"{
+            "bucket": "bkt",
+            "namespace": "test/state",
+            "hash": "abcdef",
+            "origin": "test.quilt.dev"
+        }"#,
+    )
+    .await?;
+    assert_eq!(
+        latest,
+        PackageStateReport {
+            state: PackageState::Latest,
+            upstream_state: UpstreamState::UpToDate,
+            changed_files: Some(0),
+            latest_refreshed: true,
+        }
+    );
+    assert_eq!(reads, 1, "the tip was read");
+
+    // No catalog host: nowhere to vend credentials from, so nothing is asked.
+    let (misconfigured, reads) = state_with(
+        Some("abcdef"),
+        r#"{
+            "bucket": "bkt",
+            "namespace": "test/state",
+            "hash": "abcdef"
+        }"#,
+    )
+    .await?;
+    assert_eq!(
+        misconfigured,
+        PackageStateReport {
+            state: PackageState::Unknown,
+            upstream_state: UpstreamState::Error,
+            changed_files: None,
+            latest_refreshed: false,
+        }
+    );
+    assert_eq!(reads, 0, "a misconfigured remote is not asked");
+
+    // No remote: resolved from lineage, the working tree not walked.
+    let (local, _) = state_with(None, "null").await?;
+    assert_eq!(
+        local,
+        PackageStateReport {
+            state: PackageState::NoRemote,
+            upstream_state: UpstreamState::Local,
+            changed_files: None,
+            latest_refreshed: false,
+        }
+    );
+
+    Ok(())
+}
