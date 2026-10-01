@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn user_facing_drops_the_quilt_wrapper_and_keeps_the_sentence() {
-        // qhq-8mgw.59. The dialog read "Failed to create package: Quilt error:
+        // The dialog read "Failed to create package: Quilt error:
         // The package proj/process is already installed." — three clauses, one
         // of which informs.
         let err = Error::Quilt(quilt::Error::InstallPackage(

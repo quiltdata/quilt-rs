@@ -3,7 +3,7 @@
 //! The dark palette has existed since the tokens were written and nothing in the
 //! app could ever reach it: `_tokens.scss` declares it under
 //! `:root[data-theme="dark"]`, the gallery set that attribute from its own
-//! button, and the app set it from nowhere (qhq-8mgw.56). This is the missing
+//! button, and the app set it from nowhere. This is the missing
 //! half, and the shape the tokens' own comment asks for — *"following the OS
 //! means setting `data-theme` from Rust, not duplicating 60 lines into a
 //! `prefers-color-scheme` block"*.

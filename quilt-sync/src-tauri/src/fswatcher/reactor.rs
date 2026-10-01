@@ -117,13 +117,13 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                 // on the same observation that moves the list, rather than
                 // leaving it to the next tick — which is 30s focused but 120s
                 // unfocused and 600s closed, and editing a file means the window
-                // is not focused (qhq-8mgw.54).
+                // is not focused.
                 //
                 // Behind `claim_signal` above, necessarily: the arm time is read
                 // off the status walk, which is the thing that gate exists to
                 // ration. So the countdown is no more live than the list — but
                 // it is no LESS live either, and the two moving on one
-                // observation is what qhq-8mgw.54 was actually about. A
+                // observation is the whole point. A
                 // countdown armed outside the gate would have to walk the tree
                 // to do it, which is the gate undone.
                 let watcher = app_handle.state::<Watcher>();
@@ -183,7 +183,7 @@ pub(crate) async fn process_signal(
 
     // The same observation, told to the clock. The event above moves the list,
     // which measures the tree; without this the card's countdown still waited
-    // for a tick, and the two disagreed on screen (qhq-8mgw.54).
+    // for a tick, and the two disagreed on screen.
     if let Some(inner) = clocks {
         crate::autopull::arm_publish_from_status(inner, &signal.namespace, &status).await;
     }
@@ -484,7 +484,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_edit_moves_the_publish_countdown_without_waiting_for_a_tick() {
-        // qhq-8mgw.54's wiring, which is the half that was missing rather than
+        // The wiring, which is the half that was missing rather than
         // the half that was wrong: `arm_publish_from_status` is tested on its
         // own in `autopull`, and the defect was that nothing called it from
         // here. The tick wrote the arm map alone, so the countdown lagged the

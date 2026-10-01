@@ -651,7 +651,7 @@ explicit product call, and Primer is the weaker authority in each case:
 
 ### What was applied
 
-Applied 2026-08-07 (`qhq-o2ov`), beyond the six component renames above:
+Applied 2026-08-07, beyond the six component renames above:
 
 - `Banner`'s tone prop is `variant: BannerVariant`, not `kind` --
   `variant` is Primer's word for the visual axis and is what `Button`,
@@ -667,7 +667,7 @@ Applied 2026-08-07 (`qhq-o2ov`), beyond the six component renames above:
   `primary_action`. Renaming the component and leaving the props would
   have been a half-match.
 
-`Field` became `FormControl` the same day (`qhq-kt31`), and that one was
+`Field` became `FormControl` the same day, and that one was
 not a rename -- see the next section.
 
 Still outstanding:
@@ -679,9 +679,9 @@ Still outstanding:
    spot-check found `Spinner`, where Primer takes `srText` and lists
    `aria-label` as *deprecated* -- and the reason is mechanical, not
    cosmetic: our `role="status"` element has no text content, and a live
-   region announces its content, not its label. `qhq-m5s6`.
+   region announces its content, not its label.
 
-The token migration to property-first (`qhq-mowp`) landed the same day,
+The token migration to property-first landed the same day,
 across `_tokens.scss` and all 26 module stylesheets in one commit -- a
 half-migrated vocabulary is worse than either shape. It retired `subtle`,
 `canvas` and `strong` together and makes the fill-vs-border collision

@@ -120,7 +120,7 @@ pub fn PageScene() -> impl IntoView {
                   borrow attention from. Buttons with an icon and a label, frame taken off \
                   by the bar (see PageLayout), as v1's link buttons: hover and focus them \
                   here — the ring is the bar's own ink. The glyphs are drawn twice, here and \
-                  in main_page.rs; a shared kit/icons.rs is qhq-8mgw.77's."
+                  in main_page.rs; a shared kit/icons.rs would end the copy."
         >
             <div class="g-window g-window--bar">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>

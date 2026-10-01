@@ -71,7 +71,7 @@ pub enum PackageState {
         host: Option<String>,
     },
     /// Autosync stopped for this package for a reason no other state covers —
-    /// §5's row 3, which nothing rendered until this existed (qhq-8mgw.36). The
+    /// §5's row 3, which nothing rendered until this existed. The
     /// pauses that DO have a state resolve into it instead, in the light phase.
     ///
     /// Declared above `Unknown` on purpose: `#[serde(other)]` swallows any kind

@@ -66,8 +66,8 @@ impl QueueItem {
     /// only this: a row that changed its own words keeping its own node.)
     ///
     /// Content alone would be wrong the other way — two rows are told apart by
-    /// which package they speak for. Together they give qhq-8mgw.42 what it
-    /// asks for: a row whose content did not change keeps its node and is
+    /// which package they speak for. Together they give a reordering queue what
+    /// it needs: a row whose content did not change keeps its node and is
     /// MOVED when the order changes, and only a row that actually changed is
     /// rebuilt. Unique by construction: one row per namespace, one cause per
     /// grouping key.
@@ -922,7 +922,7 @@ mod tests {
         // "Signed out…". With only the first two, rank order and text order
         // agree, and the `(rank, text)` tiebreak makes an equal-ranks mutation
         // survive — no host name can flip that, since both prefixes are
-        // constants (qhq-8mgw.38). Adding the unchecked cause puts the orders in
+        // constants. Adding the unchecked cause puts the orders in
         // opposition: it ranks last and sorts first.
         let items = derive_queue(
             &[
@@ -1212,7 +1212,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn nothing_known_yet_is_silence_and_never_an_all_clear() {
-        // R3, and the heart of qhq-8mgw.35: "Everything is Latest" before the heavy
+        // R3, and the heart of the false all-clear: "Everything is Latest" before the heavy
         // phase has answered is a claim the page has not earned. A slower false
         // all-clear is not a fix.
         let el = mount_region(
@@ -1600,8 +1600,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_settling_package_appears_in_the_queue_without_a_refetch() {
-        // qhq-8mgw.35, from the region's side: the light phase cannot see the working
-        // tree, so the package arrives Latest and the queue must pick up the heavy
+        // The false all-clear, from the region's side: the light phase cannot see
+        // the working tree, so the package arrives Latest and the queue must pick up the heavy
         // phase's answer when it lands.
         let packages = RwSignal::new(vec![pkg(
             "user/plate-07",
@@ -1665,7 +1665,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_reorder_leaves_every_row_on_the_dom_node_it_started_on() {
-        // qhq-8mgw.42. The settle itself is safe — `AnyView::rebuild` diffs in
+        // The settle itself is safe — `AnyView::rebuild` diffs in
         // place and most settles leave the order alone — but `derive_queue`
         // sorts by precedence, so one settling into a higher rank inserts at the
         // top and shifts everything below it. Under an unkeyed positional diff
@@ -1834,7 +1834,7 @@ mod tests {
     }
     #[wasm_bindgen_test]
     fn a_failed_check_becomes_one_cause_grouped_by_host() {
-        // qhq-8mgw.51. Host-grouped, so the sentence and its remedy share a
+        // Host-grouped, so the sentence and its remedy share a
         // scope, exactly as the signed-out cause does. The cached states differ
         // on purpose: the failure is not a state, and a fixture where every row
         // said the same thing would not show that.
@@ -2007,7 +2007,7 @@ mod tests {
     }
     #[wasm_bindgen_test]
     fn an_unexplained_pause_gets_its_own_row_below_a_conflict() {
-        // qhq-8mgw.36, and §5's row 3 rendered for the first time. Nothing groups
+        // §5's row 3, rendered for the first time. Nothing groups
         // a pause — it is not shared by a host or a bucket — so it falls to a
         // per-package row, and its precedence puts it under a conflict (which
         // names its files, and is the more specific fact about the same disk) and

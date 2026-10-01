@@ -599,7 +599,7 @@ pub(crate) async fn run_once(
     inner: &WatcherInner,
 ) -> Result<(), Error> {
     // Re-arm before doing any work, so a running tick advertises the tick that
-    // FOLLOWS it rather than the one it is serving (qhq-8mgw.30). The loop arms
+    // FOLLOWS it rather than the one it is serving. The loop arms
     // `now + cadence` and then sleeps exactly `cadence`, so on arrival here the
     // deadline is already now, and it stays in the past for however long this
     // tick takes — a network round trip per package on a large install. A card

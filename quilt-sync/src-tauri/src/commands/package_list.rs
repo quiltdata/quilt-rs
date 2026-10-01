@@ -161,7 +161,7 @@ pub(super) async fn denied_mark(
 ///
 /// It bounds the host's WHOLE pass, not just the bucket query — the role query
 /// behind a denial has the same two shapes of failure and once sat outside any
-/// budget at all (qhq-8mgw.24), so a host that answered the first call and hung
+/// budget at all, so a host that answered the first call and hung
 /// on the second held the main screen blank exactly as before. One deadline
 /// shared across both calls rather than a second budget in series, which would
 /// have doubled the wait this constant exists to cap.
@@ -1000,7 +1000,7 @@ mod tests {
 
     /// A host that answers the bucket query and then says nothing to `/me`.
     /// `SilentHost` covers the first call; this covers the second, which is
-    /// where the roster reached before qhq-8mgw.24.
+    /// where the roster hung before the budget covered it.
     struct SilentRole {
         domain: tokio::sync::Mutex<quilt::LocalDomain>,
     }
@@ -1051,7 +1051,7 @@ mod tests {
         }
     }
 
-    /// qhq-8mgw.24, the v1 copy. The budget bounded the bucket query and
+    /// The v1 copy of the test in `commands/main_page.rs`. The budget bounded the bucket query and
     /// nothing else, so a host that answered it and hung on `/me` held the main
     /// screen blank for as long as the HTTP stack allowed. The row still comes
     /// back denied — the bucket said no — with no role named.

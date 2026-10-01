@@ -809,7 +809,7 @@ pub struct MainPagePackageData {
     /// always true — a `PullConflict` is the exception, coming from the watcher's
     /// paused map rather than from cached lineage, and it arrives settled.
     /// `pages::main_page::PackageStore::seed` reads this per row; assuming it
-    /// instead is what took conflicts out of the queue offline (qhq-8mgw.40).
+    /// instead is what took conflicts out of the queue offline.
     pub provisional: bool,
     /// The host whose role selector the row's switch affordance opens. The page
     /// carries it into `RowSignals` and settles it on refresh; the switch
@@ -875,13 +875,14 @@ pub enum PausedReasonData {
 /// The Autosync card carries this list but renders nothing from it. The queue
 /// (`pages::main_page::queue`) does not read it either — it derives from the
 /// resolved package state, never from a pause map — so nothing in this build
-/// reads a pause's namespace or reason; hence the suppression. Surfacing an
-/// autosync pause that resolves to no state of its own is filed as
-/// qhq-8mgw.36.
+/// reads a pause's namespace or reason; hence the suppression. An autosync
+/// pause that resolves to no state of its own is surfaced another way: the
+/// light phase folds it into `PackageState::Paused` (see `paused` below).
 ///
 /// No suppression any more: this is a library module, and `dead_code` does not
-/// flag an unused `pub` item in one, because its callers are outside it
-/// (qhq-8mgw.20). It carried a `cfg_attr`-guarded `expect` until then.
+/// flag an unused `pub` item in one, because its callers are outside it.
+/// It carried a `cfg_attr`-guarded `expect` until the shared modules moved
+/// into the library target.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PausedPackageData {
@@ -901,7 +902,7 @@ pub struct MainPageWatcherData {
     ///
     /// §5's lattice row 3, "Paused — other", was the case this list looked like
     /// the answer to. It was settled instead by the LIGHT PHASE folding an
-    /// unexplained pause into `PackageState::Paused` (qhq-8mgw.36), so the queue
+    /// unexplained pause into `PackageState::Paused`, so the queue
     /// still derives from one resolved state and this list still has no reader —
     /// which is the outcome R4 argued for, reached the other way round.
     pub paused: Vec<PausedPackageData>,
@@ -2204,8 +2205,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_conflict_arrives_as_a_list_with_its_commas_intact() {
-        // `qhq-8mgw.9`'s whole point, asserted at the boundary that used to flatten
-        // it: a filename containing ", " must not become two paths.
+        // Why the reason carries a list, asserted at the boundary that used to
+        // flatten it: a filename containing ", " must not become two paths.
         let data = serde_json::from_str::<super::PausedReasonData>(
             r#"{"kind":"pull_conflict","files":["plate, run 3.csv","b.csv"]}"#,
         )

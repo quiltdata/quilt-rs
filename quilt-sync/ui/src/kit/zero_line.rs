@@ -41,8 +41,7 @@ pub fn ZeroLine(
 /// The queue had no placeholder in the shared fallback, so the list started high
 /// and jumped down when the queue arrived. Shaped on the zero line rather than a
 /// cause card: the all-clear is what most loads resolve to, and reserving a
-/// card's height would trade this shift for an upward one on every healthy day
-/// (qhq-8mgw.55).
+/// card's height would trade this shift for an upward one on every healthy day.
 ///
 /// Drawn until every package's check has answered. The line is the busy region
 /// (`aria-busy`); its bars are `aria-hidden`, per `skeleton_box.rs`.

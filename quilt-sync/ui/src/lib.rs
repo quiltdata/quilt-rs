@@ -12,7 +12,7 @@
 //! being needed and so deletes itself when the consuming code lands; but it is an
 //! unfulfilled expectation in whichever binary DOES use the item, and an
 //! unfulfilled `expect` is an error under the workspace's `warnings = "deny"`.
-//! The annotations could not expire, so they accumulated (qhq-8mgw.20).
+//! The annotations could not expire, so they accumulated.
 //!
 //! `dead_code` does not flag an unused `pub` item in a library, because a library's
 //! callers are outside it. Moving the shared modules here retires the whole class

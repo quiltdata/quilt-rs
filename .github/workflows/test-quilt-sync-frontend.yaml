@@ -76,7 +76,7 @@ jobs:
       # and libtest's main runs only `#[test]`. The step above is the wasm half. This
       # is the host half, and without it a `#[test]` in this crate gates nothing —
       # which is how the whole filter/group/sort pipeline shipped with its ten tests
-      # green locally and unrun in CI (qhq-8mgw.27).
+      # green locally and unrun in CI.
       #
       # DOM tests cannot move here: `mount_to` and friends are wasm-bindgen bindings
       # into JS. Pure-logic tests could move the other way, and once v1 is deleted
@@ -84,7 +84,7 @@ jobs:
       # dropping this step is the cheaper end state.
       #
       # `--lib --bins`, not `--bin quilt-sync-ui`: the shared modules moved to a
-      # library target (qhq-8mgw.20) and took their tests with them, so naming the
+      # library target and took their tests with them, so naming the
       # binary alone now runs FOUR tests where it used to run 124, and says nothing
       # about the missing 120.
       - name: Test (host target)

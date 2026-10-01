@@ -388,7 +388,7 @@ async fn run_once_disabled_is_a_noop() -> Result<(), Error> {
 
 #[tokio::test]
 async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> Result<(), Error> {
-    // qhq-8mgw.30. The spawn loop arms `now + cadence` and then sleeps exactly
+    // The spawn loop arms `now + cadence` and then sleeps exactly
     // `cadence`, so by the time the tick begins the deadline IS now — and stays
     // in the past for the tick's whole duration, which on a large install is a
     // network round trip per package. The v2 card then reads a past deadline,
@@ -1462,7 +1462,7 @@ fn local_status(files: usize, mtime: Option<SystemTime>) -> quilt::lineage::Inst
 
 #[tokio::test]
 async fn a_local_edit_arms_the_publish_deadline_without_waiting_for_a_tick() {
-    // qhq-8mgw.54. The arm map was written only by the tick, so the countdown
+    // The arm map was written only by the tick, so the countdown
     // lagged the working tree by a whole cadence — and the cadence is longest
     // exactly when it matters, because editing a file means the window is
     // unfocused (120s) or closed (600s), not focused (30s). The list meanwhile

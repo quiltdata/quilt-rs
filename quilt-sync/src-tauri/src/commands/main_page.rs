@@ -80,7 +80,8 @@ pub enum PackageStateDto {
     /// §5's row 3, which nothing rendered until this existed. The reasons that DO
     /// have a state resolve into it instead: `PendingChanges`, `PendingCommit` and
     /// `Diverged` into what the tree already reports, `PullConflict` and
-    /// `RoleDenied` into their own. This is the residue (qhq-8mgw.36).
+    /// `RoleDenied` into their own. This is the residue: a pause no other
+    /// state explains.
     ///
     /// Deliberately NOT folded into `Unknown`, which asserts something different
     /// and stronger — that the upstream state could not be read at all.
@@ -98,7 +99,7 @@ pub enum PackageStateDto {
 /// file names for `pullConflict`, the role name for `roleDenied`. One slot with
 /// three meanings forces the UI to know that a comma means "list here but not
 /// there", and a joined list cannot be counted back apart when a filename
-/// contains one (`qhq-8mgw.9`). Three meanings, three fields.
+/// contains one. Three meanings, three fields.
 ///
 /// Kinds are `snake_case`, matching [`PackageStateDto`] rather than v1's
 /// camelCase reason strings. The queue reads a pause and a state side by side,
@@ -120,7 +121,7 @@ pub enum PausedDto {
     RoleDenied {
         role: Option<String>,
     },
-    /// `PausedReason`'s fallback arm, not a missing state (`qhq-8mgw.4`,
+    /// `PausedReason`'s fallback arm, not a missing state (decided
     /// 2026-09-01). The vocabulary gains nothing from it: the UI pairs fixed
     /// words with this message as a detail line, which is the shape v1 already
     /// ships — minus v1's "push manually to resume", because there is no resume.
@@ -315,7 +316,7 @@ pub(super) fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String
 /// How long the roster waits on one host — the readable-bucket query and the
 /// role query behind a denial together — before giving up on it.
 ///
-/// COPIED from `package_list.rs:160` per `qhq-8mgw.1`, not shared: v1 is frozen
+/// COPIED from `package_list.rs:160`, not shared: v1 is frozen
 /// and deleted wholesale. Mirror fixes in both until then.
 ///
 /// The roster is otherwise local data and paints without touching the network.
@@ -328,7 +329,7 @@ pub(super) fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String
 /// costs the first paint.
 ///
 /// It bounds the host's WHOLE pass. The role query once sat outside any budget
-/// at all (qhq-8mgw.24), so a host that answered the first call and hung on the
+/// at all, so a host that answered the first call and hung on the
 /// second held the main screen blank exactly as before this constant existed.
 /// One deadline shared across both calls rather than a second budget in series,
 /// which would have doubled the wait this exists to cap.
@@ -505,7 +506,7 @@ async fn get_main_page_packages_from_model(
     tracing: &crate::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
-    // COPIED from `package_list.rs:193` per `qhq-8mgw.1`. A load is the cadence
+    // COPIED from `package_list.rs:193`, not shared, like the budget. A load is the cadence
     // the role refresh is pinned to. A switch is server-side and global, so it can
     // happen in the web catalog with the app none the wiser; held for a whole
     // session, the cached name would make a row name a role that in fact has
@@ -528,7 +529,7 @@ async fn get_main_page_packages_from_model(
 ///
 /// **Not a filesystem mtime, and no directory walk happens here.** Both values come
 /// out of `data.json`, which the light phase has already read and deserialized —
-/// `qhq-8mgw.3` called this plumbing rather than I/O, and it was right.
+/// so reading them is plumbing rather than I/O.
 ///
 /// `PathState`'s own doc says why the distinction matters: *"We don't track files
 /// modifications in real time. We calculate hash when we commit or install file."* So
@@ -600,7 +601,7 @@ async fn load_main_page_package(
     // make it truer. Saying otherwise costs a real capability — the queue drops
     // provisional rows to keep the access pre-filter's guesses out of it, so a
     // conflict labelled a guess leaves the queue exactly when the remote is
-    // unreachable and syncing cannot fix it (qhq-8mgw.40).
+    // unreachable and syncing cannot fix it.
     // An unexplained pause joins the conflict here, and it MATTERS: the queue
     // drops provisional rows (R2), so a pause marked as a guess would be dropped
     // again and stay exactly as invisible as it was before it had a state.
@@ -853,8 +854,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // the tree says because it is why the tree is not being acted on —
             // and without the second arm this phase measured straight past an
             // unexplained pause and overwrote the light phase's answer, so the
-            // row showed `Sync paused` only until the first refresh landed
-            // (qhq-8mgw.36).
+            // row showed `Sync paused` only until the first refresh landed.
             state: if let Some(files) = conflict_files(paused) {
                 PackageStateDto::PullConflict { files }
             } else if unexplained_pause(paused) {
@@ -962,7 +962,7 @@ pub struct MainPageWatcher {
     /// The paused set, typed. **Intended for the queue; no reader in this
     /// build** — the card needs only `activity`, which is derived from this
     /// same list on the way past. It ships now because the split that makes it
-    /// legible is this plan's deliverable (`qhq-8mgw.9`, `qhq-8mgw.4`).
+    /// legible, one typed field per meaning, is already done here.
     pub paused: Vec<PausedPackage>,
 }
 
@@ -1136,7 +1136,7 @@ mod tests {
 
     #[test]
     fn a_conflict_crosses_the_wire_as_a_list_not_a_joined_string() {
-        // `qhq-8mgw.9`: `reporter.rs:146` sends `files.join(", ")`, so a label of
+        // `reporter.rs:146` sends `files.join(", ")`, so a label of
         // the form "conflicts in N files" has to re-split on comma-space — which
         // breaks on exactly this filename.
         let reason =
@@ -1634,7 +1634,7 @@ mod tests {
         // provisional — which is what makes the payload below the ORDINARY shape,
         // the one nearly every row has. This fixture used to reach that state via
         // an `Other` pause, chosen precisely because it did not fold; it folds now
-        // (qhq-8mgw.36), and the no-fold rule it stood in for is asserted directly
+        // and the no-fold rule it stood in for is asserted directly
         // by `the_three_duplicate_pauses_do_not_fold_into_a_state`.
         let paused_reasons = HashMap::new();
 
@@ -1756,7 +1756,7 @@ mod tests {
         // the access pre-filter's guesses out of it). Marked provisional, a conflict
         // is treated as a guess about a remote and vanishes from the queue whenever
         // that remote is unreachable — which is precisely when it cannot be fixed
-        // by syncing. qhq-8mgw.40.
+        // by syncing.
         //
         // The pair is the unit: the second half is what stops this being satisfied
         // by never marking anything provisional at all.
@@ -1813,7 +1813,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_heavy_phase_keeps_an_unexplained_pause_rather_than_measuring_past_it() {
-        // qhq-8mgw.36's other half, and the half that shipped broken. The light
+        // The other half of folding an unexplained pause, and the half that
+        // shipped broken. The light
         // phase folded `Other` into `Paused`; the heavy phase had its own
         // resolution and no branch for a pause, so `PackageState::resolve` measured the
         // working tree and overwrote it. On the running app the row read
@@ -1845,7 +1846,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unexplained_pause_folds_into_a_state_of_its_own() {
-        // qhq-8mgw.36. The case §5's row 3 names and nothing rendered: a package
+        // The case §5's row 3 names and nothing rendered: a package
         // latest by hash and paused by a workflow rejection resolved to `Latest`,
         // which `derive_queue` excludes by rule — so the region whose job is to
         // name every package needing a decision said nothing at all, permanently,
@@ -2230,7 +2231,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_role_query_that_never_answers_does_not_hold_the_roster() {
-        // qhq-8mgw.24. `BUCKET_LIST_BUDGET` bounded the bucket query and nothing
+        // `BUCKET_LIST_BUDGET` bounded the bucket query and nothing
         // else, so a host that answered that one and then hung on `/me` held the
         // main screen blank for as long as the HTTP stack allowed — the same
         // blank-screen class the budget was added to close, reached through the

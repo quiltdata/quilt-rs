@@ -189,7 +189,7 @@
    while one of those is showing is themed over an unthemed page. Scoping to the
    flag rather than to the rendered page is the operator's call — the flag is
    what the reader chose, and the main page is where these are read. It stops
-   mattering with qhq-8mgw.52. */
+   mattering once those pages are restyled for v2 too. */
 .qui-v2 .qui-toast {
   color: var(--q-fgColor-default);
   background: var(--q-bgColor-default);

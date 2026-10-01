@@ -224,8 +224,7 @@ impl Watcher {
                 // for the whole cadence, which is when the card draws it. The
                 // tick that follows is covered by `run_once`, which re-arms at
                 // its top — this one would otherwise be exactly now by the time
-                // the sleep ends, and in the past for the tick's duration
-                // (qhq-8mgw.30).
+                // the sleep ends, and in the past for the tick's duration.
                 arm_next_pull(&task_inner, cadence).await;
                 tokio::time::sleep(cadence).await;
                 task_inner.aggregator.note_tick_started();

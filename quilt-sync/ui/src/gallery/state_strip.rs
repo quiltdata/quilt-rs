@@ -232,7 +232,7 @@ fn PausedStale() -> impl IntoView {
                   bundle showed — all 13 packages fully synced while the pause persisted in \
                   memory, with restarting the app as the only recovery. It cannot self-heal, \
                   because autopull's tick skips any namespace already in the paused set. The \
-                  fix is not a button: this state should not be reachable, and `qhq-usw0` is \
+                  fix is not a button: this state should not be reachable, and reaching it is \
                   the bug. An escape hatch drawn here would make a backend defect look like \
                   a feature."
         >

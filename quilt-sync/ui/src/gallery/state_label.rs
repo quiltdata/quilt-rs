@@ -23,7 +23,7 @@ use crate::kit::StateTone;
 ///
 /// This list is hand-maintained, so a state can be added to `kit::render` without
 /// reaching it: `Sync stopped` was missing here until 2026-09-09, having shipped in
-/// the vocabulary from the start. See qhq-8mgw.53.
+/// the vocabulary from the start.
 const STATES: &[(&str, StateTone)] = &[
     ("Latest", StateTone::Success),
     ("Not the latest", StateTone::Attention),

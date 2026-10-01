@@ -40,7 +40,7 @@
 //! - **The marked rows.** Which files differ between two diverged revisions is
 //!   computed nowhere — `MergeData` carries a namespace and a URI, and the
 //!   working-tree changes are local edits against the installed manifest, not
-//!   mine against published (`qhq-mrzt`).
+//!   mine against published.
 //!
 //! # What the render settled, none of it reasoned first
 //!
@@ -1187,8 +1187,8 @@ fn stop_keeping(confirm: Confirm) -> AnyView {
 ///
 /// The sentence verdict 8 requires is the one thing here that has no source:
 /// the revision count needs `list_revisions` and the file count needs a
-/// row-by-row comparison of two diverged manifests, which is computed nowhere
-/// (`qhq-mrzt`). Drawn anyway, with the numbers a fixture, because a dialog that
+/// row-by-row comparison of two diverged manifests, which is computed nowhere.
+/// Drawn anyway, with the numbers a fixture, because a dialog that
 /// cannot count is a dialog that lies and this is what the backend has to grow.
 fn replace_mine(open: RwSignal<bool>) -> AnyView {
     view! {

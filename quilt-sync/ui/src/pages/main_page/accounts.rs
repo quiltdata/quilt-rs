@@ -548,7 +548,7 @@ mod tests {
     }
     #[wasm_bindgen_test]
     fn a_card_with_no_hosts_says_so_rather_than_drawing_an_empty_box() {
-        // qhq-8mgw.57, found by the operator on a profile with no auth and no
+        // Found by the operator on a profile with no auth and no
         // packages: the card drew its chrome around nothing. The host set is the
         // union of the catalogs the roster points at and the hosts you have
         // signed into (`account_hosts`), so with neither it is empty — and an

@@ -51,7 +51,7 @@ fmt:
 # crate has two test flavours on two targets and neither harness sees the other,
 # so its 124 `#[test]` functions run here and its `#[wasm_bindgen_test]` ones run
 # in `test-frontend`. Excluding it meant a green `just test` said nothing about
-# any of them — qhq-8mgw.27, the same hole CI had until the `Test (host target)`
+# any of them — the same hole CI had until the `Test (host target)`
 # step closed it.
 scope := "--workspace --all-targets"
 

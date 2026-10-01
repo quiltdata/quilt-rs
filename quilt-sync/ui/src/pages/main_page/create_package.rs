@@ -400,7 +400,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_create_says_why_inside_the_dialog() {
-        // qhq-8mgw.47. The message goes in the dialog and not in `PageLayout`'s
+        // The message goes in the dialog and not in `PageLayout`'s
         // banner slot because `Dialog` uses `show_modal()`: the page sits behind
         // a 45% backdrop in a lower layer, where a notice is dimmed and its
         // dismiss unreachable by pointer or by tab.

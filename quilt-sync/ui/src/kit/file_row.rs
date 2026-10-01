@@ -183,7 +183,7 @@ pub fn FileRow(
 /// The feed's boundary rendered nothing at all, so switching to Recent files
 /// showed an empty region until the read answered — where the packages view
 /// shows three of its own skeletons in the same place. §6 exempts chrome from
-/// skeletons; the two lists are not chrome (qhq-8mgw.44).
+/// skeletons; the two lists are not chrome.
 ///
 /// Three boxes, not four: the path, the package tag and the time are what a row
 /// is mostly made of, and the actions are a fixed trio of glyphs whose absence
