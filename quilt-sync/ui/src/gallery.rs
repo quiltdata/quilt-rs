@@ -316,6 +316,15 @@ const ENTRIES: &[Entry] = &[
     entry!(Pages, "While loading", page::LoadingScene),
 ];
 
+/// What `#/` shows: two whole pages, named by tier and label so they are looked
+/// up in `ENTRIES` rather than mounted a second way. `#/` used to be every
+/// section, so the first load mounted all of them; these two pages are what is
+/// opened most, and the rest is one link away at `#/all`.
+const HOME: &[(Tier, &str)] = &[
+    (Tier::Pages, "Main page"),
+    (Tier::Pages, "Installed package"),
+];
+
 /// What the URL fragment asks for.
 ///
 /// A hash route rather than `leptos_router`: the gallery is one static page
@@ -325,11 +334,18 @@ const ENTRIES: &[Entry] = &[
 /// Routes rather than tabs. Tabs would show one component at a time and cost
 /// the thing a design-system gallery is *for*: noticing that a Select is a pixel
 /// taller than a Button, or that two components disagree about a baseline. So
-/// `#/` is still the one long scroll, and a tier (`#/core`) is still a page to
+/// `#/all` is still the one long scroll, and a tier (`#/core`) is still a page to
 /// compare across and Ctrl+F through — the narrower routes are for looking
 /// something up, and for not mounting two whole-page scenes to look at a Button.
+///
+/// `#/` is not the long scroll: mounting every section made the first load slow,
+/// and what is opened first is nearly always one of the two whole pages. So the
+/// bare address shows `HOME`, with a line pointing at everything else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
+    /// `#/`: the sections in `HOME`.
+    Home,
+    /// `#/all`: every section.
     All,
     Tier(Tier),
     /// An index into `ENTRIES`.
@@ -342,6 +358,10 @@ impl Route {
     fn parse(hash: &str) -> Route {
         let path = hash.trim_start_matches('#').trim_matches('/');
         if path.is_empty() {
+            return Route::Home;
+        }
+        // `all` cannot shadow a tier: a test holds the tier slugs to that.
+        if path == "all" {
             return Route::All;
         }
         let (tier, section) = match path.split_once('/') {
@@ -366,6 +386,9 @@ impl Route {
 
     fn shows(self, index: usize) -> bool {
         match self {
+            Route::Home => HOME
+                .iter()
+                .any(|&(tier, label)| ENTRIES[index].tier == tier && ENTRIES[index].label == label),
             Route::All => true,
             Route::Tier(tier) => ENTRIES[index].tier == tier,
             Route::Entry(i) => i == index,
@@ -435,7 +458,10 @@ fn Gallery() -> impl IntoView {
                 // nobody finds again.
                 <div class="g-nav__index">
                     <p class="g-nav__tier">
-                        <a href="#/" aria-current=current(Route::All)>"All"</a>
+                        <a href="#/" aria-current=current(Route::Home)>"Overview"</a>
+                    </p>
+                    <p class="g-nav__tier">
+                        <a href="#/all" aria-current=current(Route::All)>"All"</a>
                     </p>
                     {move || {
                         let matching = matching();
@@ -473,12 +499,35 @@ fn Gallery() -> impl IntoView {
                         return view! {
                             <p class="g-note">
                                 "Nothing in the gallery is at this address. "
-                                <a href="#/">"Show every section."</a>
+                                <a href="#/all">"Show every section."</a>
                             </p>
                         }
                             .into_any();
                     }
-                    Tier::ALL
+                    // Said on the page, so a short first load does not read as
+                    // a gallery that lost most of its sections.
+                    let overview = (route == Route::Home)
+                        .then(|| {
+                            view! {
+                                <p class="g-note">
+                                    "A short overview: two whole pages. "
+                                    <a href="#/all">"Every section"</a>
+                                    " is one long scroll; a tier — "
+                                    {Tier::ALL
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(n, tier)| {
+                                            view! {
+                                                {(n > 0).then_some(", ")}
+                                                <a href=format!("#/{}", tier.slug())>{tier.name()}</a>
+                                            }
+                                        })
+                                        .collect_view()}
+                                    " — is a shorter one."
+                                </p>
+                            }
+                        });
+                    let tiers = Tier::ALL
                         .into_iter()
                         .filter_map(|tier| {
                             let items: Vec<usize> = (0..ENTRIES.len())
@@ -486,8 +535,8 @@ fn Gallery() -> impl IntoView {
                                 .collect();
                             (!items.is_empty()).then(|| main_tier(tier, &items))
                         })
-                        .collect_view()
-                        .into_any()
+                        .collect_view();
+                    view! { {overview} {tiers} }.into_any()
                 }}
             </main>
         </div>
@@ -658,7 +707,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use super::{ENTRIES, Route, Tier};
+    use super::{ENTRIES, HOME, Route, Tier};
     use crate::gallery::entry_group::EntryGroupStories;
     use crate::gallery::entry_row::EntryRowStories;
     use crate::gallery::file_pane::FilePaneScene;
@@ -691,9 +740,48 @@ mod tests {
     }
 
     #[test]
-    fn no_fragment_shows_everything() {
+    fn no_fragment_is_the_overview() {
         for hash in ["", "#", "#/"] {
+            assert_eq!(Route::parse(hash), Route::Home, "{hash:?}");
+        }
+    }
+
+    #[test]
+    fn the_overview_shows_the_two_whole_pages_and_nothing_else() {
+        let shown: Vec<_> = (0..ENTRIES.len())
+            .filter(|&i| Route::Home.shows(i))
+            .map(|i| (ENTRIES[i].tier, ENTRIES[i].label))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                (Tier::Pages, "Main page"),
+                (Tier::Pages, "Installed package")
+            ]
+        );
+        // Each `HOME` line names exactly one entry, so a renamed label fails
+        // here rather than quietly dropping a page from the overview.
+        for &(tier, label) in HOME {
+            let found = ENTRIES
+                .iter()
+                .filter(|e| e.tier == tier && e.label == label)
+                .count();
+            assert_eq!(found, 1, "{label}");
+        }
+    }
+
+    #[test]
+    fn the_all_address_shows_everything() {
+        for hash in ["#/all", "#/all/"] {
             assert_eq!(Route::parse(hash), Route::All, "{hash:?}");
+        }
+        assert!((0..ENTRIES.len()).all(|i| Route::All.shows(i)));
+    }
+
+    #[test]
+    fn no_tier_is_called_all() {
+        for tier in Tier::ALL {
+            assert_ne!(tier.slug(), "all");
         }
     }
 
