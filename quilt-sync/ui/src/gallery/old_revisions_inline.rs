@@ -709,8 +709,10 @@ fn live() -> AnyView {
     view! {
         <div class="g-ori-stage">
             <div class="g-inline">
+                // Refused while a removal runs as well: it owns the store, as
+                // the sync would hold the package's lock.
                 <Button
-                    disabled=Signal::derive(move || flow.syncing.get())
+                    disabled=Signal::derive(move || flow.blocked())
                     on_click=move |_| flow.sync()
                 >
                     "Start a sync (4 s)"
