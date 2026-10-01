@@ -940,10 +940,16 @@ mod tests {
     #[test]
     fn uninstall_prunes_only_when_asked() {
         let plain = Args::try_parse_from(["quilt", "uninstall", "-n", "a/b"]).expect("parses");
-        assert!(matches!(plain.command, Commands::Uninstall { prune: false, .. }));
+        assert!(matches!(
+            plain.command,
+            Commands::Uninstall { prune: false, .. }
+        ));
         let pruning =
             Args::try_parse_from(["quilt", "uninstall", "-n", "a/b", "--prune"]).expect("parses");
-        assert!(matches!(pruning.command, Commands::Uninstall { prune: true, .. }));
+        assert!(matches!(
+            pruning.command,
+            Commands::Uninstall { prune: true, .. }
+        ));
     }
 
     /// `global = true` is what makes this additive: the shipped spelling keeps

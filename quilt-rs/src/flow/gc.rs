@@ -689,7 +689,12 @@ mod tests {
         );
         assert_eq!(pruned.to_string(), "Freed 2 B: 1 object");
         assert_eq!(object_names(&paths)?, kept);
-        assert!(domain.get_installed_package(&"acme/gone".try_into()?).await?.is_none());
+        assert!(
+            domain
+                .get_installed_package(&"acme/gone".try_into()?)
+                .await?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -704,7 +709,12 @@ mod tests {
             .get_installed_package(&namespace)
             .await?
             .expect("installed")
-            .commit("second".to_string(), crate::flow::UserMeta::Keep, None, None)
+            .commit(
+                "second".to_string(),
+                crate::flow::UserMeta::Keep,
+                None,
+                None,
+            )
             .await?;
         assert_eq!(object_names(&paths)?.len(), 2);
 
@@ -779,7 +789,12 @@ mod tests {
             "Kept downloaded files: acme/busy is busy"
         );
         assert_eq!(object_names(&paths)?, before);
-        assert!(domain.get_installed_package(&"acme/gone".try_into()?).await?.is_none());
+        assert!(
+            domain
+                .get_installed_package(&"acme/gone".try_into()?)
+                .await?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -809,7 +824,12 @@ mod tests {
             "{err}"
         );
         assert_eq!(object_names(&paths)?, before);
-        assert!(domain.get_installed_package(&"acme/gone".try_into()?).await?.is_none());
+        assert!(
+            domain
+                .get_installed_package(&"acme/gone".try_into()?)
+                .await?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -823,7 +843,9 @@ mod tests {
         assert!(
             matches!(
                 result,
-                Err(Error::InstallPackage(crate::InstallPackageError::NotInstalled(_)))
+                Err(Error::InstallPackage(
+                    crate::InstallPackageError::NotInstalled(_)
+                ))
             ),
             "{result:?}"
         );

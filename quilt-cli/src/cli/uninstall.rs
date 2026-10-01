@@ -53,7 +53,11 @@ pub async fn model(
     Input { namespace, prune }: Input,
 ) -> Result<Output, Error> {
     let pruned = if prune {
-        Some(local_domain.uninstall_package_pruning(namespace.clone()).await?)
+        Some(
+            local_domain
+                .uninstall_package_pruning(namespace.clone())
+                .await?,
+        )
     } else {
         local_domain.uninstall_package(namespace.clone()).await?;
         None

@@ -67,7 +67,7 @@ mod tests {
             namespace,
             prune: false,
         })
-            .await?;
+        .await?;
 
         let output = m.gc().await?;
         assert_eq!(output.to_string(), "Freed 3 B: 1 object");
