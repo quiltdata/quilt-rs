@@ -185,7 +185,7 @@ pub struct Args {
     home: Option<PathBuf>,
 
     /// Path to local domain
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     domain: Option<PathBuf>,
 
     /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
@@ -918,6 +918,43 @@ mod tests {
 
         let default = Args::try_parse_from(["quilt", "list"]).expect("parses");
         assert!(!default.json);
+    }
+
+    /// Like `--json`, `global = true` keeps the shipped spelling working.
+    #[test]
+    fn domain_flag_parses_before_or_after_the_subcommand() {
+        let domain = Some(PathBuf::from("/tmp/quilt-domain"));
+
+        for argv in [
+            ["quilt", "--domain", "/tmp/quilt-domain", "list"],
+            ["quilt", "-d", "/tmp/quilt-domain", "list"],
+            ["quilt", "list", "--domain", "/tmp/quilt-domain"],
+            ["quilt", "list", "-d", "/tmp/quilt-domain"],
+        ] {
+            let args = Args::try_parse_from(argv).expect("parses");
+            assert_eq!(args.domain, domain, "{argv:?}");
+            assert!(matches!(args.command, Commands::List), "{argv:?}");
+        }
+
+        let status = Args::try_parse_from([
+            "quilt",
+            "status",
+            "-n",
+            "demo/sales",
+            "--domain",
+            "/tmp/quilt-domain",
+        ])
+        .expect("parses");
+        assert_eq!(status.domain, domain);
+        assert!(matches!(
+            status.command,
+            Commands::Status {
+                pkg: PackageRef { namespace: Some(namespace) },
+            } if namespace == "demo/sales"
+        ));
+
+        let default = Args::try_parse_from(["quilt", "list"]).expect("parses");
+        assert_eq!(default.domain, None);
     }
 
     #[test]

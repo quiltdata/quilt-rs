@@ -83,6 +83,8 @@ Run `quilt <command> --help` for arguments.
   `com.quiltdata.quilt-sync/`, shared with QuiltSync
   (`~/.local/share/com.quiltdata.quilt-sync/` on Linux,
   `~/Library/Application Support/com.quiltdata.quilt-sync/` on macOS).
+  Like `--json`, it goes before or after the subcommand, so
+  `quilt --domain <path> list` and `quilt list --domain <path>` both work.
 - `--home <path>` — deprecated, use `quilt home <path>`. It prints a warning,
   then sets the home the same way before the command runs.
 

@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.34.1-dev]
+
+### Changed
+
+- `--domain <path>` (or `-d`) works before or after the command, like `--json`, so `quilt list --domain <path>` works as well as `quilt --domain <path> list`
+
 ## [v0.34.0] - 2026-09-30
 
 ### Added
