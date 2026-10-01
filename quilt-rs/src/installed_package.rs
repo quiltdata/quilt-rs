@@ -365,9 +365,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         // Only refresh latest hash if we have a remote
-        let lineage = match lineage.remote_uri.as_ref() {
+        let (lineage, latest_refreshed) = match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
-                Ok(lineage) => lineage,
+                Ok(lineage) => (lineage, true),
                 Err(Error::Login(LoginError::NoSession(_))) => {
                     return Err(Error::Login(LoginError::NoSession(
                         lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
@@ -387,10 +387,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 Err(err) if err.is_session_absent() => return Err(err),
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
-                    lineage
+                    (lineage, false)
                 }
             },
-            None => lineage,
+            None => (lineage, false),
         };
         let manifest = self.manifest().await?;
 
@@ -412,7 +412,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        Ok(status)
+        Ok(InstalledPackageStatus {
+            latest_refreshed,
+            ..status
+        })
     }
 
     /// Downloads `paths` and starts tracking them. A path whose bytes the

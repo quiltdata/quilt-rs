@@ -68,6 +68,11 @@ pub struct InstalledPackageStatus {
     /// Future-dated `mtime`s are clamped to `now` at compare time in
     /// `working_tree_quiet`, not here.
     pub most_recent_mtime: Option<SystemTime>,
+    /// This status was read against the remote's `latest` tip fetched just
+    /// now. `false` when the package has no remote, when the remote could not
+    /// be reached and `upstream_state` fell back to the last-known tip, and
+    /// for any status not built by [`InstalledPackage::status`](crate::InstalledPackage::status).
+    pub latest_refreshed: bool,
 }
 
 impl InstalledPackageStatus {
@@ -79,6 +84,7 @@ impl InstalledPackageStatus {
             ignored_files: Vec::new(),
             junky_changes: Vec::new(),
             most_recent_mtime: None,
+            latest_refreshed: false,
         }
     }
 

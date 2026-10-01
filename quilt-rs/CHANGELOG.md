@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.42.0-dev]
+
+### Added
+
+- `InstalledPackageStatus::latest_refreshed` is `true` when `InstalledPackage::status` read the remote's `latest` tip in that call, and `false` when the package has no remote or the remote could not be reached and the status fell back to the last-known tip (<https://github.com/quiltdata/quilt-rs/pull/1032>)
+
 ## [v0.41.0] - 2026-09-30
 
 ### Added
