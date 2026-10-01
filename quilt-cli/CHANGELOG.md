@@ -33,7 +33,7 @@
 
 ### Deprecated
 
-- `quilt push --origin` (`-o`) is deprecated in favor of `--host`, the name `login` and `role` already use. It still works with a warning
+- `quilt push --origin` (`-o`) is deprecated in favor of `--host`, the name `login` and `role` already use. It still works with a warning (<https://github.com/quiltdata/quilt-rs/pull/1039>)
 
 ### quilt-rs
 
