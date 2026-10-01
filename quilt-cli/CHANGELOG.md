@@ -23,7 +23,8 @@
 
 ### Changed
 
-- `--domain <path>` (or `-d`) works before or after the command, like `--json`, so `quilt list --domain <path>` works as well as `quilt --domain <path> list` (<https://github.com/quiltdata/quilt-rs/pull/1033>)
+- `quilt list` names its status column `last synced`, words each status as of the package's last install, pull or push (`synced`, `unpushed commit`, `never pushed`, `local only`, …), and ends with a hint to run `quilt status` for a fresh check. `--json` output is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1031>)
+- `--domain <path>` (`-d`) is a global flag, accepted before or after the command: `quilt list --domain <path>` now works as well as `quilt --domain <path> list` (<https://github.com/quiltdata/quilt-rs/pull/1033>)
 
 ## [v0.34.0] - 2026-09-30
 

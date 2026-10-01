@@ -920,7 +920,7 @@ mod tests {
         assert!(!default.json);
     }
 
-    /// Like `--json`, `global = true` keeps the shipped spelling working.
+    /// `global = true` keeps the shipped spelling working and adds the other.
     #[test]
     fn domain_flag_parses_before_or_after_the_subcommand() {
         let domain = Some(PathBuf::from("/tmp/quilt-domain"));
