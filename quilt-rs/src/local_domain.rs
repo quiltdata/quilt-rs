@@ -226,9 +226,40 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
         let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+        self.uninstall_locked(&namespace).await
+    }
 
+    /// Uninstall, then delete the package's objects that no other installed
+    /// manifest uses — every revision's. Nothing else: other unused objects,
+    /// the manifest cache and staging stay for [`Self::gc`].
+    ///
+    /// The uninstall stands whatever the prune finds. Another package busy
+    /// in another writer keeps the objects, answered as
+    /// [`flow::Pruned::Busy`]; a manifest that can't be read keeps them too,
+    /// as [`Error::KeptObjects`].
+    pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
+        info!("Uninstalling package and its objects: {}", namespace);
+        let candidates = {
+            let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+            let candidates = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
+            self.uninstall_locked(&namespace).await?;
+            candidates
+        };
+        // The package's own lock is released above: the prune try-locks
+        // every package, this one among them.
+        let prune = async {
+            let lineage = self.lineage.read(&self.storage).await?;
+            flow::prune(&self.paths, &self.storage, &lineage, candidates).await
+        };
+        prune
+            .await
+            .map_err(|err| Error::KeptObjects(namespace, Box::new(err)))
+    }
+
+    /// Uninstall `namespace`, whose lock the caller holds.
+    async fn uninstall_locked(&self, namespace: &Namespace) -> Res<()> {
         debug!("Preparing paths for uninstallation");
-        self.scaffold_paths_for_installing(&namespace).await?;
+        self.scaffold_paths_for_installing(namespace).await?;
 
         debug!("Reading current lineage state");
         let lineage = self.lineage.read(&self.storage).await?;
@@ -240,7 +271,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
         debug!("Updating domain lineage after uninstallation");
         self.lineage
-            .update_package_lineage(&self.storage, &namespace, |entry| {
+            .update_package_lineage(&self.storage, namespace, |entry| {
                 *entry = None;
                 Ok(())
             })
