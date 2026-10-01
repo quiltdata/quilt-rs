@@ -26,12 +26,12 @@
 - `InstalledPackageStatus::latest_refreshed` is `true` when `InstalledPackage::status` read the remote's `latest` tip in that call (a package never published reads as no tip, which also counts), and `false` when the package has no remote or the remote could not be reached and the status fell back to the last-known tip (<https://github.com/quiltdata/quilt-rs/pull/1032>)
 - `PackageState` resolves a package's state in the words front ends show it (`Latest`, `PendingCommit`, `PendingChanges`, `Behind`, `Diverged`, `Unpublished`, `NoRemote`, `Unknown`) from its `UpstreamState`, with `PackageState::resolve`; `PackageLineage::misconfigured_remote` says a remote has a bucket but no catalog host; and `InstalledPackage::state` checks a package's remote and working tree and resolves the result into a `PackageStateReport`, asking nothing for a package with no remote or a misconfigured one (<https://github.com/quiltdata/quilt-rs/pull/1032>)
 - `LocalDomain::gc` deletes the objects no installed manifest uses, everything in the `packages/` manifest cache and everything in `staging/`, and returns a `flow::GcReport` with the counts and bytes it freed. Its `Display` is the sentence to show a user. It try-locks every package first; if one is busy it deletes nothing and returns `Error::PackageBusy` naming it (<https://github.com/quiltdata/quilt-rs/pull/1030>)
-- `LocalDomain::uninstall_package_pruning` uninstalls a package, then deletes the objects its manifests used, every revision's, that no other installed manifest uses, and returns a `flow::Pruned`: the freed counts as a `GcReport`, or the busy package that kept them. Its `Display` is gc's sentence, for example `Freed 630.2 kB: 6 objects`. It leaves other unused objects, `packages/` and `staging/` to `gc` (PR_URL)
+- `LocalDomain::uninstall_package_pruning` uninstalls a package, then deletes the objects its manifests used, every revision's, that no other installed manifest uses, and returns a `flow::Pruned`: the freed counts as a `GcReport`, or the busy package that kept them. Its `Display` is gc's sentence, for example `Freed 630.2 kB: 6 objects`. It leaves other unused objects, `packages/` and `staging/` to `gc` (<https://github.com/quiltdata/quilt-rs/pull/1040>)
 - `DomainPaths::installed_dir`, `locks_dir` and `cached_manifests_root` return the `installed/`, `locks/` and `packages/` directories (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 
 ### Changed
 
-- **Breaking:** `Error` has new variants, `PackageBusy` and `KeptObjects`, so an exhaustive `match` on it needs new arms (<https://github.com/quiltdata/quilt-rs/pull/1030>, PR_URL)
+- **Breaking:** `Error` has new variants, `PackageBusy` and `KeptObjects`, so an exhaustive `match` on it needs new arms (<https://github.com/quiltdata/quilt-rs/pull/1030>, <https://github.com/quiltdata/quilt-rs/pull/1040>)
 
 ## [v0.41.0] - 2026-09-30
 
