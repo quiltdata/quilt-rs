@@ -943,7 +943,10 @@ mod tests {
         ] {
             let args = Args::try_parse_from(argv).expect("parses");
             assert_eq!(args.domain, domain, "{argv:?}");
-            assert!(matches!(args.command, Commands::List), "{argv:?}");
+            assert!(
+                matches!(args.command, Commands::List { fetch: false }),
+                "{argv:?}"
+            );
         }
 
         let status = Args::try_parse_from([
