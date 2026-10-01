@@ -385,6 +385,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 // Nor is a rejected credential: the session is dead, and
                 // stale lineage would report the package as fine.
                 Err(err) if err.is_session_absent() => return Err(err),
+                // No `latest` tag, and none ever seen: the remote answered,
+                // and its answer is that nothing was published yet. That is
+                // a read, not an outage, so the verdict is fresh.
+                Err(err) if err.is_not_found() && lineage.latest_hash.is_empty() => (lineage, true),
                 Err(err) => {
                     log::warn!("Failed to refresh latest hash: {err}");
                     (lineage, false)

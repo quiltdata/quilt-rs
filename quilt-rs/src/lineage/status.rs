@@ -69,7 +69,8 @@ pub struct InstalledPackageStatus {
     /// `working_tree_quiet`, not here.
     pub most_recent_mtime: Option<SystemTime>,
     /// This status was read against the remote's `latest` tip fetched just
-    /// now. `false` when the package has no remote, when the remote could not
+    /// now, including a remote with no `latest` tag for a package never
+    /// published: that is an answer, not an outage. `false` when the package has no remote, when the remote could not
     /// be reached and `upstream_state` fell back to the last-known tip, and
     /// for any status not built by [`InstalledPackage::status`](crate::InstalledPackage::status).
     pub latest_refreshed: bool,

@@ -1204,7 +1204,12 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
 /// status as fresh needs it: the fallback is silent, only a warning in the log.
 #[test(tokio::test)]
 async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
-    async fn status_with(tag: Option<&str>, remote_json: &str) -> Res<InstalledPackageStatus> {
+    async fn status_with(
+        tag: Option<&str>,
+        commit_json: &str,
+        remote_json: &str,
+        latest_hash: &str,
+    ) -> Res<InstalledPackageStatus> {
         let (home, _temp_dir1) = Home::from_temp_dir()?;
         let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
         let storage = LocalStorage::new();
@@ -1219,10 +1224,10 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
             r#"{{
                 "packages": {{
                     "test/refreshed": {{
-                        "commit": null,
+                        "commit": {commit_json},
                         "remote": {remote_json},
                         "base_hash": "{hash}",
-                        "latest_hash": "{hash}",
+                        "latest_hash": "{latest_hash}",
                         "paths": {{}}
                     }}
                 }},
@@ -1269,17 +1274,34 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
         "catalog": "test.quilt.dev"
     }"#;
 
-    let reached = status_with(Some("abcdef"), remote_json).await?;
+    let reached = status_with(Some("abcdef"), "null", remote_json, "abcdef").await?;
     assert!(reached.latest_refreshed, "the tip was read this call");
     assert_eq!(reached.upstream_state, UpstreamState::UpToDate);
 
     // No `latest` tag to read: the refresh fails, is swallowed, and the
     // verdict comes from the last-known tip.
-    let unreachable = status_with(None, remote_json).await?;
+    let unreachable = status_with(None, "null", remote_json, "abcdef").await?;
     assert!(!unreachable.latest_refreshed, "the tip was not read");
     assert_eq!(unreachable.upstream_state, UpstreamState::UpToDate);
 
-    let local = status_with(None, "null").await?;
+    // No `latest` tag, and none ever seen: the remote was read and says the
+    // package was never published, which is a fresh answer, not an outage.
+    let committed_json = r#"{
+        "timestamp": "2024-01-01T00:00:00Z",
+        "hash": "abcdef",
+        "prev_hashes": []
+    }"#;
+    let unpublished_json = r#"{
+        "bucket": "bkt",
+        "namespace": "test/refreshed",
+        "hash": "",
+        "catalog": "test.quilt.dev"
+    }"#;
+    let unpublished = status_with(None, committed_json, unpublished_json, "").await?;
+    assert!(unpublished.latest_refreshed, "the missing tag was read");
+    assert_eq!(unpublished.upstream_state, UpstreamState::Local);
+
+    let local = status_with(None, "null", "null", "abcdef").await?;
     assert!(!local.latest_refreshed, "no remote, nothing to read");
 
     Ok(())
