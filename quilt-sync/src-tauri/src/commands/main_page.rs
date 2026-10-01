@@ -506,8 +506,8 @@ async fn get_main_page_packages_from_model(
     tracing: &crate::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
-    // COPIED from `package_list.rs:193`, not shared, like the budget. A load is the cadence
-    // the role refresh is pinned to. A switch is server-side and global, so it can
+    // COPIED from `package_list.rs:193`, not shared, like the budget. A load is
+    // the cadence the role refresh is pinned to. A switch is server-side and global, so it can
     // happen in the web catalog with the app none the wiser; held for a whole
     // session, the cached name would make a row name a role that in fact has
     // access, and — worse — `observe_role` would never re-run, leaving the S3
@@ -1814,8 +1814,7 @@ mod tests {
     #[tokio::test]
     async fn the_heavy_phase_keeps_an_unexplained_pause_rather_than_measuring_past_it() {
         // The other half of folding an unexplained pause, and the half that
-        // shipped broken. The light
-        // phase folded `Other` into `Paused`; the heavy phase had its own
+        // shipped broken. The light phase folded `Other` into `Paused`; the heavy phase had its own
         // resolution and no branch for a pause, so `PackageState::resolve` measured the
         // working tree and overwrote it. On the running app the row read
         // `Sync paused` for the fraction of a second before the first refresh
