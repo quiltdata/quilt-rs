@@ -856,6 +856,75 @@ mod tests {
         assert_eq!(unique.len(), ids.len(), "{ids:?}");
     }
 
+    /// The ids of everything in `container` that has one, sorted.
+    fn ids_in(container: &web_sys::Element) -> Vec<String> {
+        let with_id = container.query_selector_all("[id]").unwrap();
+        let mut ids: Vec<String> = (0..with_id.length())
+            .map(|i| {
+                let el: web_sys::Element = with_id.item(i).unwrap().dyn_into().unwrap();
+                el.id()
+            })
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// The overview's frames share ids with the sections they come from, so
+    /// the swap between `#/` and `#/all` must take one set down before it puts
+    /// the other up. Driven through the gallery's own `hashchange` listener.
+    #[wasm_bindgen_test]
+    async fn switching_between_the_overview_and_everything_draws_no_id_twice() {
+        let window = web_sys::window().unwrap();
+        let doc = window.document().unwrap();
+        let go = |hash: &str| {
+            window.location().set_hash(hash).unwrap();
+            // Dispatched by hand so the swap does not wait on the browser's own
+            // event, which arrives a task later and only sets the same route.
+            window
+                .dispatch_event(&web_sys::Event::new("hashchange").unwrap())
+                .unwrap();
+        };
+        window.location().set_hash("/").unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), super::Gallery);
+
+        let mut seen = Vec::new();
+        for hash in ["", "/all", "/"] {
+            if !hash.is_empty() {
+                go(hash);
+            }
+            leptos::task::tick().await;
+            let ids = ids_in(&container);
+            let selecting = ids.iter().filter(|id| *id == "page-selecting").count();
+            // The long scroll draws the resolve sentence once per story that
+            // marks rows, each for its own cell, so that one id repeats there
+            // on purpose. Any other repeat is the swap leaving a page behind.
+            let mut twice: Vec<String> = ids
+                .windows(2)
+                .filter(|w| w[0] == w[1] && w[0] != crate::kit::DIFFERS_ID)
+                .map(|w| w[0].clone())
+                .collect();
+            twice.dedup();
+            let frames = container.query_selector_all(".g-entry").unwrap().length() as usize;
+            seen.push((hash, frames, selecting, twice));
+        }
+        drop(handle);
+        container.remove();
+        window.location().set_hash("").unwrap();
+        // (route, frames drawn, how many `page-selecting`, the ids drawn twice)
+        let none = Vec::<String>::new;
+        assert_eq!(
+            seen,
+            [
+                ("", 2, 1, none()),
+                ("/all", ENTRIES.len(), 1, none()),
+                ("/", 2, 1, none()),
+            ]
+        );
+    }
+
     #[test]
     fn the_all_address_shows_everything() {
         for hash in ["#/all", "#/all/"] {

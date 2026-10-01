@@ -11,7 +11,8 @@ start: ui-stubs
 ui-stubs:
     cd quilt-sync/ui && mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/_modules.scss assets/css/kit/_normalize.scss
 
-# Open the component gallery (the kit's design record, never the app) in a browser.
+# Serve the component gallery (the kit's design record, never the app); `--open`
+# opens a browser tab.
 # Needs the frontend toolchain, see CONTRIBUTING.md.
 #
 # `--dist` is load-bearing. Trunk writes whatever target it is given to
