@@ -63,7 +63,10 @@ mod tests {
             message: None,
         })
         .await?;
-        m.uninstall(crate::cli::uninstall::Input { namespace })
+        m.uninstall(crate::cli::uninstall::Input {
+            namespace,
+            prune: false,
+        })
             .await?;
 
         let output = m.gc().await?;

@@ -382,9 +382,16 @@ enum Commands {
         pkg: PackageRef,
     },
     /// Uninstall package from local domain
+    ///
+    /// Deletes the working files and the installed manifests. The downloaded
+    /// objects stay for `quilt gc` unless `--prune` is given.
     Uninstall {
         #[command(flatten)]
         pkg: PackageRef,
+        /// Also delete the package's downloaded objects that no other
+        /// installed package uses, and print what was freed
+        #[arg(long)]
+        prune: bool,
     },
 }
 
@@ -600,9 +607,9 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Undoing commit {args:?}");
             Ok(undo_commit::command(m, args).await)
         }
-        Commands::Uninstall { pkg } => {
+        Commands::Uninstall { pkg, prune } => {
             let namespace = pkg.resolve(&m).await?;
-            let args = uninstall::Input { namespace };
+            let args = uninstall::Input { namespace, prune };
 
             log::debug!("Uninstalling {args:?}");
             Ok(uninstall::command(m, args).await)
@@ -746,7 +753,10 @@ mod tests {
             .await?;
         let held = created.installed_package.lock().await?;
 
-        let mut uninstall = std::pin::pin!(m.uninstall(uninstall::Input { namespace }));
+        let mut uninstall = std::pin::pin!(m.uninstall(uninstall::Input {
+            namespace,
+            prune: false,
+        }));
         let early =
             tokio::time::timeout(std::time::Duration::from_millis(300), &mut uninstall).await;
         assert!(early.is_err(), "the uninstall waits for the holder");
@@ -924,6 +934,16 @@ mod tests {
 
         let default = Args::try_parse_from(["quilt", "list"]).unwrap();
         assert!(!default.verbose);
+    }
+
+    /// `--prune` is off unless given.
+    #[test]
+    fn uninstall_prunes_only_when_asked() {
+        let plain = Args::try_parse_from(["quilt", "uninstall", "-n", "a/b"]).expect("parses");
+        assert!(matches!(plain.command, Commands::Uninstall { prune: false, .. }));
+        let pruning =
+            Args::try_parse_from(["quilt", "uninstall", "-n", "a/b", "--prune"]).expect("parses");
+        assert!(matches!(pruning.command, Commands::Uninstall { prune: true, .. }));
     }
 
     /// `global = true` is what makes this additive: the shipped spelling keeps
@@ -2041,6 +2061,7 @@ mod tests {
                 pkg: PackageRef {
                     namespace: Some(pkg::NAMESPACE_STR.to_string()),
                 },
+                prune: false,
             },
         };
 
@@ -2071,6 +2092,7 @@ mod tests {
                 pkg: PackageRef {
                     namespace: Some("in/valid".to_string()),
                 },
+                prune: false,
             },
         };
 
@@ -2184,7 +2206,13 @@ mod tests {
             ),
             ("log", Commands::Log { pkg: pkg() }),
             ("undo-commit", Commands::UndoCommit { pkg: pkg() }),
-            ("uninstall", Commands::Uninstall { pkg: pkg() }),
+            (
+                "uninstall",
+                Commands::Uninstall {
+                    pkg: pkg(),
+                    prune: false,
+                },
+            ),
         ];
 
         for (name, command) in commands {
