@@ -15,9 +15,7 @@ use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
 use crate::commands::RoleCache;
 use crate::commands::main_page::PackageStateDto;
-use crate::commands::main_page::{
-    conflict_files, misconfigured_remote, resolve_state, unexplained_pause,
-};
+use crate::commands::main_page::{conflict_files, unexplained_pause};
 use crate::commands::package_entries::{EntryList, entry_list};
 use crate::error::Error;
 use crate::model;
@@ -534,7 +532,7 @@ async fn get_package_page_data_from_model(
     let mut role_switch = None;
     // The status, or why a blocked read refused; `None` when it was not asked.
     let mut status_read: Option<Result<quilt::lineage::InstalledPackageStatus, String>> = None;
-    let state = if misconfigured_remote(&lineage) {
+    let state = if lineage.misconfigured_remote() {
         // The same predicate both main-page phases apply before resolving, for
         // the same reason: without a catalog there is nowhere to vend
         // credentials from, so the status call cannot succeed. A third surface
@@ -559,7 +557,7 @@ async fn get_package_page_data_from_model(
                 let state = if let Some(files) = conflict_files(paused) {
                     PackageStateDto::PullConflict { files }
                 } else {
-                    resolve_state(
+                    quilt::lineage::PackageState::resolve(
                         status.upstream_state,
                         has_local_commit,
                         has_remote,
@@ -567,6 +565,7 @@ async fn get_package_page_data_from_model(
                         // package, so it has no light phase to be provisional for.
                         Some(status.changes.len()),
                     )
+                    .into()
                 };
                 status_read = Some(Ok(status));
                 state

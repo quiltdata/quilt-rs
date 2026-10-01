@@ -24,14 +24,14 @@ use crate::commands::RoleCache;
 use crate::error::Error;
 use crate::model;
 use crate::quilt;
-use crate::quilt::lineage::UpstreamState;
+use crate::quilt::lineage::PackageState;
 
 /// A package's resolved state, as the UI's `kit::PackageState` expects it.
 ///
 /// §2: a discriminator, never prose. The UI owns the words; a rewording must not
 /// need a backend release.
 ///
-/// Two variants come from outside `resolve_state`: `PullConflict` from the
+/// Two variants come from outside [`PackageState::resolve`]: `PullConflict` from the
 /// watcher's paused map (see [`conflict_files`]), `RoleDenied` from the access
 /// pass below (`AccessMark::state`).
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -256,67 +256,31 @@ fn account_hosts(rows: &[Row], auth_hosts: &[String]) -> Vec<String> {
     hosts
 }
 
-/// The light phase's resolution: **map** the state `quilt-rs` already derived.
+/// The tree-derived states, as resolved by `quilt-rs`.
 ///
-/// It does NOT re-derive from hashes. `quilt-rs` computes `UpstreamState` from a
-/// lineage via `let upstream: UpstreamState = lineage.into()`, and a second
-/// resolver in the tree is exactly what §1 forbids — "resolution happens exactly
-/// once, upstream of every payload". Two places deciding what is true is the
-/// 2026-07-11 bug.
+/// Resolution happens exactly once, upstream of every payload (§1): both
+/// phases, the package page and `quilt list --fetch` hand `quilt-rs`'s
+/// `UpstreamState` to the one [`PackageState::resolve`], and a remote with no
+/// catalog host is caught by the one
+/// [`PackageLineage::misconfigured_remote`](quilt::lineage::PackageLineage::misconfigured_remote)
+/// before it. Two places deciding what is true is the 2026-07-11 bug. This
+/// mapping only renames.
 ///
-/// The two extra booleans are not a second resolution: they split one
-/// `UpstreamState` variant that v2's vocabulary distinguishes and v1's did not.
-///
-/// `changed_files` is what the heavy phase measured — `None` when nobody has
-/// looked yet, which is the light phase. It can only reach rank 7 of §5's
-/// precedence lattice: `Diverged` and `Behind` outrank it, and a package with
-/// nowhere to publish to has no use for a file count.
-pub(super) fn resolve_state(
-    upstream: UpstreamState,
-    has_local_commit: bool,
-    has_remote: bool,
-    changed_files: Option<usize>,
-) -> PackageStateDto {
-    // A working tree measured as non-empty. Rank 7 only; see the doc comment.
-    let pending_changes = match changed_files {
-        Some(files) if files > 0 => Some(PackageStateDto::PendingChanges { files }),
-        _ => None,
-    };
-
-    match upstream {
-        // `Local` means either no bucket chosen, or a bucket with nothing in it yet.
-        // v1 called both "no remote"; v2 has a word for each.
-        UpstreamState::Local if has_remote => PackageStateDto::Unpublished,
-        UpstreamState::Local => PackageStateDto::NoRemote,
-        UpstreamState::Behind => PackageStateDto::Behind,
-        UpstreamState::Diverged => PackageStateDto::Diverged,
-        UpstreamState::Error => PackageStateDto::Unknown,
-        UpstreamState::Ahead => pending_changes.unwrap_or(PackageStateDto::PendingCommit),
-        UpstreamState::UpToDate => pending_changes.unwrap_or({
-            if has_local_commit {
-                PackageStateDto::PendingCommit
-            } else {
-                PackageStateDto::Latest
-            }
-        }),
+/// `PendingChanges` can only reach rank 7 of §5's precedence lattice; the
+/// app-only states above it are added by the callers.
+impl From<PackageState> for PackageStateDto {
+    fn from(state: PackageState) -> Self {
+        match state {
+            PackageState::Latest => Self::Latest,
+            PackageState::PendingCommit => Self::PendingCommit,
+            PackageState::PendingChanges { files } => Self::PendingChanges { files },
+            PackageState::Behind => Self::Behind,
+            PackageState::Diverged => Self::Diverged,
+            PackageState::Unpublished => Self::Unpublished,
+            PackageState::NoRemote => Self::NoRemote,
+            PackageState::Unknown => Self::Unknown,
+        }
     }
-}
-
-/// A remote with a bucket but no catalog host.
-///
-/// `impl From<PackageLineage> for UpstreamState` deliberately ignores `origin`
-/// (`quilt-rs/src/lineage/package.rs:179-186`) and answers from the hashes, which
-/// for this shape is a state the app cannot act on: without a catalog there is
-/// nowhere to vend credentials from. Both phases check this BEFORE resolving, so
-/// there is one answer to the question rather than one per phase.
-///
-/// v2's word for it is `Unknown` — "Sync stopped" — which is where v1's `error`
-/// status lands too (`package_list.rs:311-324`).
-pub(super) fn misconfigured_remote(lineage: &quilt::lineage::PackageLineage) -> bool {
-    lineage
-        .remote_uri
-        .as_ref()
-        .is_some_and(|uri| uri.origin.is_none())
 }
 
 /// Precedence rank 2: a pull-conflict pause outranks everything the tree's own
@@ -614,7 +578,7 @@ async fn load_main_page_package(
         .as_ref()
         .and_then(|uri| uri.catalog.as_ref())
         .map(ToString::to_string);
-    let state = if misconfigured_remote(&lineage) {
+    let state = if lineage.misconfigured_remote() {
         PackageStateDto::Unknown
     } else if let Some(files) = conflict_files(paused_reasons.get(&namespace)) {
         // Rank 2, below the arm above: a remote with no catalog host is a package
@@ -627,7 +591,7 @@ async fn load_main_page_package(
     } else {
         // `None`, not `Some(0)`: this phase has not looked at the working tree.
         // The heavy phase (`refresh_main_page_package`) measures it.
-        resolve_state(lineage.into(), has_local_commit, has_remote, None)
+        PackageState::resolve(lineage.into(), has_local_commit, has_remote, None).into()
     };
 
     // `provisional` means the state came from cached lineage and the remote has
@@ -819,7 +783,7 @@ pub struct MainPagePackageRefresh {
 }
 
 /// The heavy phase: one real status call, resolved through the SAME
-/// [`resolve_state`] the light phase uses.
+/// [`PackageState::resolve`] the light phase uses.
 ///
 /// §1 — resolution happens exactly once, upstream of every payload. The light
 /// and heavy phases differ in what they *measure*, never in how they decide:
@@ -854,20 +818,20 @@ pub(super) async fn refresh_main_page_package_from_model(
     // from, so the status call cannot succeed and its answer would not be
     // actionable if it did. The SAME predicate the light phase uses, so the two
     // phases cannot disagree about this shape.
-    if misconfigured_remote(&lineage) {
+    if lineage.misconfigured_remote() {
         return Ok(MainPagePackageRefresh {
             state: PackageStateDto::Unknown,
             role_switch_host: None,
         });
     }
 
-    // No remote at all: `resolve_state` ignores the file count for `Local`, so the
+    // No remote at all: `PackageState::resolve` ignores the file count for `Local`, so the
     // status call would be a local hash walk whose answer nothing reads. A remote
     // that exists but has never been pushed to still goes through the call below —
     // it is reachable, and `Unpublished` is what comes back.
     if !has_remote {
         return Ok(MainPagePackageRefresh {
-            state: resolve_state(lineage.into(), has_local_commit, false, None),
+            state: PackageState::resolve(lineage.into(), has_local_commit, false, None).into(),
             role_switch_host: None,
         });
     }
@@ -896,12 +860,13 @@ pub(super) async fn refresh_main_page_package_from_model(
             } else if unexplained_pause(paused) {
                 PackageStateDto::Paused
             } else {
-                resolve_state(
+                PackageState::resolve(
                     status.upstream_state,
                     has_local_commit,
                     has_remote,
                     Some(status.changes.len()),
                 )
+                .into()
             },
             // The refresh did not deny, so any pre-filter mark is cleared.
             role_switch_host: None,
@@ -1548,73 +1513,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn local_with_no_bucket_is_no_remote() {
-        assert_eq!(
-            resolve_state(UpstreamState::Local, false, false, None),
-            PackageStateDto::NoRemote
-        );
-    }
-
-    #[test]
-    fn local_with_a_bucket_is_unpublished() {
-        // `UpstreamState::Local` covers BOTH "no remote configured" and "remote set
-        // but never pushed" — its own doc comment says so. v2 splits them.
-        assert_eq!(
-            resolve_state(UpstreamState::Local, false, true, None),
-            PackageStateDto::Unpublished
-        );
-    }
-
-    #[test]
-    fn up_to_date_with_nothing_local_is_latest() {
-        assert_eq!(
-            resolve_state(UpstreamState::UpToDate, false, true, None),
-            PackageStateDto::Latest
-        );
-    }
-
-    #[test]
-    fn up_to_date_with_a_local_revision_is_pending_commit() {
-        assert_eq!(
-            resolve_state(UpstreamState::UpToDate, true, true, None),
-            PackageStateDto::PendingCommit
-        );
-    }
-
-    #[test]
-    fn ahead_is_pending_commit() {
-        assert_eq!(
-            resolve_state(UpstreamState::Ahead, false, true, None),
-            PackageStateDto::PendingCommit
-        );
-    }
-
-    #[test]
-    fn behind_carries_no_count() {
-        assert_eq!(
-            resolve_state(UpstreamState::Behind, false, true, None),
-            PackageStateDto::Behind,
-            "a hash inequality is not a distance; no revision count is derivable"
-        );
-    }
-
-    #[test]
-    fn diverged_maps_straight_through() {
-        assert_eq!(
-            resolve_state(UpstreamState::Diverged, false, true, None),
-            PackageStateDto::Diverged
-        );
-    }
-
-    #[test]
-    fn error_becomes_the_fallback() {
-        assert_eq!(
-            resolve_state(UpstreamState::Error, false, true, None),
-            PackageStateDto::Unknown
-        );
-    }
-
     /// A lineage carrying only the timestamps `last_changed` reads.
     fn lineage_with(commit_ms: Option<i64>, path_ms: &[i64]) -> quilt::lineage::PackageLineage {
         let mut lineage = quilt::lineage::PackageLineage::default();
@@ -1660,107 +1558,6 @@ mod tests {
         assert_eq!(last_changed(&lineage_with(None, &[])), None);
         // Paths but no commit still has an answer.
         assert_eq!(last_changed(&lineage_with(None, &[7_000])), Some(7_000.0));
-    }
-
-    #[test]
-    fn a_measured_working_tree_beats_an_unpushed_revision() {
-        // Rank 7 of the precedence lattice, both arms of it. Both offer Publish;
-        // only one of them can say how much.
-        assert_eq!(
-            resolve_state(UpstreamState::UpToDate, true, true, Some(3)),
-            PackageStateDto::PendingChanges { files: 3 }
-        );
-        assert_eq!(
-            resolve_state(UpstreamState::Ahead, false, true, Some(2)),
-            PackageStateDto::PendingChanges { files: 2 }
-        );
-    }
-
-    #[test]
-    fn a_measured_clean_tree_falls_through_to_the_revision_state() {
-        assert_eq!(
-            resolve_state(UpstreamState::UpToDate, false, true, Some(0)),
-            PackageStateDto::Latest
-        );
-        assert_eq!(
-            resolve_state(UpstreamState::UpToDate, true, true, Some(0)),
-            PackageStateDto::PendingCommit
-        );
-        assert_eq!(
-            resolve_state(UpstreamState::Ahead, false, true, Some(0)),
-            PackageStateDto::PendingCommit
-        );
-    }
-
-    #[test]
-    fn a_count_never_outranks_a_state_above_it_in_the_lattice() {
-        // §5: Diverged (5) and Behind (6) both outrank rank 7. The local edits are
-        // real and they are not what this row is about; they show on the package page.
-        assert_eq!(
-            resolve_state(UpstreamState::Behind, false, true, Some(4)),
-            PackageStateDto::Behind
-        );
-        assert_eq!(
-            resolve_state(UpstreamState::Diverged, false, true, Some(4)),
-            PackageStateDto::Diverged
-        );
-        // No bucket to publish to: the number is not the thing to say.
-        assert_eq!(
-            resolve_state(UpstreamState::Local, false, false, Some(4)),
-            PackageStateDto::NoRemote
-        );
-        assert_eq!(
-            resolve_state(UpstreamState::Local, false, true, Some(4)),
-            PackageStateDto::Unpublished
-        );
-    }
-
-    #[test]
-    fn an_unmeasured_tree_agrees_with_a_measured_empty_one() {
-        // Deliberate: `None` exists so the LIGHT PHASE'S CALL SITE cannot assert a
-        // clean tree, not to produce a third state. If a future arm makes these
-        // differ, that is a decision to take on purpose — this test is the tripwire.
-        for upstream in [
-            UpstreamState::UpToDate,
-            UpstreamState::Ahead,
-            UpstreamState::Behind,
-            UpstreamState::Diverged,
-            UpstreamState::Local,
-            UpstreamState::Error,
-        ] {
-            for has_local_commit in [true, false] {
-                assert_eq!(
-                    resolve_state(upstream, has_local_commit, true, None),
-                    resolve_state(upstream, has_local_commit, true, Some(0)),
-                    "{upstream:?} / commit={has_local_commit} disagreed"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_remote_with_no_catalog_host_is_not_read_through_the_hashes() {
-        // The classifier ignores `origin` on purpose and would answer from the hash
-        // comparison — a state the app cannot act on, because without a catalog there
-        // is nowhere to vend credentials from. v1 short-circuits the same case
-        // (`package_list.rs:311`).
-        let mut lineage = quilt::lineage::PackageLineage::from_remote(
-            make_manifest_uri_no_origin("team/one"),
-            "abcdef".to_string(),
-        );
-        lineage.latest_hash = "abcdef".to_string();
-        assert!(misconfigured_remote(&lineage));
-
-        // A remote WITH a catalog host, and a package with no remote at all, are both fine.
-        assert!(!misconfigured_remote(
-            &quilt::lineage::PackageLineage::from_remote(
-                make_manifest_uri("team/one"),
-                "abcdef".to_string(),
-            )
-        ));
-        assert!(!misconfigured_remote(
-            &quilt::lineage::PackageLineage::default()
-        ));
     }
 
     #[test]
@@ -1875,7 +1672,7 @@ mod tests {
     }
 
     /// A one-package roster whose lineage is a clean remote on a bucket the role
-    /// can read: `resolve_state` alone answers `Latest` (asserted by
+    /// can read: `PackageState::resolve` alone answers `Latest` (asserted by
     /// `other_and_the_three_duplicates_do_not_fold_into_a_state`, which drives
     /// this same fixture), and the access pass marks nothing. So any other state
     /// a test below sees came from the fold and nowhere else.
@@ -1982,7 +1779,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_pull_conflict_pause_resolves_the_row_to_pull_conflict() {
-        // Lattice rank 2. `resolve_state` maps an `UpstreamState` and a pull
+        // Lattice rank 2. `PackageState::resolve` maps an `UpstreamState` and a pull
         // conflict is not one, which is why `PackageStateDto::PullConflict` has
         // been declared in both crates and constructed nowhere since Plan 1.
         let m = mock_clean_roster();
@@ -2018,7 +1815,7 @@ mod tests {
     async fn the_heavy_phase_keeps_an_unexplained_pause_rather_than_measuring_past_it() {
         // qhq-8mgw.36's other half, and the half that shipped broken. The light
         // phase folded `Other` into `Paused`; the heavy phase had its own
-        // resolution and no branch for a pause, so `resolve_state` measured the
+        // resolution and no branch for a pause, so `PackageState::resolve` measured the
         // working tree and overwrote it. On the running app the row read
         // `Sync paused` for the fraction of a second before the first refresh
         // answered, then reverted to `1 file changed` — found by the operator
@@ -2026,7 +1823,7 @@ mod tests {
         // exercised the light phase alone.
         //
         // The fixture's tree HAS a change on purpose: `1 file changed` is what
-        // `resolve_state` would report, so a clean tree would pass without the
+        // `PackageState::resolve` would report, so a clean tree would pass without the
         // fix. `refresh_with_pause`'s own doc states the invariant — the two
         // phases must reach the same answer.
         let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 1)), None);
@@ -2743,9 +2540,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_behind_result_passes_through_resolve_state_and_clears_the_switch_host() {
+    async fn a_behind_result_passes_through_the_resolver_and_clears_the_switch_host() {
         // A `Behind` status is not a denial, so it maps straight through
-        // `resolve_state` like any other successful call, and `role_switch_host` is
+        // `PackageState::resolve` like any other successful call, and `role_switch_host` is
         // unconditionally `None` on this arm regardless of what roles the caller
         // holds — the success arm never reads the pre-filter mark. This is a
         // `Behind` pass-through check, not proof that a row the light phase greyed
