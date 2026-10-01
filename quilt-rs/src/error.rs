@@ -365,6 +365,11 @@ pub enum Error {
     #[error(transparent)]
     PackageOp(#[from] PackageOpError),
 
+    /// Another writer holds this package's lock, so a domain-wide sweep
+    /// that needs every package still would be unsafe to start.
+    #[error("{0} is busy in another quilt process; try again once it finishes")]
+    PackageBusy(Namespace),
+
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 

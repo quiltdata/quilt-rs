@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.6-dev]
+
+### Added
+
+- **Settings → General → Free up space** deletes the downloaded files no installed package uses any more, cached package listings and leftovers of interrupted downloads, and says how much it freed, for example "Freed 630.2 kB: 6 objects, 2 cached manifests". It stops without deleting anything while a package is busy (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+
+### quilt-rs
+
+- Updated [from v0.41.0 to v0.42.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.41.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.22.5] - 2026-09-30
 
 ### Changed

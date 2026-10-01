@@ -37,6 +37,19 @@ pub(super) fn GeneralSection(
         });
     };
 
+    // Runs at once, unconfirmed: it deletes only what no installed package uses.
+    let freeing = RwSignal::new(false);
+    let on_free_up_space = move |_| {
+        freeing.set(true);
+        leptos::task::spawn_local(async move {
+            match commands::run_gc().await {
+                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Err(e) => notification.set(Some(Notification::Error(e))),
+            }
+            freeing.set(false);
+        });
+    };
+
     view! {
         <section class="settings-section">
             <h2 class="section-title">"General"</h2>
@@ -57,6 +70,11 @@ pub(super) fn GeneralSection(
                 <dd>
                     <span class="path" title=data_title>{data_dir}</span>
                     <buttons::OpenInFileBrowser on_click=on_open_data small=true link=true />
+                </dd>
+
+                <dt>"Local storage"</dt>
+                <dd>
+                    <buttons::FreeUpSpace on_click=on_free_up_space busy=freeing />
                 </dd>
             </dl>
         </section>
@@ -99,5 +117,44 @@ fn ReleaseNotesPopup(
                     .collect_view()}
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{button_saying, mount, sleep_ms};
+    use wasm_bindgen_test::*;
+
+    fn mount_section(notification: RwSignal<Option<Notification>>) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <GeneralSection
+                    version="0.0.0".to_string()
+                    home_dir=None
+                    data_dir="/data".to_string()
+                    changelog=Vec::new()
+                    notification=notification
+                />
+            }
+        })
+    }
+
+    /// One click runs the sweep, with no dialog in between, and its answer
+    /// lands in the notification. Outside Tauri the call fails, which is the
+    /// error path; the button is usable again after it.
+    #[wasm_bindgen_test]
+    async fn free_up_space_runs_at_once_and_reports() {
+        let notification = RwSignal::new(None);
+        let root = mount_section(notification);
+
+        button_saying(&root, "Free up space").click();
+        sleep_ms(0).await;
+
+        assert!(matches!(
+            notification.get_untracked(),
+            Some(Notification::Error(_))
+        ));
+        assert!(!button_saying(&root, "Free up space").disabled());
     }
 }

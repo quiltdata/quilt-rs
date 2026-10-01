@@ -1725,6 +1725,12 @@ pub async fn open_data_dir() -> Result<String, String> {
     tauri::invoke_unit("open_data_dir").await
 }
 
+/// Delete what local storage holds for nothing; `Ok` is the sentence saying
+/// what was freed.
+pub async fn run_gc() -> Result<String, String> {
+    tauri::invoke_unit("run_gc").await
+}
+
 pub async fn collect_diagnostic_logs() -> Result<String, String> {
     tauri::invoke_unit("collect_diagnostic_logs").await
 }

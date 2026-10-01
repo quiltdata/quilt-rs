@@ -19,11 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.34.1-dev]
+## [v0.35.0-dev]
 
 ### Added
 
 - `quilt list --fetch` checks each package's remote now and counts its changed files, showing what QuiltSync's main page shows (`latest`, `not the latest`, `3 files changed`, …). A package whose remote cannot be reached says so, as in `latest (remote unreachable)`. Plain `quilt list` stays offline (<https://github.com/quiltdata/quilt-rs/pull/1032>)
+- `quilt gc` deletes what the local store holds for nothing: the stored files no installed package uses, such as those an uninstall left, the cache of remote manifests, and files left mid-write by an interrupted command. It prints what it freed, for example `Freed 630.2 kB: 6 objects, 2 cached manifests`, or `Nothing to free`. `--json` prints the counts and bytes. While another quilt process is changing a package it deletes nothing and fails with the error kind `package_busy` (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 
 ### Changed
 

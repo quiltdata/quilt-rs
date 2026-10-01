@@ -58,7 +58,7 @@ const INSTALLED_DIR: &str = "installed";
 // prefix of the same name in `quilt-uri::paths` — sharing the literal
 // value today is incidental, the two contracts can evolve independently.
 const MANIFEST_DIR: &str = "packages";
-const OBJECTS_DIR: &str = "objects";
+pub(crate) const OBJECTS_DIR: &str = "objects";
 
 pub use quilt_uri::paths::get_manifest_key;
 pub use quilt_uri::paths::tag_key;
@@ -128,9 +128,26 @@ impl DomainPaths {
     /// Directory for storing installed manifests
     #[must_use]
     pub fn installed_manifests_dir(&self, namespace: &Namespace) -> PathBuf {
-        self.dot_quilt_dir()
-            .join(INSTALLED_DIR)
-            .join(namespace.to_string())
+        self.installed_dir().join(namespace.to_string())
+    }
+
+    /// Directory holding every package's installed manifests,
+    /// `installed/<owner>/<name>/<hash>`.
+    #[must_use]
+    pub fn installed_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join(INSTALLED_DIR)
+    }
+
+    /// Directory holding the package lock files, `locks/<owner>/<name>.lock`.
+    #[must_use]
+    pub fn locks_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join(LOCKS_DIR)
+    }
+
+    /// Directory of the remote-manifest cache, `packages/<bucket>/<hash>`.
+    #[must_use]
+    pub fn cached_manifests_root(&self) -> PathBuf {
+        self.dot_quilt_dir().join(MANIFEST_DIR)
     }
 
     /// Path to the lineage file
@@ -143,24 +160,19 @@ impl DomainPaths {
     /// [`InstalledPackage::lock`](crate::InstalledPackage::lock).
     #[must_use]
     pub fn package_lock(&self, namespace: &Namespace) -> PathBuf {
-        self.dot_quilt_dir()
-            .join(LOCKS_DIR)
-            .join(format!("{namespace}.lock"))
+        self.locks_dir().join(format!("{namespace}.lock"))
     }
 
     /// Path to the manifest cached in semi-temporary directory
     #[must_use]
     pub fn cached_manifest(&self, uri: &ManifestUri) -> PathBuf {
-        self.dot_quilt_dir()
-            .join(MANIFEST_DIR)
-            .join(&uri.bucket)
-            .join(&uri.hash)
+        self.cached_manifests_dir(&uri.bucket).join(&uri.hash)
     }
 
     /// Directory for storing cached manifests for a bucket
     #[must_use]
     pub fn cached_manifests_dir(&self, bucket: &str) -> PathBuf {
-        self.dot_quilt_dir().join(MANIFEST_DIR).join(bucket)
+        self.cached_manifests_root().join(bucket)
     }
 
     /// Directory for storing pristine hashed files
@@ -178,9 +190,9 @@ impl DomainPaths {
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![
-            self.dot_quilt_dir().join(INSTALLED_DIR),
+            self.installed_dir(),
             self.objects_dir(),
-            self.dot_quilt_dir().join(MANIFEST_DIR),
+            self.cached_manifests_root(),
         ]
     }
 
@@ -314,6 +326,15 @@ mod tests {
             PathBuf::from("foo/bar/.quilt/packages/my-bucket/deadbeef"),
         );
         assert_eq!(paths.objects_dir(), PathBuf::from("foo/bar/.quilt/objects"));
+        assert_eq!(
+            paths.installed_dir(),
+            PathBuf::from("foo/bar/.quilt/installed")
+        );
+        assert_eq!(paths.locks_dir(), PathBuf::from("foo/bar/.quilt/locks"));
+        assert_eq!(
+            paths.cached_manifests_root(),
+            PathBuf::from("foo/bar/.quilt/packages")
+        );
         assert_eq!(
             paths.object(&[0xde, 0xad, 0xbe, 0xef]),
             PathBuf::from("foo/bar/.quilt/objects/deadbeef"),
