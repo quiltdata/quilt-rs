@@ -23,7 +23,7 @@
 
 ### Changed
 
-- `--domain <path>` (or `-d`) works before or after the command, like `--json`, so `quilt list --domain <path>` works as well as `quilt --domain <path> list`
+- `--domain <path>` (or `-d`) works before or after the command, like `--json`, so `quilt list --domain <path>` works as well as `quilt --domain <path> list` (<https://github.com/quiltdata/quilt-rs/pull/1033>)
 
 ## [v0.34.0] - 2026-09-30
 
