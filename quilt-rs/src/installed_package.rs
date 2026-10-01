@@ -422,6 +422,39 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         })
     }
 
+    /// This package's [`PackageState`](lineage::PackageState), as every front
+    /// end shows it.
+    ///
+    /// Asks the remote only when there is something to ask: a remote with no
+    /// catalog host is `Unknown` and a package with no remote is resolved from
+    /// its lineage, both without the network or a working-tree walk. Otherwise
+    /// this is [`Self::status`] — the remote's `latest` tip plus the working
+    /// tree — resolved by [`PackageState::resolve`](lineage::PackageState::resolve).
+    /// The fetched tip is not written back to lineage.
+    ///
+    /// Errors are `status`'s, returned as they are: a denial
+    /// ([`Error::is_access_denied`]), a missing or rejected session, or any other
+    /// failure. What a front end shows for each is its own policy.
+    pub async fn state(&self) -> Res<lineage::PackageStateReport> {
+        let lineage = self.lineage().await?;
+        if let Some(report) = lineage::PackageStateReport::without_remote(&lineage) {
+            return Ok(report);
+        }
+        let status = self.status(None).await?;
+        let changed_files = status.changes.len();
+        Ok(lineage::PackageStateReport {
+            state: lineage::PackageState::resolve(
+                status.upstream_state,
+                lineage.commit.is_some(),
+                true,
+                Some(changed_files),
+            ),
+            upstream_state: status.upstream_state,
+            changed_files: Some(changed_files),
+            latest_refreshed: status.latest_refreshed,
+        })
+    }
+
     /// Downloads `paths` and starts tracking them. A path whose bytes the
     /// remote no longer holds is skipped, not an error: see
     /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped).
