@@ -74,8 +74,10 @@ fn activities(label: &str) -> Activities {
     activities
 }
 
+/// The busy day on its own, so the gallery's overview can draw this one frame
+/// without the four that follow it in [`PageScene`].
 #[component]
-pub fn PageScene() -> impl IntoView {
+pub fn BusyDayScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · the whole page, a busy day"
@@ -93,6 +95,13 @@ pub fn PageScene() -> impl IntoView {
                 </PageLayout>
             </div>
         </Scene>
+    }
+}
+
+#[component]
+pub fn PageScene() -> impl IntoView {
+    view! {
+        <BusyDayScene />
         <Scene
             title="Scene · the whole page, a normal day"
             note="The same page with autosync working, which is what most users see most \

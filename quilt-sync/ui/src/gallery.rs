@@ -316,13 +316,42 @@ const ENTRIES: &[Entry] = &[
     entry!(Pages, "While loading", page::LoadingScene),
 ];
 
-/// What `#/` shows: two whole pages, named by tier and label so they are looked
-/// up in `ENTRIES` rather than mounted a second way. `#/` used to be every
-/// section, so the first load mounted all of them; these two pages are what is
-/// opened most, and the rest is one link away at `#/all`.
-const HOME: &[(Tier, &str)] = &[
-    (Tier::Pages, "Main page"),
-    (Tier::Pages, "Installed package"),
+/// One frame of `#/`: a single scene lifted out of a `Pages` section.
+struct HomeFrame {
+    /// The label of the `Pages` entry the frame comes from. Its source link goes
+    /// there, so the rest of that page's frames are one click away.
+    from: &'static str,
+    view: fn() -> AnyView,
+}
+
+impl HomeFrame {
+    fn source(&self) -> &'static Entry {
+        ENTRIES
+            .iter()
+            .find(|e| e.tier == Tier::Pages && e.label == self.from)
+            .expect("a home frame names a Pages entry")
+    }
+}
+
+/// What `#/` shows: the busiest frame of each of the two whole pages, and none
+/// of the gallery's sections. `#/` used to be every section, so the first load
+/// mounted all of them; even the two `Pages` sections are ten frames. These two
+/// are what is looked at most, and the rest is one link away at `#/all`.
+const HOME: &[HomeFrame] = &[
+    HomeFrame {
+        from: "Main page",
+        view: || {
+            use crate::gallery::page::BusyDayScene;
+            view! { <BusyDayScene /> }.into_any()
+        },
+    },
+    HomeFrame {
+        from: "Installed package",
+        view: || {
+            use crate::gallery::installed_package::SelectingScene;
+            view! { <SelectingScene /> }.into_any()
+        },
+    },
 ];
 
 /// What the URL fragment asks for.
@@ -340,10 +369,11 @@ const HOME: &[(Tier, &str)] = &[
 ///
 /// `#/` is not the long scroll: mounting every section made the first load slow,
 /// and what is opened first is nearly always one of the two whole pages. So the
-/// bare address shows `HOME`, with a line pointing at everything else.
+/// bare address shows `HOME`, the busiest frame of each, with a line pointing at
+/// everything else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
-    /// `#/`: the sections in `HOME`.
+    /// `#/`: the frames in `HOME`, and no section of `ENTRIES`.
     Home,
     /// `#/all`: every section.
     All,
@@ -386,13 +416,13 @@ impl Route {
 
     fn shows(self, index: usize) -> bool {
         match self {
-            Route::Home => HOME
-                .iter()
-                .any(|&(tier, label)| ENTRIES[index].tier == tier && ENTRIES[index].label == label),
             Route::All => true,
             Route::Tier(tier) => ENTRIES[index].tier == tier,
             Route::Entry(i) => i == index,
-            Route::Unknown => false,
+            // Home draws `HOME`'s frames instead, which share ids with the
+            // sections they come from (`page-selecting`): mounting both would
+            // duplicate them.
+            Route::Home | Route::Unknown => false,
         }
     }
 }
@@ -504,30 +534,10 @@ fn Gallery() -> impl IntoView {
                         }
                             .into_any();
                     }
-                    // Said on the page, so a short first load does not read as
-                    // a gallery that lost most of its sections.
-                    let overview = (route == Route::Home)
-                        .then(|| {
-                            view! {
-                                <p class="g-note">
-                                    "A short overview: two whole pages. "
-                                    <a href="#/all">"Every section"</a>
-                                    " is one long scroll; a tier — "
-                                    {Tier::ALL
-                                        .into_iter()
-                                        .enumerate()
-                                        .map(|(n, tier)| {
-                                            view! {
-                                                {(n > 0).then_some(", ")}
-                                                <a href=format!("#/{}", tier.slug())>{tier.name()}</a>
-                                            }
-                                        })
-                                        .collect_view()}
-                                    " — is a shorter one."
-                                </p>
-                            }
-                        });
-                    let tiers = Tier::ALL
+                    if route == Route::Home {
+                        return home().into_any();
+                    }
+                    Tier::ALL
                         .into_iter()
                         .filter_map(|tier| {
                             let items: Vec<usize> = (0..ENTRIES.len())
@@ -535,12 +545,58 @@ fn Gallery() -> impl IntoView {
                                 .collect();
                             (!items.is_empty()).then(|| main_tier(tier, &items))
                         })
-                        .collect_view();
-                    view! { {overview} {tiers} }.into_any()
+                        .collect_view()
+                        .into_any()
                 }}
             </main>
         </div>
     }
+}
+
+/// `#/`: the overview line, then `HOME`'s frames under the `Pages` heading they
+/// come from. Each frame is built here, so no other route mounts it.
+fn home() -> AnyView {
+    // Said on the page, so a short first load does not read as a gallery that
+    // lost most of its sections.
+    let overview = view! {
+        <p class="g-note">
+            "A short overview: the busiest frame of each of the two whole pages. "
+            <a href="#/all">"Every section"</a>
+            " is one long scroll; a tier — "
+            {Tier::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(n, tier)| {
+                    view! {
+                        {(n > 0).then_some(", ")}
+                        <a href=format!("#/{}", tier.slug())>{tier.name()}</a>
+                    }
+                })
+                .collect_view()}
+            " — is a shorter one."
+        </p>
+    };
+    let frames = HOME
+        .iter()
+        .map(|frame| {
+            let source = frame.source();
+            view! {
+                <div class="g-entry">
+                    <a class="g-entry__source" href=source.href()>
+                        "src/gallery/"
+                        {source.file}
+                    </a>
+                    {(frame.view)()}
+                </div>
+            }
+        })
+        .collect_view();
+    view! {
+        {overview}
+        {tier_heading(Tier::Pages)}
+        {frames}
+    }
+    .into_any()
 }
 
 /// One tier of the index: its heading, then its sections, with a scene's page
@@ -605,13 +661,20 @@ fn main_tier(tier: Tier, items: &[usize]) -> AnyView {
         );
     }
     view! {
+        {tier_heading(tier)}
+        {sections}
+    }
+    .into_any()
+}
+
+fn tier_heading(tier: Tier) -> AnyView {
+    view! {
         // The tier rule, beside the tier, so a section lands in the right one
         // without anybody opening this file.
         <div class="g-tier">
             <h2 class="g-tier__name">{tier.name()}</h2>
             <p class="g-tier__rule">{tier.rule()}</p>
         </div>
-        {sections}
     }
     .into_any()
 }
@@ -746,28 +809,51 @@ mod tests {
         }
     }
 
+    /// Not one of the sections: `HOME`'s frames are drawn on their own, and
+    /// share ids with the sections they come from.
     #[test]
-    fn the_overview_shows_the_two_whole_pages_and_nothing_else() {
-        let shown: Vec<_> = (0..ENTRIES.len())
-            .filter(|&i| Route::Home.shows(i))
-            .map(|i| (ENTRIES[i].tier, ENTRIES[i].label))
-            .collect();
-        assert_eq!(
-            shown,
-            [
-                (Tier::Pages, "Main page"),
-                (Tier::Pages, "Installed package")
-            ]
-        );
-        // Each `HOME` line names exactly one entry, so a renamed label fails
-        // here rather than quietly dropping a page from the overview.
-        for &(tier, label) in HOME {
+    fn the_overview_mounts_no_section() {
+        assert!((0..ENTRIES.len()).all(|i| !Route::Home.shows(i)));
+    }
+
+    /// One frame from each whole page, and each names a real `Pages` entry, so a
+    /// renamed label fails here rather than at the first load.
+    #[test]
+    fn each_overview_frame_comes_from_a_page() {
+        let sources: Vec<_> = HOME.iter().map(|f| f.source().href()).collect();
+        assert_eq!(sources, ["#/pages/main-page", "#/pages/installed-package"]);
+        for frame in HOME {
             let found = ENTRIES
                 .iter()
-                .filter(|e| e.tier == tier && e.label == label)
+                .filter(|e| e.tier == Tier::Pages && e.label == frame.from)
                 .count();
-            assert_eq!(found, 1, "{label}");
+            assert_eq!(found, 1, "{}", frame.from);
         }
+    }
+
+    /// The overview as it mounts: its two frames together, with no id drawn twice.
+    #[wasm_bindgen_test]
+    fn the_overview_draws_no_id_twice() {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), super::home);
+        let with_id = container.query_selector_all("[id]").unwrap();
+        let mut ids = Vec::new();
+        for i in 0..with_id.length() {
+            let el: web_sys::Element = with_id.item(i).unwrap().dyn_into().unwrap();
+            ids.push(el.id());
+        }
+        let frames = container.query_selector_all(".g-entry").unwrap().length();
+        drop(handle);
+        container.remove();
+        assert_eq!(frames, 2);
+        assert!(ids.iter().any(|id| id == "page-selecting"), "{ids:?}");
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "{ids:?}");
     }
 
     #[test]
