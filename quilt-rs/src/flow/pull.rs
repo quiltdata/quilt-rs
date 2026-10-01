@@ -1139,7 +1139,10 @@ mod tests {
         let tracked = tracked_map(["something-else.csv"]);
         let none = ChangeSet::new();
 
-        assert!(touch_set(never.clone(), &tracked, &none, SyncScope::IndividualFiles).is_empty());
+        assert_eq!(
+            touch_set(never.clone(), &tracked, &none, SyncScope::IndividualFiles),
+            [] as [PathBuf; 0]
+        );
         assert_eq!(
             touch_set(never.clone(), &tracked, &none, SyncScope::EntirePackage),
             never

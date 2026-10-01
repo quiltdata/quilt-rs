@@ -445,7 +445,7 @@ mod tests {
         let mut lineage = DomainLineage::new("/tmp/home");
 
         // Empty lineage should return empty vector
-        assert!(lineage.namespaces().is_empty());
+        assert_eq!(lineage.namespaces(), [] as [Namespace; 0]);
 
         // Add some packages
         lineage

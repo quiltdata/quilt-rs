@@ -374,7 +374,7 @@ mod tests {
         assert!(caret.disabled(), "the caret");
 
         found[0].click();
-        assert!(ran.get_untracked().is_empty());
+        assert_eq!(ran.get_untracked(), [] as [String; 0]);
     }
 
     #[wasm_bindgen_test]

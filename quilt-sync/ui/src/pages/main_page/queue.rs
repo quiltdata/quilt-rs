@@ -722,7 +722,7 @@ mod tests {
             &[host("h.io", true)],
             &[],
         );
-        assert!(items.is_empty());
+        assert_eq!(items, [] as [QueueItem; 0]);
     }
 
     #[wasm_bindgen_test]

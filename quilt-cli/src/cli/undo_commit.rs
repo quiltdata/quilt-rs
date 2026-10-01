@@ -642,7 +642,7 @@ mod tests {
             tracked(&cli_model, &namespace).await?,
             ["kept.txt", "value.txt"]
         );
-        assert!(changes(&cli_model, &namespace).await?.is_empty());
+        assert_eq!(changes(&cli_model, &namespace).await?, [] as [String; 0]);
         Ok(())
     }
 
@@ -690,7 +690,7 @@ mod tests {
         undo(&cli_model, &namespace).await?;
 
         assert_eq!(tokio::fs::read(home.join("value.txt")).await?, b"first");
-        assert!(changes(&cli_model, &namespace).await?.is_empty());
+        assert_eq!(changes(&cli_model, &namespace).await?, [] as [String; 0]);
         Ok(())
     }
 
