@@ -67,7 +67,6 @@ mod gallery {
     pub mod load_failure;
     pub mod old_revisions_inline;
     pub mod package_header;
-    pub mod package_size;
     pub mod packages;
     pub mod page;
     pub mod pane_section;
@@ -297,11 +296,6 @@ const ENTRIES: &[Entry] = &[
         Scenes / "Installed package",
         "File pane",
         file_pane::FilePaneScene
-    ),
-    entry!(
-        Scenes / "Old revisions",
-        "Package size in the context pane",
-        package_size::PackageSizeScene
     ),
     entry!(
         Scenes / "Old revisions",
