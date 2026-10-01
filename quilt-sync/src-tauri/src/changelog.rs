@@ -69,7 +69,7 @@ mod tests {
 
         let first = &entries[0];
         assert!(first.version.starts_with('v'), "version: {}", first.version);
-        assert!(!first.body.is_empty());
+        assert_ne!(first.body, "");
 
         // Only the top section can be unreleased; every one below it is dated.
         assert!(entries[1..].iter().all(|e| !e.date.is_empty()));

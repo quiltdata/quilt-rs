@@ -1783,11 +1783,9 @@ schemas:
                 .unwrap()
         );
         // Validation against an ungoverned selection yields no violations.
-        assert!(
-            cache
-                .validate("foo/bar", "wf", "", "", "foo/bar")
-                .await
-                .is_empty()
+        assert_eq!(
+            cache.validate("foo/bar", "wf", "", "", "foo/bar").await,
+            [] as [CommitViolation; 0]
         );
         Ok(())
     }
@@ -1839,11 +1837,9 @@ schemas:
     #[tokio::test]
     async fn validate_without_loaded_rules_is_clean() {
         let cache = WorkflowRulesCache::default();
-        assert!(
-            cache
-                .validate("foo/bar", "wf", "", "", "foo/bar")
-                .await
-                .is_empty()
+        assert_eq!(
+            cache.validate("foo/bar", "wf", "", "", "foo/bar").await,
+            [] as [CommitViolation; 0]
         );
     }
 

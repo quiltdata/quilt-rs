@@ -190,7 +190,7 @@ mod tests {
         // bucket too would be a second contract nothing on screen states.
         let rows = vec![row("user/alpha", None, Some("s3://plate-bucket"))];
 
-        assert!(filter_packages(rows, "plate").is_empty());
+        assert_eq!(filter_packages(rows, "plate"), [] as [ListRowData; 0]);
     }
 
     #[wasm_bindgen_test]

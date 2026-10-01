@@ -254,7 +254,7 @@ mod tests {
         let bytes = stream.collect().await?.to_vec();
 
         // Verify we can read the known test file
-        assert!(!bytes.is_empty());
+        assert_ne!(bytes, [] as [u8; 0]);
         assert_eq!(bytes, fs::read("fixtures/user-settings.mkfg").await?);
 
         Ok(())

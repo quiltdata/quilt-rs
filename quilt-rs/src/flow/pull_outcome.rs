@@ -379,7 +379,7 @@ mod tests {
     fn a_changed_path_is_not_an_addition() {
         let base = manifest_of(vec![row("same-name.csv", b"before")]);
         let latest = manifest_of(vec![row("same-name.csv", b"after")]);
-        assert!(remote_additions(&base, &latest).is_empty());
+        assert_eq!(remote_additions(&base, &latest), [] as [PathBuf; 0]);
     }
 
     fn behind(changes: ChangeSet) -> InstalledPackageStatus {
