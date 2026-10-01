@@ -27,6 +27,10 @@ pub use status::ChangeSet;
 pub use status::InstalledPackageStatus;
 pub use status::UpstreamState;
 
+mod state;
+pub use state::PackageState;
+pub use state::PackageStateReport;
+
 mod package;
 pub use package::CommitState;
 pub use package::LineagePaths;

@@ -299,7 +299,15 @@ enum Commands {
         host: Host,
     },
     /// List installed packages
-    List,
+    ///
+    /// Without `--fetch`, reads only what this machine recorded, so each status
+    /// is as of the package's last install, pull or push.
+    List {
+        /// Check each package's remote now, and count files changed since the
+        /// last commit. Reads the remotes; leaves local packages unchanged.
+        #[arg(long)]
+        fetch: bool,
+    },
     /// List the revisions of a package this copy has, newest first.
     ///
     /// Ordered by when this copy obtained each revision, which is all that is
@@ -507,9 +515,11 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 Ok(Std::Err(Error::LoginRequired(host)))
             }
         }
-        Commands::List => {
-            log::info!("Listing installed packages");
-            Ok(list::command(m).await)
+        Commands::List { fetch } => {
+            let args = list::Input { fetch };
+
+            log::info!("Listing installed packages {args:?}");
+            Ok(list::command(m, args).await)
         }
         Commands::Log { pkg } => {
             let namespace = pkg.resolve(&m).await?;
@@ -906,11 +916,11 @@ mod tests {
     fn json_flag_parses_before_or_after_the_subcommand() {
         let after = Args::try_parse_from(["quilt", "list", "--json"]).expect("parses");
         assert!(after.json);
-        assert!(matches!(after.command, Commands::List));
+        assert!(matches!(after.command, Commands::List { fetch: false }));
 
         let before = Args::try_parse_from(["quilt", "--json", "list"]).expect("parses");
         assert!(before.json);
-        assert!(matches!(before.command, Commands::List));
+        assert!(matches!(before.command, Commands::List { fetch: false }));
 
         let status = Args::try_parse_from(["quilt", "status", "-n", "demo/sales", "--json"])
             .expect("parses");
@@ -1122,7 +1132,7 @@ mod tests {
             domain: Some(domain_temp_dir.path().to_path_buf()),
             verbose: false,
             json: false,
-            command: Commands::List,
+            command: Commands::List { fetch: false },
         };
 
         let mut output = Vec::new();
@@ -2070,7 +2080,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             json: false,
-            command: Commands::List,
+            command: Commands::List { fetch: false },
         };
 
         // Default home initialization now reaches the same write-protected
@@ -2091,7 +2101,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
             json: false,
-            command: Commands::List,
+            command: Commands::List { fetch: false },
         };
 
         // Test init with empty domain
@@ -2141,7 +2151,7 @@ mod tests {
                     message: Some("first".to_string()),
                 },
             ),
-            ("list", Commands::List),
+            ("list", Commands::List { fetch: false }),
             ("status", Commands::Status { pkg: pkg() }),
             (
                 "commit",
