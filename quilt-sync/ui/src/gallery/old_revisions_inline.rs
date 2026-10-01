@@ -1,24 +1,44 @@
-//! Option A · remove from the popover — an exploration for removing old revisions, not a shipped design.
+//! Remove old revisions from the "Revisions you have" popover — the chosen
+//! design, staged with stub data.
 //!
 //! # Where it lives
 //!
 //! In the "Revisions you have" surface the context pane already opens, at the
 //! pane's 280px. The list is the thing a reader is looking at when they wonder
-//! why there are six of them, so the removal sits on the rows rather than in a
-//! settings page that has to name the package back to them.
+//! why there are six of them, so the removal sits on the rows.
 //!
-//! # The confirmation is an arm, not a dialog
+//! # Every removal is confirmed by the kit's `ConfirmDialog`
 //!
-//! The surface is an `auto` popover, and a modal opened from it takes focus into
-//! the top layer and light-dismisses the list it was asked about. So the footer
-//! button confirms in place: the first press turns it into the Danger verb with
-//! the count and the size in it, the second removes. Escape and focus leaving
-//! disarm it. Escape while armed is swallowed, so the first one disarms and only
-//! a second closes the surface.
+//! The footer's "Remove N older" and each row's trash open the same dialog,
+//! whose sentence says what goes and what it frees. Cancel is first and the
+//! verb is the Danger `Remove`, so the kit's rule — only `ConfirmDialog` draws a
+//! Danger button — holds without an exception.
 //!
-//! A row's own trash icon removes on one press. Every removable row is a
-//! published revision — an unpublished one is protected — so what it undoes can
-//! be obtained again; the bulk action is the one that earns the arm.
+//! **The popover stays open behind the dialog.** `showModal()` hides every
+//! `auto` popover *except the dialog's own popover ancestors*, and a click inside
+//! the dialog is a click inside its popover ancestor, so light dismiss leaves it
+//! alone too. So the dialog is mounted inside the popover's body, and the list it
+//! was asked about is still there when it closes — the rows go disabled, then
+//! update in place.
+//!
+//! # The dialog closes on Remove; the work shows elsewhere
+//!
+//! The verb's action starts the removal and answers `Ok` at once, unlike the
+//! header's commands, which hold the dialog until they settle. A sweep can take a
+//! while, and the owner asked for its progress in the appbar and for the remove
+//! buttons to refuse meanwhile — neither readable behind a modal. While it runs,
+//! the appbar's activity line says "Removing 4 old revisions of user/plate-07…",
+//! and every remove button is disabled, as it is while the package syncs.
+//!
+//! # The result is a notification from the stack
+//!
+//! The toast stack's, not the package page's outcome band. The band sits in the
+//! flow under the appbar and pushes the page down, and an open popover is in the
+//! top layer: it would stay where its trigger used to be. The stack floats, it
+//! outlives the page — a sweep the reader navigated away from still reports —
+//! and it is how autopull already reports a finished pull (`pull_toast.rs`). The
+//! gallery cannot mount `ToastStack`, which reads the backend on mount, so the
+//! card here is a copy of its markup and its v2 styles.
 //!
 //! # Sizes are what removing frees
 //!
@@ -28,45 +48,52 @@
 //! shared are now its alone. The footer's figure is computed for the set, which
 //! is why it is larger than the rows added up.
 //!
-//! # Kit changes the real build needs
+//! # What the real build needs
 //!
 //! - `icons::trash()` — drawn here from Octicons' `trash-16` until then.
 //! - `RevisionRow` wants a trailing-action slot and a detail after the time
 //!   (`3 days ago · frees 1.2 MB`); composed here as a wrapper and a third line.
-//! - `Button` wants a `node_ref` or `on_keydown`/`on_blur` so the arm can focus
-//!   and disarm itself; composed here with a wrapping `span` and delegated
-//!   events.
-//! - `ButtonVariant::Danger`'s rule ("only `ConfirmDialog` draws one") would
-//!   have to admit an armed button as a confirmation.
+//! - `ActivityKind` has one variant, `Autopull`, which this stubs with. The
+//!   build needs a second (`RemoveRevisions`, say), and `Activities` needs a slot
+//!   per producer: autopull's feed replaces the whole list on every event, so a
+//!   second writer's entry would be wiped by the next tick.
+//! - The backend: a command that removes a set of revisions of one namespace and
+//!   answers what it freed, refusing while the package is locked; the activity
+//!   event while it runs; and a `ToastCenter::post` of the result when it ends.
 
-use leptos::ev::FocusEvent;
-use leptos::ev::KeyboardEvent;
-use leptos::ev::MouseEvent;
+use leptos::context::Provider;
 use leptos::prelude::*;
-use wasm_bindgen::JsCast;
 
 use crate::Cell;
 use crate::Scene;
 use crate::gallery::forms::after_a_beat;
+use crate::kit::Activities;
+use crate::kit::Activity;
+use crate::kit::ActivityKind;
 use crate::kit::Align;
 use crate::kit::AnchoredOverlay;
-use crate::kit::Banner;
-use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CatalogLink;
+use crate::kit::ConfirmDialog;
 use crate::kit::IconButton;
 use crate::kit::IconButtonVariant;
+use crate::kit::PageLayout;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
-use crate::kit::StateTone;
+use crate::kit::Submit;
+use crate::kit::icons;
 
 const NAMESPACE: &str = "user/plate-07";
 
 const HOUR: f64 = 3_600_000.0;
 const DAY: f64 = 24.0 * HOUR;
 const MINUTE: f64 = HOUR / 60.0;
+
+/// How long the stub removal runs, and the stub sync beside it.
+const REMOVING_MS: i32 = 2500;
+const SYNCING_MS: i32 = 4000;
 
 fn ago(ms: f64) -> f64 {
     js_sys::Date::now() - ms
@@ -139,6 +166,10 @@ const REVS: [Rev; 6] = [
     },
 ];
 
+const ALL: [usize; 6] = [0, 1, 2, 3, 4, 5];
+const KEPT: [usize; 2] = [0, 1];
+const OLDER: [usize; 4] = [2, 3, 4, 5];
+
 /// Objects shared by exactly two revisions and nothing else, in tenths of a MB.
 /// Freed only once neither of the pair is left, which is how the set of 3–6
 /// frees 6.9 MB against rows that add up to 6.2.
@@ -158,8 +189,8 @@ fn freed(set: &[usize], remaining: &[usize]) -> u32 {
     own + shared
 }
 
-/// A size, honestly: most old revisions free little or nothing, and a figure
-/// rounded to `0.2 MB` would claim a precision the reader has no use for.
+/// A size on a row or the footer, honestly: most old revisions free little or
+/// nothing, and `0.2 MB` would claim a precision nobody has a use for.
 fn size(tenths: u32) -> String {
     match tenths {
         0 => "nothing".to_string(),
@@ -168,11 +199,28 @@ fn size(tenths: u32) -> String {
     }
 }
 
-fn revisions(count: usize) -> String {
+/// The same figure in a sentence, where "frees nothing" and "< 1" read badly.
+fn spelled(tenths: u32) -> String {
+    match tenths {
+        0 => "no space".to_string(),
+        1..=9 => "less than 1 MB".to_string(),
+        _ => size(tenths),
+    }
+}
+
+fn plural(count: usize, one: &str, many: &str) -> String {
     if count == 1 {
-        "1 revision".to_string()
+        format!("1 {one}")
     } else {
-        format!("{count} revisions")
+        format!("{count} {many}")
+    }
+}
+
+/// A row's name in a sentence: its message in quotes, or what it lacks.
+fn named(i: usize) -> String {
+    match REVS[i].message {
+        "" => "the revision with no message".to_string(),
+        message => format!("\u{201c}{message}\u{201d}"),
     }
 }
 
@@ -194,48 +242,88 @@ fn trash() -> AnyView {
     .into_any()
 }
 
-/// Where the footer stands. `Removed` and `Partial` are the result line; the
-/// others are what the button is doing.
+/// What the confirmation asks: the set, and the words for its title and its
+/// one sentence.
 #[derive(Clone, Debug, PartialEq)]
-enum Phase {
-    Idle,
-    Armed,
-    Working,
-    Removed {
-        count: usize,
-        freed: u32,
-    },
-    /// The package is locked by a sync. Nothing runs, and the words say which
-    /// package — the surface belongs to one, but the refusal is read later.
-    Busy,
-    Failed,
-    Partial {
-        removed: usize,
-        of: usize,
-        freed: u32,
-        left: usize,
-    },
+struct Ask {
+    set: Vec<usize>,
+    title: &'static str,
+    consequence: String,
 }
 
-/// One surface's state. Every cell owns one, so every cell is live from the
-/// point it starts at.
+impl Ask {
+    /// The footer's: every removable row, freed as a set.
+    fn older(set: &[usize], remaining: &[usize]) -> Self {
+        Self {
+            set: set.to_vec(),
+            title: "Remove old revisions",
+            consequence: format!(
+                "Remove {}? This frees {}.",
+                plural(set.len(), "older revision", "older revisions"),
+                spelled(freed(set, remaining)),
+            ),
+        }
+    }
+
+    /// A row's: that revision alone.
+    fn one(i: usize, remaining: &[usize]) -> Self {
+        Self {
+            set: vec![i],
+            title: "Remove a revision",
+            consequence: format!(
+                "Remove {}? This frees {}.",
+                named(i),
+                spelled(freed(&[i], remaining)),
+            ),
+        }
+    }
+}
+
+/// One surface's state, with the page around it: its own activity line and its
+/// own notification, so every cell is live from the point it starts at and no
+/// two cells share a bar.
 #[derive(Clone, Copy)]
-struct Model {
+struct Flow {
     remaining: RwSignal<Vec<usize>>,
-    phase: RwSignal<Phase>,
-    /// Set while the arm swaps one button for another. The idle button is
-    /// removed while it has focus, and a `focusout` from it then must not read
-    /// as the reader leaving.
-    settling: StoredValue<bool>,
+    /// The set being removed, while it is.
+    removing: RwSignal<Option<Vec<usize>>>,
+    /// The package is locked by a sync. Every remove button refuses.
+    syncing: RwSignal<bool>,
+    activities: Activities,
+    /// The notification's sentence, once a removal has ended.
+    toast: RwSignal<Option<String>>,
+    /// The confirmation: what it asks, and whether it is open.
+    ask: RwSignal<Option<Ask>>,
+    open: RwSignal<bool>,
 }
 
-impl Model {
-    fn new(remaining: &[usize], phase: Phase) -> Self {
+impl Flow {
+    fn new(remaining: &[usize]) -> Self {
         Self {
             remaining: RwSignal::new(remaining.to_vec()),
-            phase: RwSignal::new(phase),
-            settling: StoredValue::new(false),
+            removing: RwSignal::new(None),
+            syncing: RwSignal::new(false),
+            activities: Activities::new(),
+            toast: RwSignal::new(None),
+            ask: RwSignal::new(None),
+            open: RwSignal::new(false),
         }
+    }
+
+    /// Held mid-removal of `set`, for a cell to show still.
+    fn removing(remaining: &[usize], set: &[usize]) -> Self {
+        let flow = Self::new(remaining);
+        flow.removing.set(Some(set.to_vec()));
+        flow.say(Some(Self::progress(set.len())));
+        flow
+    }
+
+    /// Held mid-sync, for a cell to show still.
+    fn syncing(remaining: &[usize]) -> Self {
+        let flow = Self::new(remaining);
+        flow.syncing.set(true);
+        flow.say(Some(format!("Getting latest for {NAMESPACE}\u{2026}")));
+        flow
     }
 
     fn removable(self) -> Vec<usize> {
@@ -246,58 +334,104 @@ impl Model {
             .collect()
     }
 
+    /// Every remove button's `disabled`: a sync holds the package's lock, and a
+    /// removal already running owns the store.
     fn blocked(self) -> bool {
-        matches!(self.phase.get(), Phase::Working | Phase::Busy)
+        self.syncing.get() || self.removing.get().is_some()
     }
 
-    /// Removes `set` after a beat, as the command would. The gallery's always
-    /// succeeds; the failure and the partial are starting points, not outcomes.
-    fn remove(self, set: Vec<usize>) {
-        self.phase.set(Phase::Working);
+    fn progress(count: usize) -> String {
+        format!(
+            "Removing {} of {NAMESPACE}\u{2026}",
+            plural(count, "old revision", "old revisions")
+        )
+    }
+
+    /// The appbar's line. The kind is a stub: see the module comment.
+    fn say(self, label: Option<String>) {
+        self.activities.set(
+            label
+                .map(|label| Activity {
+                    kind: ActivityKind::Autopull,
+                    label,
+                })
+                .into_iter()
+                .collect(),
+        );
+    }
+
+    fn confirm(self, ask: Ask) {
+        self.ask.set(Some(ask));
+        self.open.set(true);
+    }
+
+    /// Starts removing `set` and returns, as the verb's action does: the dialog
+    /// closes, the line takes over, and the notification ends it.
+    fn start(self, set: Vec<usize>) {
+        self.removing.set(Some(set.clone()));
+        self.toast.set(None);
+        self.say(Some(Self::progress(set.len())));
         leptos::task::spawn_local(async move {
-            after_a_beat(1200).await;
+            after_a_beat(REMOVING_MS).await;
             let freed = freed(&set, &self.remaining.get_untracked());
             self.remaining
                 .update(|rows| rows.retain(|i| !set.contains(i)));
-            self.phase.set(Phase::Removed {
-                count: set.len(),
-                freed,
-            });
+            self.removing.set(None);
+            self.say(None);
+            self.toast.set(Some(format!(
+                "Removed {} of {NAMESPACE} · freed {}",
+                plural(set.len(), "old revision", "old revisions"),
+                spelled(freed),
+            )));
         });
     }
 
-    /// One row, at once. Its figure was what it frees alone, and that is what
-    /// the result line reports.
-    fn remove_one(self, i: usize) {
-        let freed = freed(&[i], &self.remaining.get_untracked());
-        self.remaining.update(|rows| rows.retain(|&r| r != i));
-        self.phase.set(Phase::Removed { count: 1, freed });
+    /// The stub sync: the lock for a few seconds, and autopull's own line.
+    fn sync(self) {
+        self.syncing.set(true);
+        self.say(Some(format!("Getting latest for {NAMESPACE}\u{2026}")));
+        leptos::task::spawn_local(async move {
+            after_a_beat(SYNCING_MS).await;
+            self.syncing.set(false);
+            if self.removing.get_untracked().is_none() {
+                self.say(None);
+            }
+        });
+    }
+
+    fn reset(self) {
+        self.remaining.set(ALL.to_vec());
+        self.removing.set(None);
+        self.syncing.set(false);
+        self.toast.set(None);
+        self.say(None);
     }
 }
 
 /// One row: the kit's revision row, the trash after its catalog icon, and a
 /// third line saying what removing it frees — or why it cannot be removed.
-fn row(i: usize, model: Model) -> AnyView {
+fn row(i: usize, flow: Flow) -> AnyView {
     let rev = &REVS[i];
     let note = if let Some((tag, why)) = rev.kept {
         view! { <span class="g-ori-note" title=why>{tag}</span> }.into_any()
     } else {
-        let words = move || format!("frees {}", size(freed(&[i], &model.remaining.get())));
+        let words = move || format!("frees {}", size(freed(&[i], &flow.remaining.get())));
         view! { <span class="g-ori-note">{words}</span> }.into_any()
     };
     // A kept row holds the trash's width empty, so every catalog icon in the
     // column lines up — except when the whole list is kept and no row has one.
     let action = if rev.kept.is_some() {
-        let holds = move || model.removable().is_empty().then_some("display:none");
+        let holds = move || flow.removable().is_empty().then_some("display:none");
         view! { <span class="g-ori-gap" aria-hidden="true" style=holds></span> }.into_any()
     } else {
+        let label = format!("Remove {}", named(i));
         view! {
             <IconButton
                 icon=trash()
-                aria_label="Remove this revision"
+                aria_label=label
                 variant=IconButtonVariant::Invisible
-                disabled=Signal::derive(move || model.blocked())
-                on_click=move |_| model.remove_one(i)
+                disabled=Signal::derive(move || flow.blocked())
+                on_click=move |_| flow.confirm(Ask::one(i, &flow.remaining.get_untracked()))
             />
         }
         .into_any()
@@ -319,205 +453,182 @@ fn row(i: usize, model: Model) -> AnyView {
     .into_any()
 }
 
-/// Focuses the button inside `holder` once the swap has drawn it, then lets
-/// `focusout` count again.
-fn focus_after_swap(holder: NodeRef<leptos::html::Span>, settling: StoredValue<bool>) {
-    request_animation_frame(move || {
-        if let Some(button) = holder
-            .get_untracked()
-            .and_then(|el| el.query_selector("button").ok().flatten())
-            .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
-        {
-            drop(button.focus());
-        }
-        settling.set_value(false);
-    });
-}
-
-/// The footer's button, in whichever of its four faces the phase gives it.
-fn bulk(model: Model, removable: &[usize]) -> AnyView {
-    let holder = NodeRef::<leptos::html::Span>::new();
-    let count = removable.len();
-    let total = size(freed(removable, &model.remaining.get_untracked()));
-    let arm = move |_: MouseEvent| {
-        model.settling.set_value(true);
-        model.phase.set(Phase::Armed);
-        focus_after_swap(holder, model.settling);
-    };
-    let set = removable.to_vec();
-    let confirm = move |_: MouseEvent| model.remove(set.clone());
-
-    // Escape disarms and is spent doing it, so the surface stays open; a second
-    // one reaches the popover and closes it.
-    let on_keydown = move |ev: KeyboardEvent| {
-        if ev.key() == "Escape" && model.phase.get_untracked() == Phase::Armed {
-            ev.prevent_default();
-            ev.stop_propagation();
-            model.settling.set_value(true);
-            model.phase.set(Phase::Idle);
-            focus_after_swap(holder, model.settling);
-        }
-    };
-    let on_focusout = move |_: FocusEvent| {
-        if !model.settling.get_value() && model.phase.get_untracked() == Phase::Armed {
-            model.phase.set(Phase::Idle);
-        }
-    };
-    // WebKit does not focus a button it is clicking, so pressing the armed
-    // one would first blur it and disarm it under the pointer. Keeping the
-    // focus where it is lets the click land on the button it was aimed at.
-    let on_mousedown = move |ev: MouseEvent| {
-        if model.phase.get_untracked() == Phase::Armed {
-            ev.prevent_default();
-        }
-    };
-
-    let face = move || match model.phase.get() {
-        Phase::Armed => view! {
-            <Button variant=ButtonVariant::Danger on_click=confirm.clone()>
-                {format!("Remove {count}? frees {total}")}
-            </Button>
-        }
-        .into_any(),
-        Phase::Working => view! {
-            <Button loading=true on_click=|_| ()>
-                {format!("Removing {count}\u{2026}")}
-            </Button>
-        }
-        .into_any(),
-        phase => view! {
-            <Button disabled=phase == Phase::Busy on_click=arm>
-                {format!("Remove {count} older · frees {total}")}
-            </Button>
-        }
-        .into_any(),
-    };
-    view! {
-        <span
-            class="g-ori-arm"
-            node_ref=holder
-            on:keydown=on_keydown
-            on:focusout=on_focusout
-            on:mousedown=on_mousedown
-        >
-            {face}
-        </span>
-    }
-    .into_any()
-}
-
-/// What the footer says above its button, if anything.
-fn status(model: Model, removable: &[usize]) -> Option<AnyView> {
-    Some(match model.phase.get() {
-        Phase::Removed { count, freed } => view! {
-            <p class="g-ori-result">
-                {StateTone::Success.glyph()}
-                <span>{format!("Removed {} · freed {}", revisions(count), size(freed))}</span>
-            </p>
-        }
-        .into_any(),
-        Phase::Busy => view! {
-            <p class="g-ori-muted">
-                {format!("{NAMESPACE} is busy syncing — try again in a moment")}
-            </p>
-        }
-        .into_any(),
-        Phase::Failed => {
-            let set = removable.to_vec();
-            view! {
-                <Banner variant=BannerVariant::Critical>
-                    "Could not remove old revisions: a file in one is open in another program."
-                </Banner>
-                <Button on_click=move |_| model.remove(set.clone())>"Try again"</Button>
-            }
-            .into_any()
-        }
-        Phase::Partial {
-            removed,
-            of,
-            freed,
-            left,
-        } => {
-            let message = REVS[left].message;
-            view! {
-                <p class="g-ori-result">
-                    <span>{format!("Removed {removed} of {of} · freed {}", size(freed))}</span>
-                </p>
-                <Banner variant=BannerVariant::Critical>
-                    {format!("\u{201c}{message}\u{201d} could not be removed: a file in it is open in another program.")}
-                </Banner>
-                <Button on_click=move |_| model.remove(vec![left])>"Try again"</Button>
-            }
-            .into_any()
-        }
-        Phase::Idle | Phase::Armed | Phase::Working if removable.is_empty() => view! {
-            <p class="g-ori-muted">"Nothing to remove — every revision here is in use"</p>
-        }
-        .into_any(),
-        _ => return None,
-    })
-}
-
 /// The footer. Absent when the list is the current revision alone: there is
 /// nothing to say about removing, not even that nothing can be.
-///
-/// The button is rebuilt only when what it would remove changes, or when a
-/// retry takes its place — never on the arm, which has to keep the element it
-/// just focused.
-fn footer(model: Model) -> impl IntoView {
-    // Failure and partial own the footer's one action, `Try again`.
-    let retrying =
-        Memo::new(move |_| matches!(model.phase.get(), Phase::Failed | Phase::Partial { .. }));
+fn footer(flow: Flow) -> impl IntoView {
     move || {
-        let remaining = model.remaining.get();
-        if remaining == [0] {
+        if flow.remaining.get() == [0] {
             return None;
         }
-        let removable = model.removable();
-        let offers = !removable.is_empty() && !retrying.get();
+        let removable = flow.removable();
+        let line = if flow.syncing.get() {
+            Some(format!(
+                "{NAMESPACE} is busy syncing \u{2014} try again in a moment"
+            ))
+        } else if removable.is_empty() {
+            Some("Nothing to remove \u{2014} every revision here is in use".to_string())
+        } else {
+            None
+        };
+        let button = (!removable.is_empty()).then(|| {
+            let count = removable.len();
+            let total = size(freed(&removable, &flow.remaining.get_untracked()));
+            // Spinning when the set it names is the one being removed; only
+            // disabled when a row's removal or a sync holds it.
+            let named = removable.clone();
+            let loading =
+                Signal::derive(move || flow.removing.get().as_deref() == Some(&named[..]));
+            let disabled = Signal::derive(move || flow.blocked());
+            let set = removable.clone();
+            view! {
+                <Button
+                    loading=loading
+                    disabled=disabled
+                    on_click=move |_| {
+                        flow.confirm(Ask::older(&set, &flow.remaining.get_untracked()));
+                    }
+                >
+                    {format!("Remove {count} older · frees {total}")}
+                </Button>
+            }
+        });
         Some(view! {
             <PaneSection>
-                // Kept mounted with the footer, so a result line arriving in it
-                // is announced rather than inserted with its region.
-                <div class="g-ori-footer" role="status">
-                    {move || status(model, &model.removable())}
-                    {offers.then(|| bulk(model, &removable))}
+                <div class="g-ori-footer">
+                    {line.map(|line| view! { <p class="g-ori-muted">{line}</p> })}
+                    {button}
                 </div>
             </PaneSection>
         })
     }
 }
 
+/// The real confirmation, rebuilt for each question — `ConfirmDialog` takes its
+/// words once. Mounted inside the surface's body, which is what keeps the
+/// popover open behind it (see the module comment).
+fn dialog(flow: Flow) -> impl IntoView {
+    move || {
+        flow.ask.get().map(|ask| {
+            let Ask {
+                set,
+                title,
+                consequence,
+            } = ask;
+            view! {
+                <ConfirmDialog
+                    open=flow.open
+                    title=title
+                    consequence=consequence
+                    confirm=Submit::new(
+                        "Remove",
+                        move || {
+                            let set = set.clone();
+                            async move {
+                                flow.start(set);
+                                Ok(())
+                            }
+                        },
+                    )
+                />
+            }
+        })
+    }
+}
+
 /// The surface's contents: the rows, then the footer, which `PaneSection`
 /// rules off.
-fn body(model: Model) -> AnyView {
+fn body(flow: Flow) -> AnyView {
     view! {
         <div class="g-ori-body">
             <PaneSection>
                 <div class="g-ori-rows">
                     {move || {
-                        model.remaining.get().into_iter().map(|i| row(i, model)).collect_view()
+                        flow.remaining.get().into_iter().map(|i| row(i, flow)).collect_view()
                     }}
                 </div>
             </PaneSection>
-            {footer(model)}
+            {footer(flow)}
+            {dialog(flow)}
         </div>
     }
     .into_any()
 }
 
 /// The surface drawn in the page, for a cell to hold still. The same border,
-/// padding and shadow the overlay's surface draws, so the static cells read as
-/// the popover they are copies of.
-fn surface(remaining: &[usize], phase: Phase) -> AnyView {
-    view! { <div class="g-ori-surface">{body(Model::new(remaining, phase))}</div> }.into_any()
+/// padding and shadow the overlay's surface draws, so the stills read as the
+/// popover they are copies of.
+fn surface(flow: Flow) -> AnyView {
+    view! { <div class="g-ori-surface">{body(flow)}</div> }.into_any()
+}
+
+fn appbar_actions() -> AnyView {
+    view! {
+        <Button leading_visual=icons::sync() on_click=|_| ()>
+            "Refresh"
+        </Button>
+        <Button leading_visual=icons::gear() on_click=|_| ()>
+            "Settings"
+        </Button>
+    }
+    .into_any()
+}
+
+/// The appbar, with this flow's activity line in it.
+fn appbar(flow: Flow) -> AnyView {
+    view! {
+        <div class="g-window g-window--bar">
+            <Provider value=flow.activities>
+                <PageLayout heading="Package" actions=appbar_actions()>
+                    ""
+                </PageLayout>
+            </Provider>
+        </div>
+    }
+    .into_any()
+}
+
+/// The notification, as `ToastStack` draws a `Success` card: the sentence and
+/// a dismiss. A copy, because the stack reads the backend on mount.
+fn toast(flow: Flow) -> impl IntoView {
+    move || {
+        flow.toast.get().map(|said| {
+            view! {
+                <div class="g-ori-toast" role="status">
+                    <span class="g-ori-toast__body">{said}</span>
+                    <button
+                        class="g-ori-toast__close"
+                        type="button"
+                        aria-label="Dismiss"
+                        on:click=move |_| flow.toast.set(None)
+                    >
+                        "\u{2715}"
+                    </button>
+                </div>
+            }
+        })
+    }
+}
+
+/// The page around a still surface: the appbar on top, the notification where
+/// the stack hangs, and the surface where the pane's popover opens.
+fn staged(flow: Flow) -> AnyView {
+    view! {
+        <div class="g-ori-stage">
+            {appbar(flow)}
+            <div class="g-ori-toasts">{toast(flow)}</div>
+            <div class="g-ori-page g-ori-page--still">
+                <div class="g-ori-files">"the file list"</div>
+                {surface(flow)}
+            </div>
+        </div>
+    }
+    .into_any()
 }
 
 /// The pane with the real trigger and the real popover, beside a stand-in for
 /// the file list — the surface opens leftwards over it, as on the page.
-fn live() -> AnyView {
+fn pane(flow: Flow) -> AnyView {
     let open = RwSignal::new(false);
-    let model = Model::new(&[0, 1, 2, 3, 4, 5], Phase::Idle);
     let trigger = move |surface_id: String| {
         view! {
             <Button
@@ -525,7 +636,7 @@ fn live() -> AnyView {
                 aria_expanded=open
                 aria_controls=surface_id
             >
-                {move || format!("Revisions you have ({})", model.remaining.get().len())}
+                {move || format!("Revisions you have ({})", flow.remaining.get().len())}
             </Button>
         }
         .into_any()
@@ -543,7 +654,7 @@ fn live() -> AnyView {
                             aria_label="Revisions you have"
                             align=Align::End
                         >
-                            {body(model)}
+                            {body(flow)}
                         </AnchoredOverlay>
                     </PaneSection>
                 </Card>
@@ -553,56 +664,129 @@ fn live() -> AnyView {
     .into_any()
 }
 
-const ALL: [usize; 6] = [0, 1, 2, 3, 4, 5];
+/// The whole flow, live: the appbar, the stack's slot and the pane, with a
+/// stub sync to start and a reset.
+///
+/// The slot keeps its height when empty. A notification arriving in the flow
+/// would push the pane down under a popover that stays put — the very thing
+/// the real stack floats to avoid.
+fn live() -> AnyView {
+    let flow = Flow::new(&ALL);
+    view! {
+        <div class="g-ori-stage">
+            <div class="g-inline">
+                <Button
+                    disabled=Signal::derive(move || flow.syncing.get())
+                    on_click=move |_| flow.sync()
+                >
+                    "Start a sync (4 s)"
+                </Button>
+                <Button on_click=move |_| flow.reset()>"Reset"</Button>
+            </div>
+            {appbar(flow)}
+            <div class="g-ori-toasts g-ori-toasts--held">{toast(flow)}</div>
+            {pane(flow)}
+        </div>
+    }
+    .into_any()
+}
+
+/// The confirmation inline, at the modal's width, beside a button that opens
+/// the real one — a live modal blocks the gallery, so the copy is what a
+/// screenshot reads. The same pieces `Dialog` and `ConfirmDialog` draw.
+fn confirmation(ask: Ask) -> AnyView {
+    let live = RwSignal::new(false);
+    let Ask {
+        title, consequence, ..
+    } = ask;
+    view! {
+        <div class="g-bars">
+            <div class="g-ori-dialog">
+                <h2 class="g-ori-dialog__title">{title}</h2>
+                <p class="g-consequence">{consequence.clone()}</p>
+                // The footer, in the dialog's own arrangement: right-aligned, Cancel first.
+                <div class="g-inline g-inline--end g-ori-dialog__footer">
+                    <Button on_click=move |_| ()>"Cancel"</Button>
+                    <Button variant=ButtonVariant::Danger on_click=move |_| ()>"Remove"</Button>
+                </div>
+            </div>
+            <div class="g-inline">
+                <Button on_click=move |_| live.set(true)>"Open the real one"</Button>
+            </div>
+        </div>
+        <ConfirmDialog
+            open=live
+            title=title
+            consequence=consequence
+            confirm=Submit::new(
+                "Remove",
+                || async {
+                    after_a_beat(700).await;
+                    Ok(())
+                },
+            )
+        />
+    }
+    .into_any()
+}
 
 const NOTE: &str = "Removal where the list already is: the context pane's \"Revisions you have\" \
-    surface, at the pane's width. A removable row ends in a trash icon after its catalog icon \
-    and says what removing it frees alone — often less than 1 MB or nothing, which is the \
-    truth about old revisions. Protected rows say why in a muted tag, and hovering the tag \
-    gives the sentence. \
+    surface, at the pane's width. A removable row ends in a trash icon and says what removing \
+    it frees alone — often less than 1 MB or nothing, which is the truth about old revisions. \
+    Protected rows say why in a muted tag; hover it for the sentence. \
     \
-    The footer removes every removable row. It confirms in place, because a modal would \
-    light-dismiss the popover: press it once and it turns into the Danger verb with the \
-    count and the size; press again to remove; Escape or tabbing away disarms. Every cell \
-    is live from where it starts. Remove one row and watch the others' figures move: \
-    objects it shared with another are now that one's alone.";
+    The footer and every trash open the kit's ConfirmDialog, which says what goes and what it \
+    frees, Cancel first and the Danger Remove last. The dialog is mounted inside the popover, \
+    so the popover stays open behind it. Remove closes the dialog; while the removal runs the \
+    appbar says so and every remove button refuses, as it does while the package syncs. The \
+    end is a notification from the stack, and the list drops to what is left. \
+    \
+    The live cell walks it all with stub delays: open the surface, remove a row or the lot, \
+    start a sync to watch the buttons refuse, and reset.";
 
 #[component]
 pub fn OldRevisionsInlineScene() -> impl IntoView {
+    let remove_one = Ask::one(4, &ALL);
     view! {
-        <Scene title="Option A · remove from the popover" note=NOTE>
-            <Cell full=true label="live — open the surface; remove a row, or arm the footer">
+        <Scene title="Remove old revisions" note=NOTE>
+            <Cell full=true label="live — the whole flow, with a stub sync and a reset">
                 {live()}
             </Cell>
-            <Cell wide=true label="the ordinary case — four removable, two kept">
-                {surface(&ALL, Phase::Idle)}
+            <Cell wide=true label="idle — four removable, two protected">
+                {surface(Flow::new(&ALL))}
             </Cell>
-            <Cell wide=true label="armed — the second press removes; Escape or blur disarms">
-                {surface(&ALL, Phase::Armed)}
+            <Cell wide=true label="confirm from the footer">
+                {confirmation(Ask::older(&OLDER, &ALL))}
             </Cell>
-            <Cell wide=true label="working — rows hold still, nothing can be pressed">
-                {surface(&ALL, Phase::Working)}
+            <Cell wide=true label="confirm from a row — Initial upload">
+                {confirmation(remove_one)}
             </Cell>
-            <Cell wide=true label="the result line, in the footer">
-                {surface(&[0, 1], Phase::Removed { count: 4, freed: 69 })}
+            <Cell wide=true label="confirm from a row that frees nothing">
+                {confirmation(Ask::one(5, &ALL))}
+            </Cell>
+            <Cell full=true label="removing — the appbar says so, every button refuses">
+                {staged(Flow::removing(&ALL, &OLDER))}
+            </Cell>
+            <Cell full=true label="done — the notification, and the two kept rows">
+                {
+                    let flow = Flow::new(&KEPT);
+                    flow.toast
+                        .set(
+                            Some(
+                                format!("Removed 4 old revisions of {NAMESPACE} · freed 6.9 MB"),
+                            ),
+                        );
+                    staged(flow)
+                }
+            </Cell>
+            <Cell full=true label="busy syncing — autopull's line, every button refuses">
+                {staged(Flow::syncing(&ALL))}
+            </Cell>
+            <Cell wide=true label="everything protected — nothing to remove">
+                {surface(Flow::new(&KEPT))}
             </Cell>
             <Cell wide=true label="only the current revision — no footer, no icons">
-                {surface(&[0], Phase::Idle)}
-            </Cell>
-            <Cell wide=true label="everything protected">
-                {surface(&[0, 1], Phase::Idle)}
-            </Cell>
-            <Cell wide=true label="busy — the package is syncing, every button refuses">
-                {surface(&ALL, Phase::Busy)}
-            </Cell>
-            <Cell wide=true label="failure — nothing removed, Try again runs the set">
-                {surface(&ALL, Phase::Failed)}
-            </Cell>
-            <Cell wide=true label="partial — three went, one is still here">
-                {surface(
-                    &[0, 1, 3],
-                    Phase::Partial { removed: 3, of: 4, freed: 51, left: 3 },
-                )}
+                {surface(Flow::new(&[0]))}
             </Cell>
         </Scene>
     }

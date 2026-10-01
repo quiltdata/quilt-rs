@@ -1,4 +1,4 @@
-// Styles for the gallery's old_revisions_inline.rs exploration only.
+// Styles for the gallery's old_revisions_inline.rs scene only.
 
 /* The surface's contents at the pane's width. 256 plus the surface's own 12px
  * padding either side is the 280 the design gives the pane — and the popover
@@ -97,12 +97,6 @@
   color: var(--q-fgColor-success);
 }
 
-/* The arm's holder is layout-neutral: it exists to catch the button's keys
- * and focus. */
-.g-ori-arm {
-  display: contents;
-}
-
 /* The live cell: the pane where the page puts it, beside the list the surface
  * opens over. */
 .g-ori-page {
@@ -133,4 +127,99 @@
 .g-ori-gap {
   flex: none;
   width: var(--q-control-height-sm);
+}
+
+/* A page around a still or live surface: the appbar, the notification's slot,
+ * then the pane. */
+.g-ori-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  width: 992px;
+  max-width: 100%;
+}
+
+/* A still surface sits where the popover hangs from the pane, at the right. */
+.g-ori-page--still {
+  align-items: flex-start;
+}
+
+.g-ori-page--still > .g-ori-surface {
+  flex: none;
+}
+
+/* Where the stack hangs: centred under the appbar. In the app it floats; here
+ * it is in the flow so it covers nothing. */
+.g-ori-toasts {
+  display: flex;
+  justify-content: center;
+}
+
+/* The live cell's slot keeps its height when empty, so a notification
+ * arriving does not move the pane under its open popover. */
+.g-ori-toasts--held {
+  min-height: 44px;
+}
+
+/* A copy of `.qui-v2 .qui-toast.success` (views/toasts.css), in the v2 tokens:
+ * the gallery does not load v1's stylesheet. */
+.g-ori-toast {
+  display: flex;
+  gap: var(--q-space-4);
+  align-items: center;
+  width: min(44rem, 100%);
+  padding: var(--q-space-2) var(--q-space-2) var(--q-space-2) var(--q-space-4);
+  color: var(--q-fgColor-default);
+  background: var(--q-bgColor-default);
+  border-left: 4px solid var(--q-fgColor-success);
+  border-radius: 2px;
+  font-size: var(--q-text-body);
+  box-shadow: rgb(0 0 0 / 32%) 0 10px 28px -6px, rgb(0 0 0 / 24%) 0 4px 10px -2px,
+    rgb(0 0 0 / 12%) 0 0 0 1px;
+}
+
+.g-ori-toast__body {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.g-ori-toast__close {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--q-fgColor-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 2px;
+}
+
+.g-ori-toast__close:hover {
+  color: var(--q-fgColor-default);
+  background: var(--q-bgColor-neutral-muted);
+}
+
+/* The confirmation inline: `Dialog`'s box, title and footer at its width. */
+.g-ori-dialog {
+  width: min(440px, 100%);
+  padding: var(--q-space-4);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  box-shadow: var(--q-shadow-overlay);
+}
+
+.g-ori-dialog__title {
+  margin: 0 0 var(--q-space-3);
+  font-size: var(--q-text-lead);
+  font-weight: 600;
+}
+
+.g-ori-dialog__footer {
+  margin-top: var(--q-space-5);
 }
