@@ -22,7 +22,8 @@ pub fn Appbar(
         <header class=style::appbar>
             <div class=style::bar>
                 <a class=style::logo href="/" prop:replace=replace>
-                    // The only logo asset with an alpha channel.
+                    // The only logo asset with an alpha channel, so it has no
+                    // opaque square on the brand background.
                     <img src="/assets/img/quilt.png" alt="QuiltSync home" />
                 </a>
                 <ActivityLine />
@@ -40,8 +41,8 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    /// `quilt-mark.png` has no alpha and shows an opaque square
-    /// on the brand ground.
+    /// `quilt-mark.png` has no alpha channel and shows an opaque square on the
+    /// brand background.
     #[wasm_bindgen_test]
     fn the_appbar_mark_is_the_asset_with_an_alpha_channel() {
         let el = mount(|| view! { <Appbar /> });

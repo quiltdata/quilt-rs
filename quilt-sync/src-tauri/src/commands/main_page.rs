@@ -76,30 +76,27 @@ pub enum PackageStateDto {
     SignInExpired {
         host: Option<String>,
     },
-    /// Autosync stopped for this package for a reason no other state covers —
-    /// §5's row 3, which nothing rendered until this existed. The reasons that DO
-    /// have a state resolve into it instead: `PendingChanges`, `PendingCommit` and
-    /// `Diverged` into what the tree already reports, `PullConflict` and
-    /// `RoleDenied` into their own. This is the residue: a pause no other
-    /// state explains.
+    /// Autosync stopped for this package for a reason no other state covers.
+    /// The pause reasons that have a state resolve into it instead:
+    /// `PendingChanges`, `PendingCommit` and `Diverged` into the state the working
+    /// tree reports, and `PullConflict` and `RoleDenied` into their own states.
+    /// Only `PausedReason::Other` resolves here (see `unexplained_pause`).
     ///
-    /// Deliberately NOT folded into `Unknown`, which asserts something different
-    /// and stronger — that the upstream state could not be read at all.
+    /// Kept separate from `Unknown`, which makes a different and stronger claim:
+    /// that the upstream state could not be read at all.
     Paused,
     /// `UpstreamState::Error`. The UI's `PackageState` catches this with
     /// `#[serde(other)]`, the same arm that catches a kind added after this build.
     Unknown,
 }
 
-/// Why the watcher stopped syncing one package, as it crosses the wire.
+/// Why the watcher stopped syncing one package, as sent to the UI.
 ///
-/// **v2's own type.** `reporter::PausedEvent` is v1's and frozen: its `reason` is
-/// a plain string and its `message` is a single `Option<String>` whose meaning
-/// depends on that string — the raw refusal for `other`, the **comma-joined**
-/// file names for `pullConflict`, the role name for `roleDenied`. One slot with
-/// three meanings forces the UI to know that a comma means "list here but not
-/// there", and a joined list cannot be counted back apart when a filename
-/// contains one. Three meanings, three fields.
+/// v2's own type. v1's `reporter::PausedEvent` is frozen: its `reason` is a plain
+/// string, and its single `message` means something different for each reason
+/// (the raw refusal for `other`, comma-joined file names for `pullConflict`, the
+/// role name for `roleDenied`). A comma-joined list cannot be split back apart
+/// when a file name contains a comma. Here each meaning has its own field.
 ///
 /// Kinds are `snake_case`, matching [`PackageStateDto`] rather than v1's
 /// camelCase reason strings. The queue reads a pause and a state side by side,
@@ -121,10 +118,9 @@ pub enum PausedDto {
     RoleDenied {
         role: Option<String>,
     },
-    /// `PausedReason`'s fallback arm, not a missing state (decided
-    /// 2026-09-01). The vocabulary gains nothing from it: the UI pairs fixed
-    /// words with this message as a detail line, which is the shape v1 already
-    /// ships — minus v1's "push manually to resume", because there is no resume.
+    /// `PausedReason`'s fallback arm: a refusal with no more specific reason,
+    /// such as a workflow rejection. `message` is the refusal text. It needs no
+    /// state of its own; the package state for it is [`PackageStateDto::Paused`].
     Other {
         message: String,
     },
@@ -313,26 +309,24 @@ pub(super) fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String
     }
 }
 
-/// How long the roster waits on one host — the readable-bucket query and the
-/// role query behind a denial together — before giving up on it.
+/// How long the roster waits on one host before giving up on it. The budget
+/// covers the readable-bucket query and the role query behind a denial
+/// together.
 ///
-/// COPIED from `package_list.rs:160`, not shared: v1 is frozen
-/// and deleted wholesale. Mirror fixes in both until then.
+/// A copy of `BUCKET_LIST_BUDGET` in `package_list.rs`, not shared with it,
+/// because v1 is frozen and will be deleted as a whole. Keep the two in sync.
 ///
-/// The roster is otherwise local data and paints without touching the network.
-/// The query adds two round trips per host — `config.json`, then a GraphQL POST
-/// — serialised under that host's credential lock behind a retry middleware with
-/// a 10s connect timeout, so an unreachable host held the main screen blank for
-/// tens of seconds. The pre-filter is an optimistic hint with a correct degrade
-/// path (reactive-only marking), so the budget is deliberately short:
-/// undershooting on a slow-but-working link costs only the hint; overshooting
-/// costs the first paint.
+/// Apart from these queries the roster is local data and renders without the
+/// network. The bucket query adds two round trips per host (`config.json`, then
+/// a GraphQL POST), serialised under the host's credential lock behind a retry
+/// middleware with a 10s connect timeout. Without a budget, an unreachable host
+/// keeps the main screen blank for tens of seconds. The bucket pre-filter is only
+/// a hint: without it, the per-row status call still marks denied rows a moment
+/// later. So the budget is short. On a slow link the roster loses only the hint;
+/// a longer wait would delay the first render.
 ///
-/// It bounds the host's WHOLE pass. The role query once sat outside any budget
-/// at all, so a host that answered the first call and hung on the
-/// second held the main screen blank exactly as before this constant existed.
-/// One deadline shared across both calls rather than a second budget in series,
-/// which would have doubled the wait this exists to cap.
+/// One deadline covers both queries. A separate budget for each, run in series,
+/// would double the wait.
 const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// Whether the active role can reach a row's bucket, and what to say about it.
@@ -506,15 +500,15 @@ async fn get_main_page_packages_from_model(
     tracing: &crate::telemetry::Telemetry,
     paused_reasons: &HashMap<quilt_uri::Namespace, PausedReason>,
 ) -> Result<MainPagePackages, Error> {
-    // COPIED from `package_list.rs:193`, not shared, like the budget. A load is
-    // the cadence the role refresh is pinned to. A switch is server-side and global, so it can
-    // happen in the web catalog with the app none the wiser; held for a whole
-    // session, the cached name would make a row name a role that in fact has
-    // access, and — worse — `observe_role` would never re-run, leaving the S3
-    // clients signing as the old role until Settings is opened or the ~1h
-    // credential TTL expires. Every host, not just the roster's: the roster is
-    // only known once `load_rows` below has fetched it, and an entry is only a
-    // name.
+    // Clear the role cache on every load, as v1's
+    // `get_installed_packages_list_data_from_model` does (a copy, not shared).
+    // A role switch is server-side and global, so it can happen in the web
+    // catalog without the app knowing. If the cached name lived for the whole
+    // session, a row could name a role that in fact has access, and
+    // `observe_role` would never run again, so the S3 clients would keep signing
+    // as the old role until Settings is opened or the ~1h credential TTL
+    // expires. All hosts are cleared because the roster's hosts are known only
+    // after `load_rows` below, and a cache entry is only a name.
     roles.invalidate(None).await;
 
     let mut rows = load_rows(m, tracing, paused_reasons).await?;
@@ -527,15 +521,14 @@ async fn get_main_page_packages_from_model(
 /// When this copy last changed: the last local commit, or the last file we installed
 /// or committed, whichever is later. Epoch milliseconds.
 ///
-/// **Not a filesystem mtime, and no directory walk happens here.** Both values come
-/// out of `data.json`, which the light phase has already read and deserialized —
-/// so reading them is plumbing rather than I/O.
+/// Not a filesystem mtime, and no directory walk happens here. Both values come
+/// from `data.json`, which the light phase has already read, so this does no I/O.
 ///
-/// `PathState`'s own doc says why the distinction matters: *"We don't track files
-/// modifications in real time. We calculate hash when we commit or install file."* So
-/// this is the last time `QuiltSync` touched the copy, not the last time anything on
-/// disk did. A file edited in the working directory since does not move it — that is
-/// what the heavy phase's hashing is for.
+/// `PathState`'s doc explains the difference: *"We don't track files
+/// modifications in real time. We calculate hash when we commit or install file."*
+/// So this is the last time `QuiltSync` wrote to the copy, not the last time
+/// anything on disk changed. A later edit in the working directory does not move
+/// it; the heavy phase's hashing finds those edits.
 ///
 /// `None` means we have never written to this package: no commit, and no installed
 /// paths. That is a real answer, not a missing one, which is why the row says
@@ -596,15 +589,12 @@ async fn load_main_page_package(
     };
 
     // `provisional` means the state came from cached lineage and the remote has
-    // not confirmed it. A pull conflict is not that: it comes from the watcher's
-    // paused map above, so it is a fact about this disk and no network call can
-    // make it truer. Saying otherwise costs a real capability — the queue drops
-    // provisional rows to keep the access pre-filter's guesses out of it, so a
-    // conflict labelled a guess leaves the queue exactly when the remote is
-    // unreachable and syncing cannot fix it.
-    // An unexplained pause joins the conflict here, and it MATTERS: the queue
-    // drops provisional rows (R2), so a pause marked as a guess would be dropped
-    // again and stay exactly as invisible as it was before it had a state.
+    // not confirmed it. A pull conflict and an unexplained pause are not that:
+    // both come from the watcher's paused map above, so they are facts about
+    // this disk that no network call can confirm. The queue drops provisional
+    // rows to keep the access pre-filter's guesses out of it. If these two were
+    // provisional, they would leave the queue whenever the remote is
+    // unreachable, which is when syncing cannot fix them.
     let provisional = !matches!(
         state,
         PackageStateDto::PullConflict { .. } | PackageStateDto::Paused
@@ -846,15 +836,15 @@ pub(super) async fn refresh_main_page_package_from_model(
         .await
     {
         Ok(status) => Ok(MainPagePackageRefresh {
-            // Ranks 2 and 3, applied here rather than at the top of the
-            // function: the access-denied arm below is rank 1 and must keep its
-            // chance to win.
+            // The pause checks go here rather than at the top of the function,
+            // because the access-denied arm below has higher precedence and must
+            // still be able to win.
             //
-            // BOTH pause arms, in the light phase's order. A pause outranks what
-            // the tree says because it is why the tree is not being acted on —
-            // and without the second arm this phase measured straight past an
-            // unexplained pause and overwrote the light phase's answer, so the
-            // row showed `Sync paused` only until the first refresh landed.
+            // Both pause checks, in the same order as the light phase. A pause
+            // takes precedence over the working tree's state because it is the
+            // reason the tree is not being synced. Without the unexplained-pause
+            // check, this phase would replace the light phase's `Paused` with the
+            // measured tree state.
             state: if let Some(files) = conflict_files(paused) {
                 PackageStateDto::PullConflict { files }
             } else if unexplained_pause(paused) {
@@ -959,10 +949,9 @@ pub struct ToggleState {
 pub struct MainPageWatcher {
     pub pull: ToggleState,
     pub publish: ToggleState,
-    /// The paused set, typed. **Intended for the queue; no reader in this
-    /// build** — the card needs only `activity`, which is derived from this
-    /// same list on the way past. It ships now because the split that makes it
-    /// legible, one typed field per meaning, is already done here.
+    /// The paused set, typed. It is meant for the queue, and nothing reads it
+    /// yet: the Autosync card needs only `activity`, which is derived from this
+    /// list.
     pub paused: Vec<PausedPackage>,
 }
 
@@ -1136,9 +1125,9 @@ mod tests {
 
     #[test]
     fn a_conflict_crosses_the_wire_as_a_list_not_a_joined_string() {
-        // `reporter.rs:146` sends `files.join(", ")`, so a label of
-        // the form "conflicts in N files" has to re-split on comma-space — which
-        // breaks on exactly this filename.
+        // v1's `reporter` sends `files.join(", ")`. Counting files for
+        // "conflicts in N files" from that string means splitting on ", ", which
+        // gives the wrong count for this file name.
         let reason =
             PausedReason::PullConflict(vec!["plate, run 3.csv".to_string(), "b.csv".to_string()]);
         let json = serde_json::to_string(&PausedDto::from(&reason)).unwrap();
@@ -1630,12 +1619,10 @@ mod tests {
             .expect_readable_buckets()
             .returning(|_| Err(Error::General("no bucket list in this test".to_string())));
 
-        // No pause at all, so the row keeps its own `latest` and stays
-        // provisional — which is what makes the payload below the ORDINARY shape,
-        // the one nearly every row has. This fixture used to reach that state via
-        // an `Other` pause, chosen precisely because it did not fold; it folds now
-        // and the no-fold rule it stood in for is asserted directly
-        // by `the_three_duplicate_pauses_do_not_fold_into_a_state`.
+        // No pause, so the row keeps its own `latest` and stays provisional. That
+        // is the shape nearly every row has. The rule that some pauses leave the
+        // state alone is tested by
+        // `the_three_duplicate_pauses_do_not_fold_into_a_state`.
         let paused_reasons = HashMap::new();
 
         let result = get_main_page_packages_from_model(
@@ -1752,14 +1739,12 @@ mod tests {
         // pull conflict is not that: it comes from the watcher's paused map, so it
         // is a fact about this disk that no network call can confirm or deny.
         //
-        // It matters because the queue drops provisional rows (plan 6's R2, to keep
-        // the access pre-filter's guesses out of it). Marked provisional, a conflict
-        // is treated as a guess about a remote and vanishes from the queue whenever
-        // that remote is unreachable — which is precisely when it cannot be fixed
-        // by syncing.
+        // The queue drops provisional rows, to keep the access pre-filter's
+        // guesses out of it. A conflict marked provisional would leave the queue
+        // whenever the remote is unreachable, which is when syncing cannot fix it.
         //
-        // The pair is the unit: the second half is what stops this being satisfied
-        // by never marking anything provisional at all.
+        // The second half checks that a cached state is still provisional, so the
+        // test cannot pass by never marking anything provisional.
         let conflicted = light_phase_row(
             &mock_clean_roster(),
             Some(PausedReason::PullConflict(vec!["a.csv".to_string()])),
@@ -1813,19 +1798,16 @@ mod tests {
 
     #[tokio::test]
     async fn the_heavy_phase_keeps_an_unexplained_pause_rather_than_measuring_past_it() {
-        // The other half of folding an unexplained pause, and the half that
-        // shipped broken. The light phase folded `Other` into `Paused`; the heavy phase had its own
-        // resolution and no branch for a pause, so `PackageState::resolve` measured the
-        // working tree and overwrote it. On the running app the row read
-        // `Sync paused` for the fraction of a second before the first refresh
-        // answered, then reverted to `1 file changed` — found by the operator
-        // 2026-09-10, not by this suite, because every test for the fold
-        // exercised the light phase alone.
+        // The light phase resolves an `Other` pause to `Paused`, and the heavy
+        // phase must do the same. Without a pause check in the heavy phase,
+        // `PackageState::resolve` measures the working tree, and the row shows
+        // `Sync paused` only until the first refresh answers, then `1 file
+        // changed`.
         //
-        // The fixture's tree HAS a change on purpose: `1 file changed` is what
-        // `PackageState::resolve` would report, so a clean tree would pass without the
-        // fix. `refresh_with_pause`'s own doc states the invariant — the two
-        // phases must reach the same answer.
+        // The fixture's tree has a change on purpose, matching the case seen on
+        // the running app, where `PackageState::resolve` reports `1 file
+        // changed`. `refresh_with_pause`'s doc states the rule: the two phases
+        // must reach the same answer.
         let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 1)), None);
         let refreshed = refresh_with_pause(
             &m,
@@ -1845,15 +1827,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_unexplained_pause_folds_into_a_state_of_its_own() {
-        // The case §5's row 3 names and nothing rendered: a package
-        // latest by hash and paused by a workflow rejection resolved to `Latest`,
-        // which `derive_queue` excludes by rule — so the region whose job is to
-        // name every package needing a decision said nothing at all, permanently,
-        // because `Other` is non-transient.
+        // A package that is latest by hash and paused by a workflow rejection.
+        // If it resolved to `Latest`, `derive_queue` would leave it out, and since
+        // `Other` does not clear by itself, the queue would never show it.
         //
-        // Still NOT `Unknown`, which the previous form of this test forbade for a
-        // reason that stands: `Unknown` claims the upstream state could not be read,
-        // where here it was read fine and the sync is what stopped.
+        // It must not be `Unknown` either: `Unknown` claims the upstream state
+        // could not be read, but here it was read and the sync stopped.
         let m = mock_clean_roster();
         let state = light_phase_state(
             &m,
@@ -2230,16 +2209,13 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_role_query_that_never_answers_does_not_hold_the_roster() {
-        // `BUCKET_LIST_BUDGET` bounded the bucket query and nothing
-        // else, so a host that answered that one and then hung on `/me` held the
-        // main screen blank for as long as the HTTP stack allowed — the same
-        // blank-screen class the budget was added to close, reached through the
-        // second call instead of the first.
+        // `BUCKET_LIST_BUDGET` covers the role query as well as the bucket
+        // query. Without that, a host that answers the bucket query and then
+        // hangs on `/me` keeps the main screen blank for as long as the HTTP
+        // stack allows.
         //
-        // The degrade is the one the vocabulary already names: `RoleDenied`
-        // with no role. The bucket said no, so the denial is certain; only the
-        // word for it is missing, and dropping the denial to keep the name
-        // would lose the larger fact.
+        // The result is `RoleDenied` with no role. The bucket refused, so the
+        // denial is certain; only the role name is missing.
         let m = SilentRole::default();
         let started = tokio::time::Instant::now();
         let rows = roster(&m, &RoleCache::default()).await;

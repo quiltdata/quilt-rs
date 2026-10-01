@@ -388,17 +388,14 @@ async fn run_once_disabled_is_a_noop() -> Result<(), Error> {
 
 #[tokio::test]
 async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> Result<(), Error> {
-    // The spawn loop arms `now + cadence` and then sleeps exactly
-    // `cadence`, so by the time the tick begins the deadline IS now — and stays
-    // in the past for the tick's whole duration, which on a large install is a
-    // network round trip per package. The v2 card then reads a past deadline,
-    // waits its due-floor, refetches, reads the same past deadline back, and
-    // rebuilds its ring from zero every 10s instead of letting it sit full.
+    // The spawn loop arms `now + cadence` and then sleeps `cadence`, so when a
+    // tick starts its deadline is already now, and it stays in the past while
+    // the tick runs. Without the arming in `run_once`, the v2 card reads a past
+    // deadline, refetches after `REFETCH_DUE_FLOOR`, reads the same deadline
+    // again, and restarts its ring from zero every 10s.
     //
-    // Armed here rather than in the loop because the loop needs a Tauri runtime
-    // and cannot be driven from a test — `arm_next_pull`'s own doc gives that as
-    // the reason it is a free function, and the same reasoning applies to when it
-    // is called. The cadence arithmetic is pinned separately, by
+    // Tested through `run_once` because the spawn loop needs a Tauri runtime and
+    // cannot run in a test. The cadence arithmetic is tested by
     // `arming_the_pull_records_a_deadline_one_cadence_out`.
     let model = MockQuiltModel::new();
     let inner = make_inner(AutosyncSettings::default());
@@ -1462,15 +1459,15 @@ fn local_status(files: usize, mtime: Option<SystemTime>) -> quilt::lineage::Inst
 
 #[tokio::test]
 async fn a_local_edit_arms_the_publish_deadline_without_waiting_for_a_tick() {
-    // The arm map was written only by the tick, so the countdown
-    // lagged the working tree by a whole cadence — and the cadence is longest
-    // exactly when it matters, because editing a file means the window is
-    // unfocused (120s) or closed (600s), not focused (30s). The list meanwhile
-    // updates within the file watcher's debounce, so the two panels disagreed
-    // on screen: "Nothing to publish" beside "1 file changed".
+    // A local edit arms the publish deadline directly, without waiting for the
+    // next tick. If only the tick armed it, the countdown would lag the working
+    // tree by a whole cadence. While a user edits a file the window is unfocused
+    // (120s) or closed (600s), so the cadence is long. The package list updates
+    // within the file watcher's debounce, so the card would show "Nothing to
+    // publish" next to "1 file changed".
     //
-    // The tree is deliberately NOT quiet: a quiet one publishes on the next
-    // tick rather than at a future moment, which is the `None` case below.
+    // The tree is not quiet on purpose: a quiet tree publishes on the next tick
+    // rather than at a future moment, which is the `None` case below.
     let inner = make_inner(enabled());
     let ns: Namespace = ("acme", "demo").into();
     let edited_at = SystemTime::now();

@@ -116,11 +116,11 @@ pub fn PageScene() -> impl IntoView {
         <CheckingScene />
         <Scene
             title="Scene · the appbar alone"
-            note="The two chrome buttons on the brand ground, with nothing under them to \
-                  borrow attention from. Buttons with an icon and a label, frame taken off \
-                  by the bar (see PageLayout), as v1's link buttons: hover and focus them \
-                  here — the ring is the bar's own ink. The glyphs are drawn twice, here and \
-                  in main_page.rs; a shared kit/icons.rs would end the copy."
+            note="The two chrome buttons on the brand background, with nothing else on \
+                  the bar. Buttons with an icon and a label; the bar removes their frame \
+                  (see PageLayout), like v1's link buttons. Hover and focus them here: the \
+                  focus ring uses the bar's text colour. The glyphs are defined twice, here \
+                  and in main_page.rs, because there is no shared kit/icons.rs."
         >
             <div class="g-window g-window--bar">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>

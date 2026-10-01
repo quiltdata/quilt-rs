@@ -71,22 +71,18 @@ jobs:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           WASM_BINDGEN_TEST_TIMEOUT: "60"
 
-      # The crate's two test flavours run on two targets and neither harness sees
-      # the other's: `wasm-bindgen-test-runner` enumerates only `#[wasm_bindgen_test]`,
-      # and libtest's main runs only `#[test]`. The step above is the wasm half. This
-      # is the host half, and without it a `#[test]` in this crate gates nothing —
-      # which is how the whole filter/group/sort pipeline shipped with its ten tests
-      # green locally and unrun in CI.
+      # This crate has tests for two targets, and neither harness runs the
+      # other's: `wasm-bindgen-test-runner` runs only `#[wasm_bindgen_test]`, and
+      # libtest runs only `#[test]`. The step above runs the wasm tests; this step
+      # runs the host tests. Without it, no `#[test]` in this crate runs in CI.
       #
-      # DOM tests cannot move here: `mount_to` and friends are wasm-bindgen bindings
-      # into JS. Pure-logic tests could move the other way, and once v1 is deleted
-      # only about twenty host tests survive — at which point converting them and
-      # dropping this step is the cheaper end state.
+      # DOM tests cannot run here, because `mount_to` and similar helpers are
+      # wasm-bindgen bindings into JS. Pure-logic tests could move to wasm
+      # instead. Once v1 is deleted only about twenty host tests remain, and
+      # converting them and removing this step becomes the cheaper option.
       #
-      # `--lib --bins`, not `--bin quilt-sync-ui`: the shared modules moved to a
-      # library target and took their tests with them, so naming the
-      # binary alone now runs FOUR tests where it used to run 124, and says nothing
-      # about the missing 120.
+      # `--lib --bins`, not `--bin quilt-sync-ui`: most of the tests are in the
+      # library target, and `--bin` alone runs only the few in the binary.
       - name: Test (host target)
         run: cargo test -p quilt-sync-ui --lib --bins
 

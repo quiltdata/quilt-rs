@@ -22,12 +22,11 @@
   flex-direction: column;
   overflow-y: auto;
   background: var(--q-bgColor-page);
-  /* The page paints its own ground, so it must state its own ink beside it.
-   * Without this the whole v2 subtree inherits `body`'s colour, which is v1's
-   * `--q-ui-palette-text-primary` — a hardcoded `rgb(0 0 0 / 87%)` that no
-   * theme switches. Every element that does not set a colour of its own was
-   * therefore black, which is invisible on the dark ground above.
-   * Descendants that do set one still win. */
+  /* The page sets its own background, so it also sets its own text colour.
+   * Without this the v2 subtree inherits `body`'s colour, which is v1's
+   * `--q-ui-palette-text-primary`: a fixed `rgb(0 0 0 / 87%)` that no theme
+   * changes. Text without its own colour would then be black on the dark
+   * background. Descendants that set a colour still override it. */
   color: var(--q-fgColor-default);
   /* Its own type for the same reason: v1's `layout.css` sets `body`'s face to
    * Roboto after this bundle loads, and the page must not inherit it. */

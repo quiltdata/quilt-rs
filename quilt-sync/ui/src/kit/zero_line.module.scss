@@ -38,16 +38,16 @@
   white-space: nowrap;
 }
 
-/* The line's geometry while the page is still being read, so the list below does
+/* The line's size while the page is still being read, so the list below does
  * not start high and jump down when the queue arrives.
  *
- * Shaped on the ZERO LINE and not on a cause card, because the all-clear is what
- * most days resolve to: reserving a card's height would trade the shift for an
- * upward one on every healthy load. A day that does need attention still shifts,
- * by less, and it shifts to show something worth seeing.
+ * Sized like the zero line, not like a cause card, because most loads end with
+ * the zero line: reserving a card's height would make the list jump up on every
+ * load with nothing to report. A load that does show a card still shifts the
+ * list, by less.
  *
  * Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
- * already use — a test looking for this one has to be able to say so.
+ * already use, so a test can select this one alone.
  *
  * The bar is a block and forms no line box, so the text's line height is set
  * explicitly to match `.root .text`. */

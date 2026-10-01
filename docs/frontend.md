@@ -651,7 +651,8 @@ explicit product call, and Primer is the weaker authority in each case:
 
 ### What was applied
 
-Applied 2026-08-07, beyond the six component renames above:
+Beyond the six component renames above, these props and variants use
+Primer's names:
 
 - `Banner`'s tone prop is `variant: BannerVariant`, not `kind` --
   `variant` is Primer's word for the visual axis and is what `Button`,
@@ -667,26 +668,24 @@ Applied 2026-08-07, beyond the six component renames above:
   `primary_action`. Renaming the component and leaving the props would
   have been a half-match.
 
-`Field` became `FormControl` the same day, and that one was
-not a rename -- see the next section.
+`FormControl` replaces `Field`, and it is a different design, not a
+rename -- see the `FormControl` section above.
 
 Still outstanding:
 
 1. **`ButtonVariant`** lacks Primer's `Danger` and `Invisible`. Add when
    a call site needs one, not before.
-2. **A prop-by-prop audit of the components that were already
-   correctly named.** Only the renamed ones had their props checked. One
-   spot-check found `Spinner`, where Primer takes `srText` and lists
-   `aria-label` as *deprecated* -- and the reason is mechanical, not
-   cosmetic: our `role="status"` element has no text content, and a live
-   region announces its content, not its label.
+2. **A prop-by-prop audit of the components whose names already matched
+   Primer.** Only the renamed components have had their props checked.
+   One known gap is `Spinner`: Primer takes `srText` and marks
+   `aria-label` as deprecated, because a live region announces its
+   content, not its label, and our `role="status"` element has no text
+   content.
 
-The token migration to property-first landed the same day,
-across `_tokens.scss` and all 26 module stylesheets in one commit -- a
-half-migrated vocabulary is worse than either shape. It retired `subtle`,
-`canvas` and `strong` together and makes the fill-vs-border collision
-impossible to reintroduce. v1's page CSS was untouched: it reads a
-separate `--q-ui-*` namespace.
+Tokens are named property-first in `_tokens.scss` and in every module
+stylesheet. The role words `subtle`, `canvas` and `strong` are not used,
+so a fill token and a border token cannot share one name. v1's page CSS
+does not read these tokens: it uses a separate `--q-ui-*` namespace.
 
 Two checks are worth repeating after any future token sweep, because a
 dangling `var()` fails **silently** -- the declaration is simply dropped

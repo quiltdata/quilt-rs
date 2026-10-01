@@ -220,11 +220,9 @@ impl Watcher {
                     let mode = *task_inner.window_mode.read().await;
                     cadence_for_mode(&settings.pull, mode)
                 };
-                // This arming covers the WAIT: the deadline has to be readable
-                // for the whole cadence, which is when the card draws it. The
-                // tick that follows is covered by `run_once`, which re-arms at
-                // its top — this one would otherwise be exactly now by the time
-                // the sleep ends, and in the past for the tick's duration.
+                // This deadline covers the sleep, which is when the Autosync
+                // card draws it. `run_once` arms again when the tick starts,
+                // because by then this deadline is already in the past.
                 arm_next_pull(&task_inner, cadence).await;
                 tokio::time::sleep(cadence).await;
                 task_inner.aggregator.note_tick_started();

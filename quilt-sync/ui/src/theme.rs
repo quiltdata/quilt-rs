@@ -1,12 +1,10 @@
 //! Follow the OS colour scheme.
 //!
-//! The dark palette has existed since the tokens were written and nothing in the
-//! app could ever reach it: `_tokens.scss` declares it under
-//! `:root[data-theme="dark"]`, the gallery set that attribute from its own
-//! button, and the app set it from nowhere. This is the missing
-//! half, and the shape the tokens' own comment asks for — *"following the OS
-//! means setting `data-theme` from Rust, not duplicating 60 lines into a
-//! `prefers-color-scheme` block"*.
+//! `_tokens.scss` declares the dark palette under `:root[data-theme="dark"]`.
+//! The gallery sets that attribute from its own button; this module sets it in
+//! the app from the OS preference. This is the approach the tokens' own comment
+//! asks for: *"following the OS means setting `data-theme` from Rust, not
+//! duplicating 60 lines into a `prefers-color-scheme` block"*.
 //!
 //! # v1 is unaffected, and that is checked rather than hoped
 //!

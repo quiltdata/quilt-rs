@@ -400,14 +400,14 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_create_says_why_inside_the_dialog() {
-        // The message goes in the dialog and not in `PageLayout`'s
-        // banner slot because `Dialog` uses `show_modal()`: the page sits behind
-        // a 45% backdrop in a lower layer, where a notice is dimmed and its
-        // dismiss unreachable by pointer or by tab.
+        // The message goes in the dialog, not in `PageLayout`'s banner slot,
+        // because `Dialog` uses `show_modal()`: the page sits behind a 45%
+        // backdrop in a lower layer, where a notice is dimmed and its dismiss
+        // button cannot be reached by pointer or by tab.
         //
-        // The same failure is asked for directly first, so this asserts that the
-        // BACKEND'S OWN WORDS arrive — not merely that some message appeared.
-        // There is no Tauri host here, so both calls reject with the same message.
+        // The test calls the command directly first, so it checks that the
+        // backend's own message arrives, not just some message. There is no
+        // Tauri host here, so both calls reject with the same message.
         //
         // Its first line only: with no host the rejection is a thrown `TypeError`
         // whose text carries a JS stack, and the stack names the frame that called,

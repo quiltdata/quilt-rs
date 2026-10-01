@@ -174,22 +174,22 @@
 }
 
 /* ── The v2 palette, for a reader who has opted into it ──────────────────────
-   The stack is mounted outside the router, so it draws over v1's pages and
-   v2's alike. v1's stylesheets read only `--q-ui-*`, which no theme switches,
-   so v1 stays light whatever the OS says — and a toast that followed the theme
-   unconditionally would be dark over a white page for every v1 reader with a
-   dark desktop, which is the DEFAULT today.
+   The stack is mounted outside the router, so it draws over both v1 and v2
+   pages. v1's stylesheets read only `--q-ui-*`, which no theme switches, so v1
+   pages are always light. A toast that always followed the OS theme would be
+   dark over a white page for every v1 reader with a dark desktop, and v1 is the
+   default.
 
    `.qui-v2` is set on the root from the reader's preview preference
-   (`theme::set_v2`, fed by `main.rs`'s `design_preview`), so these apply
+   (`theme::set_v2`, fed by `main.rs`'s `design_preview`), so these rules apply
    whenever *New design preview* is on.
 
-   Residue, knowingly accepted: with the flag on, /settings, /commit, /merge and
-   the package pages are still v1-styled and still light, so a toast raised
-   while one of those is showing is themed over an unthemed page. Scoping to the
-   flag rather than to the rendered page is the operator's call — the flag is
-   what the reader chose, and the main page is where these are read. It stops
-   mattering once those pages are restyled for v2 too. */
+   Known limitation: with the flag on, /settings, /commit, /merge and the
+   package pages are still v1-styled and light, so a toast shown on one of them
+   is themed over an unthemed page. The rules follow the flag rather than the
+   current page on purpose: the flag is the reader's choice, and toasts are
+   mostly read on the main page. The mismatch goes away when those pages get v2
+   styles. */
 .qui-v2 .qui-toast {
   color: var(--q-fgColor-default);
   background: var(--q-bgColor-default);
