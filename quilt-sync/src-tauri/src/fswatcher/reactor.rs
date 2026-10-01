@@ -113,19 +113,16 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                     continue;
                 }
                 let model = app_handle.state::<Model>();
-                // The watcher's clocks, so an edit moves the publish countdown
-                // on the same observation that moves the list, rather than
-                // leaving it to the next tick — which is 30s focused but 120s
-                // unfocused and 600s closed, and editing a file means the window
-                // is not focused (qhq-8mgw.54).
+                // Pass the watcher's clocks, so an edit moves the publish
+                // countdown together with the list instead of at the next tick.
+                // The tick comes every 30s while the window is focused, but every
+                // 120s unfocused and 600s closed, and while a user edits a file
+                // the window is not focused.
                 //
-                // Behind `claim_signal` above, necessarily: the arm time is read
-                // off the status walk, which is the thing that gate exists to
-                // ration. So the countdown is no more live than the list — but
-                // it is no LESS live either, and the two moving on one
-                // observation is what qhq-8mgw.54 was actually about. A
-                // countdown armed outside the gate would have to walk the tree
-                // to do it, which is the gate undone.
+                // This must stay behind `claim_signal` above: the arm time comes
+                // from the status walk, which that gate limits. The countdown
+                // therefore updates exactly as often as the list. Arming it
+                // outside the gate would need its own tree walk.
                 let watcher = app_handle.state::<Watcher>();
                 process_signal(
                     &*model,
@@ -181,9 +178,8 @@ pub(crate) async fn process_signal(
         PackageStatusEvent::from_status(&signal.namespace, &status),
     );
 
-    // The same observation, told to the clock. The event above moves the list,
-    // which measures the tree; without this the card's countdown still waited
-    // for a tick, and the two disagreed on screen (qhq-8mgw.54).
+    // Arm the publish countdown from the same status. Without this the card's
+    // countdown waits for the next tick while the list already shows the edit.
     if let Some(inner) = clocks {
         crate::autopull::arm_publish_from_status(inner, &signal.namespace, &status).await;
     }
@@ -484,12 +480,10 @@ mod tests {
 
     #[tokio::test]
     async fn an_edit_moves_the_publish_countdown_without_waiting_for_a_tick() {
-        // qhq-8mgw.54's wiring, which is the half that was missing rather than
-        // the half that was wrong: `arm_publish_from_status` is tested on its
-        // own in `autopull`, and the defect was that nothing called it from
-        // here. The tick wrote the arm map alone, so the countdown lagged the
-        // tree by a cadence — 120s while the window is unfocused, which is what
-        // editing a file makes it.
+        // `arm_publish_from_status` is tested on its own in `autopull`; this
+        // tests that `process_signal` calls it. Without the call only the tick
+        // arms the deadline, so the countdown lags the tree by a cadence: 120s
+        // while the window is unfocused, which it is while a user edits a file.
         let ns: quilt_uri::Namespace = ("acme", "demo").into();
         let mut model = MockQuiltModel::new();
         model

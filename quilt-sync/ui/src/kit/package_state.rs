@@ -70,13 +70,13 @@ pub enum PackageState {
     SignInExpired {
         host: Option<String>,
     },
-    /// Autosync stopped for this package for a reason no other state covers —
-    /// §5's row 3, which nothing rendered until this existed (qhq-8mgw.36). The
-    /// pauses that DO have a state resolve into it instead, in the light phase.
+    /// Autosync stopped for this package for a reason no other state covers.
+    /// Pause reasons that have a state of their own resolve into that state on
+    /// the backend.
     ///
-    /// Declared above `Unknown` on purpose: `#[serde(other)]` swallows any kind
-    /// this build does not name, so a missing arm here would not fail — it would
-    /// silently render "Sync stopped", which is a different and stronger claim.
+    /// `#[serde(other)]` on `Unknown` catches any kind this build does not name,
+    /// so without this arm `paused` would not fail to deserialize. It would
+    /// render "Sync stopped", which makes a different and stronger claim.
     Paused,
     #[serde(other)]
     Unknown,

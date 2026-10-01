@@ -2,22 +2,16 @@
 //!
 //! # Why a `[lib]` at all
 //!
-//! There were two `[[bin]]`s and no library, and both compiled the same `src/kit/`
-//! tree: the app, and the debug gallery. An item could therefore be live in one
-//! binary and dead in the other — `kit::render` is used by the pages and never by
-//! the gallery — and `dead_code` fires per target.
+//! The app and the debug gallery are two binaries that share the `src/kit/` tree.
+//! An item can be used in one and unused in the other (`kit::render` is used by
+//! the pages and never by the gallery), and `dead_code` runs per target. In a
+//! binary, `#[allow(dead_code)]` never expires, and `#[expect(dead_code)]` fails
+//! in whichever binary does use the item, because an unfulfilled `expect` is an
+//! error under the workspace's `warnings = "deny"`.
 //!
-//! That left `#[allow(dead_code)]` as the only annotation that compiles.
-//! `#[expect(dead_code)]` would be strictly better, since it warns once it stops
-//! being needed and so deletes itself when the consuming code lands; but it is an
-//! unfulfilled expectation in whichever binary DOES use the item, and an
-//! unfulfilled `expect` is an error under the workspace's `warnings = "deny"`.
-//! The annotations could not expire, so they accumulated (qhq-8mgw.20).
-//!
-//! `dead_code` does not flag an unused `pub` item in a library, because a library's
-//! callers are outside it. Moving the shared modules here retires the whole class
-//! rather than deferring it — and the two binaries below are the callers, so
-//! nothing here is dead by construction.
+//! `dead_code` does not flag an unused `pub` item in a library, because a
+//! library's callers are outside it. So the shared modules live in this library,
+//! and the two binaries are its callers.
 //!
 //! # Nothing moved on disk
 //!

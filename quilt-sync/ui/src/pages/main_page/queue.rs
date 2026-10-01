@@ -55,22 +55,19 @@ pub enum QueueItem {
 }
 
 impl QueueItem {
-    /// This row's key for the diff in [`QueueRegion`]: its identity AND the
-    /// content that draws it, which is the whole item.
+    /// This row's key for the diff in [`QueueRegion`]: its identity and the
+    /// content that draws it, which together are the whole item.
     ///
-    /// Identity alone — the namespace, the cause's text — reads like the right
-    /// answer and is not. `<For>` builds a child view once per key and never
-    /// calls the children function again for a key it already holds, so a
-    /// package settling from `Behind` into `PullConflict` would keep the words
-    /// and the button it had. (Making the children reactive instead would buy
-    /// only this: a row that changed its own words keeping its own node.)
+    /// Identity alone (the namespace, or the cause's text) is not enough.
+    /// `<For>` builds a child view once per key and never calls the children
+    /// function again for a key it already holds, so a package that settles
+    /// from `Behind` into `PullConflict` would keep its old words and button.
     ///
-    /// Content alone would be wrong the other way — two rows are told apart by
-    /// which package they speak for. Together they give qhq-8mgw.42 what it
-    /// asks for: a row whose content did not change keeps its node and is
-    /// MOVED when the order changes, and only a row that actually changed is
-    /// rebuilt. Unique by construction: one row per namespace, one cause per
-    /// grouping key.
+    /// Content alone is not enough either, because two rows with the same
+    /// content are told apart by their package. With both, a row whose content
+    /// did not change keeps its DOM node and is moved when the order changes,
+    /// and only a row that changed is rebuilt. Keys are unique: one row per
+    /// namespace, one cause per grouping key.
     fn key(&self) -> Self {
         self.clone()
     }
@@ -913,17 +910,16 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn cause_rank_decides_the_order_and_not_the_causes_own_text() {
-        // M5: no test built a payload holding more than one kind of cause at
-        // once, so nothing pinned that §5's cause rank decides the order.
+        // A payload with more than one kind of cause, to check that the cause
+        // rank, not the cause text, decides the order.
         //
-        // All THREE kinds, because two could not tell the claim apart from its
-        // negation: the ranks are role-denied 0, signed-out 4, unchecked 5,
-        // while the fixed text prefixes sort "Couldn't check…" < "No access…" <
-        // "Signed out…". With only the first two, rank order and text order
-        // agree, and the `(rank, text)` tiebreak makes an equal-ranks mutation
-        // survive — no host name can flip that, since both prefixes are
-        // constants (qhq-8mgw.38). Adding the unchecked cause puts the orders in
-        // opposition: it ranks last and sorts first.
+        // All three kinds are needed. The ranks are role-denied 0, signed-out 4,
+        // unchecked 5, while the fixed text prefixes sort "Couldn't check…" <
+        // "No access…" < "Signed out…". With only the first two kinds, rank
+        // order and text order agree, so the `(rank, text)` tiebreak would hide
+        // a bug that gave every cause the same rank; no host name can change
+        // that, since both prefixes are constants. The unchecked cause ranks
+        // last and sorts first, so it makes the two orders disagree.
         let items = derive_queue(
             &[
                 pkg("a/one", PackageState::Unknown, Some("gone.io")),
@@ -1212,9 +1208,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn nothing_known_yet_is_silence_and_never_an_all_clear() {
-        // R3, and the heart of qhq-8mgw.35: "Everything is Latest" before the heavy
-        // phase has answered is a claim the page has not earned. A slower false
-        // all-clear is not a fix.
+        // While a heavy-phase call is outstanding, the page does not know yet
+        // whether everything is Latest, so the region must not say so. Showing
+        // the all-clear later but still too early would be the same error.
         let el = mount_region(
             Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
             one_signed_in(),
@@ -1600,9 +1596,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_settling_package_appears_in_the_queue_without_a_refetch() {
-        // qhq-8mgw.35, from the region's side: the light phase cannot see the working
-        // tree, so the package arrives Latest and the queue must pick up the heavy
-        // phase's answer when it lands.
+        // The light phase cannot see the working tree, so the package arrives as
+        // Latest. The queue must pick up the heavy phase's answer when it lands,
+        // without a refetch.
         let packages = RwSignal::new(vec![pkg(
             "user/plate-07",
             PackageState::Latest,
@@ -1665,18 +1661,16 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_reorder_leaves_every_row_on_the_dom_node_it_started_on() {
-        // qhq-8mgw.42. The settle itself is safe — `AnyView::rebuild` diffs in
-        // place and most settles leave the order alone — but `derive_queue`
-        // sorts by precedence, so one settling into a higher rank inserts at the
-        // top and shifts everything below it. Under an unkeyed positional diff
-        // the node at index i is then rebuilt into a DIFFERENT logical row: same
-        // element, new label, new handler. Nothing clicks the wrong target
-        // (listeners are re-attached), but a keyboard user's focused control and
-        // a mouse-down in flight both land on a row that became someone else's,
-        // up to 43 times on one page load.
+        // `AnyView::rebuild` diffs in place, and most settles leave the order
+        // alone. But `derive_queue` sorts by precedence, so a row that settles
+        // into a higher rank moves to the top and shifts every row below it.
+        // With an unkeyed positional diff, the node at index i would be rebuilt
+        // into a different row: same element, new label, new handler. Clicks
+        // still reach the right handler, but a keyboard user's focused control
+        // and a mouse-down in progress would end up on a different row.
         //
-        // Stamping the nodes and re-finding them by name is the only way to see
-        // this: the rendered TEXT is identical either way.
+        // The test marks the nodes and finds them again by name, because the
+        // rendered text is the same either way.
         let packages = RwSignal::new(vec![
             pkg("a/one", PackageState::Behind, Some("h.io")),
             pkg("b/two", PackageState::Unpublished, Some("h.io")),
@@ -1834,10 +1828,10 @@ mod tests {
     }
     #[wasm_bindgen_test]
     fn a_failed_check_becomes_one_cause_grouped_by_host() {
-        // qhq-8mgw.51. Host-grouped, so the sentence and its remedy share a
-        // scope, exactly as the signed-out cause does. The cached states differ
-        // on purpose: the failure is not a state, and a fixture where every row
-        // said the same thing would not show that.
+        // Grouped by host, like the signed-out cause, so the sentence and its
+        // remedy cover the same packages. The cached states differ on purpose:
+        // a failed check is not a state, and rows with equal states would not
+        // show that.
         let items = derive_queue(
             &[],
             &[host("open.quiltdata.com", true)],
@@ -2007,11 +2001,10 @@ mod tests {
     }
     #[wasm_bindgen_test]
     fn an_unexplained_pause_gets_its_own_row_below_a_conflict() {
-        // qhq-8mgw.36, and §5's row 3 rendered for the first time. Nothing groups
-        // a pause — it is not shared by a host or a bucket — so it falls to a
-        // per-package row, and its precedence puts it under a conflict (which
-        // names its files, and is the more specific fact about the same disk) and
-        // over an unread state.
+        // A pause is not shared by a host or a bucket, so it is not grouped and
+        // gets a per-package row. Its precedence puts it below a conflict, which
+        // names its files and is the more specific fact about the same disk, and
+        // above an unread state.
         //
         // The fixture is in the reverse of the expected order, so a `precedence`
         // that ignored these states entirely would not pass by luck.

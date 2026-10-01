@@ -180,14 +180,13 @@ pub fn FileRow(
 
 /// A file row's shape while the feed is being read.
 ///
-/// The feed's boundary rendered nothing at all, so switching to Recent files
-/// showed an empty region until the read answered — where the packages view
-/// shows three of its own skeletons in the same place. §6 exempts chrome from
-/// skeletons; the two lists are not chrome (qhq-8mgw.44).
+/// Without it, Recent files shows an empty region until the read answers,
+/// while the packages view shows skeleton rows in the same place. Page chrome
+/// gets no skeleton, but both lists do.
 ///
-/// Three boxes, not four: the path, the package tag and the time are what a row
-/// is mostly made of, and the actions are a fixed trio of glyphs whose absence
-/// for a moment reads as nothing missing.
+/// Three boxes, not four: the path, the package tag and the time take up most
+/// of a row. The actions are three fixed glyphs, and their brief absence does
+/// not look like missing content.
 #[component]
 pub fn FileRowSkeleton() -> impl IntoView {
     view! {

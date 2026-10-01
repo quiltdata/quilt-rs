@@ -598,17 +598,16 @@ pub(crate) async fn run_once(
     roles: &RoleCache,
     inner: &WatcherInner,
 ) -> Result<(), Error> {
-    // Re-arm before doing any work, so a running tick advertises the tick that
-    // FOLLOWS it rather than the one it is serving (qhq-8mgw.30). The loop arms
-    // `now + cadence` and then sleeps exactly `cadence`, so on arrival here the
-    // deadline is already now, and it stays in the past for however long this
-    // tick takes — a network round trip per package on a large install. A card
-    // reading that refetches on its due-floor, reads the same past deadline, and
-    // rebuilds its ring from zero on a loop.
+    // Arm the next deadline before doing any work, so a running tick shows the
+    // tick after it. The loop arms `now + cadence` and then sleeps `cadence`, so
+    // when this runs the old deadline is already now, and it stays in the past
+    // while this tick runs (one network round trip per package). A card that
+    // reads a past deadline waits `REFETCH_DUE_FLOOR`, reads the same deadline
+    // again, and restarts its countdown ring from zero each time.
     //
-    // The deadline this writes is early by this tick's own duration, which
-    // `kit/countdown.rs` sanctions outright: a ring that sits full for a few
-    // seconds is truthful, where one that restarts from zero is not.
+    // The new deadline is early by this tick's duration. `kit/countdown.rs`
+    // accepts that: a ring that stays full for a few seconds is correct, and one
+    // that restarts from zero is not.
     //
     // Before the cheap pre-check below, not after: the loop arms unconditionally
     // today, and whether a disabled direction should advertise a deadline at all

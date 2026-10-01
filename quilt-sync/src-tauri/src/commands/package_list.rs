@@ -143,28 +143,24 @@ pub(super) async fn denied_mark(
     AccessMark::denied(host, info.as_ref())
 }
 
-/// How long the roster waits on one host's readable-bucket query before
-/// giving up on it.
+/// How long the roster waits on one host before giving up on it. The budget
+/// covers the readable-bucket query and the role query behind a denial
+/// together. `commands/main_page.rs` has a copy; keep the two in sync.
 ///
-/// The roster is otherwise local data and used to paint without touching the
-/// network. The query added two round trips per host — `config.json`, then a
-/// GraphQL POST — serialized per host under that host's credential lock and
-/// behind a retry middleware with a 10s connect timeout, so an unreachable
-/// host (offline, captive portal, DNS blackhole) held the main screen blank
-/// for tens of seconds.
+/// Apart from these queries the roster is local data and renders without the
+/// network. The bucket query adds two round trips per host (`config.json`, then
+/// a GraphQL POST), serialised under the host's credential lock behind a retry
+/// middleware with a 10s connect timeout. Without a budget, an unreachable host
+/// (offline, captive portal, DNS blackhole) keeps the main screen blank for tens
+/// of seconds.
 ///
-/// The pre-filter is an optimistic hint, and there is already a correct
-/// degrade path for not having it: reactive-only marking, where the
-/// authoritative per-row status call marks the denied rows a moment later.
-/// So the budget is deliberately short. Undershooting on a slow-but-working
-/// link costs only the hint; overshooting costs the first paint.
+/// The bucket pre-filter is only a hint: without it, the per-row status call
+/// still marks denied rows a moment later. So the budget is short. On a slow
+/// link the roster loses only the hint; a longer wait would delay the first
+/// render.
 ///
-/// It bounds the host's WHOLE pass, not just the bucket query — the role query
-/// behind a denial has the same two shapes of failure and once sat outside any
-/// budget at all (qhq-8mgw.24), so a host that answered the first call and hung
-/// on the second held the main screen blank exactly as before. One deadline
-/// shared across both calls rather than a second budget in series, which would
-/// have doubled the wait this constant exists to cap.
+/// One deadline covers both queries. A separate budget for each, run in series,
+/// would double the wait.
 const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// A message-bearing autosync pause for a namespace: the stable reason
@@ -998,9 +994,9 @@ mod tests {
         }
     }
 
-    /// A host that answers the bucket query and then says nothing to `/me`.
-    /// `SilentHost` covers the first call; this covers the second, which is
-    /// where the roster reached before qhq-8mgw.24.
+    /// A host that answers the bucket query and then never answers `/me`.
+    /// `SilentHost` tests a hang on the first call; this tests a hang on the
+    /// second.
     struct SilentRole {
         domain: tokio::sync::Mutex<quilt::LocalDomain>,
     }
@@ -1051,10 +1047,11 @@ mod tests {
         }
     }
 
-    /// qhq-8mgw.24, the v1 copy. The budget bounded the bucket query and
-    /// nothing else, so a host that answered it and hung on `/me` held the main
-    /// screen blank for as long as the HTTP stack allowed. The row still comes
-    /// back denied — the bucket said no — with no role named.
+    /// The v1 copy of the test of the same name in `commands/main_page.rs`. If
+    /// the budget covered only the bucket query, a host that answers it and hangs
+    /// on `/me` would keep the main screen blank for as long as the HTTP stack
+    /// allows. The row still comes back denied, because the bucket refused, with
+    /// no role named.
     #[tokio::test(start_paused = true)]
     async fn a_role_query_that_never_answers_does_not_hold_the_roster() {
         let m = SilentRole::default();

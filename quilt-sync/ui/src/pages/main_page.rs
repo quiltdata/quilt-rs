@@ -162,18 +162,18 @@ enum Confidence {
     /// Its call is still out. Not news: the row is dashed and dimmed, and the
     /// queue waits rather than speaking (R3).
     Pending,
-    /// Its call failed, so the row keeps the light phase's state — which is not
-    /// wrong, only unwitnessed, and right most of the time. This is what tells
-    /// "we could not look" apart from "we have not looked yet", which one
-    /// boolean could not (qhq-8mgw.51).
+    /// Its call failed, so the row keeps the light phase's state, which is
+    /// unconfirmed but usually right. This variant tells "we could not check"
+    /// apart from "we have not checked yet" (`Pending`).
     Unchecked,
 }
 
 impl RowSignals {
-    /// `provisional` comes from the payload rather than being assumed: almost
-    /// every light-phase state is a cached guess, but a `PullConflict` is the
-    /// watcher's own reading of this disk and arrives already settled. Assuming
-    /// it here is what dropped conflicts out of the queue offline (qhq-8mgw.40).
+    /// `provisional` comes from the payload: almost every light-phase state is
+    /// a cached guess, but `PullConflict` and `Paused` come from the watcher's
+    /// reading of this disk and arrive settled. If this assumed every row was
+    /// provisional, a conflict would leave the queue while the remote is
+    /// unreachable.
     fn new(state: PackageState, role_switch_host: Option<String>, provisional: bool) -> Self {
         Self {
             state: RwSignal::new(state),
@@ -283,9 +283,8 @@ impl PackageStore {
     }
 
     /// The light-phase payload with the heavy phase's answers written over it,
-    /// dropping every row the heavy phase has not confirmed (R2). The access
-    /// pre-filter over-reports, so a guess it made must not reach the queue as a
-    /// denial (qhq-8mgw.35).
+    /// minus every row that is still provisional. The access pre-filter
+    /// over-reports, so its guesses must not reach the queue as denials.
     ///
     /// Reads the signals with `.get()`, never `get_untracked()`: the caller's
     /// reactivity is the entire point of holding these signals on the page, and
@@ -344,12 +343,11 @@ fn record_refresh(
     match result {
         Ok(refreshed) => row.apply(refreshed),
         Err(err) => {
-            // The row keeps the light phase's state, which is honest: nothing
-            // confirmed it, and it is not wrong — only unwitnessed. What the
-            // failure adds is that we could not look, as distinct from not having
-            // looked yet, which is what the queue names as a shared cause
-            // (qhq-8mgw.51). Still logged, because the backend's own words are
-            // diagnostic and never reach the page.
+            // The row keeps the light phase's state, which is unconfirmed but
+            // not wrong. Marking it unchecked records that the check failed, as
+            // opposed to not having run yet; the queue shows failed checks as a
+            // shared cause. The backend's message is logged for diagnosis and
+            // never shown on the page.
             row.mark_unchecked();
             web_sys::console::error_1(&format!("refresh_main_page_package failed: {err}").into());
         }
@@ -778,10 +776,9 @@ fn files_view(
 ) -> AnyView {
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
-        // `()` left the region EMPTY while the feed was read, and again on a
-        // Refresh taken during one — the rebuilt `Transition` has no previous
-        // body to hold, so it behaves like a `Suspense` for that resolve
-        // (qhq-8mgw.44). §6 exempts chrome from skeletons; a list is not chrome.
+        // Without a fallback the region is empty while the feed is read, and
+        // again on a Refresh during a read: the rebuilt `Transition` has no
+        // previous body to keep, so it behaves like a `Suspense`.
         <Transition fallback=|| {
             view! {
                 <Card label="Recent files" busy=true>
@@ -1091,14 +1088,12 @@ fn MainPageRegions(
                         // whose call failed, which stop being outstanding without
                         // ever being accounted for.
                         let total = Signal::stored(light.len());
-                        // §4.3's "resolved package list", at last: the queue reads
-                        // what the heavy phase confirmed, not what the light phase
-                        // guessed — the light phase never looks at the working
-                        // tree, which is how a package with local edits ended up
-                        // under an all-clear (qhq-8mgw.35). Reactive, so a row
+                        // The queue reads what the heavy phase confirmed, not the
+                        // light phase's guess. The light phase never looks at the
+                        // working tree, so a package with local edits would sit
+                        // under "Everything is Latest". Reactive, so a row
                         // settling re-renders the queue and nothing else: the list
-                        // below reads its own per-row signals, and a settle must
-                        // cost nothing list-wide.
+                        // below reads its own per-row signals.
                         let unchecked_light = light.clone();
                         let settled = Signal::derive(move || store.settled(&light));
                         let unchecked = Signal::derive(move || store.unchecked(&unchecked_light));
@@ -1336,16 +1331,14 @@ pub fn MainPage() -> impl IntoView {
             answer
         }
     });
-    // Held here rather than inside the Accounts card, which is where it used to
-    // live: the queue joins against these same host facts (§4.3, R3), and a second
-    // resource for them would be a second read of one question.
+    // Held here rather than inside the Accounts card, because the queue joins
+    // against the same host data, and a second resource would read it twice.
     //
-    // Pinned by `the_queue_is_drawn_from_the_same_payloads_as_the_cards`, and only
-    // by it. A strip that built its own resource would call the real command,
-    // which has no Tauri host under test, so the strip goes empty and that test
-    // reddens — verified by making the change and watching it. Counting this
-    // fetcher's calls does NOT pin it: the count would be of the test's own
-    // fetcher, which the regression routes around (qhq-8mgw.38).
+    // Tested only by `the_queue_is_drawn_from_the_same_payloads_as_the_cards`. A
+    // card that built its own resource would call the real command, which has no
+    // Tauri host under test, so the card would be empty and that test would fail.
+    // Counting this fetcher's calls would not catch it: a card with its own
+    // resource does not call the test's fetcher at all.
     let accounts = LocalResource::new(move || {
         reload.track();
         accounts_retry.track();
@@ -1492,15 +1485,13 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_conflict_is_settled_on_arrival_and_reaches_the_queue_unconfirmed() {
-        // qhq-8mgw.40. `settled` drops provisional rows so the access
-        // pre-filter's guesses stay out of the queue, which is right — but a
-        // `PullConflict` is not a guess. Assuming every light-phase row was
-        // provisional meant that offline, when no heavy-phase call can answer,
-        // `settled` came back empty and an unresolved conflict left the queue at
-        // exactly the moment syncing could not fix it.
+        // `settled` drops provisional rows so the access pre-filter's guesses
+        // stay out of the queue, but a `PullConflict` is not a guess. If every
+        // light-phase row were provisional, then offline, when no heavy-phase
+        // call can answer, `settled` would be empty and an unresolved conflict
+        // would leave the queue when syncing cannot fix it.
         //
-        // This is the offline shape: nothing is settled by hand, so nothing has
-        // been confirmed.
+        // This is the offline case: no row is settled, so nothing is confirmed.
         let light = vec![
             conflicted("a/paused"),
             pkg("a/cached", PackageState::Behind),
@@ -1522,8 +1513,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn settled_drops_what_the_heavy_phase_has_not_confirmed() {
-        // R2, and the half of qhq-8mgw.35 that manufactures a denial: the access
-        // pre-filter over-reports, so its guesses must not reach the queue.
+        // The access pre-filter over-reports, so its guesses must not reach the
+        // queue as denials.
         let light = vec![
             pkg("a/confirmed", PackageState::Latest),
             pkg("a/guessed", PackageState::RoleDenied { role: None }),
@@ -1549,12 +1540,11 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_reader_of_settled_re_runs_when_a_row_settles() {
-        // `settled` reads its signals with `.get()` and must keep doing so. Its
-        // only other input is a `StoredValue`, which is not reactive, so an
-        // "optimising" `get_untracked()` would leave a `Signal::derive` over it
-        // with no dependencies at all — and the queue, which is now that
-        // derivation's only reader, would freeze on the light phase. That is
-        // qhq-8mgw.35 exactly, so this is the whole plan's regression guard.
+        // `settled` must read its signals with `.get()`. Its only other input is
+        // a `StoredValue`, which is not reactive, so with `get_untracked()` a
+        // `Signal::derive` over it would have no dependencies. The queue reads
+        // that derivation, so it would stay on the light phase's states and could
+        // show "Everything is Latest" above a package with local changes.
         let light = vec![pkg("user/plate-07", PackageState::Latest)];
         let store = PackageStore::seed(&light);
         let settled = Signal::derive(move || store.settled(&light));
@@ -2729,11 +2719,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_queue_names_a_package_the_heavy_phase_found_changes_in() {
-        // qhq-8mgw.35, end to end and at the page level: the operator saw
-        // "Everything is Latest" above a package with uncommitted changes. The
-        // light phase cannot see the working tree, so only the heavy phase's
-        // answer can name this package — and until this task the queue was never
-        // told about it.
+        // End to end at the page level. The light phase cannot see the working
+        // tree, so only the heavy phase's answer can put this package in the
+        // queue. Without it the queue says "Everything is Latest" above a package
+        // with uncommitted changes.
         //
         // The accounts fixture is the signed-out host, which the packages here
         // cannot join to: `pkg` leaves `host` at `None`, so no cause is ever
@@ -3066,17 +3055,15 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_toolbar_and_its_list_share_one_parent() {
-        // `PageLayout`'s column sets the gap BETWEEN regions, so the toolbar and
-        // the list it names have to be one child of that column. Left as siblings
-        // they each take a region's share of the gap, and the toolbar ends up
-        // further from its own list than it is from the queue above it — region 4
-        // drawn as two.
+        // `PageLayout`'s column sets the gap between regions, so the toolbar and
+        // its list must be one child of that column. As siblings, each gets a
+        // region's gap, and the toolbar ends up further from its own list than
+        // from the queue above it.
         //
-        // This pins the NESTING and nothing more. No stylesheet is loaded in the
-        // test harness, so `getComputedStyle` here returns browser defaults and
-        // the spacing itself cannot be asserted: swapping the wrapper to
-        // `display: contents` keeps this test green while the gap comes back.
-        // Manual check 82 on `qhq-8mgw.21` is the other half.
+        // This tests the nesting only. The test harness loads no stylesheet, so
+        // `getComputedStyle` returns browser defaults and the spacing cannot be
+        // asserted: changing the wrapper to `display: contents` keeps this test
+        // green while the gap comes back. Check the spacing in the running app.
         let (slot, on_store) = store_slot();
         let payload = a_package_needing_attention();
         let el = mount_regions_reloading(
@@ -4147,11 +4134,10 @@ mod tests {
     }
     #[wasm_bindgen_test]
     fn unchecked_names_only_the_rows_whose_check_failed() {
-        // qhq-8mgw.51. Three rows, three fates, and the third is why one boolean
-        // was not enough: a row still waiting is NOT news — the queue waits for
-        // it (R3) — while a row whose call failed is something the page can
-        // speak about. A fixture without the waiting row would not tell them
-        // apart.
+        // Three rows: confirmed, failed and still waiting. The queue waits for a
+        // row that is still waiting and reports nothing about it, while it
+        // reports a row whose call failed. Without the waiting row, the fixture
+        // could not tell those two apart.
         let light = vec![
             pkg("a/confirmed", PackageState::Latest),
             pkg("a/failed", PackageState::Latest),
@@ -4224,10 +4210,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn an_empty_roster_says_so_and_offers_the_one_thing_to_do() {
-        // qhq-8mgw.48. `group_packages` over an empty roster yields no groups, so
-        // the card body drew NOTHING — the packages view was the last region on
-        // the page with no empty state, the feed having had one since plan 7.
-        // The words are the gallery's, unchanged (`gallery/packages.rs`).
+        // `group_packages` over an empty roster yields no groups, so without an
+        // empty state the card body would be blank. The words match the gallery
+        // (`gallery/packages.rs`).
         let el = mount_regions(Ok(no_packages()), Ok(one_signed_out_host()));
         sleep_ms(50).await;
 
@@ -4309,15 +4294,13 @@ mod tests {
     }
     #[wasm_bindgen_test]
     async fn the_feed_shows_its_shape_while_it_is_being_read() {
-        // qhq-8mgw.44. The feed's boundary had `fallback=|| ()`, so switching to
-        // Recent files showed an EMPTY region until the read answered — and
-        // again on a Refresh taken while reading it, since the rebuilt
-        // `Transition` has no previous body to hold. The packages view shows
-        // three skeletons in the same position; §6 exempts chrome from
-        // skeletons and the two lists are not chrome.
+        // With `fallback=|| ()`, Recent files shows an empty region until the
+        // read answers, and again on a Refresh during a read, because the rebuilt
+        // `Transition` has no previous body to keep. The packages view shows
+        // three skeletons in the same position, and the feed must do the same.
         //
-        // A read that never answers, the idiom `mount_regions_pending` uses, so
-        // the fallback is what the assertion looks at for as long as it looks.
+        // The read never answers, as in `mount_regions_pending`, so the fallback
+        // stays on screen for the whole assertion.
         let el = mount(|| {
             let recent_files = LocalResource::new(|| {
                 std::future::pending::<Result<MainPageRecentFilesData, String>>()
@@ -4340,15 +4323,14 @@ mod tests {
     }
     #[wasm_bindgen_test]
     async fn the_queue_reserves_its_line_while_the_page_is_read() {
-        // qhq-8mgw.55. The shared fallback drew the toolbar and three row
-        // skeletons but nothing where the queue goes, so the list sat high and
-        // jumped down when the queue arrived. Operator, watching a cold load:
-        // "reserve the space with skeleton. We always render SOMETHING - even
-        // when Everything is Latest."
+        // The shared fallback must reserve the queue's line as well as the
+        // toolbar and row skeletons. Without it, the list starts high and jumps
+        // down when the queue arrives. The queue always renders something, even
+        // when everything is Latest, so its space can always be reserved.
         //
-        // `[class*=placeholder]` is the zero line's own class, chosen so this
-        // can name it: `skeleton` is already `PackageRow`'s and `FileRow`'s, and
-        // a selector that matched those would pass without the queue's.
+        // `[class*=placeholder]` matches only the zero line's skeleton:
+        // `skeleton` is also used by `PackageRow` and `FileRow`, so a selector on
+        // it would pass without the queue's placeholder.
         let el = mount_regions_pending();
         leptos::task::tick().await;
 
