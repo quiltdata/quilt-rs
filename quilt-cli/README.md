@@ -51,11 +51,11 @@ cargo install quilt-cli
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
 
-`list`'s status compares commits: your last commit against the last-known
-remote tip, read from local records so listing stays offline. It is not the
-package's overall state — uncommitted edits are invisible to it, so a package
-with local changes still shows `up_to_date`. `quilt status` reads the working
-copy.
+`list`'s `last synced` column compares commits: your last commit against the
+remote tip as of the package's last install, pull or push, read from local
+records so listing stays offline. It is not the package's overall state —
+uncommitted edits are invisible to it, so a package with local changes still
+shows `synced`. `quilt status` reads the working copy and checks the remote now.
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a

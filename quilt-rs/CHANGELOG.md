@@ -19,27 +19,35 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.41.0-dev]
+## [v0.42.0-dev]
 
 ### Added
 
-- `InstalledPackage::lock` and `InstalledPackage::try_lock` take the package's lock, `.quilt/locks/<owner>/<name>.lock`, and return a `LockedPackage` whose writers run under it without locking again. `lock` waits for another writer, in this process or another; `try_lock` returns `None` while one holds it (<https://github.com/quiltdata/quilt-rs/pull/1022>)
-- `on_package_lock_wait` sets a hook that runs once each time a writer has to wait for its package's lock (<https://github.com/quiltdata/quilt-rs/pull/1022>)
-- `LocalDomain::gc` deletes the objects no installed manifest uses, everything in the `packages/` manifest cache and everything in `staging/`, and returns a `GcReport` of the counts and bytes freed, whose `Display` is the sentence to show a user. It try-locks every package first; if one is busy it deletes nothing and returns the new `Error::PackageBusy` naming it (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+- `LocalDomain::gc` deletes the objects no installed manifest uses, everything in the `packages/` manifest cache and everything in `staging/`, and returns a `flow::GcReport` with the counts and bytes it freed. Its `Display` is the sentence to show a user. It try-locks every package first; if one is busy it deletes nothing and returns `Error::PackageBusy` naming it (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+- `DomainPaths::installed_dir`, `locks_dir` and `cached_manifests_root` return the `installed/`, `locks/` and `packages/` directories (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+
+### Changed
+
+- **Breaking:** `Error` has a new variant, `PackageBusy`, so an exhaustive `match` on it needs a new arm (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+
+## [v0.41.0] - 2026-09-30
+
+### Added
+
+- `InstalledPackage::lock` and `InstalledPackage::try_lock` take the package's lock and return a `LockedPackage` whose writers run under it. `lock` waits for a writer in any process; `try_lock` returns `None` while one holds the lock. `on_package_lock_wait` sets a hook that runs each time a writer has to wait (<https://github.com/quiltdata/quilt-rs/pull/1022>)
 - `LocalDomain::overwrite_home` and `DomainLineageIo::overwrite_home` set the home even while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### Changed
 
-- **Breaking:** `Storage` has two new required methods, `lock_exclusive(path)` and `try_lock_exclusive(path)`, which lock a path against every other holder in this process and in any other until the returned `LockGuard` drops. `LocalStorage` and `MockStorage` have them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
-- **Breaking:** `InstalledPackage::publish` no longer takes a status. It walks the working tree under the package's lock; `LockedPackage::publish` accepts a status walked on the same handle (<https://github.com/quiltdata/quilt-rs/pull/1022>)
-- **Breaking:** `DomainLineageIo::write_package_lineage` is gone. `DomainLineageIo::update` and `update_package_lineage` re-read, change and write `data.json` under a short lock, and `PackageLineageIo::write` splices one entry through them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
-- `LocalDomain::set_home` and `DomainLineageIo::set_home` refuse a different home while any package is installed, and change nothing. The error is `LineageError::HomeInUse`, with the current home and the number of installed packages. Setting the home the domain already has writes nothing (<https://github.com/quiltdata/quilt-rs/pull/1025>)
-- `set_home` and `overwrite_home` create the home folder if it is missing. A home whose folder can't be created is not stored (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+- **Breaking:** `Storage` has two new required methods, `lock_exclusive` and `try_lock_exclusive`, which return a `LockGuard`. `LocalStorage` and `MockStorage` implement them; an implementation outside this crate must add them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `InstalledPackage::publish` no longer takes a status; pass one to `LockedPackage::publish` instead (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `DomainLineageIo::write_package_lineage` is removed. Use `DomainLineageIo::update` or `update_package_lineage`, which change `data.json` under a lock (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `LocalDomain::set_home` and `DomainLineageIo::set_home` refuse a different home while packages are installed, with the new `LineageError::HomeInUse`. An exhaustive `match` on `LineageError` needs a new arm. `set_home` and `overwrite_home` create the home folder if it is missing (<https://github.com/quiltdata/quilt-rs/pull/1025>)
 
 ### Fixed
 
-- Operations on one package no longer drop each other's changes to its entry in `.quilt/data.json`. Each writer of a package holds the package's lock from its first read to its write, in one process and across processes (the `quilt` CLI and QuiltSync share the file), so a pull and a download of one package run one after the other and no file nobody touched reads Modified. Writers of different packages still run in parallel. Installing, creating or uninstalling a package no longer writes back the other packages' entries as it read them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
-- An S3 call fails with a timeout when S3 sends nothing for 60 seconds after the request is sent. Such a call used to wait forever: `HeadObject`, `GetObject`, `PutObject` and every multipart upload step. Only silence counts, so a slow upload or download that keeps moving bytes is never cut off, and a large `CompleteMultipartUpload` still succeeds. A timed-out call is retried like any other network error (<https://github.com/quiltdata/quilt-rs/pull/1021>)
+- Operations on one package no longer drop each other's changes to `.quilt/data.json`. Each writer holds the package's lock from read to write, across processes; writers of different packages still run in parallel (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- S3 calls time out after 60 seconds with no response instead of hanging forever; slow transfers that keep moving are not cut off (<https://github.com/quiltdata/quilt-rs/pull/1021>)
 
 ## [v0.40.0] - 2026-09-28
 

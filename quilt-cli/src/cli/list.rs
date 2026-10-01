@@ -11,6 +11,11 @@ use crate::cli::output::Std;
 /// Rendered in the `bucket` cell of a package with no remote.
 const NO_BUCKET: &str = "∅";
 
+/// Printed under the table. `list` never reads the remote, so every status is
+/// only as fresh as the last operation that wrote the remote tip to lineage.
+const LAST_SYNCED_HINT: &str = "Statuses are as of each package's last install, pull or push. \
+Run `quilt status --namespace <namespace>` to check the remote now.";
+
 /// A listed package as [`model`] resolves it; [`PackageRow`] is its rendering.
 pub struct PackageEntry {
     /// `None` for a local-only package — no remote, or a remote with no bucket.
@@ -49,7 +54,23 @@ impl Output {
 struct PackageRow {
     bucket: String,
     namespace: String,
-    status: String,
+    #[tabled(rename = "last synced")]
+    status: &'static str,
+}
+
+/// Worded for `list` alone, not [`UpstreamState`]'s `Display`: the state here is
+/// read from lineage, not refreshed, so each value must read as true *as of* the
+/// last sync. `quilt status` refreshes the tip and words its verdict its own way.
+fn last_synced(entry: &PackageEntry) -> &'static str {
+    match entry.status {
+        UpstreamState::UpToDate => "synced",
+        UpstreamState::Ahead => "unpushed commit",
+        UpstreamState::Behind => "behind",
+        UpstreamState::Diverged => "diverged",
+        UpstreamState::Local if entry.bucket.is_some() => "never pushed",
+        UpstreamState::Local => "local only",
+        UpstreamState::Error => "unknown",
+    }
 }
 
 impl From<&PackageEntry> for PackageRow {
@@ -57,7 +78,7 @@ impl From<&PackageEntry> for PackageRow {
         Self {
             bucket: entry.bucket.as_deref().unwrap_or(NO_BUCKET).to_string(),
             namespace: entry.namespace.to_string(),
-            status: entry.status.to_string(),
+            status: last_synced(entry),
         }
     }
 }
@@ -89,7 +110,7 @@ impl std::fmt::Display for Output {
             row += group.len();
         }
 
-        write!(f, "{table}")
+        write!(f, "{table}\n{LAST_SYNCED_HINT}")
     }
 }
 
@@ -119,7 +140,7 @@ pub async fn command(m: impl Commands) -> Std {
 ///
 /// `status` is the [`UpstreamState`] cascade over the lineage's four hashes,
 /// read against the *last-known* remote tip: `list` never refreshes it.
-/// `quilt status <namespace>` does.
+/// `quilt status --namespace <namespace>` does.
 pub async fn model(local_domain: &quilt_rs::LocalDomain) -> Result<Output, Error> {
     let domain_lineage = local_domain.get_lineage().await?;
     let mut installed_packages_list = Vec::with_capacity(domain_lineage.packages.len());
@@ -242,10 +263,47 @@ mod tests {
         ] {
             assert!(rendered.contains(name), "{name} is listed");
         }
-        // One header, so `status` names the column and nothing else.
-        assert_eq!(rendered.matches("status").count(), 1);
+        // One header, so `last synced` names the column and nothing else.
+        assert_eq!(rendered.matches("last synced").count(), 1);
         // Statuses are never merged, even when adjacent rows repeat one.
-        assert_eq!(rendered.matches("up_to_date").count(), 2);
+        assert_eq!(rendered.matches("| synced").count(), 2);
+    }
+
+    /// Each state reads as true *as of* the last sync, and a local-only package
+    /// says whether it has a remote it was never pushed to.
+    #[test]
+    fn test_display_words_each_state_as_of_last_sync() {
+        let cases = [
+            (Some("acme-research"), UpstreamState::UpToDate, "synced"),
+            (
+                Some("acme-research"),
+                UpstreamState::Ahead,
+                "unpushed commit",
+            ),
+            (Some("acme-research"), UpstreamState::Behind, "behind"),
+            (Some("acme-research"), UpstreamState::Diverged, "diverged"),
+            (Some("acme-research"), UpstreamState::Local, "never pushed"),
+            (None, UpstreamState::Local, "local only"),
+            (Some("acme-research"), UpstreamState::Error, "unknown"),
+        ];
+        for (bucket, status, expected) in cases {
+            assert_eq!(last_synced(&entry(bucket, "one", status)), expected);
+        }
+    }
+
+    /// The hint follows the table, so a reader learns how stale it may be.
+    /// An empty listing has no statuses to qualify, so it prints no hint.
+    #[test]
+    fn test_display_ends_with_last_synced_hint() {
+        let output = Output::new(vec![entry(
+            Some("acme-research"),
+            "one",
+            UpstreamState::UpToDate,
+        )]);
+        assert!(format!("{output}").ends_with(LAST_SYNCED_HINT));
+
+        let empty = Output::new(Vec::new());
+        assert!(!format!("{empty}").contains(LAST_SYNCED_HINT));
     }
 
     #[test(tokio::test)]
@@ -293,9 +351,9 @@ mod tests {
             let output = format!("{output}");
             assert!(output.contains("bucket"));
             assert!(output.contains("namespace"));
-            assert!(output.contains("status"));
+            assert!(output.contains("last synced"));
             assert!(output.contains(pkg::BUCKET));
-            assert!(output.contains("up_to_date"));
+            assert!(output.contains("| synced"));
         }
 
         Ok(())
@@ -316,7 +374,7 @@ mod tests {
             let output = output.to_string();
             assert!(output.contains(pkg::BUCKET));
             assert!(output.contains(pkg::NAMESPACE_STR));
-            assert!(output.contains("up_to_date"));
+            assert!(output.contains("| synced"));
         } else {
             return Err(Error::Test("Failed to list packages".to_string()));
         }

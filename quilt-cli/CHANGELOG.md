@@ -19,24 +19,37 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.34.0-dev]
+## [v0.35.0-dev]
 
 ### Added
 
-- `quilt home` prints the home, the folder where installed packages keep their files, and `quilt home <dir>` sets it. A relative `<dir>` is taken against the current directory, and a missing folder is created. While any package is installed, a different home is refused, because the packages' files stay in the old folder; `quilt home <dir> --overwrite` changes it anyway. `quilt home --json` prints `{"home": "<path>"}`, and a refusal has the error kind `home_in_use` (<https://github.com/quiltdata/quilt-rs/pull/1025>)
-- `quilt gc` deletes what the local store holds for nothing: the stored files no installed package uses, such as those an uninstall left, the cache of remote manifests, and files left mid-write by an interrupted command. It prints what it freed, for example `Freed 630.2 kB: 6 objects, 2 cached manifests`, or `Nothing to free`; `quilt gc --json` prints the counts and bytes, `{"objects": 6, "cached_manifests": 2, "staging": 0, "bytes": 630200}`. While another quilt process is changing a package it deletes nothing and fails with the error kind `package_busy` (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+- `quilt gc` deletes what the local store holds for nothing: the stored files no installed package uses, such as those an uninstall left, the cache of remote manifests, and files left mid-write by an interrupted command. It prints what it freed, for example `Freed 630.2 kB: 6 objects, 2 cached manifests`, or `Nothing to free`. `--json` prints the counts and bytes. While another quilt process is changing a package it deletes nothing and fails with the error kind `package_busy` (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 
 ### Changed
 
-- A command that changes a package another quilt process is changing, such as QuiltSync downloading its files, waits for it and prints `waiting for another quilt process…` to stderr, then runs. It used to run at once, and one of the two could drop what the other recorded (<https://github.com/quiltdata/quilt-rs/pull/1022>)
-
-### Deprecated
-
-- `--home <dir>` is deprecated in favor of `quilt home <dir>`. It prints a warning, then sets the home the same way, so it now refuses a different home while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+- `quilt list` names its status column `last synced`, words each status as of the package's last install, pull or push (`synced`, `unpushed commit`, `never pushed`, `local only`, …), and ends with a hint to run `quilt status` for a fresh check. `--json` output is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1031>)
 
 ### quilt-rs
 
-- Updated [from v0.40.0 to v0.41.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.41.0 to v0.42.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.41.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.34.0] - 2026-09-30
+
+### Added
+
+- `quilt home` prints the folder where installed packages keep their files, and `quilt home <dir>` sets it. While packages are installed, a different home is refused unless you pass `--overwrite` (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+
+### Changed
+
+- A command on a package that another quilt process, such as QuiltSync, is changing waits for it and prints `waiting for another quilt process…` to stderr. It used to run at once, and one side's changes could be lost (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+
+### Deprecated
+
+- `--home <dir>` is deprecated in favor of `quilt home <dir>`. It still works with a warning, and now refuses a different home while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.41.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...quilt-rs/v0.41.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.33.0] - 2026-09-28
 
