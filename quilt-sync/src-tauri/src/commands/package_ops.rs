@@ -563,7 +563,11 @@ pub async fn package_uninstall(
 ) -> Result<String, String> {
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
-    let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
+    // A prune that failed after the uninstall says so in its own words.
+    let msg_err = |err: &Error| match err {
+        Error::Quilt(kept @ quilt::Error::KeptObjects(..)) => kept.to_string(),
+        _ => format!("Failed to uninstall package: {err}"),
+    };
 
     let result = package_uninstall_command(&m, &namespace, prune).await;
     if let Ok(Some(pruned)) = &result {
