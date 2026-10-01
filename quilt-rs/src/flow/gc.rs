@@ -205,8 +205,16 @@ async fn lock_every_package(
             continue;
         };
         let owner = owner.to_string_lossy();
-        for (lock_file, _, _) in list_files(storage, &owner_dir).await? {
-            if let Some(name) = lock_file.strip_suffix(".lock") {
+        // Every file, hidden ones included: a package named `.foo` locks
+        // `.foo.lock`.
+        for entry in list_entries(storage, &owner_dir).await? {
+            if entry.is_dir {
+                continue;
+            }
+            let Some(lock_file) = entry.path.file_name() else {
+                continue;
+            };
+            if let Some(name) = lock_file.to_string_lossy().strip_suffix(".lock") {
                 namespaces.insert((owner.as_ref(), name).into());
             }
         }
@@ -446,6 +454,24 @@ mod tests {
 
         assert!(
             matches!(&result, Err(Error::PackageBusy(ns)) if *ns == installing),
+            "{result:?}"
+        );
+        Ok(())
+    }
+
+    /// A package whose name starts with a dot has a hidden lock file; one
+    /// held before the package has a lineage entry is busy too.
+    #[test(tokio::test)]
+    async fn a_held_lock_of_a_dot_named_package_is_busy() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        let creating: Namespace = "acme/.foo".try_into()?;
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &creating).await?;
+        assert!(paths.locks_dir().join("acme/.foo.lock").is_file());
+
+        let result = domain.gc().await;
+
+        assert!(
+            matches!(&result, Err(Error::PackageBusy(ns)) if *ns == creating),
             "{result:?}"
         );
         Ok(())
