@@ -1274,8 +1274,14 @@ mod tests {
 
     #[test]
     fn healthy_row_has_no_hint() {
-        assert!(hint_lines("up_to_date", true, None, None, None).is_empty());
-        assert!(hint_lines("ahead", false, None, None, None).is_empty());
+        assert_eq!(
+            hint_lines("up_to_date", true, None, None, None),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            hint_lines("ahead", false, None, None, None),
+            [] as [String; 0]
+        );
     }
 
     #[test]

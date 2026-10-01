@@ -583,7 +583,10 @@ mod tests {
         let ns_a: Namespace = ("acme", "demo").into();
         let ns_b: Namespace = ("acme", "other").into();
 
-        assert!(watcher.snapshot().await.paused.is_empty());
+        assert_eq!(
+            watcher.snapshot().await.paused,
+            [] as [reporter::PausedEvent; 0]
+        );
 
         watcher
             .pause_for_test(ns_a.clone(), PausedReason::PendingChanges)

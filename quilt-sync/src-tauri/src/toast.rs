@@ -252,7 +252,7 @@ mod tests {
             })
             .await;
         assert!(center.dismiss(id).await);
-        assert!(center.live().await.is_empty());
+        assert_eq!(center.live().await, [] as [Toast; 0]);
         // A second dismissal of the same id is not an error.
         assert!(!center.dismiss(id).await);
     }

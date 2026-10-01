@@ -1366,7 +1366,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         format!("{};{}", event.status, event.has_changes),
         "conflict emit should carry a stable heuristic fingerprint, not an empty default"
     );
-    assert!(!event.fingerprint.is_empty());
+    assert_ne!(event.fingerprint, "");
     Ok(())
 }
 

@@ -1177,6 +1177,9 @@ mod tests {
         );
         // No config link (no catalog host) and a workflow with no schemas →
         // nothing to show, so the row is hidden.
-        assert!(catalog_links(None, Some(&none_head)).is_empty());
+        assert_eq!(
+            catalog_links(None, Some(&none_head)),
+            [] as [(&str, String); 0]
+        );
     }
 }

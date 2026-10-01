@@ -1353,7 +1353,7 @@ mod tests {
         assert!(!host.signed_in);
         assert!(!host.provisional, "nothing to wait for");
         assert_eq!(host.current_role, None);
-        assert!(host.roles.is_empty());
+        assert_eq!(host.roles, [] as [String; 0]);
     }
 
     #[test]
@@ -1453,7 +1453,7 @@ mod tests {
 
         assert!(host.signed_in, "a network failure is not a logout");
         assert_eq!(host.current_role, None);
-        assert!(host.roles.is_empty());
+        assert_eq!(host.roles, [] as [String; 0]);
         assert!(
             !host.provisional,
             "we asked and could not tell — that is settled"
@@ -1485,7 +1485,7 @@ mod tests {
 
         assert!(host.signed_in, "the session on disk still stands");
         assert_eq!(host.current_role, None);
-        assert!(host.roles.is_empty());
+        assert_eq!(host.roles, [] as [String; 0]);
         assert!(
             !host.provisional,
             "we asked and could not tell — that is settled"
