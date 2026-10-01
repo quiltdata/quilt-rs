@@ -9,6 +9,9 @@ on:
     - cron: "17 7 * * *"
   workflow_dispatch:
   push:
+    # Only `main`: a pull request branch already runs on `pull_request`, and
+    # a `push` run too would test every commit there twice.
+    branches: [main]
     # Ignore only crates downstream of what this job builds: Cargo forbids
     # dependency cycles, so nothing here can depend on quilt-sync, which its
     # `--exclude` flags name below. An upstream crate would skip a real check.
@@ -30,6 +33,7 @@ jobs:
   workspace:
     name: workspace
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       # This runner has no Tauri system libraries, so it cannot build
       # `quilt-sync`; `quilt-sync-ui` is wasm-only. Both have their own
@@ -92,6 +96,7 @@ jobs:
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

@@ -57,6 +57,17 @@ records so listing stays offline. It is not the package's overall state —
 uncommitted edits are invisible to it, so a package with local changes still
 shows `synced`. `quilt status` reads the working copy and checks the remote now.
 
+`quilt list --fetch` asks each package's remote now and counts its changed
+files, giving the answer QuiltSync's main page gives, in its words: `latest`,
+`not the latest`, `3 files changed`, `revision not published`, `changed in both
+places`, `not published yet`, `no S3 bucket yet`, `no access`, `unknown`. It
+leaves local packages unchanged, so a plain `list` afterwards still shows the
+last sync. When a remote cannot be reached, that row falls back to what was
+last recorded and says so, as in `latest (remote unreachable)`. Under `--json`
+each row adds `fetched`, `true` only when the remote was read just now, a
+`changed_files` count when the files were scanned, and `"access_denied": true`
+when the remote refused your role; `status` keeps its values.
+
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
 `&path=` parameter in the URI.
@@ -79,16 +90,28 @@ Run `quilt <command> --help` for arguments.
 
 ## Global flags
 
-- `--domain <path>` — local domain directory (stores credentials and
+`--domain`, `--json` and `--verbose` are global: each goes before or after the
+command, so `quilt --domain <path> list` and `quilt list --domain <path>` both
+work.
+
+- `--domain <path>` (`-d`) — local domain directory (stores credentials and
   package metadata). Defaults to the platform local-data directory under
   `com.quiltdata.quilt-sync/`, shared with QuiltSync
   (`~/.local/share/com.quiltdata.quilt-sync/` on Linux,
   `~/Library/Application Support/com.quiltdata.quilt-sync/` on macOS).
-- `--home <path>` — deprecated, use `quilt home <path>`. It prints a warning,
-  then sets the home the same way before the command runs.
+- `--json` — print a machine-readable form instead of human-readable text.
+  Every command accepts it, so `quilt list --json | jq` and
+  `quilt --json list | jq` both work.
+- `--verbose` (`-v`) — show INFO-level logs on stderr; set `RUST_LOG` for
+  target-specific filtering. Commands keep stdout reserved for command output
+  by default.
 
-Every command accepts `--json` for a machine-readable form, before or after the
-subcommand, so `quilt list --json | jq` and `quilt --json list | jq` both work.
+`--home <path>` is deprecated, use `quilt home <path>`. It goes before the
+command, prints a warning, then sets the home the same way before the command
+runs.
+
+### JSON output
+
 Field names are stable; the human tables are not, so parse the JSON rather than
 the tables.
 
@@ -102,10 +125,6 @@ stderr is also the log stream, so the error object is not necessarily the whole
 of it: a warning at the default level, or INFO lines under `-v`, are written
 there first. The object is always a single line and always the last one, so
 read it with `tail -n 1` rather than parsing the stream whole.
-
-Commands keep stdout reserved for command output by default. Add `-v` or
-`--verbose` to show INFO-level logs on stderr; set `RUST_LOG` for target-specific
-filtering.
 
 ## Example
 
