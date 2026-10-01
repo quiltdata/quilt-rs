@@ -537,33 +537,60 @@ pub async fn package_pull_outcome(
         .map_err(|e| e.to_string())
 }
 
-async fn package_uninstall_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
+async fn package_uninstall_command(
+    m: &model::Model,
+    namespace: &str,
+    prune: bool,
+) -> Result<Option<quilt::flow::Pruned>, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_uninstall(m, namespace.clone()).await?;
-    Ok(())
+    model::package_uninstall(m, namespace, prune).await
 }
 
+/// Remove a package; with `prune`, also delete its downloaded files that no
+/// other package uses.
+///
+/// What the prune freed goes to the toast stack, not the returned line: the
+/// v2 page that confirms it returns to the package list on success, and only
+/// the stack outlives that.
 #[tauri::command]
 pub async fn package_uninstall(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    toasts: tauri::State<'_, ToastCenter>,
     namespace: String,
     uri: Option<S3PackageUri>,
+    prune: bool,
 ) -> Result<String, String> {
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
 
+    let result = package_uninstall_command(&m, &namespace, prune).await;
+    if let Ok(Some(pruned)) = &result {
+        toasts.post(pruned_toast(&namespace, pruned)).await;
+    }
     Notify::new(msg_init)
         .on_success(
             &tracing,
             MixpanelEvent::PackageUninstalled(PackageEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            package_uninstall_command(&m, &namespace).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
+}
+
+/// The toast saying what removing `namespace` freed, in gc's sentence, or
+/// which busy package kept its files.
+fn pruned_toast(namespace: &str, pruned: &quilt::flow::Pruned) -> crate::toast::ToastDraft {
+    let kind = match pruned {
+        quilt::flow::Pruned::Freed(_) => crate::toast::ToastKind::Success,
+        quilt::flow::Pruned::Busy(_) => crate::toast::ToastKind::Info,
+    };
+    crate::toast::ToastDraft {
+        kind,
+        title: Some(namespace.to_string()),
+        body: format!("Removed. {pruned}."),
+        groups: Vec::new(),
+        timeout_ms: None,
+    }
 }
 
 /// Step the package back to the revision before its newest local commit.
@@ -1590,5 +1617,67 @@ mod tests {
             .expect_err("a dirty tree refuses");
 
         assert!(err.to_string().contains("value.txt"), "got: {err}");
+    }
+
+    /// The toast reads gc's sentence after the removal, or names the busy
+    /// package that kept the files.
+    #[test]
+    fn the_pruned_toast_says_what_was_freed() {
+        let freed = quilt::flow::Pruned::Freed(quilt::flow::GcReport {
+            objects: 6,
+            bytes: 630_200,
+            ..Default::default()
+        });
+        let toast = super::pruned_toast("acme/demo", &freed);
+        assert_eq!(toast.kind, crate::toast::ToastKind::Success);
+        assert_eq!(toast.title.as_deref(), Some("acme/demo"));
+        assert_eq!(toast.body, "Removed. Freed 630.2 kB: 6 objects.");
+
+        let busy = quilt::flow::Pruned::Busy(("acme", "other").into());
+        let toast = super::pruned_toast("acme/demo", &busy);
+        assert_eq!(toast.kind, crate::toast::ToastKind::Info);
+        assert_eq!(
+            toast.body,
+            "Removed. Kept downloaded files: acme/other is busy."
+        );
+    }
+
+    /// `prune` deletes the package's objects; without it they stay.
+    #[tokio::test]
+    async fn uninstall_prunes_only_when_asked() -> Result<(), Error> {
+        use crate::model::QuiltModel as _;
+
+        let dir = tempfile::TempDir::new()?;
+        let model = crate::model::Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await?;
+        let source = tempfile::TempDir::new()?;
+        std::fs::write(source.path().join("a.txt"), "abc")?;
+        for name in ["kept", "gone"] {
+            model
+                .package_create(
+                    ("acme", name).into(),
+                    Some(source.path().to_path_buf()),
+                    None,
+                )
+                .await?;
+        }
+        std::fs::write(source.path().join("b.txt"), "bb")?;
+        model
+            .package_create(
+                ("acme", "pruned").into(),
+                Some(source.path().to_path_buf()),
+                None,
+            )
+            .await?;
+
+        let kept = super::package_uninstall_command(&model, "acme/kept", false).await?;
+        assert_eq!(kept, None);
+        let pruned = super::package_uninstall_command(&model, "acme/pruned", true).await?;
+        assert_eq!(
+            pruned.map(|p| p.to_string()).as_deref(),
+            Some("Freed 2 B: 1 object"),
+            "a.txt is still used by acme/gone"
+        );
+        Ok(())
     }
 }
