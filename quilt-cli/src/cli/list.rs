@@ -29,6 +29,11 @@ except where marked unreachable. Changed files are ones not committed yet.";
 /// is as of the last sync. See [`Fetched::remote_checked`].
 const UNREACHABLE_SUFFIX: &str = " (remote unreachable)";
 
+/// How many packages `--fetch` checks at once. Each check is a remote round
+/// trip plus a working-tree walk, so an unbounded fan-out over a large domain
+/// would open as many connections and directory scans as there are packages.
+const FETCH_CONCURRENCY: usize = 8;
+
 #[derive(Debug, Default)]
 pub struct Input {
     /// Ask each package's remote for its current state, and count the files
@@ -282,8 +287,10 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
     }
 
     // Spawned rather than awaited in turn: each package is a round trip to its
-    // remote plus a walk of its working tree. The order they finish in does not
-    // matter, since `Output::new` sorts.
+    // remote plus a walk of its working tree. At most `FETCH_CONCURRENCY` run
+    // at once. The order they finish in does not matter, since `Output::new`
+    // sorts.
+    let limit = std::sync::Arc::new(tokio::sync::Semaphore::new(FETCH_CONCURRENCY));
     let mut tasks = tokio::task::JoinSet::new();
     let mut spawned = std::collections::HashMap::new();
     for (namespace, lineage) in domain_lineage.packages {
@@ -297,7 +304,11 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
                 ..Fetched::default()
             }),
         };
+        let limit = limit.clone();
         let task = tasks.spawn(async move {
+            // Held until the check ends. The semaphore is never closed, so
+            // this always holds a permit.
+            let _permit = limit.acquire_owned().await;
             fetch_entry(namespace, lineage, || installed_package.status(None)).await
         });
         spawned.insert(task.id(), fallback);
