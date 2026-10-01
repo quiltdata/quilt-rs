@@ -600,7 +600,7 @@ mod tests {
         let ns: Namespace = ("acme", "demo").into();
         sub.add(ns.clone(), dir.path().to_path_buf())?;
         sub.remove(&ns);
-        assert!(sub.watched_namespaces().is_empty());
+        assert_eq!(sub.watched_namespaces(), [] as [Namespace; 0]);
         Ok(())
     }
 }

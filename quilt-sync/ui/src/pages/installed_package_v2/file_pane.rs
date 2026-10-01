@@ -1479,7 +1479,7 @@ mod facet_tests {
         assert_eq!(paths("raw/", Facet::Changed), ["raw/a.csv"]);
         assert_eq!(paths("", Facet::Changed), ["raw/a.csv", "notes/a.md"]);
         assert_eq!(paths("raw/", Facet::All), ["raw/a.csv", "raw/b.csv"]);
-        assert!(paths("raw/", Facet::NotDownloaded).is_empty());
+        assert_eq!(paths("raw/", Facet::NotDownloaded), [] as [String; 0]);
     }
 
     /// The backend's own rule (`EntryCounts::of`), so a facet shows the rows
@@ -2092,7 +2092,7 @@ mod pane_tests {
             }),
             RwSignal::new(Facet::Changed.key().to_string()),
         );
-        assert!(drawn(&el).is_empty());
+        assert_eq!(drawn(&el), [] as [String; 0]);
         element_saying(&el, "None of the loaded files are in this view");
     }
 

@@ -1145,7 +1145,13 @@ mod tests {
     #[test]
     fn field_violations_empty_when_field_clean() {
         let violations = vec![violation(ViolationField::Message, "x")];
-        assert!(field_violations(&violations, ViolationField::Name).is_empty());
-        assert!(field_violations(&[], ViolationField::Message).is_empty());
+        assert_eq!(
+            field_violations(&violations, ViolationField::Name),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            field_violations(&[], ViolationField::Message),
+            [] as [String; 0]
+        );
     }
 }
