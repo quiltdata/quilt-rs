@@ -316,6 +316,44 @@ const ENTRIES: &[Entry] = &[
     entry!(Pages, "While loading", page::LoadingScene),
 ];
 
+/// One frame of `#/`: a single scene lifted out of a `Pages` section.
+struct HomeFrame {
+    /// The label of the `Pages` entry the frame comes from. Its source link goes
+    /// there, so the rest of that page's frames are one click away.
+    from: &'static str,
+    view: fn() -> AnyView,
+}
+
+impl HomeFrame {
+    fn source(&self) -> &'static Entry {
+        ENTRIES
+            .iter()
+            .find(|e| e.tier == Tier::Pages && e.label == self.from)
+            .expect("a home frame names a Pages entry")
+    }
+}
+
+/// What `#/` shows: the busiest frame of each of the two whole pages, and none
+/// of the gallery's sections. `#/` used to be every section, so the first load
+/// mounted all of them; even the two `Pages` sections are ten frames. These two
+/// are what is looked at most, and the rest is one link away at `#/all`.
+const HOME: &[HomeFrame] = &[
+    HomeFrame {
+        from: "Main page",
+        view: || {
+            use crate::gallery::page::BusyDayScene;
+            view! { <BusyDayScene /> }.into_any()
+        },
+    },
+    HomeFrame {
+        from: "Installed package",
+        view: || {
+            use crate::gallery::installed_package::SelectingScene;
+            view! { <SelectingScene /> }.into_any()
+        },
+    },
+];
+
 /// What the URL fragment asks for.
 ///
 /// A hash route rather than `leptos_router`: the gallery is one static page
@@ -325,11 +363,19 @@ const ENTRIES: &[Entry] = &[
 /// Routes rather than tabs. Tabs would show one component at a time and cost
 /// the thing a design-system gallery is *for*: noticing that a Select is a pixel
 /// taller than a Button, or that two components disagree about a baseline. So
-/// `#/` is still the one long scroll, and a tier (`#/core`) is still a page to
+/// `#/all` is still the one long scroll, and a tier (`#/core`) is still a page to
 /// compare across and Ctrl+F through — the narrower routes are for looking
 /// something up, and for not mounting two whole-page scenes to look at a Button.
+///
+/// `#/` is not the long scroll: mounting every section made the first load slow,
+/// and what is opened first is nearly always one of the two whole pages. So the
+/// bare address shows `HOME`, the busiest frame of each, with a line pointing at
+/// everything else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
+    /// `#/`: the frames in `HOME`, and no section of `ENTRIES`.
+    Home,
+    /// `#/all`: every section.
     All,
     Tier(Tier),
     /// An index into `ENTRIES`.
@@ -342,6 +388,10 @@ impl Route {
     fn parse(hash: &str) -> Route {
         let path = hash.trim_start_matches('#').trim_matches('/');
         if path.is_empty() {
+            return Route::Home;
+        }
+        // `all` cannot shadow a tier: a test holds the tier slugs to that.
+        if path == "all" {
             return Route::All;
         }
         let (tier, section) = match path.split_once('/') {
@@ -369,7 +419,10 @@ impl Route {
             Route::All => true,
             Route::Tier(tier) => ENTRIES[index].tier == tier,
             Route::Entry(i) => i == index,
-            Route::Unknown => false,
+            // Home draws `HOME`'s frames instead, which share ids with the
+            // sections they come from (`page-selecting`): mounting both would
+            // duplicate them.
+            Route::Home | Route::Unknown => false,
         }
     }
 }
@@ -435,7 +488,10 @@ fn Gallery() -> impl IntoView {
                 // nobody finds again.
                 <div class="g-nav__index">
                     <p class="g-nav__tier">
-                        <a href="#/" aria-current=current(Route::All)>"All"</a>
+                        <a href="#/" aria-current=current(Route::Home)>"Overview"</a>
+                    </p>
+                    <p class="g-nav__tier">
+                        <a href="#/all" aria-current=current(Route::All)>"All"</a>
                     </p>
                     {move || {
                         let matching = matching();
@@ -473,10 +529,13 @@ fn Gallery() -> impl IntoView {
                         return view! {
                             <p class="g-note">
                                 "Nothing in the gallery is at this address. "
-                                <a href="#/">"Show every section."</a>
+                                <a href="#/all">"Show every section."</a>
                             </p>
                         }
                             .into_any();
+                    }
+                    if route == Route::Home {
+                        return home().into_any();
                     }
                     Tier::ALL
                         .into_iter()
@@ -492,6 +551,52 @@ fn Gallery() -> impl IntoView {
             </main>
         </div>
     }
+}
+
+/// `#/`: the overview line, then `HOME`'s frames under the `Pages` heading they
+/// come from. Each frame is built here, so no other route mounts it.
+fn home() -> AnyView {
+    // Said on the page, so a short first load does not read as a gallery that
+    // lost most of its sections.
+    let overview = view! {
+        <p class="g-note">
+            "A short overview: the busiest frame of each of the two whole pages. "
+            <a href="#/all">"Every section"</a>
+            " is one long scroll; a tier — "
+            {Tier::ALL
+                .into_iter()
+                .enumerate()
+                .map(|(n, tier)| {
+                    view! {
+                        {(n > 0).then_some(", ")}
+                        <a href=format!("#/{}", tier.slug())>{tier.name()}</a>
+                    }
+                })
+                .collect_view()}
+            " — is a shorter one."
+        </p>
+    };
+    let frames = HOME
+        .iter()
+        .map(|frame| {
+            let source = frame.source();
+            view! {
+                <div class="g-entry">
+                    <a class="g-entry__source" href=source.href()>
+                        "src/gallery/"
+                        {source.file}
+                    </a>
+                    {(frame.view)()}
+                </div>
+            }
+        })
+        .collect_view();
+    view! {
+        {overview}
+        {tier_heading(Tier::Pages)}
+        {frames}
+    }
+    .into_any()
 }
 
 /// One tier of the index: its heading, then its sections, with a scene's page
@@ -556,13 +661,20 @@ fn main_tier(tier: Tier, items: &[usize]) -> AnyView {
         );
     }
     view! {
+        {tier_heading(tier)}
+        {sections}
+    }
+    .into_any()
+}
+
+fn tier_heading(tier: Tier) -> AnyView {
+    view! {
         // The tier rule, beside the tier, so a section lands in the right one
         // without anybody opening this file.
         <div class="g-tier">
             <h2 class="g-tier__name">{tier.name()}</h2>
             <p class="g-tier__rule">{tier.rule()}</p>
         </div>
-        {sections}
     }
     .into_any()
 }
@@ -617,12 +729,16 @@ pub fn Scene(title: &'static str, note: &'static str, children: Children) -> imp
 }
 
 /// The resolve pane's sentence, for a cell that draws marked rows without the
-/// pane. A marked row's `aria-describedby` names `DIFFERS_ID`, which in the app
+/// pane. A marked row's `aria-describedby` names the sentence, which in the app
 /// only the pane carries; a cell without it would point at nothing.
 /// `count` is how many rows the cell marks, which the sentence counts.
+///
+/// Its id is the cell's own `kit::DiffersId`, read the same way the rows read
+/// it, so a cell that forgets to provide one draws `DIFFERS_ID` and the
+/// gallery's unique-id test names it.
 #[must_use]
 pub fn differs_caption(count: usize) -> AnyView {
-    view! { <p class="g-note" id=kit::DIFFERS_ID>{pages::differs_sentence(count)}</p> }.into_any()
+    view! { <p class="g-note" id=kit::differs_id()>{pages::differs_sentence(count)}</p> }.into_any()
 }
 
 #[component]
@@ -658,7 +774,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use super::{ENTRIES, Route, Tier};
+    use super::{ENTRIES, HOME, Route, Tier};
     use crate::gallery::entry_group::EntryGroupStories;
     use crate::gallery::entry_row::EntryRowStories;
     use crate::gallery::file_pane::FilePaneScene;
@@ -691,9 +807,207 @@ mod tests {
     }
 
     #[test]
-    fn no_fragment_shows_everything() {
+    fn no_fragment_is_the_overview() {
         for hash in ["", "#", "#/"] {
+            assert_eq!(Route::parse(hash), Route::Home, "{hash:?}");
+        }
+    }
+
+    /// Not one of the sections: `HOME`'s frames are drawn on their own, and
+    /// share ids with the sections they come from.
+    #[test]
+    fn the_overview_mounts_no_section() {
+        assert!((0..ENTRIES.len()).all(|i| !Route::Home.shows(i)));
+    }
+
+    /// One frame from each whole page, and each names a real `Pages` entry, so a
+    /// renamed label fails here rather than at the first load.
+    #[test]
+    fn each_overview_frame_comes_from_a_page() {
+        let sources: Vec<_> = HOME.iter().map(|f| f.source().href()).collect();
+        assert_eq!(sources, ["#/pages/main-page", "#/pages/installed-package"]);
+        for frame in HOME {
+            let found = ENTRIES
+                .iter()
+                .filter(|e| e.tier == Tier::Pages && e.label == frame.from)
+                .count();
+            assert_eq!(found, 1, "{}", frame.from);
+        }
+    }
+
+    /// The overview as it mounts: its two frames together, with no id drawn twice.
+    #[wasm_bindgen_test]
+    fn the_overview_draws_no_id_twice() {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), super::home);
+        let with_id = container.query_selector_all("[id]").unwrap();
+        let mut ids = Vec::new();
+        for i in 0..with_id.length() {
+            let el: web_sys::Element = with_id.item(i).unwrap().dyn_into().unwrap();
+            ids.push(el.id());
+        }
+        let frames = container.query_selector_all(".g-entry").unwrap().length();
+        drop(handle);
+        container.remove();
+        assert_eq!(frames, 2);
+        assert!(ids.iter().any(|id| id == "page-selecting"), "{ids:?}");
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "{ids:?}");
+    }
+
+    /// The ids of everything in `container` that has one, sorted.
+    fn ids_in(container: &web_sys::Element) -> Vec<String> {
+        let with_id = container.query_selector_all("[id]").unwrap();
+        let mut ids: Vec<String> = (0..with_id.length())
+            .map(|i| {
+                let el: web_sys::Element = with_id.item(i).unwrap().dyn_into().unwrap();
+                el.id()
+            })
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// The gallery, mounted on `#/`, and a way to move it to another route
+    /// through its own `hashchange` listener. Dispatched by hand so the swap
+    /// does not wait on the browser's own event, which arrives a task later and
+    /// only sets the same route again.
+    fn mount_gallery() -> (web_sys::HtmlElement, impl Drop, impl Fn(&str)) {
+        let window = web_sys::window().unwrap();
+        let doc = window.document().unwrap();
+        window.location().set_hash("/").unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), super::Gallery);
+        let go = move |hash: &str| {
+            window.location().set_hash(hash).unwrap();
+            window
+                .dispatch_event(&web_sys::Event::new("hashchange").unwrap())
+                .unwrap();
+        };
+        (container, handle, go)
+    }
+
+    /// Every id `container` draws more than once.
+    fn ids_twice(container: &web_sys::Element) -> Vec<String> {
+        let mut twice: Vec<String> = ids_in(container)
+            .windows(2)
+            .filter(|w| w[0] == w[1])
+            .map(|w| w[0].clone())
+            .collect();
+        twice.dedup();
+        twice
+    }
+
+    /// Every id an `aria-describedby` in `container` names that is not drawn
+    /// exactly once there, so the description is either missing or ambiguous.
+    ///
+    /// Except a form control's validation message while it has none to show:
+    /// `kit/form_control.rs` names that id from the start on purpose, so a
+    /// message that appears later is announced, and a missing id is ignored.
+    fn descriptions_not_drawn_once(container: &web_sys::Element) -> Vec<String> {
+        let unshown_validation = |id: &str| id.starts_with("q-control-") && id.ends_with("-error");
+        let ids = ids_in(container);
+        let described = container.query_selector_all("[aria-describedby]").unwrap();
+        let mut wrong = Vec::new();
+        for i in 0..described.length() {
+            let el: web_sys::Element = described.item(i).unwrap().dyn_into().unwrap();
+            for id in el
+                .get_attribute("aria-describedby")
+                .unwrap()
+                .split_whitespace()
+            {
+                let drawn = ids.iter().filter(|drawn| *drawn == id).count();
+                if drawn > 1 || (drawn == 0 && !unshown_validation(id)) {
+                    wrong.push(id.to_string());
+                }
+            }
+        }
+        wrong.sort();
+        wrong.dedup();
+        wrong
+    }
+
+    /// The overview's frames share ids with the sections they come from, so
+    /// the swap between `#/` and `#/all` must take one set down before it puts
+    /// the other up.
+    #[wasm_bindgen_test]
+    async fn switching_between_the_overview_and_everything_draws_no_id_twice() {
+        let (container, handle, go) = mount_gallery();
+        let mut seen = Vec::new();
+        for hash in ["", "/all", "/"] {
+            if !hash.is_empty() {
+                go(hash);
+            }
+            leptos::task::tick().await;
+            let ids = ids_in(&container);
+            let selecting = ids.iter().filter(|id| *id == "page-selecting").count();
+            let frames = container.query_selector_all(".g-entry").unwrap().length() as usize;
+            seen.push((hash, frames, selecting, ids_twice(&container)));
+        }
+        drop(handle);
+        container.remove();
+        go("");
+        // (route, frames drawn, how many `page-selecting`, the ids drawn twice)
+        let none = Vec::<String>::new;
+        assert_eq!(
+            seen,
+            [
+                ("", 2, 1, none()),
+                ("/all", ENTRIES.len(), 1, none()),
+                ("/", 2, 1, none()),
+            ]
+        );
+    }
+
+    /// Every address the gallery has draws each id once, and every description
+    /// a row names is drawn once beside it. The long scroll is the hard case:
+    /// several cells mark rows and draw the resolve sentence, and each pairs
+    /// its rows with its own sentence through `kit::DiffersId`.
+    #[wasm_bindgen_test]
+    async fn every_route_draws_each_id_once_and_every_description_once() {
+        let mut hashes = vec!["/".to_string(), "/all".to_string()];
+        hashes.extend(Tier::ALL.iter().map(|t| format!("/{}", t.slug())));
+        hashes.extend(
+            ENTRIES
+                .iter()
+                .map(|e| e.href().trim_start_matches('#').to_string()),
+        );
+        let (container, handle, go) = mount_gallery();
+        let mut wrong = Vec::new();
+        for hash in &hashes {
+            go(hash);
+            leptos::task::tick().await;
+            let twice = ids_twice(&container);
+            let described = descriptions_not_drawn_once(&container);
+            if !twice.is_empty() || !described.is_empty() {
+                wrong.push((hash.clone(), twice, described));
+            }
+        }
+        drop(handle);
+        container.remove();
+        go("");
+        assert_eq!(wrong, Vec::new());
+    }
+
+    #[test]
+    fn the_all_address_shows_everything() {
+        for hash in ["#/all", "#/all/"] {
             assert_eq!(Route::parse(hash), Route::All, "{hash:?}");
+        }
+        assert!((0..ENTRIES.len()).all(|i| Route::All.shows(i)));
+    }
+
+    #[test]
+    fn no_tier_is_called_all() {
+        for tier in Tier::ALL {
+            assert_ne!(tier.slug(), "all");
         }
     }
 

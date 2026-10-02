@@ -11,15 +11,20 @@ start: ui-stubs
 ui-stubs:
     cd quilt-sync/ui && mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/_modules.scss assets/css/kit/_normalize.scss
 
-# Open the component gallery (the kit's design record, never the app) in a browser.
+# Serve the component gallery (the kit's design record, never the app); `--open`
+# opens a browser tab.
 # Needs the frontend toolchain, see CONTRIBUTING.md.
 #
 # `--dist` is load-bearing. Trunk writes whatever target it is given to
 # `<dist>/index.html`, and `just start` points Tauri at `ui/dist`, so sharing one
 # directory means whichever of the two rebuilt last owns the page both of them serve.
 # With its own directory the gallery and the app run side by side.
-gallery port="8787": ui-stubs
-    cd quilt-sync/ui && trunk serve gallery.html --dist dist-gallery --port {{port}} --open
+#
+# Extra arguments go to `trunk serve`: `just gallery --open`, `just gallery --address 0.0.0.0`.
+# The port defaults through Trunk's env var rather than `--port`, so `just gallery --port 9000`
+# overrides it instead of passing the flag twice.
+gallery *args: ui-stubs
+    cd quilt-sync/ui && TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8787}" trunk serve gallery.html --dist dist-gallery {{args}}
 
 # Run test coverage for all packages
 coverage:

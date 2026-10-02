@@ -31,6 +31,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use leptos::context::Provider;
 use leptos::prelude::*;
 use quilt_uri::Namespace;
 
@@ -47,6 +48,7 @@ use crate::kit::Card;
 use crate::kit::CatalogLink;
 use crate::kit::Choice;
 use crate::kit::ChoiceGroup;
+use crate::kit::DiffersId;
 use crate::kit::LoadFailure;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
@@ -502,7 +504,9 @@ pub fn ContextPaneScene() -> impl IntoView {
                 )}
             </Cell>
             <Cell wide=true label="resolve mode, with the exit the design left open">
-                {resolve("#contextpane", compared())}
+                <Provider value=DiffersId("resolve-differing-context-pane")>
+                    {resolve("#contextpane", compared())}
+                </Provider>
             </Cell>
             <Cell wide=true label="resolve mode — the comparison could not be read">
                 {resolve("#contextpane", refused())}

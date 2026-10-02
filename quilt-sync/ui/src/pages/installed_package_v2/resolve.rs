@@ -19,8 +19,8 @@ use super::{Outcome, Replace, Wiring, holding, run};
 use crate::commands;
 use crate::kit::readable;
 use crate::kit::{
-    BackLink, BannerVariant, Button, ButtonVariant, Card, ConfirmDialog, DIFFERS_ID, LoadFailure,
-    PaneSection, RevisionRow, Submit, unique_id,
+    BackLink, BannerVariant, Button, ButtonVariant, Card, ConfirmDialog, LoadFailure, PaneSection,
+    RevisionRow, Submit, differs_id, unique_id,
 };
 use crate::routes;
 
@@ -143,7 +143,7 @@ pub fn ResolvePane(
             ..
         } => (
             view! {
-                <p id=DIFFERS_ID>{move || differs_sentence(count())}</p>
+                <p id=differs_id()>{move || differs_sentence(count())}</p>
                 {yours}
                 <PaneSection nested=true label="Published">
                     // The kit draws `No message` for an empty one; no time, since

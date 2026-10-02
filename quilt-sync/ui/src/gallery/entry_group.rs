@@ -1,11 +1,13 @@
 //! `EntryGroup` stories.
 
+use leptos::context::Provider;
 use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
 use crate::differs_caption;
 use crate::kit::CheckState;
+use crate::kit::DiffersId;
 use crate::kit::EntryAction;
 use crate::kit::EntryGroup;
 use crate::kit::EntryRow;
@@ -30,6 +32,27 @@ fn notes() -> AnyView {
 /// carries the check, not a box — and the heading carries no box either,
 /// because a box that can select nothing is the dead control `Select` already
 /// refuses to be. It carries the rows' check instead, summarising them.
+/// A closed heading holding a marked row, with the sentence both name under
+/// an id of this cell's own.
+fn marked_group(open: RwSignal<bool>) -> AnyView {
+    view! {
+        <Provider value=DiffersId("resolve-differing-entry-group")>
+            <EntryGroup
+                name="plate/"
+                count=Signal::derive(|| 2)
+                open=open
+                differs=true
+                have_mark=true
+            >
+                <EntryRow name="a.csv" size="4 KB" differs=true have_mark=true />
+                <EntryRow name="b.csv" size="4 KB" have_mark=true />
+            </EntryGroup>
+            {differs_caption(1)}
+        </Provider>
+    }
+    .into_any()
+}
+
 fn settled_group(open: RwSignal<bool>) -> AnyView {
     view! {
         <EntryGroup name="notes/" count=Signal::derive(|| 3) open=open have_mark=true>
@@ -220,17 +243,7 @@ pub fn EntryGroupStories() -> impl IntoView {
                 </EntryGroup>
             </Cell>
             <Cell full=true label="collapsed, holding a file that differs — resolve mode marks the heading">
-                <EntryGroup
-                    name="plate/"
-                    count=Signal::derive(|| 2)
-                    open=marked_shut
-                    differs=true
-                    have_mark=true
-                >
-                    <EntryRow name="a.csv" size="4 KB" differs=true have_mark=true />
-                    <EntryRow name="b.csv" size="4 KB" have_mark=true />
-                </EntryGroup>
-                {differs_caption(1)}
+                {marked_group(marked_shut)}
             </Cell>
             <Cell full=true label="every file already here — nothing to select, so no box, and the heading and every row have the check">
                 {settled_group(settled)}

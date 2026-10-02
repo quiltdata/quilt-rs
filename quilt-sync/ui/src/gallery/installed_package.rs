@@ -98,6 +98,7 @@
 //! context, then files, at every width. Wide, `order` draws the files on the
 //! leading side; stacked, the order resets and what you see is DOM order.
 
+use leptos::context::Provider;
 use leptos::prelude::*;
 
 use crate::Cell;
@@ -106,6 +107,7 @@ use crate::gallery::context_pane::ContextPaneRegion;
 use crate::gallery::file_pane::FilePaneRegion;
 use crate::gallery::package_header::PackageHeaderRegion;
 use crate::kit::Button;
+use crate::kit::DiffersId;
 use crate::kit::PackageState;
 use crate::kit::PageLayout;
 use crate::kit::icons;
@@ -150,15 +152,21 @@ fn page(
                         publish_choice=publish_choice
                         action_open=resolving
                     />
-                    <div class="g-ip-shell">
-                        <ContextPaneRegion
-                            resolving=resolving
-                            scope=scope
-                            pending=2
-                            exit=format!("#{name}")
-                        />
-                        <FilePaneRegion name=name ticked=ticked marked=resolving />
-                    </div>
+                    // The pane's sentence and the rows it describes, under one id
+                    // of their own: the context pane's scene draws the same pane.
+                    // Only the resolve frame draws either, so the five frames can
+                    // share it.
+                    <Provider value=DiffersId("resolve-differing-page")>
+                        <div class="g-ip-shell">
+                            <ContextPaneRegion
+                                resolving=resolving
+                                scope=scope
+                                pending=2
+                                exit=format!("#{name}")
+                            />
+                            <FilePaneRegion name=name ticked=ticked marked=resolving />
+                        </div>
+                    </Provider>
                 </div>
             </PageLayout>
         </div>
@@ -174,6 +182,31 @@ const NOTE: &str = "The page at its own floor, 1024×560, which is where the ver
     stacks itself, and the last is resolve mode, the app's own resolve pane beside the \
     marked rows, so the rows and the sentence naming them are finally on screen together.";
 
+/// Shared by [`InstalledPackageScene`] and [`SelectingScene`], so the frame
+/// reads the same wherever it is drawn.
+const SELECTING: &str = "1024×560 — three ticked, and the footer has taken its 49px";
+
+/// The busiest of the five frames on its own, for the gallery's overview: three
+/// files ticked at the window's floor, so the header, both panes and the footer
+/// are all competing for the same 560px.
+///
+/// Its ids are the same ones [`InstalledPackageScene`]'s copy carries. The two
+/// are never mounted together: the overview mounts no gallery section.
+#[component]
+pub fn SelectingScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="The installed package page, picking files"
+            note="Three files ticked at the 1024×560 floor, with the footer up. The \
+                  busiest this page gets: 220px of list, six rows."
+        >
+            <Cell full=true label=SELECTING>
+                {page(1024, 560, PackageState::Behind, "page-selecting", 3, false)}
+            </Cell>
+        </Scene>
+    }
+}
+
 #[component]
 pub fn InstalledPackageScene() -> impl IntoView {
     view! {
@@ -181,7 +214,7 @@ pub fn InstalledPackageScene() -> impl IntoView {
             <Cell full=true label="1024×560 — the floor, nothing ticked">
                 {page(1024, 560, PackageState::Behind, "page-floor", 0, false)}
             </Cell>
-            <Cell full=true label="1024×560 — three ticked, and the footer has taken its 49px">
+            <Cell full=true label=SELECTING>
                 {page(1024, 560, PackageState::Behind, "page-selecting", 3, false)}
             </Cell>
             <Cell full=true label="1024×900 — the default window, for what the floor costs">
