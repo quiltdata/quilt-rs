@@ -271,7 +271,7 @@ pub mod old_revisions {
                     "paths": {}
                 }
             },
-            "home": home_dir.path(),
+            "home": &home,
         })
         .to_string();
         storage
