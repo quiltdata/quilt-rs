@@ -4460,14 +4460,19 @@ mod tests {
                 account_reads.update(|n| *n += 1);
                 async { Err::<MainPageAccountsData, String>("nope".to_string()) }
             });
+            // The queue calls `use_navigate`, which panics outside a `Router`. The
+            // panic lands in a spawned task, not this test, and leaves the runtime
+            // broken for whichever test runs next.
             view! {
-                <MainPageRegions
-                    packages=packages
-                    accounts=accounts
-                    reload=reload
-                    packages_retry=packages_retry
-                    accounts_retry=accounts_retry
-                />
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        packages_retry=packages_retry
+                        accounts_retry=accounts_retry
+                    />
+                </leptos_router::components::Router>
             }
         });
         sleep_ms(50).await;
