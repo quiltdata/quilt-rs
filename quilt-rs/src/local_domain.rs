@@ -236,21 +236,27 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// The uninstall stands whatever the prune finds. Another package busy
     /// in another writer keeps the objects, answered as
     /// [`flow::Pruned::Busy`]; a manifest that can't be read keeps them too,
-    /// as [`Error::PruneFailed`]. The package's own manifest that can't be
-    /// read fails before anything changes.
+    /// as [`Error::PruneFailed`]. So does one of the package's own manifests
+    /// or objects that can't be read: the package is still removed, and what
+    /// was read is still pruned.
     pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
         info!("Uninstalling package and its objects: {}", namespace);
-        let candidates = {
+        let (candidates, unread) = {
             let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
-            let candidates = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
+            let found = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
             self.uninstall_locked(&namespace).await?;
-            candidates
+            found
         };
         // The package's own lock is released above: the prune try-locks
         // every package, this one among them.
         let prune = async {
             let lineage = self.lineage.read(&self.storage).await?;
-            flow::prune(&self.paths, &self.storage, &lineage, candidates).await
+            let pruned = flow::prune(&self.paths, &self.storage, &lineage, candidates).await?;
+            match (pruned, unread) {
+                // Some of its files could not be counted, so not all went.
+                (flow::Pruned::Freed(_), Some(err)) => Err(err),
+                (pruned, _) => Ok(pruned),
+            }
         };
         prune
             .await

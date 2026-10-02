@@ -162,35 +162,59 @@ impl std::fmt::Display for Pruned {
 /// the uninstall removes the manifests.
 ///
 /// Only names present in `objects/` count, each looked up by name rather
-/// than by listing the store, so the work follows the package's size. A
-/// manifest that can't be read fails it: the objects only that revision
-/// names could not be counted, and the caller has changed nothing yet.
+/// than by listing the store, so the work follows the package's size.
+///
+/// A manifest or an object that can't be read does not stop it: the rest
+/// are still candidates, and the first such error comes back beside them,
+/// so the caller can say not every file was deleted. Refusing instead would
+/// leave a surface that always prunes unable to remove the package.
 pub(crate) async fn package_objects(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     namespace: &Namespace,
-) -> Res<BTreeMap<String, u64>> {
+) -> Res<(BTreeMap<String, u64>, Option<Error>)> {
     let objects = paths.objects_dir();
     let mut seen = BTreeSet::new();
     let mut candidates = BTreeMap::new();
+    let mut unread = None;
     let manifests = paths.installed_manifests_dir(namespace);
     for (_, manifest_path, _) in list_files(storage, &manifests).await? {
-        let manifest = Manifest::from_path(storage, &manifest_path).await?;
+        let manifest = match Manifest::from_path(storage, &manifest_path).await {
+            Ok(manifest) => manifest,
+            Err(err) => {
+                unread.get_or_insert(err);
+                continue;
+            }
+        };
         for row in &manifest.rows {
             for name in row_objects(&row.hash, &row.physical_key) {
                 if !seen.insert(name.clone()) {
                     continue;
                 }
-                let path = objects.join(&name);
-                if !storage.exists(&path).await {
-                    continue;
+                match object_len(storage, &objects.join(&name)).await {
+                    Ok(Some(len)) => {
+                        candidates.insert(name, len);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        unread.get_or_insert(err);
+                    }
                 }
-                let len = storage.open_file(&path).await?.metadata().await?.len();
-                candidates.insert(name, len);
             }
         }
     }
-    Ok(candidates)
+    Ok((candidates, unread))
+}
+
+/// The length of the object at `path`, or `None` if there is none. Any
+/// other failure to read it is an error, not an absence.
+async fn object_len(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<u64>> {
+    let file = match storage.open_file(path).await {
+        Ok(file) => file,
+        Err(err) if err.is_not_found() => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    Ok(Some(file.metadata().await?.len()))
 }
 
 /// Delete the `candidates` no installed manifest uses, after an uninstall
@@ -833,27 +857,51 @@ mod tests {
         Ok(())
     }
 
-    /// The package's own manifest that can't be read refuses the prune
-    /// before anything changes: its objects could not be counted.
+    /// The package's own manifest that can't be read does not stop the
+    /// removal: the package goes, the objects of what could be read go, and
+    /// the error says not every file was deleted.
     #[test(tokio::test)]
-    async fn its_own_unreadable_manifest_refuses_before_uninstalling() -> Res {
-        let (domain, paths, _dir) = domain().await?;
-        create(&domain, "acme/broken", &[("a.txt", "a")]).await?;
+    async fn its_own_unreadable_manifest_removes_and_says_files_were_left() -> Res {
+        let (domain, paths, dir) = domain().await?;
+        create(&domain, "acme/broken", &[("b.txt", "b1")]).await?;
         let namespace: Namespace = "acme/broken".try_into()?;
-        let before = object_names(&paths)?;
-        for entry in std::fs::read_dir(paths.installed_manifests_dir(&namespace))? {
-            std::fs::write(entry?.path(), "not a manifest")?;
+        let first: Vec<_> = std::fs::read_dir(paths.installed_manifests_dir(&namespace))?
+            .map(|entry| entry.map(|e| e.path()))
+            .collect::<Result<_, _>>()?;
+        std::fs::write(dir.path().join("home/acme/broken/b.txt"), "b22")?;
+        domain
+            .get_installed_package(&namespace)
+            .await?
+            .expect("installed")
+            .commit(
+                "second".to_string(),
+                crate::flow::UserMeta::Keep,
+                None,
+                None,
+            )
+            .await?;
+        for path in first {
+            std::fs::write(path, "not a manifest")?;
         }
 
         let result = domain.uninstall_package_pruning(namespace.clone()).await;
 
-        assert!(result.is_err(), "{result:?}");
+        let Err(err @ Error::PruneFailed(..)) = result else {
+            panic!("expected PruneFailed, got {result:?}");
+        };
         assert!(
-            !matches!(result, Err(Error::PruneFailed(..))),
-            "nothing was uninstalled: {result:?}"
+            err.to_string().starts_with(
+                "Uninstalled acme/broken, but not all of its downloaded files were deleted: "
+            ),
+            "{err}"
         );
-        assert!(domain.get_installed_package(&namespace).await?.is_some());
-        assert_eq!(object_names(&paths)?, before);
+        assert!(domain.get_installed_package(&namespace).await?.is_none());
+        assert_eq!(
+            object_names(&paths)?.len(),
+            1,
+            "the readable revision's object went; the unread one's stays for gc"
+        );
+        assert_eq!(domain.gc().await?.objects, 1, "and gc frees it");
         Ok(())
     }
 
