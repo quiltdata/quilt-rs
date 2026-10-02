@@ -568,8 +568,9 @@ enum Body {
     Loading,
     /// The call failed.
     Failed,
-    /// The rows, under the sentence saying they are not all of them.
-    Capped,
+    /// The rows, under the sentence saying they are not all of them: the
+    /// package's whole count, of which the rows are the first [`LOADED`].
+    Capped(usize),
 }
 
 /// How the pane is standing when a cell draws it. One struct rather than nine
@@ -731,7 +732,7 @@ fn pane(p: Pane) -> AnyView {
     let boxes = !whole;
     let shape = Shape {
         boxes,
-        capped: body == Body::Capped,
+        capped: matches!(body, Body::Capped(_)),
     };
     let footer_shown = Signal::derive(move || boxes && chosen.get().files > 0);
     let marked: Vec<String> = marked.iter().map(|&p| p.to_string()).collect();
@@ -966,8 +967,11 @@ fn pane(p: Pane) -> AnyView {
                         }
                         _ => {
                             view! {
-                                {(body == Body::Capped)
-                                    .then(|| {
+                                {match body {
+                                    Body::Capped(total) => Some(total),
+                                    _ => None,
+                                }
+                                    .map(|total| {
                                         view! {
                                             // The first 1,000 by path: the page read
                                             // sorts before it caps and sends the
@@ -976,7 +980,11 @@ fn pane(p: Pane) -> AnyView {
                                                       var(--q-space-3); \
                                                       color:var(--q-fgColor-muted); \
                                                       font-size:var(--q-text-body)">
-                                                "This package has 4,312 files. This list covers the first 1,000 by path."
+                                                {format!(
+                                                    "This package has {} files. This list covers the first {} by path.",
+                                                    count(total),
+                                                    count(LOADED),
+                                                )}
                                             </p>
                                         }
                                     })}
@@ -989,7 +997,7 @@ fn pane(p: Pane) -> AnyView {
                                             } else {
                                                 match (footer_shown.get(), body) {
                                                     (true, _) => LIST_WITH_FOOTER,
-                                                    (false, Body::Capped) => LIST_UNDER_NOTICE,
+                                                    (false, Body::Capped(_)) => LIST_UNDER_NOTICE,
                                                     (false, _) => LIST_RESTING,
                                                 }
                                             },
@@ -1251,8 +1259,22 @@ fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
         .collect()
 }
 
+/// The page read's cap: it sends the first 1,000 entries by path, and only a
+/// loaded row takes a tick. The backend's constant is not visible to this
+/// crate, so it is restated here once, for every cell that honours it.
+const LOADED: usize = 1_000;
+
+/// The rows the page would load from `files`: sorted by path and cut at
+/// [`LOADED`], with the package's whole count beside them.
+fn loaded(mut files: Vec<File>) -> (Vec<File>, usize) {
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let total = files.len();
+    files.truncate(LOADED);
+    (files, total)
+}
+
 /// The page read's list over `files`, built as the backend builds it: sorted,
-/// counted over the whole package, then capped at 1,000.
+/// counted over the whole package, then capped at [`LOADED`].
 fn entry_list(files: Vec<File>) -> crate::commands::EntryList {
     let mut entries = entries(files);
     let mut counts = crate::commands::EntryCounts::default();
@@ -1273,7 +1295,7 @@ fn entry_list(files: Vec<File>) -> crate::commands::EntryList {
         }
     }
     let total = entries.len();
-    entries.truncate(1_000);
+    entries.truncate(LOADED);
     crate::commands::EntryList {
         truncated: total > entries.len(),
         entries,
@@ -1370,8 +1392,9 @@ fn empty_selection() -> Vec<File> {
 }
 
 /// Everything here but a folder of 1,000 large plates this copy has not
-/// fetched — the most a selection can hold, since the page loads the first
-/// 1,000 rows by path and only a loaded row takes a tick.
+/// fetched, which takes the package past the cap. Drawn through [`loaded`], so
+/// only the plates among the first 1,000 paths can be ticked: 998 of them,
+/// after `.DS_Store` and `README.md`.
 fn heavy_selection() -> Vec<File> {
     let mut files = downloaded_package();
     for i in 1..=1_000 {
@@ -1465,13 +1488,18 @@ pub fn FilePaneScene() -> impl IntoView {
             </Cell>
             <Cell
                 full=true
-                label="a huge selection — all 1,000 loaded rows, the most a tick can reach"
+                label="a huge selection, limited by the 1,000 loaded rows — 1,000 plates are \
+                       missing, but only the 998 among the first 1,000 paths can be ticked"
             >
-                {pane(Pane {
-                    files: heavy_selection(),
-                    ticked: 1_000,
-                    ..Pane::new("fp-heavy")
-                })}
+                {
+                    let (files, total) = loaded(heavy_selection());
+                    pane(Pane {
+                        files,
+                        ticked: LOADED,
+                        body: Body::Capped(total),
+                        ..Pane::new("fp-heavy")
+                    })
+                }
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
                 <Provider value=DiffersId("resolve-differing-file-pane")>
@@ -1508,7 +1536,7 @@ pub fn FilePaneScene() -> impl IntoView {
                 {pane(Pane { body: Body::Loading, ..Pane::new("fp-loading") })}
             </Cell>
             <Cell full=true label="over the cap — and the toolbar's counts openly disagree with it">
-                {pane(Pane { body: Body::Capped, ..Pane::new("fp-capped") })}
+                {pane(Pane { body: Body::Capped(4_312), ..Pane::new("fp-capped") })}
             </Cell>
             <Cell full=true label="the read failed — the controls stay, the box carries it">
                 {pane(Pane { body: Body::Failed, ..Pane::new("fp-failed") })}
@@ -1580,6 +1608,22 @@ mod tests {
             assert_eq!(chosen.files, set.len());
             assert_eq!(chosen.bytes, set.iter().map(|r| r.bytes).sum::<u64>());
         }
+    }
+
+    /// The huge selection honours the cap: no more than [`LOADED`] rows, so
+    /// fewer ticks than the package has missing files.
+    #[test]
+    fn the_huge_selection_is_limited_by_the_loaded_rows() {
+        let (files, total) = loaded(heavy_selection());
+        assert_eq!((files.len(), total), (LOADED, 1_056));
+        let all = rows(&files);
+        let picks = vec![true; all.iter().filter(|r| r.pick.is_some()).count()];
+        let chosen = chosen_among(&all, &picks);
+        assert_eq!(chosen.files, 998);
+        assert_eq!(
+            footer_words(chosen).replace('\u{a0}', " "),
+            "Download 998 · 86.1 GB"
+        );
     }
 
     /// The live cell over the cap says what the page would: the whole count,
