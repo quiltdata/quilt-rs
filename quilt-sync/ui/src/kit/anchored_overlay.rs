@@ -148,8 +148,10 @@ pub fn AnchoredOverlay(
             let Some(window) = web_sys::window() else {
                 return;
             };
-            // It may have been dismissed inside that frame.
-            if !open.get_untracked() {
+            // It may have been dismissed inside that frame, or disposed with
+            // its owner. A disposed one must not attach: `on_cleanup` has
+            // already run, so nothing would ever remove the listener.
+            if !open.try_get_untracked().unwrap_or(false) {
                 return;
             }
             let closure =
