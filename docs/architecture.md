@@ -49,11 +49,11 @@ working file cannot corrupt the store, and modification detection is a
 cheap timestamp-plus-hash comparison against the recorded `PathState`
 rather than a re-hash of the store.
 
-The consequence accepted with it: `objects/` and the `packages/` cache are
-**never pruned** — not on uninstall, not on reset, not on pull. Content may
-be shared across packages and there is no reference counting, so the safe
-choice is to leak bytes rather than risk deleting content another package
-still addresses.
+The consequence accepted with it: content may be shared across packages and
+there is no reference counting, so no reset or pull deletes an object. Only
+`gc` and a pruning uninstall do, and only objects they prove unused by
+reading every installed manifest under every package's lock. `gc` also
+empties the `packages/` cache and `staging/`.
 
 ## Workspace Crate Layout
 
@@ -299,9 +299,11 @@ the namespace. Resolution of either is user-action only.
 
 ### Uninstall
 
-Removes tracking, installed manifests, and the working directory — but
-deliberately leaves `objects/` and the `packages/` cache (shared content,
-no reference counting).
+Removes tracking, installed manifests, and the working directory, and
+leaves `objects/` and the `packages/` cache (shared content, no reference
+counting). With `--prune` (`LocalDomain::uninstall_package_pruning`, and
+QuiltSync's v2 Remove by default) it then deletes the package's objects no
+other installed manifest uses; the rest stays for `gc`.
 
 ## Resolving Diverged
 

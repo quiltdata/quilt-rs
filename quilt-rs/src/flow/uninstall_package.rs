@@ -38,8 +38,8 @@ pub async fn uninstall_package(
     storage.remove_dir_all(&package_home).await?;
     debug!("✔️ Removed working directory: {}", package_home.display());
 
-    // TODO: Remove object files? But need to make sure no other manifest uses them.
-    debug!("ℹ️ Skipping object files cleanup - may be used by other packages");
+    // Objects may be used by other packages. A pruning uninstall deletes the
+    // ones no other manifest uses afterwards; see `flow::gc::prune`.
 
     info!("✔️ Successfully uninstalled package {}", namespace);
     Ok(lineage)

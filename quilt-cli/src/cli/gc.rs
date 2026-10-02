@@ -63,8 +63,11 @@ mod tests {
             message: None,
         })
         .await?;
-        m.uninstall(crate::cli::uninstall::Input { namespace })
-            .await?;
+        m.uninstall(crate::cli::uninstall::Input {
+            namespace,
+            prune: false,
+        })
+        .await?;
 
         let output = m.gc().await?;
         assert_eq!(output.to_string(), "Freed 3 B: 1 object");

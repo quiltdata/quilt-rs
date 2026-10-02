@@ -254,7 +254,10 @@ mod tests {
             |_| (),
             move || flag.set(true),
         );
-        leptos::task::tick().await;
+        // A timer, not `leptos::task::tick`: the registration runs on
+        // `wasm_bindgen_futures`, and `tick` needs a Leptos executor, which only
+        // exists if an earlier test in the run happened to mount something.
+        crate::test_support::sleep_ms(0).await;
         drop(listener);
         assert!(!registered.get());
     }

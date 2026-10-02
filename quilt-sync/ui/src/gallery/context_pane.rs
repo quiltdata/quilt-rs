@@ -206,19 +206,158 @@ fn revision_skeleton() -> AnyView {
     .into_any()
 }
 
+/// What the page read knows about the size.
+#[derive(Clone, Copy)]
+enum Size {
+    /// A row's size could not be read.
+    Unread,
+    /// Bytes in the revision, and in the files of it that are here.
+    Known { total: u64, here: u64 },
+}
+
+/// What `Keeping` reports: the revision's files, how many are not here, and
+/// their bytes.
+#[derive(Clone, Copy)]
+struct Held {
+    files: usize,
+    pending: usize,
+    size: Size,
+}
+
+const MB: u64 = 1_000_000;
+
+/// The standalone cells' package, two files short or complete: 56 files,
+/// 3.4 MB, of which 1.9 MB is here when two are not. Not the page's: beside the
+/// file pane the region reads [`on_page`] instead.
+const fn plate(pending: usize) -> Held {
+    Held {
+        files: TOTAL,
+        pending,
+        size: Size::Known {
+            total: 34 * MB / 10,
+            here: if pending == 0 {
+                34 * MB / 10
+            } else {
+                19 * MB / 10
+            },
+        },
+    }
+}
+
+/// The file pane's own package, as the region says it on the page: the two
+/// panes are on screen together there, so the sizes come from the same rows.
+fn on_page() -> Held {
+    let kept = crate::gallery::file_pane::kept();
+    Held {
+        files: kept.files,
+        pending: kept.pending,
+        size: Size::Known {
+            total: kept.total,
+            here: kept.here,
+        },
+    }
+}
+
+/// A revision with no files at all.
+const EMPTY: Held = Held {
+    files: 0,
+    pending: 0,
+    size: Size::Known { total: 0, here: 0 },
+};
+
+/// 140,000 files, 12,400 of them here.
+const HUGE: Held = Held {
+    files: 140_000,
+    pending: 127_600,
+    size: Size::Known {
+        total: 1_200_000 * MB,
+        here: 86_300 * MB,
+    },
+};
+
+/// Two files short, and a row's size could not be read.
+const UNREAD: Held = Held {
+    size: Size::Unread,
+    ..plate(2)
+};
+
+/// A logical size, in decimal units and one decimal: the revisions surface's
+/// "1.2 MB", carried up to TB and down to bytes. The one formatter for the
+/// package's sizes, the Download buttons' included. The space is a no-break
+/// one: at 280px the caption wraps, and "1.2" ending a line with "TB" starting
+/// the next reads as two figures.
+pub(crate) fn bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
+    if n < 1000 {
+        return format!("{n}\u{a0}B");
+    }
+    // In u128, so `n * 10 + scale / 2` cannot overflow for any u64: the
+    // largest is under 2^68.
+    let n = u128::from(n);
+    let mut scale = 1000u128;
+    let mut tenths = 0;
+    let mut unit = UNITS[0];
+    for next in UNITS {
+        unit = next;
+        tenths = (n * 10 + scale / 2) / scale;
+        // Rounding up into the next unit's "1000.0" moves on to that unit.
+        if tenths < 10_000 {
+            break;
+        }
+        scale *= 1000;
+    }
+    format!("{}.{}\u{a0}{unit}", tenths / 10, tenths % 10)
+}
+
+/// A file count, grouped in thousands: "140,000" is read, "140000" is counted.
+pub(crate) fn count(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+/// The count, with the size joined to it: the count already answers *how much
+/// of this package is here*, and the size is the same question in bytes. A
+/// size that cannot be read says nothing, not a dash: the count is still true.
+/// An empty revision says so instead of "All files are downloaded", which is
+/// true of nothing.
+fn counted(held: Held) -> String {
+    let present = held.files.saturating_sub(held.pending);
+    match held.size {
+        Size::Known { .. } if held.files == 0 => "This revision has no files".to_string(),
+        Size::Known { total, .. } if held.pending == 0 => {
+            format!("All files are downloaded · {}", bytes(total))
+        }
+        Size::Known { total, .. } if present == 0 => {
+            format!("No files are downloaded · {}", bytes(total))
+        }
+        Size::Known { total, here } => format!(
+            "{} of {} files · {} of {} downloaded",
+            count(present),
+            count(held.files),
+            bytes(here),
+            bytes(total),
+        ),
+        Size::Unread if held.pending == 0 => "All files are downloaded".to_string(),
+        Size::Unread => format!("{} of {} downloaded", count(present), count(held.files)),
+    }
+}
+
 /// What the choice means, in the present tense.
 ///
 /// Two clauses from v1's own band, kept apart on purpose: the count reports the
 /// present, and the standing line promises something about files that do not
 /// exist yet. Only whole-package scope may make that promise — under
 /// individual-file scope the next revision can add a file and falsify it.
-fn consequence(scope: RwSignal<String>, pending: usize) -> Signal<String> {
+fn consequence(scope: RwSignal<String>, held: Held) -> Signal<String> {
     Signal::derive(move || {
-        let counted = if pending == 0 {
-            "All files are downloaded".to_string()
-        } else {
-            format!("{} of {TOTAL} downloaded", TOTAL - pending)
-        };
+        let counted = counted(held);
         if scope.get() == "all" {
             format!("{counted} — files added later are downloaded too.")
         } else {
@@ -227,22 +366,30 @@ fn consequence(scope: RwSignal<String>, pending: usize) -> Signal<String> {
     })
 }
 
+/// The backlog action's words, `Download 2 files · 1.5 MB`: the bytes are the
+/// missing files', total less downloaded, so a size that cannot be read leaves
+/// the count alone. The real section takes them from the page read's size.
+fn download_words(held: Held) -> String {
+    let files = if held.pending == 1 {
+        "Download 1 file".to_string()
+    } else {
+        format!("Download {} files", count(held.pending))
+    };
+    match held.size {
+        Size::Known { total, here } => format!("{files} · {}", bytes(total.saturating_sub(here))),
+        Size::Unread => files,
+    }
+}
+
 /// The backlog action. Conditional and counted, which is what lets it exist at
 /// all: a standing `Download all files` with no extent was removed on purpose,
 /// and this appears only where the scope change would otherwise strand files
 /// already listed.
-fn download(scope: RwSignal<String>, pending: usize) -> AnyView {
+fn download(scope: RwSignal<String>, held: Held) -> AnyView {
     view! {
         {move || {
-            (scope.get() == "all" && pending > 0)
-                .then(|| {
-                    let label = if pending == 1 {
-                        "Download 1 file".to_string()
-                    } else {
-                        format!("Download {pending} files")
-                    };
-                    view! { <Button on_click=|_| ()>{label}</Button> }
-                })
+            (scope.get() == "all" && held.pending > 0)
+                .then(|| view! { <Button on_click=|_| ()>{download_words(held)}</Button> })
         }}
     }
     .into_any()
@@ -258,7 +405,7 @@ fn pane(
     open: RwSignal<bool>,
     body: AnyView,
     scope: RwSignal<String>,
-    pending: usize,
+    held: Held,
     on_page: bool,
 ) -> AnyView {
     let sections = view! {
@@ -279,11 +426,11 @@ fn pane(
         <PaneSection>
             <ChoiceGroup
                 label="Keeping"
-                caption=consequence(scope, pending)
+                caption=consequence(scope, held)
                 options=scopes()
                 selected=scope
             />
-            {download(scope, pending)}
+            {download(scope, held)}
         </PaneSection>
     };
 
@@ -384,6 +531,12 @@ fn refused() -> ResolveData {
 const NOTE: &str = "280px holding two blocks: what the page says about the package rather \
     than about its files. \
     \
+    Keeping's count carries the package's size: the sum of the current revision's \
+    manifest rows, and of those whose files are here. It is the logical size, not disk \
+    usage: on APFS the object store shares blocks with the working files. The pane's words \
+    say downloaded, about files; only the revisions surface's frees is about this disk. A \
+    size that cannot be read leaves the count alone. \
+    \
     Flip a radio in a hand-built cell and the caption and the download action \
     answer together; the live cell's answer only once a stored choice is re-read, \
     which the gallery never does. \
@@ -413,10 +566,6 @@ pub fn ContextPaneRegion(
     resolving: bool,
     /// The standing scope, shared with whatever else on the page reads it.
     scope: RwSignal<String>,
-    /// How many files the scope leaves outstanding, which is what decides
-    /// whether `Keeping` carries a download action at all.
-    #[prop(optional)]
-    pending: usize,
     /// Where resolve mode's exit points. The page's own anchor, so that a link
     /// with no router behind it does not scroll somebody somewhere else.
     #[prop(into, optional)]
@@ -426,11 +575,12 @@ pub fn ContextPaneRegion(
     if resolving {
         resolve(&exit, compared())
     } else {
-        pane(open, revision_list(), scope, pending, true)
+        pane(open, revision_list(), scope, on_page(), true)
     }
 }
 
 #[component]
+#[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
 pub fn ContextPaneScene() -> impl IntoView {
     // One open signal per pane: a popover of `auto` type closes any other, so
     // sharing one between two cells would make the second trigger reopen the
@@ -441,6 +591,9 @@ pub fn ContextPaneScene() -> impl IntoView {
     let listed = RwSignal::new(false);
     let waiting_surface = RwSignal::new(false);
     let failed = RwSignal::new(false);
+    let emptied = RwSignal::new(false);
+    let huge = RwSignal::new(false);
+    let unread = RwSignal::new(false);
 
     let pick = RwSignal::new("pick".to_string());
     let whole = RwSignal::new("all".to_string());
@@ -448,13 +601,20 @@ pub fn ContextPaneScene() -> impl IntoView {
     let listing = RwSignal::new("pick".to_string());
     let waiting = RwSignal::new("pick".to_string());
     let broken = RwSignal::new("pick".to_string());
+    let empty_scope = RwSignal::new("pick".to_string());
+    let huge_scope = RwSignal::new("pick".to_string());
+    let unread_scope = RwSignal::new("all".to_string());
 
     view! {
         <Scene
             title="The context pane"
             note=NOTE
         >
-            <Cell wide=true label="live — current revision, bucket, history and keeping">
+            <Cell
+                wide=true
+                label="live — current revision, bucket, history and keeping; the page's own \
+                       section, so no size until PackageContextData carries one"
+            >
                 <crate::pages::CurrentRevisionPane
                     data=crate::commands::PackageContextData {
                         revision: crate::commands::CurrentRevisionData {
@@ -482,19 +642,35 @@ pub fn ContextPaneScene() -> impl IntoView {
                 />
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">
-                {pane(resting, revision_list(), pick, 2, false)}
+                {pane(resting, revision_list(), pick, plate(2), false)}
             </Cell>
-            <Cell wide=true label="the whole package, two files outstanding">
-                {pane(outstanding, revision_list(), whole, 2, false)}
+            <Cell
+                wide=true
+                label="the whole package, two files outstanding — the button says the bytes left; \
+                       the real section needs PackageContextData.size, total less downloaded"
+            >
+                {pane(outstanding, revision_list(), whole, plate(2), false)}
             </Cell>
             <Cell wide=true label="the whole package, nothing outstanding — no action">
-                {pane(settled, revision_list(), complete, 0, false)}
+                {pane(settled, revision_list(), complete, plate(0), false)}
+            </Cell>
+            <Cell wide=true label="an empty revision — no files, and the count says so">
+                {pane(emptied, revision_list(), empty_scope, EMPTY, false)}
+            </Cell>
+            <Cell wide=true label="a huge package — 1.2 TB in 140,000 files; the counts grouped">
+                {pane(huge, revision_list(), huge_scope, HUGE, false)}
+            </Cell>
+            <Cell
+                wide=true
+                label="a size that cannot be read — the count alone, and the button counts files"
+            >
+                {pane(unread, revision_list(), unread_scope, UNREAD, false)}
             </Cell>
             <Cell full=true label="click the trigger — the revisions this copy holds">
-                {in_page(pane(listed, revision_list(), listing, 2, false))}
+                {in_page(pane(listed, revision_list(), listing, plate(2), false))}
             </Cell>
             <Cell full=true label="click it — the call has not answered yet">
-                {in_page(pane(waiting_surface, revision_skeleton(), waiting, 2, false))}
+                {in_page(pane(waiting_surface, revision_skeleton(), waiting, plate(2), false))}
             </Cell>
             <Cell full=true label="click it — the call failed">
                 {in_page(
@@ -508,7 +684,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                         }
                             .into_any(),
                         broken,
-                        2,
+                        plate(2),
                         false,
                     ),
                 )}
@@ -522,5 +698,89 @@ pub fn ContextPaneScene() -> impl IntoView {
                 {resolve("#contextpane", refused())}
             </Cell>
         </Scene>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EMPTY, HUGE, UNREAD, bytes, count, counted, download_words, on_page, plate};
+
+    /// The words as read, with the no-break spaces shown as spaces.
+    fn plain(words: &str) -> String {
+        words.replace('\u{a0}', " ")
+    }
+
+    #[test]
+    fn sizes_take_one_decimal_in_the_largest_unit() {
+        assert_eq!(plain(&bytes(0)), "0 B");
+        assert_eq!(plain(&bytes(999)), "999 B");
+        assert_eq!(plain(&bytes(1_900_000)), "1.9 MB");
+        assert_eq!(plain(&bytes(999_960)), "1.0 MB");
+        assert_eq!(plain(&bytes(1_200_000_000_000)), "1.2 TB");
+    }
+
+    /// No u64 overflows the arithmetic, and rounding at each unit's edge moves
+    /// on to the next unit rather than reading "1000.0".
+    #[test]
+    fn sizes_hold_at_the_unit_edges_and_at_the_top() {
+        assert_eq!(plain(&bytes(1_000)), "1.0 kB");
+        assert_eq!(plain(&bytes(999_949)), "999.9 kB");
+        assert_eq!(plain(&bytes(999_950)), "1.0 MB");
+        assert_eq!(plain(&bytes(999_949_999)), "999.9 MB");
+        assert_eq!(plain(&bytes(999_950_000)), "1.0 GB");
+        assert_eq!(plain(&bytes(999_950_000_000)), "1.0 TB");
+        assert_eq!(plain(&bytes(999_949_999_999_999)), "999.9 TB");
+        // Past the last unit the figure grows instead of the unit.
+        assert_eq!(plain(&bytes(999_950_000_000_000)), "1000.0 TB");
+        assert_eq!(plain(&bytes(u64::MAX - 1)), "18446744.1 TB");
+        assert_eq!(plain(&bytes(u64::MAX)), "18446744.1 TB");
+    }
+
+    #[test]
+    fn counts_are_grouped() {
+        assert_eq!(count(56), "56");
+        assert_eq!(count(12_400), "12,400");
+        assert_eq!(count(140_000), "140,000");
+    }
+
+    #[test]
+    fn the_count_carries_the_size() {
+        assert_eq!(
+            plain(&counted(plate(2))),
+            "54 of 56 files · 1.9 MB of 3.4 MB downloaded"
+        );
+        assert_eq!(
+            plain(&counted(plate(0))),
+            "All files are downloaded · 3.4 MB"
+        );
+        assert_eq!(counted(EMPTY), "This revision has no files");
+        assert_eq!(
+            plain(&counted(HUGE)),
+            "12,400 of 140,000 files · 86.3 GB of 1.2 TB downloaded"
+        );
+        assert_eq!(counted(UNREAD), "54 of 56 downloaded");
+    }
+
+    #[test]
+    fn the_backlog_action_says_the_bytes_left() {
+        assert_eq!(
+            plain(&download_words(plate(2))),
+            "Download 2 files · 1.5 MB"
+        );
+        assert_eq!(download_words(UNREAD), "Download 2 files");
+    }
+
+    /// On the page the pane counts the file pane's own rows: its 17 not
+    /// downloaded, and the plates' megabytes.
+    #[test]
+    fn on_the_page_the_sizes_are_the_file_panes() {
+        assert_eq!(
+            plain(&counted(on_page())),
+            "35 of 52 files · 95.7 MB of 161.9 MB downloaded"
+        );
+        assert_eq!(
+            plain(&download_words(on_page())),
+            "Download 17 files · 66.2 MB"
+        );
     }
 }

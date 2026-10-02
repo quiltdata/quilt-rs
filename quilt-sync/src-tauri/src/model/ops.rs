@@ -151,10 +151,10 @@ pub async fn install_paths_only(
 pub async fn package_uninstall(
     model: &impl QuiltModel,
     namespace: quilt_uri::Namespace,
-) -> Result<(), Error> {
+    prune: bool,
+) -> Result<Option<quilt::flow::Pruned>, Error> {
     debug!("Uninstall package for {} namespace", &namespace);
-    model.package_uninstall(namespace).await?;
-    Ok(())
+    model.package_uninstall(namespace, prune).await
 }
 
 pub fn open_in_web_browser(url: &str) -> Result<(), Error> {

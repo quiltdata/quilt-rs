@@ -313,6 +313,9 @@ impl From<&crate::quilt::Error> for Failure {
             // revision the user meant is no longer there to remove.
             E::RevisionNotRemovable { .. } => Self::Refusal(RefusalKind::Missing),
 
+            // The uninstall happened; what kept the objects is the failure.
+            E::PruneFailed(_, inner, _) => Self::from(inner.as_ref()),
+
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same
             // answer, since an unclassifiable failure must stay visible.

@@ -127,6 +127,9 @@ use crate::kit::state_label::StateTone;
 use crate::pages::downloaded_words;
 use quilt_sync_ui::util::format_size;
 
+use crate::gallery::context_pane::bytes;
+use crate::gallery::context_pane::count;
+
 /// The two files the resolve fixture has differing between the revisions. Both
 /// are local and both are in the first screen of the list, because a mark the
 /// reader has to scroll to proves nothing about the marking. The context pane's
@@ -280,6 +283,39 @@ fn package() -> Vec<File> {
     files
 }
 
+/// What the context pane's Keeping line says about [`package`] when the page
+/// draws the two side by side, so the pane's sizes are these rows' sizes.
+pub(crate) struct Kept {
+    /// The revision's files: every row but the new and the ignored ones, which
+    /// are on disk and in no manifest.
+    pub(crate) files: usize,
+    /// The ones not downloaded, the rows the file pane can tick.
+    pub(crate) pending: usize,
+    /// The revision's bytes.
+    pub(crate) total: u64,
+    /// Those bytes less the not-downloaded rows'. A row deleted here still
+    /// counts: the real caption's backlog is the paths this copy neither tracks
+    /// nor has a local change at (`keeping_data` in the backend), and a delete
+    /// is a local change waiting to be committed, not something Download fetches.
+    pub(crate) here: u64,
+}
+
+/// [`Kept`], read off [`package`].
+pub(crate) fn kept() -> Kept {
+    let revision: Vec<File> = package()
+        .into_iter()
+        .filter(|f| !matches!(f.mark, Mark::New | Mark::Ignored))
+        .collect();
+    let missing = || revision.iter().filter(|f| f.mark == Mark::Missing);
+    let total = revision.iter().map(|f| f.bytes).sum::<u64>();
+    Kept {
+        files: revision.len(),
+        pending: missing().count(),
+        total,
+        here: total - missing().map(|f| f.bytes).sum::<u64>(),
+    }
+}
+
 /// The same package with nothing changed, for the cell about a facet that
 /// matches nothing. Same files, three marks moved home — a clean copy is a state
 /// the page reaches constantly, not a special fixture.
@@ -366,6 +402,8 @@ struct Row {
     folder: Option<String>,
     leaf: String,
     size: String,
+    /// The manifest's `size`, which the footer sums over the ticked rows.
+    bytes: u64,
     mark: Mark,
     /// Its slot in the selection vector, for the rows a tick can act on.
     pick: Option<usize>,
@@ -397,6 +435,7 @@ fn rows(files: &[File]) -> Vec<Row> {
                 folder,
                 leaf,
                 size: format_size(f.bytes),
+                bytes: f.bytes,
                 mark: f.mark,
                 pick,
             }
@@ -562,8 +601,9 @@ enum Body {
     Loading,
     /// The call failed.
     Failed,
-    /// The rows, under the sentence saying they are not all of them.
-    Capped,
+    /// The rows, under the sentence saying they are not all of them: the
+    /// package's whole count, of which the rows are the first [`LOADED`].
+    Capped(usize),
 }
 
 /// How the pane is standing when a cell draws it. One struct rather than nine
@@ -691,7 +731,8 @@ fn pane(p: Pane) -> AnyView {
                 .count()
         })
     });
-    let chosen = Signal::derive(move || {
+    // Select-all's own number: the ticks among the rows on screen.
+    let shown_ticked = Signal::derive(move || {
         all.with_value(|rs| {
             shown
                 .get()
@@ -700,6 +741,12 @@ fn pane(p: Pane) -> AnyView {
                 .count()
         })
     });
+    // What the footer's press fetches, its count and its bytes read off one
+    // set: every loaded tick, shown or not, as the real footer counts them — a
+    // search hides a tick, it does not undo it. Only a missing file takes a
+    // tick, so the bytes are exactly what is downloaded, summed over rows the
+    // page already holds, with no I/O.
+    let chosen = Memo::new(move |_| all.with_value(|rs| picks.with(|p| chosen_among(rs, p))));
     let narrowed =
         Signal::derive(move || !query_sig.get().is_empty() || !facet_sig.get().starts_with("All"));
 
@@ -718,9 +765,9 @@ fn pane(p: Pane) -> AnyView {
     let boxes = !whole;
     let shape = Shape {
         boxes,
-        capped: body == Body::Capped,
+        capped: matches!(body, Body::Capped(_)),
     };
-    let footer_shown = Signal::derive(move || boxes && chosen.get() > 0);
+    let footer_shown = Signal::derive(move || boxes && chosen.get().files > 0);
     let marked: Vec<String> = marked.iter().map(|&p| p.to_string()).collect();
     let marked = StoredValue::new(marked);
     let empty_package = pickable == 0 && all.with_value(Vec::is_empty);
@@ -870,7 +917,7 @@ fn pane(p: Pane) -> AnyView {
                                 }>
                                     <span style="flex:0 0 28px" />
                                     <SelectAll
-                                        selected=chosen
+                                        selected=shown_ticked
                                         total=offered
                                         narrowed=narrowed
                                         on_toggle=move |next| {
@@ -953,8 +1000,11 @@ fn pane(p: Pane) -> AnyView {
                         }
                         _ => {
                             view! {
-                                {(body == Body::Capped)
-                                    .then(|| {
+                                {match body {
+                                    Body::Capped(total) => Some(total),
+                                    _ => None,
+                                }
+                                    .map(|total| {
                                         view! {
                                             // The first 1,000 by path: the page read
                                             // sorts before it caps and sends the
@@ -963,7 +1013,11 @@ fn pane(p: Pane) -> AnyView {
                                                       var(--q-space-3); \
                                                       color:var(--q-fgColor-muted); \
                                                       font-size:var(--q-text-body)">
-                                                "This package has 4,312 files. This list covers the first 1,000 by path."
+                                                {format!(
+                                                    "This package has {} files. This list covers the first {} by path.",
+                                                    count(total),
+                                                    count(LOADED),
+                                                )}
                                             </p>
                                         }
                                     })}
@@ -976,7 +1030,7 @@ fn pane(p: Pane) -> AnyView {
                                             } else {
                                                 match (footer_shown.get(), body) {
                                                     (true, _) => LIST_WITH_FOOTER,
-                                                    (false, Body::Capped) => LIST_UNDER_NOTICE,
+                                                    (false, Body::Capped(_)) => LIST_UNDER_NOTICE,
                                                     (false, _) => LIST_RESTING,
                                                 }
                                             },
@@ -1002,7 +1056,7 @@ fn pane(p: Pane) -> AnyView {
                                 loading=running
                                 on_click=move |_| ()
                             >
-                                {move || format!("Download {}", chosen.get())}
+                                {move || footer_words(chosen.get())}
                             </Button>
                         </div>
                     </Show>
@@ -1238,8 +1292,22 @@ fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
         .collect()
 }
 
+/// The page read's cap: it sends the first 1,000 entries by path, and only a
+/// loaded row takes a tick. The backend's constant is not visible to this
+/// crate, so it is restated here once, for every cell that honours it.
+const LOADED: usize = 1_000;
+
+/// The rows the page would load from `files`: sorted by path and cut at
+/// [`LOADED`], with the package's whole count beside them.
+fn loaded(mut files: Vec<File>) -> (Vec<File>, usize) {
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    let total = files.len();
+    files.truncate(LOADED);
+    (files, total)
+}
+
 /// The page read's list over `files`, built as the backend builds it: sorted,
-/// counted over the whole package, then capped at 1,000.
+/// counted over the whole package, then capped at [`LOADED`].
 fn entry_list(files: Vec<File>) -> crate::commands::EntryList {
     let mut entries = entries(files);
     let mut counts = crate::commands::EntryCounts::default();
@@ -1260,7 +1328,7 @@ fn entry_list(files: Vec<File>) -> crate::commands::EntryList {
         }
     }
     let total = entries.len();
-    entries.truncate(1_000);
+    entries.truncate(LOADED);
     crate::commands::EntryList {
         truncated: total > entries.len(),
         entries,
@@ -1320,6 +1388,58 @@ fn over_the_cap() -> Vec<File> {
     files
 }
 
+/// The footer's `[Download]`, in files and bytes: `Download 3 · 1.2 MB`, in the
+/// context pane's formatter, the one the Keeping line uses. A selection of
+/// empty files still says `0 B`: the clause is always there, so the button
+/// keeps one shape and no missing figure reads as a size that failed — and the
+/// files are still fetched, the press makes them.
+fn footer_words(chosen: Ticked) -> String {
+    format!("Download {} · {}", count(chosen.files), bytes(chosen.bytes))
+}
+
+/// The footer's selection: how many files are ticked and what they weigh.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Ticked {
+    files: usize,
+    bytes: u64,
+}
+
+/// Every ticked row among `rows`, which are all the loaded ones, counted and
+/// summed in one pass so the count and the bytes cannot describe two sets.
+fn chosen_among(rows: &[Row], picks: &[bool]) -> Ticked {
+    rows.iter()
+        .filter(|r| r.pick.is_some_and(|slot| picks[slot]))
+        .fold(Ticked::default(), |sum, r| Ticked {
+            files: sum.files + 1,
+            bytes: sum.bytes.saturating_add(r.bytes),
+        })
+}
+
+/// Everything here but two empty files a run leaves to mark it done, so the
+/// only ticks there are weigh nothing.
+fn empty_selection() -> Vec<File> {
+    let mut files = downloaded_package();
+    files.push(File::new("raw/plate-07.done", 0, Mark::Missing));
+    files.push(File::new("raw/plate-08.done", 0, Mark::Missing));
+    files
+}
+
+/// Everything here but a folder of 1,000 large plates this copy has not
+/// fetched, which takes the package past the cap. Drawn through [`loaded`], so
+/// only the plates among the first 1,000 paths can be ticked: 998 of them,
+/// after `.DS_Store` and `README.md`.
+fn heavy_selection() -> Vec<File> {
+    let mut files = downloaded_package();
+    for i in 1..=1_000 {
+        files.push(File::new(
+            format!("imaging/plate-{i:04}.tiff"),
+            86_300_000,
+            Mark::Missing,
+        ));
+    }
+    files
+}
+
 const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a \
     row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
     either way, so the pane never changes height. Type in the search or pick a facet: \
@@ -1362,6 +1482,7 @@ pub fn FilePaneRegion(
 }
 
 #[component]
+#[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
 pub fn FilePaneScene() -> impl IntoView {
     // The standalone trigger has no row behind it, so it names one.
     let keeping = Confirm::new("raw/plate-03.csv (4.16 MB)");
@@ -1372,7 +1493,12 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="at rest — nothing ticked, so no footer and 313px of list">
                 {pane(Pane::new("fp-rest"))}
             </Cell>
-            <Cell full=true label="three ticked — the footer costs a row and a half of the list">
+            <Cell
+                full=true
+                label="three ticked — the footer costs a row and a half of the list, and says the \
+                       bytes. Real build: the footer sums EntryData.size over the ticked rows, in \
+                       the memo that counts them; no I/O"
+            >
                 {pane(Pane { ticked: 3, ..Pane::new("fp-selecting") })}
             </Cell>
             <Cell full=true label="downloading — the footer's button carries it, the rows do not">
@@ -1381,6 +1507,32 @@ pub fn FilePaneScene() -> impl IntoView {
                     running: true,
                     ..Pane::new("fp-running")
                 })}
+            </Cell>
+            <Cell
+                full=true
+                label="two empty files ticked — `0 B` stays, so the button keeps one shape and no \
+                       missing figure reads as a failure"
+            >
+                {pane(Pane {
+                    files: empty_selection(),
+                    ticked: 2,
+                    ..Pane::new("fp-weightless")
+                })}
+            </Cell>
+            <Cell
+                full=true
+                label="a huge selection, limited by the 1,000 loaded rows — 1,000 plates are \
+                       missing, but only the 998 among the first 1,000 paths can be ticked"
+            >
+                {
+                    let (files, total) = loaded(heavy_selection());
+                    pane(Pane {
+                        files,
+                        ticked: LOADED,
+                        body: Body::Capped(total),
+                        ..Pane::new("fp-heavy")
+                    })
+                }
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
                 <Provider value=DiffersId("resolve-differing-file-pane")>
@@ -1417,7 +1569,7 @@ pub fn FilePaneScene() -> impl IntoView {
                 {pane(Pane { body: Body::Loading, ..Pane::new("fp-loading") })}
             </Cell>
             <Cell full=true label="over the cap — and the toolbar's counts openly disagree with it">
-                {pane(Pane { body: Body::Capped, ..Pane::new("fp-capped") })}
+                {pane(Pane { body: Body::Capped(4_312), ..Pane::new("fp-capped") })}
             </Cell>
             <Cell full=true label="the read failed — the controls stay, the box carries it">
                 {pane(Pane { body: Body::Failed, ..Pane::new("fp-failed") })}
@@ -1448,6 +1600,64 @@ mod tests {
     use super::*;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
+
+    /// The footer says what the press fetches, in files and bytes.
+    #[test]
+    fn the_footer_says_its_bytes() {
+        let plain = |w: String| w.replace('\u{a0}', " ");
+        let words = |files, bytes| plain(footer_words(Ticked { files, bytes }));
+        assert_eq!(words(3, 1_200_000), "Download 3 · 1.2 MB");
+        assert_eq!(words(2, 0), "Download 2 · 0 B");
+        assert_eq!(words(1_000, 86_300_000_000), "Download 1,000 · 86.3 GB");
+    }
+
+    /// The footer's count and bytes are one set: every loaded tick, the rows a
+    /// search or a facet hides included, and nothing that is not ticked.
+    #[test]
+    fn the_footers_count_and_bytes_are_one_set() {
+        let all = rows(&package());
+        let slots = all.iter().filter(|r| r.pick.is_some()).count();
+        let mut picks = vec![false; slots];
+        // A tick on a `raw/` plate and one on `manifest.jsonl`, which a search
+        // for "plate" hides.
+        let manifest = all.iter().find(|r| r.path == "manifest.jsonl").unwrap();
+        let plate = all.iter().find(|r| r.path == "raw/plate-23.csv").unwrap();
+        picks[manifest.pick.unwrap()] = true;
+        picks[plate.pick.unwrap()] = true;
+
+        let chosen = chosen_among(&all, &picks);
+        assert_eq!(chosen.files, 2);
+        assert_eq!(chosen.bytes, manifest.bytes + plate.bytes);
+
+        // Whatever is ticked, the bytes are the sum over exactly the rows the
+        // count counts.
+        for n in 0..=slots {
+            let picks: Vec<bool> = (0..slots).map(|i| i < n).collect();
+            let chosen = chosen_among(&all, &picks);
+            let set: Vec<&Row> = all
+                .iter()
+                .filter(|r| r.pick.is_some_and(|s| picks[s]))
+                .collect();
+            assert_eq!(chosen.files, set.len());
+            assert_eq!(chosen.bytes, set.iter().map(|r| r.bytes).sum::<u64>());
+        }
+    }
+
+    /// The huge selection honours the cap: no more than [`LOADED`] rows, so
+    /// fewer ticks than the package has missing files.
+    #[test]
+    fn the_huge_selection_is_limited_by_the_loaded_rows() {
+        let (files, total) = loaded(heavy_selection());
+        assert_eq!((files.len(), total), (LOADED, 1_056));
+        let all = rows(&files);
+        let picks = vec![true; all.iter().filter(|r| r.pick.is_some()).count()];
+        let chosen = chosen_among(&all, &picks);
+        assert_eq!(chosen.files, 998);
+        assert_eq!(
+            footer_words(chosen).replace('\u{a0}', " "),
+            "Download 998 · 86.1 GB"
+        );
+    }
 
     /// The live cell over the cap says what the page would: the whole count,
     /// and that the loaded rows are the first 1,000 by path.

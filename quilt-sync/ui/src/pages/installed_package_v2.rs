@@ -193,6 +193,9 @@ pub struct Dialogs {
     /// the consequence.
     pub undo: RwSignal<bool>,
     pub remove: RwSignal<bool>,
+    /// Remove's *Also delete downloaded files from disk*. Here for the flags'
+    /// reason: a re-read must not tick a box the reader just cleared.
+    pub remove_prune: RwSignal<bool>,
     /// Resolve's *Replace mine*: here, so a re-read mid-reset keeps it open.
     pub replace: RwSignal<bool>,
 }
@@ -258,6 +261,7 @@ impl Wiring {
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),
+                remove_prune: RwSignal::new(true),
                 replace: RwSignal::new(false),
             },
             removal: old_revisions::Removal::new(),

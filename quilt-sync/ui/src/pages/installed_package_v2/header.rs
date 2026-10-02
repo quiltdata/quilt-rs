@@ -55,6 +55,7 @@ use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::ConfirmDialog;
+use crate::kit::ConfirmOption;
 use crate::kit::MenuAction;
 use crate::kit::PackageAction;
 use crate::kit::SkeletonBox;
@@ -217,7 +218,12 @@ fn menu(
                 }),
                 MenuCommand::Remote => Callback::new(move |()| bucket_open.set(true)),
                 MenuCommand::Undo => Callback::new(move |()| undo_open.set(true)),
-                MenuCommand::Remove => Callback::new(move |()| remove_open.set(true)),
+                MenuCommand::Remove => Callback::new(move |()| {
+                    // Checked each time it opens: an unchecked box from an
+                    // earlier opening is not this one's answer.
+                    w.dialogs.remove_prune.set(true);
+                    remove_open.set(true);
+                }),
             };
             MenuAction {
                 label: item.label,
@@ -350,8 +356,10 @@ fn danger_dialogs(
         busy,
         outcome,
         reload,
+        dialogs,
         ..
     } = w;
+    let prune = dialogs.remove_prune;
     let ns_undo = data.namespace.to_string();
     let ns_remove = data.namespace.to_string();
     let uri_remove = data.uri.clone();
@@ -382,13 +390,19 @@ fn danger_dialogs(
         <ConfirmDialog
             open=remove_open
             title="Remove this package"
-            consequence="Deletes this package's working files, including edits that have \
-                         never been committed. The object store keeps committed content only."
+            // No promise about the object store: a commit never pushed is named
+            // only by the manifests uninstall deletes, so it is lost either way.
+            consequence="Deletes this package's working files, including edits and commits \
+                         that were never pushed."
+            option=ConfirmOption::new("Also delete downloaded files from disk", prune)
             confirm=Submit::new("Remove", move || {
                 let ns = ns_remove.clone();
                 let uri = uri_remove.clone();
+                let prune = prune.get_untracked();
                 async move {
-                    holding(busy, outcome, commands::package_uninstall(ns, uri)).await?;
+                    // What the prune freed arrives as a toast, which outlives
+                    // the move home.
+                    holding(busy, outcome, commands::package_uninstall(ns, uri, prune)).await?;
                     // Home, not a refetch: the package this page is about is gone, so
                     // re-reading it would ask for something that no longer exists.
                     // Remove's success is arriving on the package list.
@@ -432,6 +446,8 @@ pub fn PageHeader(
         role: role_open,
         undo: undo_open,
         remove: remove_open,
+        // The menu resets it, and the dialog reads it, through `w`.
+        remove_prune: _,
         // The resolve pane's confirmation, not the header's.
         replace: _,
     } = dialogs;
@@ -1294,13 +1310,68 @@ mod tests {
             .expect("the confirmation");
         let words = dialog.text_content().unwrap_or_default();
         assert!(
-            words.contains("including edits that have never been committed"),
+            words.contains(
+                "Deletes this package's working files, including edits and commits that were \
+                 never pushed."
+            ),
             "the consequence names what is lost: {words}"
+        );
+        assert!(
+            !words.contains("keeps committed content"),
+            "no promise that unpushed commits survive: {words}"
         );
         assert_eq!(
             footer_labels(&el),
             vec!["Cancel".to_string(), "Remove".to_string()]
         );
+    }
+
+    /// Remove's confirmation offers to delete the downloaded files, checked
+    /// each time it opens: unchecking it once does not carry to the next.
+    #[wasm_bindgen_test]
+    async fn remove_offers_to_delete_the_downloaded_files_checked_each_time() {
+        let el = mount_header(data(kit::PackageState::Latest));
+        let checkbox = || -> web_sys::HtmlInputElement {
+            el.query_selector("dialog[open] input[type=checkbox]")
+                .unwrap()
+                .expect("the checkbox")
+                .unchecked_into()
+        };
+        open_menu(&el);
+        menu_item(&el, "Remove").click();
+        sleep_ms(20).await;
+        let words = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .expect("the confirmation")
+            .text_content()
+            .unwrap_or_default();
+        assert!(
+            words.contains("Also delete downloaded files from disk"),
+            "{words}"
+        );
+        assert!(checkbox().checked(), "checked when it opens");
+
+        checkbox().click();
+        sleep_ms(20).await;
+        assert!(!checkbox().checked());
+        let footer = el.query_selector_all("dialog[open] button").unwrap();
+        (0..footer.length())
+            .map(|i| {
+                footer
+                    .item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::HtmlElement>()
+            })
+            .find(|b| b.text_content().unwrap_or_default().trim() == "Cancel")
+            .expect("Cancel")
+            .click();
+        sleep_ms(20).await;
+
+        open_menu(&el);
+        menu_item(&el, "Remove").click();
+        sleep_ms(20).await;
+        assert!(checkbox().checked(), "checked again on the next opening");
     }
 
     /// Undo confirms too, for a different reason: it destroys nothing, and has

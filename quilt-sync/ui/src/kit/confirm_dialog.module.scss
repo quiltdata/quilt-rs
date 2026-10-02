@@ -9,3 +9,11 @@
   line-height: var(--q-line-body);
   max-width: 70ch;
 }
+
+/* The one option: box and words on a line, the whole label a target. */
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  cursor: pointer;
+}
