@@ -23,12 +23,12 @@
 
 ### Added
 
-- **New design preview**: the package page shows the package's size beside the file count, for example "54 of 56 files · 1.9 MB of 3.4 MB downloaded", and the **Download** buttons say how much they fetch, for example "Download 2 files · 1.5 MB" (PRLINK)
+- **New design preview**: the package page shows the package's size beside the file count, for example "54 of 56 files · 1.9 MB of 3.4 MB downloaded", and the **Download** buttons say how much they fetch, for example "Download 2 files · 1.5 MB" (<https://github.com/quiltdata/quilt-rs/pull/1046>)
 - **Settings → General → Free up space** deletes the downloaded files no installed package uses any more, cached package listings and leftovers of interrupted downloads, and says how much it freed, for example "Freed 630.2 kB: 6 objects, 2 cached manifests". It stops without deleting anything while a package is busy (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 
 ### Changed
 
-- File sizes show one decimal everywhere, for example "44.0 kB" instead of "44.00 kB" (PRLINK)
+- File sizes show one decimal everywhere, for example "44.0 kB" instead of "44.00 kB" (<https://github.com/quiltdata/quilt-rs/pull/1046>)
 
 ### quilt-rs
 
