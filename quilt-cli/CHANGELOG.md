@@ -31,6 +31,10 @@
 - `quilt list` names its status column `last synced`, words each status as of the package's last install, pull or push (`synced`, `unpushed commit`, `never pushed`, `local only`, …), and ends with a hint to run `quilt status` for a fresh check. `--json` output is unchanged (<https://github.com/quiltdata/quilt-rs/pull/1031>)
 - `--domain <path>` (`-d`) is a global flag, accepted before or after the command: `quilt list --domain <path>` now works as well as `quilt --domain <path> list` (<https://github.com/quiltdata/quilt-rs/pull/1033>)
 
+### Deprecated
+
+- `quilt push --origin` (`-o`) is deprecated in favor of `--host`, the name `login` and `role` already use. It still works with a warning (<https://github.com/quiltdata/quilt-rs/pull/1039>)
+
 ### quilt-rs
 
 - Updated [from v0.41.0 to v0.42.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.41.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))

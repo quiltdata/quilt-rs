@@ -110,6 +110,10 @@ work.
 command, prints a warning, then sets the home the same way before the command
 runs.
 
+`quilt push --origin <host>` (`-o`) is deprecated, use `quilt push --host
+<host>`, the name `login` and `role` already use. It prints a warning, then
+pushes the same way.
+
 ### JSON output
 
 Field names are stable; the human tables are not, so parse the JSON rather than
@@ -166,4 +170,4 @@ quilt list
 Add `--source <dir>` to `create` to populate the package from an existing
 directory instead of starting empty. The package stays local-only — usable
 with `status`, `commit`, and `uninstall` — until you `push` a revision to a
-remote (the first push requires `--bucket` and `--origin`).
+remote (the first push requires `--bucket` and `--host`).

@@ -97,7 +97,7 @@ destination bucket and host:
 
 ```bash
 quilt login --host quilt.example.com
-quilt push -n lab/assays --bucket lab-data --origin quilt.example.com
+quilt push -n lab/assays --bucket lab-data --host quilt.example.com
 ```
 
 Collaborators log in to the same stack, then install. Their working copies use
