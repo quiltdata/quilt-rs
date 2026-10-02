@@ -18,7 +18,7 @@ pub(super) struct Key {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Shown {
     Loading,
-    Rows(Vec<commands::RevisionHistoryRow>),
+    Rows(commands::RevisionHistoryData),
     Failed,
 }
 
@@ -66,7 +66,7 @@ impl History {
     pub(super) fn settle(
         &mut self,
         key: &Key,
-        answer: Result<Vec<commands::RevisionHistoryRow>, String>,
+        answer: Result<commands::RevisionHistoryData, String>,
     ) -> bool {
         let current = key.namespace == self.namespace
             && key.session == self.session
@@ -88,15 +88,21 @@ impl History {
 #[cfg(test)]
 mod tests {
     use super::{History, Shown};
-    use crate::commands::RevisionHistoryRow;
+    use crate::commands::{RevisionHistoryData, RevisionHistoryRow};
 
-    fn rows() -> Vec<RevisionHistoryRow> {
-        vec![RevisionHistoryRow {
-            message: Some("Initial upload".to_string()),
-            obtained_at: 1_758_500_000_000.0,
-            published: true,
-            catalog_url: None,
-        }]
+    fn rows() -> RevisionHistoryData {
+        RevisionHistoryData {
+            rows: vec![RevisionHistoryRow {
+                hash: "initial".to_string(),
+                message: Some("Initial upload".to_string()),
+                obtained_at: 1_758_500_000_000.0,
+                published: true,
+                catalog_url: None,
+                kept: Vec::new(),
+                frees: None,
+            }],
+            removable_frees: None,
+        }
     }
 
     fn history() -> History {

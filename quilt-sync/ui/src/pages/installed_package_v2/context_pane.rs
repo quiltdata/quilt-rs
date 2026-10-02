@@ -12,11 +12,11 @@ use leptos::prelude::*;
 
 use super::Wiring;
 use super::keeping::{KeepingCommands, KeepingSection};
+use super::old_revisions::{self, RemoveRevisionsFn, Remover};
 use super::revision_history::{History, Key, Shown};
 use crate::commands;
 use crate::kit::{
-    Align, AnchoredOverlay, Button, Card, CatalogLink, LoadFailure, PaneSection, RevisionRow,
-    SkeletonBox,
+    Align, AnchoredOverlay, Button, Card, LoadFailure, PaneSection, RevisionRow, SkeletonBox,
 };
 
 stylance::import_crate_style!(
@@ -27,12 +27,12 @@ stylance::import_crate_style!(
 /// Where the popover's rows come from. A function pointer rather than a
 /// direct call, so the DOM tests and the gallery answer without a Tauri host.
 pub type RevisionHistoryFetch =
-    fn(String) -> Pin<Box<dyn Future<Output = Result<Vec<commands::RevisionHistoryRow>, String>>>>;
+    fn(String) -> Pin<Box<dyn Future<Output = Result<commands::RevisionHistoryData, String>>>>;
 
 /// The app's fetch.
 pub(super) fn fetch_revision_history(
     namespace: String,
-) -> Pin<Box<dyn Future<Output = Result<Vec<commands::RevisionHistoryRow>, String>>>> {
+) -> Pin<Box<dyn Future<Output = Result<commands::RevisionHistoryData, String>>>> {
     Box::pin(commands::get_revision_history(namespace))
 }
 
@@ -54,6 +54,9 @@ pub fn CurrentRevisionPane(
     /// The page's command lock and band, which Keeping's commands take.
     w: Wiring,
     commands: KeepingCommands,
+    /// Removes old revisions from the popover. `None` offers no removal.
+    #[prop(optional)]
+    remove: Option<RemoveRevisionsFn>,
 ) -> impl IntoView {
     let keeping = data.keeping;
     let bucket = data.bucket.filter(|bucket| !bucket.is_empty()).map_or_else(
@@ -65,6 +68,7 @@ pub fn CurrentRevisionPane(
     let open = RwSignal::new(false);
     let history = RwSignal::new(History::new(namespace.clone()));
     let namespace = StoredValue::new(namespace);
+    let remover = remove.map(|remove| Remover::new(namespace, w, remove));
 
     // `try_update`: a re-read disposes this pane, and a late answer then lands nowhere.
     let load = move |key: Key| {
@@ -117,7 +121,7 @@ pub fn CurrentRevisionPane(
     // The overlay renders its body once, so the three states are one closure.
     let body = move || {
         let shown = history.with(|h| h.shown().clone());
-        surface_body(shown, count, open_catalog, retry)
+        surface_body(shown, count, open_catalog, retry, remover)
     };
 
     view! {
@@ -153,6 +157,8 @@ pub fn CurrentRevisionPane(
                     commands=commands
                 />
             </Card>
+            // Beside the popover, not in it: see `old_revisions`.
+            {remover.map(old_revisions::dialog)}
         </aside>
     }
 }
@@ -163,6 +169,7 @@ fn surface_body(
     count: usize,
     open_catalog: Callback<String>,
     retry: Callback<()>,
+    remover: Option<Remover>,
 ) -> AnyView {
     match shown {
         Shown::Loading => view! {
@@ -175,26 +182,7 @@ fn surface_body(
             </PaneSection>
         }
         .into_any(),
-        Shown::Rows(rows) => view! {
-            <PaneSection>
-                {rows
-                    .into_iter()
-                    .map(|row| {
-                        view! {
-                            <RevisionRow
-                                message=row.message.unwrap_or_default()
-                                at=row.obtained_at
-                                published=row.published
-                                catalog=row
-                                    .catalog_url
-                                    .map(|href| CatalogLink::new(href, open_catalog))
-                            />
-                        }
-                    })
-                    .collect_view()}
-            </PaneSection>
-        }
-        .into_any(),
+        Shown::Rows(data) => old_revisions::rows_and_footer(data, open_catalog, remover),
         Shown::Failed => view! {
             <LoadFailure words="Could not load your revisions." on_retry=retry />
         }
@@ -221,9 +209,12 @@ pub fn CurrentRevisionPaneSkeleton() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{CurrentRevisionData, RevisionHistoryRow};
+    use crate::commands::{
+        CurrentRevisionData, KeptReason, RevisionHistoryData, RevisionHistoryRow,
+    };
     use crate::pages::installed_package_v2::Wiring;
     use crate::pages::installed_package_v2::keeping::KeepingCommands;
+    use crate::pages::installed_package_v2::old_revisions::RemoveRevisionsFn;
     use crate::test_support::{element_saying, mount, sleep_ms};
     use std::cell::Cell;
     use std::future::Future;
@@ -234,7 +225,7 @@ mod tests {
     const PUBLISHED_URL: &str =
         "https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash";
 
-    type Answer = Pin<Box<dyn Future<Output = Result<Vec<RevisionHistoryRow>, String>>>>;
+    type Answer = Pin<Box<dyn Future<Output = Result<RevisionHistoryData, String>>>>;
 
     fn data(
         message: Option<&str>,
@@ -260,24 +251,35 @@ mod tests {
 
     fn published_row() -> RevisionHistoryRow {
         RevisionHistoryRow {
+            hash: "published-hash".to_string(),
             message: Some("Sent".to_string()),
             obtained_at: 1_758_500_000_000.0,
             published: true,
             catalog_url: Some(PUBLISHED_URL.to_string()),
+            kept: Vec::new(),
+            frees: None,
         }
     }
 
     fn unpublished_row() -> RevisionHistoryRow {
         RevisionHistoryRow {
+            hash: "local-hash".to_string(),
             message: Some("Kept here".to_string()),
             obtained_at: 1_758_400_000_000.0,
             published: false,
             catalog_url: None,
+            kept: vec![KeptReason::Unpublished],
+            frees: None,
         }
     }
 
     fn rows(_: String) -> Answer {
-        Box::pin(async { Ok(vec![published_row(), unpublished_row()]) })
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![published_row(), unpublished_row()],
+                removable_frees: None,
+            })
+        })
     }
 
     fn never(_: String) -> Answer {
@@ -366,6 +368,320 @@ mod tests {
             .query_selector("[aria-live='polite']")
             .unwrap()
             .expect("the surface's live region")
+    }
+
+    fn removal_row(
+        hash: &str,
+        message: &str,
+        kept: Vec<KeptReason>,
+        frees: Option<u64>,
+    ) -> RevisionHistoryRow {
+        RevisionHistoryRow {
+            hash: hash.to_string(),
+            message: Some(message.to_string()),
+            obtained_at: 1_758_500_000_000.0,
+            published: true,
+            catalog_url: Some(PUBLISHED_URL.to_string()),
+            kept,
+            frees,
+        }
+    }
+
+    /// One kept revision and two old ones, the set freeing more than its rows.
+    fn removable(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row(
+                        "mine",
+                        "Mine",
+                        vec![KeptReason::Current, KeptReason::NotPushed],
+                        None,
+                    ),
+                    removal_row("old-1", "Old", Vec::new(), Some(1_200_000)),
+                    removal_row("old-2", "Older", Vec::new(), Some(0)),
+                ],
+                removable_frees: Some(6_900_000),
+            })
+        })
+    }
+
+    fn all_kept(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row("mine", "Mine", vec![KeptReason::Current], None),
+                    removal_row(
+                        "tip",
+                        "Tip",
+                        vec![KeptReason::Latest, KeptReason::Base],
+                        None,
+                    ),
+                ],
+                removable_frees: None,
+            })
+        })
+    }
+
+    thread_local! {
+        static REMOVED: std::cell::RefCell<Vec<(String, Vec<String>)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    type Removed = Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+    fn removes_ok(namespace: String, hashes: Vec<String>) -> Removed {
+        REMOVED.with(|r| r.borrow_mut().push((namespace, hashes)));
+        Box::pin(async { Ok(String::new()) })
+    }
+
+    fn removes_never(_: String, _: Vec<String>) -> Removed {
+        Box::pin(std::future::pending())
+    }
+
+    fn removes_busy(_: String, _: Vec<String>) -> Removed {
+        Box::pin(async { Err("team/dataset is busy in another quilt process".to_string()) })
+    }
+
+    /// The pane over `fetch`, removing with `remove`, on `w`, under `activities`.
+    fn removal_pane(
+        fetch: RevisionHistoryFetch,
+        remove: RemoveRevisionsFn,
+        w: Wiring,
+        activities: crate::kit::Activities,
+    ) -> web_sys::Element {
+        mount(move || {
+            provide_context(activities);
+            view! {
+                <CurrentRevisionPane
+                    data=data(Some("Mine"), Some("quilt-lab-plates"), 3)
+                    namespace="team/dataset"
+                    fetch=fetch
+                    open_catalog=ignore()
+                    w=w
+                    commands=idle_commands()
+                    remove=remove
+                />
+            }
+        })
+    }
+
+    async fn opened(el: &web_sys::Element) -> web_sys::Element {
+        trigger(el).click();
+        settle().await;
+        settle().await;
+        surface(el)
+    }
+
+    /// The surface with its rows drawn again: the confirmation's modal closes
+    /// the popover, so it may take a press to open it and one more if the
+    /// trigger still thought it open.
+    async fn reopened(el: &web_sys::Element, surface: &web_sys::Element) -> web_sys::Element {
+        for _ in 0..2 {
+            if surface
+                .query_selector("button[aria-label^='Remove']")
+                .unwrap()
+                .is_some()
+            {
+                break;
+            }
+            trigger(el).click();
+            settle().await;
+            settle().await;
+        }
+        surface.clone()
+    }
+
+    fn button_named(root: &web_sys::Element, label: &str) -> web_sys::HtmlButtonElement {
+        root.query_selector(&format!("button[aria-label='{label}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("no {label:?}; markup was {}", root.inner_html()))
+            .unchecked_into()
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_removable_row_says_what_it_frees_and_a_kept_one_why() {
+        let el = removal_pane(
+            removable,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        element_saying(&surface, "frees 1.2 MB");
+        element_saying(&surface, "frees nothing");
+        let tag = element_saying(&surface, "current \u{b7} not pushed");
+        assert_eq!(
+            tag.get_attribute("title").as_deref(),
+            Some("Kept: your files are at this revision, and it has not been pushed.")
+        );
+        button_named(&surface, "Remove \u{201c}Old\u{201d}");
+        assert!(
+            surface
+                .query_selector("button[aria-label='Remove \u{201c}Mine\u{201d}']")
+                .unwrap()
+                .is_none(),
+            "a kept row has no trash"
+        );
+        element_saying(&surface, "Remove 2 older \u{b7} frees 6.9 MB");
+    }
+
+    /// The trash asks first; Remove closes the dialog and starts the removal,
+    /// which shows on the activity line until it answers.
+    #[wasm_bindgen_test]
+    async fn the_trash_confirms_then_removes_that_revision() {
+        REMOVED.with(|r| r.borrow_mut().clear());
+        let w = Wiring::new();
+        let activities = crate::kit::Activities::new();
+        let el = removal_pane(removable, removes_ok, w, activities);
+        let surface = opened(&el).await;
+
+        button_named(&surface, "Remove \u{201c}Old\u{201d}").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove \u{201c}Old\u{201d}? This frees 1.2 MB."),
+            "markup was {}",
+            dialog.inner_html()
+        );
+        assert!(
+            REMOVED.with(|r| r.borrow().is_empty()),
+            "nothing before the answer"
+        );
+
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+        settle().await;
+
+        assert_eq!(
+            REMOVED.with(|r| r.borrow().clone()),
+            vec![("team/dataset".to_string(), vec!["old-1".to_string()])]
+        );
+        assert!(!w.removal.open.get_untracked(), "the dialog closed");
+        assert_eq!(
+            w.removal.running.get_untracked(),
+            None,
+            "and the removal ended"
+        );
+        assert_eq!(untrack(|| activities.first_label()), "", "the line cleared");
+        assert_eq!(w.outcome.get_untracked(), None);
+    }
+
+    #[wasm_bindgen_test]
+    async fn while_removing_the_line_says_so_and_every_button_refuses() {
+        let w = Wiring::new();
+        let activities = crate::kit::Activities::new();
+        let el = removal_pane(removable, removes_never, w, activities);
+        let surface = opened(&el).await;
+
+        button_named(&surface, "Remove \u{201c}Old\u{201d}").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+
+        assert_eq!(
+            untrack(|| activities.first_label()),
+            "Removing 1 old revision of team/dataset\u{2026}"
+        );
+        // The modal closed the popover; reopened, it lists what is there.
+        let surface = reopened(&el, &surface).await;
+        assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
+        assert!(button_named(&surface, "Remove \u{201c}Older\u{201d}").disabled());
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refusal_reaches_the_band() {
+        let w = Wiring::new();
+        let el = removal_pane(removable, removes_busy, w, crate::kit::Activities::new());
+        let surface = opened(&el).await;
+
+        element_saying(&surface, "Remove 2 older \u{b7} frees 6.9 MB").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove 2 older revisions? This frees 6.9 MB.")
+        );
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+        settle().await;
+
+        let outcome = w.outcome.get_untracked().expect("the band speaks");
+        assert_eq!(outcome.namespace, "team/dataset");
+        assert_eq!(outcome.lead, "Could not remove old revisions.");
+        assert!(outcome.detail.unwrap_or_default().contains("busy"));
+    }
+
+    /// Autopull syncing this package holds its lock: the buttons refuse, and
+    /// the footer says why.
+    #[wasm_bindgen_test]
+    async fn a_sync_of_this_package_disables_removal_and_says_why() {
+        let activities = crate::kit::Activities::new();
+        activities.set(
+            crate::kit::ActivityKind::Autopull,
+            vec![crate::kit::Activity {
+                kind: crate::kit::ActivityKind::Autopull,
+                label: "Getting latest for team/dataset\u{2026}".to_string(),
+                package: Some("team/dataset".to_string()),
+            }],
+        );
+        let el = removal_pane(removable, removes_ok, Wiring::new(), activities);
+        let surface = opened(&el).await;
+
+        element_saying(
+            &surface,
+            "team/dataset is busy syncing \u{2014} try again in a moment",
+        );
+        assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_page_command_disables_removal() {
+        let w = Wiring::new();
+        w.busy.set(true);
+        let el = removal_pane(removable, removes_ok, w, crate::kit::Activities::new());
+        let surface = opened(&el).await;
+
+        assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
+    }
+
+    #[wasm_bindgen_test]
+    async fn everything_kept_says_there_is_nothing_to_remove() {
+        let el = removal_pane(
+            all_kept,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        element_saying(
+            &surface,
+            "Nothing to remove \u{2014} every revision here is in use",
+        );
+        element_saying(&surface, "latest \u{b7} base");
+        assert!(
+            surface
+                .query_selector("button[aria-label^='Remove']")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[wasm_bindgen_test]

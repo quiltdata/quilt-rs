@@ -208,12 +208,12 @@ pub async fn remove_revisions(
 ) -> Res<RemovalReport> {
     info!("⏳ Removing {} revisions of {namespace}", hashes.len());
     // Held to the end, so no other package files an object meanwhile.
-    let (_held, kept_for) =
-        match lock_every_package(paths, storage, lineage, Some(namespace)).await {
-            Ok(held) => (held, None),
-            Err(Error::PackageBusy(busy)) => (Vec::new(), Some(busy)),
-            Err(err) => return Err(err),
-        };
+    let (_held, kept_for) = match lock_every_package(paths, storage, lineage, Some(namespace)).await
+    {
+        Ok(held) => (held, None),
+        Err(Error::PackageBusy(busy)) => (Vec::new(), Some(busy)),
+        Err(err) => return Err(err),
+    };
 
     let usage = RevisionUsage::read(paths, storage, namespace).await?;
     let freed: Vec<(String, u64)> = usage

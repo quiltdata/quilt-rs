@@ -39,6 +39,7 @@ use crate::Cell;
 use crate::Scene;
 use crate::commands::CurrentRevisionData;
 use crate::commands::ResolveData;
+use crate::commands::RevisionHistoryData;
 use crate::commands::RevisionHistoryRow;
 use crate::gallery::file_pane::MARKED;
 use crate::kit::Align;
@@ -105,20 +106,29 @@ fn held() -> Vec<(&'static str, f64, Option<&'static str>)> {
 }
 
 /// The live pane's answer: the same four revisions, as the backend sends them.
-/// Published is having a catalog address, as it is in every row above.
+/// Published is having a catalog address, as it is in every row above. Nothing
+/// is measured, so the pane offers no removal: that is the old revisions scene.
 fn history(
     _namespace: String,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<RevisionHistoryRow>, String>>>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<RevisionHistoryData, String>>>> {
     let rows = held()
         .into_iter()
         .map(|(message, at, hash)| RevisionHistoryRow {
+            hash: hash.unwrap_or("local").to_string(),
             message: Some(message.to_string()),
             obtained_at: at,
             published: hash.is_some(),
             catalog_url: hash.map(catalog_href),
+            kept: Vec::new(),
+            frees: None,
         })
         .collect();
-    Box::pin(async move { Ok(rows) })
+    Box::pin(async move {
+        Ok(RevisionHistoryData {
+            rows,
+            removable_frees: None,
+        })
+    })
 }
 
 /// Where a published revision is read. The hash is banned from the page's words

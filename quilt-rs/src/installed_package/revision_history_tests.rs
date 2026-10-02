@@ -280,8 +280,8 @@ async fn a_refused_listing_fails_the_history() -> Res {
 
 /// `published-rev` is current, base and latest; `old-rev` is published
 /// and old; `local-rev` was never published.
-async fn package_with_old_revisions() -> Res<(InstalledPackage<LocalStorage, MockRemote>, [TempDir; 2])>
-{
+async fn package_with_old_revisions()
+-> Res<(InstalledPackage<LocalStorage, MockRemote>, [TempDir; 2])> {
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "history").into();
     for (tag, hash) in [("1758500000", "published-rev"), ("1758400000", "old-rev")] {
@@ -333,7 +333,10 @@ async fn a_kept_or_absent_revision_refuses_the_whole_removal() -> Res {
     let (package, _dirs) = package_with_old_revisions().await?;
 
     for (refused, why) in [
-        ("published-rev", "it is kept (current \u{b7} latest \u{b7} base)"),
+        (
+            "published-rev",
+            "it is kept (current \u{b7} latest \u{b7} base)",
+        ),
         ("local-rev", "it is kept (unpublished)"),
         ("gone-rev", "this copy does not hold it"),
     ] {
@@ -365,7 +368,10 @@ async fn a_busy_package_refuses_the_removal() -> Res {
         .await
         .expect_err("busy");
 
-    assert!(matches!(&err, Error::PackageBusy(ns) if *ns == package.namespace), "{err:?}");
+    assert!(
+        matches!(&err, Error::PackageBusy(ns) if *ns == package.namespace),
+        "{err:?}"
+    );
     assert_eq!(held(&package).await?.len(), 3);
     Ok(())
 }
@@ -376,7 +382,12 @@ async fn a_refused_listing_refuses_the_removal() -> Res {
     let (package, _dirs) = package_over(DeniedRemote, REMOTE).await?;
     install_manifest(&package, "old-rev", r#"{"version":"v0"}"#).await?;
 
-    assert!(package.remove_revisions(&hashes(&["old-rev"])).await.is_err());
+    assert!(
+        package
+            .remove_revisions(&hashes(&["old-rev"]))
+            .await
+            .is_err()
+    );
     assert_eq!(held(&package).await?, vec!["old-rev"]);
     Ok(())
 }

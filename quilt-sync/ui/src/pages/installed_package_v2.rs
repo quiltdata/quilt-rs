@@ -37,6 +37,7 @@ mod header;
 pub(crate) mod keeping;
 mod local_only_band;
 mod mismatch_band;
+pub(crate) mod old_revisions;
 pub(crate) mod resolve;
 mod revision_history;
 mod role_dialog;
@@ -98,6 +99,9 @@ pub struct Wiring {
     /// `outcome` is: [`Wiring::follow`] drops it once its package is off screen.
     pub replace_to: RwSignal<Option<Replace>>,
     pub dialogs: Dialogs,
+    /// The context pane's removal of old revisions: what runs, and what its
+    /// confirmation asks.
+    pub removal: old_revisions::Removal,
 }
 
 /// Hold `busy` for as long as `task` runs, and retract the band's last
@@ -256,6 +260,7 @@ impl Wiring {
                 remove: RwSignal::new(false),
                 replace: RwSignal::new(false),
             },
+            removal: old_revisions::Removal::new(),
         }
     }
 
@@ -454,6 +459,7 @@ fn package_body(
                     open_catalog=open_catalog
                     w=w
                     commands=keeping::KeepingCommands::app()
+                    remove=old_revisions::remove_revisions
                 />
             }
             .into_any(),

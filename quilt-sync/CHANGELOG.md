@@ -23,6 +23,7 @@
 
 ### Added
 
+- **New design preview**: *Revisions you have* on the package page removes old revisions. Each one that can go says how much space removing it frees and has a trash button, and *Remove N older* removes them all; both ask first. The current revision, the latest and base ones, revisions not pushed yet and revisions never published are kept, each saying why. While it runs the top bar says so, and a notification reports what it freed, for example "Removed 4 old revisions of user/plate-07 · freed 6.9 MB" (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
 - **Settings → General → Free up space** deletes the downloaded files no installed package uses any more, cached package listings and leftovers of interrupted downloads, and says how much it freed, for example "Freed 630.2 kB: 6 objects, 2 cached manifests". It stops without deleting anything while a package is busy (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 
 ### quilt-rs

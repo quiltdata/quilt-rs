@@ -675,13 +675,16 @@ async fn get_package_page_data_from_model(
     })
 }
 
+/// What removing a set of revisions frees, in bytes.
+type Measure<'a> = &'a dyn Fn(&BTreeSet<String>) -> u64;
+
 /// Project the engine's entries onto wire rows, in the engine's order, with
 /// each row's protection and what removing it frees. `frees` measures a set;
 /// `None` means it could not be read, and then nothing is offered.
 fn revision_history_data(
     lineage: &quilt::lineage::PackageLineage,
     entries: Vec<quilt::flow::HistoryEntry>,
-    frees: Option<&dyn Fn(&BTreeSet<String>) -> u64>,
+    frees: Option<Measure<'_>>,
 ) -> RevisionHistoryData {
     let kept = quilt::flow::protection(lineage, &entries);
     let removable: BTreeSet<String> = entries
@@ -788,7 +791,9 @@ async fn get_revision_history_from_model(
     Ok(revision_history_data(
         &lineage,
         entries,
-        frees.as_ref().map(|f| f as &dyn Fn(&BTreeSet<String>) -> u64),
+        frees
+            .as_ref()
+            .map(|f| f as &dyn Fn(&BTreeSet<String>) -> u64),
     ))
 }
 
@@ -836,9 +841,10 @@ async fn remove_revisions_from_model(
     hashes: Vec<String>,
 ) -> Result<quilt::flow::RemovalReport, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    let installed = m.get_installed_package(&namespace).await?.ok_or_else(|| {
-        Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone()))
-    })?;
+    let installed = m
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
     let hashes: BTreeSet<String> = hashes.into_iter().collect();
     m.package_remove_revisions(&installed, &hashes).await
 }
@@ -1976,11 +1982,7 @@ mod tests {
 
     #[test]
     fn a_kept_row_says_why_and_frees_nothing_and_the_footer_measures_the_set() {
-        let data = revision_history_data(
-            &removal_lineage(),
-            removal_entries(),
-            Some(&measure),
-        );
+        let data = revision_history_data(&removal_lineage(), removal_entries(), Some(&measure));
 
         let said: Vec<(&str, &[KeptReason], Option<u64>)> = data
             .rows
@@ -1997,21 +1999,25 @@ mod tests {
                 ("Draft", &[KeptReason::Unpublished][..], None),
             ]
         );
-        assert_eq!(data.removable_frees, Some(25), "measured as a set, not summed");
+        assert_eq!(
+            data.removable_frees,
+            Some(25),
+            "measured as a set, not summed"
+        );
     }
 
     /// Without a measure the list still draws, and offers nothing.
     #[test]
     fn without_a_measure_nothing_is_offered() {
-        let data = revision_history_data(
-            &removal_lineage(),
-            removal_entries(),
-            None,
-        );
+        let data = revision_history_data(&removal_lineage(), removal_entries(), None);
 
         assert!(data.rows.iter().all(|row| row.frees.is_none()));
         assert_eq!(data.removable_frees, None);
-        assert_eq!(data.rows[2].kept, Vec::new(), "still removable, just unmeasured");
+        assert_eq!(
+            data.rows[2].kept,
+            Vec::new(),
+            "still removable, just unmeasured"
+        );
     }
 
     #[test]
@@ -2076,9 +2082,10 @@ mod tests {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package()
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
-        m.expect_package_remove_revisions().returning(|installed, _| {
-            Err(quilt::Error::PackageBusy(installed.namespace.clone()).into())
-        });
+        m.expect_package_remove_revisions()
+            .returning(|installed, _| {
+                Err(quilt::Error::PackageBusy(installed.namespace.clone()).into())
+            });
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let toasts = ToastCenter::new(Box::new(Collector(std::sync::Arc::clone(&seen))));
 

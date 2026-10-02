@@ -12,12 +12,17 @@
 //!
 //! # What it draws
 //!
-//! A list of [`Activity`]s, of which it draws the **first** label today. There is
-//! one [`ActivityKind`], so there is one colour and one place. `kind` is where
-//! ranking the kinds, giving each its own colour and stacking several will hang,
-//! once a second producer arrives; until then nothing reads it.
+//! A list of [`Activity`]s, of which it draws the **first** label. Each
+//! [`ActivityKind`] is one producer with a slot of its own: a producer sets its
+//! slot and no other, so autopull's feed, which says the whole of its state on
+//! every event, never wipes the removal of old revisions the page started. The
+//! list runs in the kinds' order, so autopull's entry ranks first: it is the one
+//! the user did not start. One colour and one place still serve both; giving
+//! each kind its own colour and stacking several are left for later.
 //!
-//! The words come from whoever sets [`Activities`]; the kit composes none.
+//! The words come from whoever sets [`Activities`]; the kit composes none. Each
+//! activity also names the package it is about, which is how a page tells that
+//! autopull is busy with the package on screen.
 //!
 //! # Why a context
 //!
@@ -38,10 +43,13 @@ use leptos::prelude::*;
 
 stylance::import_crate_style!(style, "src/kit/activity_line.module.scss");
 
-/// Who is doing the work. One variant today: the autopull tick.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Who is doing the work, in the order the line ranks them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ActivityKind {
+    /// The autopull tick, pulling or publishing.
     Autopull,
+    /// The package page, removing old revisions.
+    RemoveRevisions,
 }
 
 /// One thing the app is doing, in the words the line draws.
@@ -49,11 +57,14 @@ pub enum ActivityKind {
 pub struct Activity {
     pub kind: ActivityKind,
     pub label: String,
+    /// The package it is about, as `owner/name`.
+    pub package: Option<String>,
 }
 
 /// What the app is doing right now, provided as context for [`ActivityLine`].
 ///
-/// The whole list each time, not deltas: a setter says what is true now.
+/// A slot per kind, each set whole, not by deltas: a setter says what is true
+/// now of its own kind, and leaves the others as they are.
 #[derive(Clone, Copy, Debug)]
 pub struct Activities(RwSignal<Vec<Activity>>);
 
@@ -63,8 +74,26 @@ impl Activities {
         Self(RwSignal::new(Vec::new()))
     }
 
-    pub fn set(&self, activities: Vec<Activity>) {
-        self.0.set(activities);
+    /// Replace `kind`'s slot with `activities`, keeping every other kind's.
+    /// Every one of `activities` must be of `kind`.
+    pub fn set(&self, kind: ActivityKind, activities: Vec<Activity>) {
+        debug_assert!(activities.iter().all(|activity| activity.kind == kind));
+        self.0.update(|all| {
+            all.retain(|activity| activity.kind != kind);
+            all.extend(activities);
+            // Stable, so a kind's own order survives.
+            all.sort_by_key(|activity| activity.kind);
+        });
+    }
+
+    /// Whether `kind` is busy with `package` now. Reactive, as [`Self::get`].
+    #[must_use]
+    pub fn busy_with(&self, kind: ActivityKind, package: &str) -> bool {
+        self.0.with(|all| {
+            all.iter().any(|activity| {
+                activity.kind == kind && activity.package.as_deref() == Some(package)
+            })
+        })
     }
 
     /// Reactive: read inside an effect or a view, it tracks.
@@ -110,7 +139,45 @@ mod tests {
         Activity {
             kind: ActivityKind::Autopull,
             label: label.to_owned(),
+            package: None,
         }
+    }
+
+    fn removing(label: &str) -> Activity {
+        Activity {
+            kind: ActivityKind::RemoveRevisions,
+            label: label.to_owned(),
+            package: Some("team/pkg".to_owned()),
+        }
+    }
+
+    /// Autopull's feed says the whole of its state on every event; that must
+    /// not wipe the page's removal, and autopull's entry ranks first.
+    #[test]
+    fn a_kind_sets_only_its_own_slot() {
+        let owner = Owner::new();
+        owner.with(|| {
+            let activities = Activities::new();
+            activities.set(
+                ActivityKind::RemoveRevisions,
+                vec![removing("Removing 4 old revisions of team/pkg\u{2026}")],
+            );
+            activities.set(
+                ActivityKind::Autopull,
+                vec![autopull("Getting latest for team/other\u{2026}")],
+            );
+            assert_eq!(
+                activities.first_label(),
+                "Getting latest for team/other\u{2026}"
+            );
+            activities.set(ActivityKind::Autopull, Vec::new());
+            assert_eq!(
+                activities.first_label(),
+                "Removing 4 old revisions of team/pkg\u{2026}"
+            );
+            assert!(activities.busy_with(ActivityKind::RemoveRevisions, "team/pkg"));
+            assert!(!activities.busy_with(ActivityKind::Autopull, "team/pkg"));
+        });
     }
 
     /// An appbar under a fresh `Activities`, handed back with it.
@@ -146,10 +213,13 @@ mod tests {
     #[wasm_bindgen_test]
     async fn the_line_says_the_first_activity() {
         let (el, activities) = appbar_with_activities();
-        activities.set(vec![
-            autopull("Getting latest for team/pkg\u{2026}"),
-            autopull("Publishing team/other\u{2026}"),
-        ]);
+        activities.set(
+            ActivityKind::Autopull,
+            vec![
+                autopull("Getting latest for team/pkg\u{2026}"),
+                autopull("Publishing team/other\u{2026}"),
+            ],
+        );
         leptos::task::tick().await;
         assert_eq!(
             the_region(&el).text_content().unwrap_or_default(),
@@ -162,9 +232,12 @@ mod tests {
     #[wasm_bindgen_test]
     async fn clearing_leaves_the_region_mounted() {
         let (el, activities) = appbar_with_activities();
-        activities.set(vec![autopull("Publishing team/pkg\u{2026}")]);
+        activities.set(
+            ActivityKind::Autopull,
+            vec![autopull("Publishing team/pkg\u{2026}")],
+        );
         leptos::task::tick().await;
-        activities.set(Vec::new());
+        activities.set(ActivityKind::Autopull, Vec::new());
         leptos::task::tick().await;
         assert_eq!(the_region(&el).text_content().unwrap_or_default(), "");
     }
@@ -183,10 +256,13 @@ mod tests {
         doc.head().unwrap().append_child(&sheet).unwrap();
 
         let (el, activities) = appbar_with_activities();
-        activities.set(vec![autopull(
-            "Getting latest for a-team-with-a-long-name/a-package-whose-name \
-             goes-on-for-longer-than-any-appbar-is-wide\u{2026}",
-        )]);
+        activities.set(
+            ActivityKind::Autopull,
+            vec![autopull(
+                "Getting latest for a-team-with-a-long-name/a-package-whose-name \
+                 goes-on-for-longer-than-any-appbar-is-wide\u{2026}",
+            )],
+        );
         leptos::task::tick().await;
         let computed = web_sys::window()
             .unwrap()

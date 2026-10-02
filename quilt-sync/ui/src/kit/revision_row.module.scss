@@ -91,3 +91,16 @@
   outline-offset: var(--q-focus-outlineOffset);
   border-radius: var(--q-radius);
 }
+
+/* A short tag can carry a sentence behind it; the cursor says so. */
+.detail[title] {
+  cursor: help;
+}
+
+/* The row's action: a 24px button centred on the message's 20px line, and
+ * never squeezed by an ellipsising message. */
+.trailing {
+  display: inline-flex;
+  flex: none;
+  margin-top: -2px;
+}
