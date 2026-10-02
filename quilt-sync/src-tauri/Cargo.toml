@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.22.6-dev"
+version = "0.22.6"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -13,7 +13,7 @@ publish = false
 
 [build-dependencies]
 # Keep the verbose notation, because it will be (re-)written by tauri-build anyway
-tauri-build = { version = "2.7.0", features = [] }
+tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
 chrono.workspace = true
@@ -36,9 +36,9 @@ notify-debouncer-full = "0.7"
 serde.workspace = true
 serde_json.workspace = true
 serde_qs = "1.1.3"
-tauri = { version = "2.12.0", features = ["test", "devtools", "tray-icon", "image-png"] }
-tauri-plugin-clipboard-manager = "2.4.0"
-tauri-plugin-deep-link = "2.6.0"
+tauri = { version = "2.12.1", features = ["test", "devtools", "tray-icon", "image-png"] }
+tauri-plugin-clipboard-manager = "2.4.1"
+tauri-plugin-deep-link = "2.6.1"
 tauri-plugin-process = "2.4.0"
 tauri-plugin-shell = "2.4.0"
 tauri-plugin-updater = "2.13.1"
@@ -66,7 +66,7 @@ serial_test = "4"
 tokio-test.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-single-instance = { version = "2.5.1", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "2.5.2", features = ["deep-link"] }
 
 [lints]
 workspace = true
