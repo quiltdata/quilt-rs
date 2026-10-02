@@ -48,6 +48,7 @@ cargo install quilt-cli
 | `log`       | List the revisions this copy has, newest first    |
 | `uninstall` | Remove a package; `--prune` also deletes its files |
 | `gc`        | Delete stored files no installed package uses    |
+| `remove-revisions` | Remove old revisions this copy no longer needs |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |
 
@@ -85,6 +86,17 @@ is created. While any package is installed, a different home is refused,
 because the packages' files stay in the old folder. `--overwrite` changes it
 anyway, and the installed packages then point at empty folders, so their files
 read as deleted. `quilt home --json` prints `{"home": "<path>"}`.
+
+`remove-revisions` removes the old revisions of a package this copy holds,
+oldest first, with the stored files only they use, and prints what it freed:
+`Removed 4 old revisions of user/plate-07 · freed 630.2 kB`. `--count N`
+removes only the N oldest. It keeps the revision the working files are at, the
+remote's latest, the merge base, a commit not yet pushed, and any revision the
+registry does not list, since this copy is then the only place it is. With
+nothing to remove it says so and succeeds. Under `--json` it prints the
+`removed` hashes, oldest first, with `revisions`, `objects` and `bytes` freed;
+`kept_for` names a package that was busy, so the files were kept for `quilt
+gc`.
 
 Run `quilt <command> --help` for arguments.
 

@@ -18,6 +18,7 @@ use crate::cli::list;
 use crate::cli::login;
 use crate::cli::pull;
 use crate::cli::push;
+use crate::cli::remove_revisions;
 use crate::cli::role;
 use crate::cli::status;
 use crate::cli::undo_commit;
@@ -82,6 +83,14 @@ pub trait Commands {
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
         let local_domain = self.get_local_domain();
         push::model(local_domain, args).await
+    }
+
+    async fn remove_revisions(
+        &self,
+        args: remove_revisions::Input,
+    ) -> Result<remove_revisions::Output, Error> {
+        let local_domain = self.get_local_domain();
+        remove_revisions::model(local_domain, args).await
     }
 
     async fn undo_commit(&self, args: undo_commit::Input) -> Result<undo_commit::Output, Error> {

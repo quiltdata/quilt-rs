@@ -26,6 +26,7 @@ mod model;
 mod output;
 mod pull;
 mod push;
+mod remove_revisions;
 mod role;
 mod status;
 mod text;
@@ -357,6 +358,20 @@ enum Commands {
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
+    /// Remove old revisions of a package, and the stored files only they use
+    ///
+    /// Removes the revisions this copy holds that it no longer needs, oldest
+    /// first, and prints what was freed. A revision is kept while the working
+    /// files are at it, while it is the remote's latest or the merge base,
+    /// while it is committed but not pushed, and while the registry does not
+    /// list it, so this copy is the only place it is.
+    RemoveRevisions {
+        #[command(flatten)]
+        pkg: PackageRef,
+        /// Remove only the N oldest removable revisions; all of them if omitted
+        #[arg(short, long, value_name = "N", value_parser = remove_revisions::parse_count)]
+        count: Option<std::num::NonZeroUsize>,
+    },
     /// Show or switch your active role on a Quilt stack
     ///
     /// The active role is server-side and global: it decides what every Quilt
@@ -602,6 +617,13 @@ pub async fn init(args: Args) -> Result<Std, Error> {
 
             log::debug!("Pushing {args:?}");
             Ok(push::command(m, args).await)
+        }
+        Commands::RemoveRevisions { pkg, count } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = remove_revisions::Input { namespace, count };
+
+            log::debug!("Removing old revisions {args:?}");
+            Ok(remove_revisions::command(m, args).await)
         }
         Commands::Role { host, set } => {
             let args = role::Input { host, set };
@@ -1050,6 +1072,26 @@ mod tests {
             pruning.command,
             Commands::Uninstall { prune: true, .. }
         ));
+    }
+
+    /// `--count` is optional, and refuses 0 as an argument error.
+    #[test]
+    fn remove_revisions_count_is_optional_and_at_least_one() {
+        let all = Args::try_parse_from(["quilt", "remove-revisions", "-n", "a/b"]).expect("parses");
+        assert!(matches!(
+            all.command,
+            Commands::RemoveRevisions { count: None, .. }
+        ));
+        let two = Args::try_parse_from(["quilt", "remove-revisions", "-n", "a/b", "-c", "2"])
+            .expect("parses");
+        assert!(matches!(
+            two.command,
+            Commands::RemoveRevisions { count: Some(count), .. } if count.get() == 2
+        ));
+        let err = Args::try_parse_from(["quilt", "remove-revisions", "--count", "0"])
+            .expect_err("0 is refused");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        assert!(err.to_string().contains("must be at least 1"), "{err}");
     }
 
     /// `global = true` is what makes this additive: the shipped spelling keeps
@@ -2315,6 +2357,13 @@ mod tests {
             ),
             ("log", Commands::Log { pkg: pkg() }),
             ("undo-commit", Commands::UndoCommit { pkg: pkg() }),
+            (
+                "remove-revisions",
+                Commands::RemoveRevisions {
+                    pkg: pkg(),
+                    count: None,
+                },
+            ),
             (
                 "uninstall",
                 Commands::Uninstall {
