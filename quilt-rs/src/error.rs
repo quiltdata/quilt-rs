@@ -370,10 +370,11 @@ pub enum Error {
     #[error("{0} is busy in another quilt process; try again once it finishes")]
     PackageBusy(Namespace),
 
-    /// A pruning uninstall removed the package, then could not prove its
-    /// objects unused, so it deleted none of them.
-    #[error("Uninstalled {0}, but kept its downloaded files: {1}")]
-    KeptObjects(Namespace, Box<Error>),
+    /// A pruning uninstall removed the package, then failed before it had
+    /// deleted every object it meant to: it could not prove them unused, so
+    /// deleted none, or a deletion failed part way.
+    #[error("Uninstalled {0}, but not all of its downloaded files were deleted: {1}")]
+    PruneFailed(Namespace, Box<Error>),
 
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),

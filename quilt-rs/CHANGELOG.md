@@ -31,7 +31,7 @@
 
 ### Changed
 
-- **Breaking:** `Error` has new variants, `PackageBusy` and `KeptObjects`, so an exhaustive `match` on it needs new arms (<https://github.com/quiltdata/quilt-rs/pull/1030>, <https://github.com/quiltdata/quilt-rs/pull/1040>)
+- **Breaking:** `Error` has new variants, `PackageBusy` and `PruneFailed`, so an exhaustive `match` on it needs new arms (<https://github.com/quiltdata/quilt-rs/pull/1030>, <https://github.com/quiltdata/quilt-rs/pull/1040>)
 
 ### quilt-uri
 

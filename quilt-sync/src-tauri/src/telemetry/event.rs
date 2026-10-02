@@ -309,7 +309,7 @@ impl From<&crate::quilt::Error> for Failure {
             E::PackageBusy(_) => Self::Refusal(RefusalKind::Busy),
 
             // The uninstall happened; what kept the objects is the failure.
-            E::KeptObjects(_, inner) => Self::from(inner.as_ref()),
+            E::PruneFailed(_, inner) => Self::from(inner.as_ref()),
 
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same

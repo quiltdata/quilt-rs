@@ -236,7 +236,8 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     /// The uninstall stands whatever the prune finds. Another package busy
     /// in another writer keeps the objects, answered as
     /// [`flow::Pruned::Busy`]; a manifest that can't be read keeps them too,
-    /// as [`Error::KeptObjects`].
+    /// as [`Error::PruneFailed`]. The package's own manifest that can't be
+    /// read fails before anything changes.
     pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
         info!("Uninstalling package and its objects: {}", namespace);
         let candidates = {
@@ -253,7 +254,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         };
         prune
             .await
-            .map_err(|err| Error::KeptObjects(namespace, Box::new(err)))
+            .map_err(|err| Error::PruneFailed(namespace, Box::new(err)))
     }
 
     /// Uninstall `namespace`, whose lock the caller holds.
