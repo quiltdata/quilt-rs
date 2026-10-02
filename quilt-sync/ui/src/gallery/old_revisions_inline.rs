@@ -570,13 +570,15 @@ fn dialog(flow: Flow) -> impl IntoView {
 fn body(flow: Flow) -> AnyView {
     view! {
         <div class="g-ori-body">
-            <PaneSection>
-                <div class="g-ori-rows">
-                    {move || {
-                        flow.remaining.get().into_iter().map(|i| row(i, flow)).collect_view()
-                    }}
-                </div>
-            </PaneSection>
+            <div class="g-ori-list">
+                <PaneSection>
+                    <div class="g-ori-rows">
+                        {move || {
+                            flow.remaining.get().into_iter().map(|i| row(i, flow)).collect_view()
+                        }}
+                    </div>
+                </PaneSection>
+            </div>
             {footer(flow)}
         </div>
     }

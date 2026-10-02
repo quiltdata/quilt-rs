@@ -355,11 +355,16 @@ pub(super) fn rows_and_footer(
     let footer = offering
         .filter(|_| rows.len() > 1)
         .map(|remover| footer(&rows, removable_frees.unwrap_or_default(), remover));
+    // Only the rows scroll: the footer stays in view under a long list.
     view! {
-        <PaneSection>
-            <div class=style::rows>{drawn}</div>
-        </PaneSection>
-        {footer}
+        <div class=style::body>
+            <div class=style::list>
+                <PaneSection>
+                    <div class=style::rows>{drawn}</div>
+                </PaneSection>
+            </div>
+            {footer}
+        </div>
     }
     .into_any()
 }
