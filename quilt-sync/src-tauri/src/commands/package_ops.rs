@@ -1672,6 +1672,7 @@ mod tests {
         let failed = Error::Quilt(quilt::Error::PruneFailed(
             ("acme", "demo").into(),
             Box::new(quilt::Error::PackageBusy(("acme", "other").into())),
+            None,
         ));
         let (result, toast) = super::settle_uninstall("acme/demo", Err(failed));
         assert!(result.is_ok());

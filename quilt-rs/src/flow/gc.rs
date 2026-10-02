@@ -838,7 +838,7 @@ mod tests {
             .uninstall_package_pruning("acme/gone".try_into()?)
             .await;
 
-        let Err(err @ Error::PruneFailed(..)) = result else {
+        let Err(err @ Error::PruneFailed(_, _, None)) = result else {
             panic!("expected PruneFailed, got {result:?}");
         };
         assert!(
@@ -886,7 +886,7 @@ mod tests {
 
         let result = domain.uninstall_package_pruning(namespace.clone()).await;
 
-        let Err(err @ Error::PruneFailed(..)) = result else {
+        let Err(err @ Error::PruneFailed(_, _, None)) = result else {
             panic!("expected PruneFailed, got {result:?}");
         };
         assert!(
@@ -905,25 +905,57 @@ mod tests {
         Ok(())
     }
 
-    /// An unreadable manifest of its own is reported even when another
-    /// package is busy: the busy package would otherwise hide it.
+    /// An unreadable revision of its own and a busy package together: the
+    /// error names both, the read error for the files it could not count and
+    /// the busy package for the ones it counted and kept.
     #[test(tokio::test)]
-    async fn its_own_unreadable_manifest_is_not_hidden_by_a_busy_package() -> Res {
-        let (domain, paths, _dir) = domain().await?;
+    async fn an_unreadable_revision_and_a_busy_package_are_both_named() -> Res {
+        let (domain, paths, dir) = domain().await?;
         create(&domain, "acme/busy", &[("a.txt", "a")]).await?;
-        create(&domain, "acme/broken", &[("b.txt", "bb")]).await?;
+        create(&domain, "acme/broken", &[("b.txt", "b1")]).await?;
         let namespace: Namespace = "acme/broken".try_into()?;
-        for entry in std::fs::read_dir(paths.installed_manifests_dir(&namespace))? {
-            std::fs::write(entry?.path(), "not a manifest")?;
+        let first: Vec<_> = std::fs::read_dir(paths.installed_manifests_dir(&namespace))?
+            .map(|entry| entry.map(|e| e.path()))
+            .collect::<Result<_, _>>()?;
+        std::fs::write(dir.path().join("home/acme/broken/b.txt"), "b22")?;
+        domain
+            .get_installed_package(&namespace)
+            .await?
+            .expect("installed")
+            .commit(
+                "second".to_string(),
+                crate::flow::UserMeta::Keep,
+                None,
+                None,
+            )
+            .await?;
+        for path in first {
+            std::fs::write(path, "not a manifest")?;
         }
+        let before = object_names(&paths)?;
         let busy: Namespace = "acme/busy".try_into()?;
         let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
 
         let result = domain.uninstall_package_pruning(namespace).await;
 
+        let Err(err @ Error::PruneFailed(_, _, Some(_))) = result else {
+            panic!("expected PruneFailed naming the busy package, got {result:?}");
+        };
+        let words = err.to_string();
         assert!(
-            matches!(&result, Err(Error::PruneFailed(_, inner)) if !matches!(**inner, Error::PackageBusy(_))),
-            "{result:?}"
+            words.starts_with(
+                "Uninstalled acme/broken, but not all of its downloaded files were deleted: "
+            ),
+            "{words}"
+        );
+        assert!(
+            words.ends_with("; acme/busy is busy, so the rest were kept too"),
+            "{words}"
+        );
+        assert_eq!(
+            object_names(&paths)?,
+            before,
+            "the busy package kept them all"
         );
         Ok(())
     }

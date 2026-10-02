@@ -250,19 +250,27 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         // The package's own lock is released above: the prune try-locks
         // every package, this one among them.
         let prune = async {
-            let lineage = self.lineage.read(&self.storage).await?;
-            let pruned = flow::prune(&self.paths, &self.storage, &lineage, candidates).await?;
-            // Some of its files could not be counted, so not all went —
-            // whether or not a busy package kept the rest. The read error
-            // goes first: once the manifests are gone, no retry can show it.
-            match unread {
-                Some(err) => Err(err),
-                None => Ok(pruned),
+            let lineage = self
+                .lineage
+                .read(&self.storage)
+                .await
+                .map_err(|err| (err, None))?;
+            let pruned = flow::prune(&self.paths, &self.storage, &lineage, candidates)
+                .await
+                .map_err(|err| (err, None))?;
+            // Some of its files could not be counted, so not all went. The
+            // read error goes first, since once the manifests are gone no
+            // retry can show it, and a busy package that kept the rest is
+            // named beside it.
+            match (unread, pruned) {
+                (None, pruned) => Ok(pruned),
+                (Some(err), flow::Pruned::Busy(busy)) => Err((err, Some(busy))),
+                (Some(err), flow::Pruned::Freed(_)) => Err((err, None)),
             }
         };
         prune
             .await
-            .map_err(|err| Error::PruneFailed(namespace, Box::new(err)))
+            .map_err(|(err, busy)| Error::PruneFailed(namespace, Box::new(err), busy))
     }
 
     /// Uninstall `namespace`, whose lock the caller holds.
