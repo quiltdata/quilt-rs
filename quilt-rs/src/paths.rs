@@ -269,6 +269,7 @@ async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Res {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use test_log::test;
 
@@ -295,7 +296,7 @@ mod tests {
     fn test_domain_paths_layout() {
         let paths = DomainPaths::new(PathBuf::from("foo/bar"));
         let namespace = Namespace::from(("test", "package"));
-        let host: Host = "example.com".parse().unwrap();
+        let host = fixtures::host();
         let manifest_uri = ManifestUri {
             bucket: "my-bucket".to_string(),
             namespace: namespace.clone(),
@@ -341,7 +342,7 @@ mod tests {
         );
         assert_eq!(
             paths.auth_host(&host),
-            PathBuf::from("foo/bar/.auth/example.com"),
+            PathBuf::from("foo/bar/.auth/quilt.test"),
         );
     }
 

@@ -3,6 +3,7 @@
 use std::future::Future;
 
 use super::*;
+use quilt_uri::fixtures;
 
 use test_log::test;
 
@@ -41,7 +42,7 @@ async fn test_spamming_commit_writes() -> Res {
                         "bucket": "bucket",
                         "namespace": "test/history",
                         "hash": "{}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{}",
                     "latest_hash": "{}",
@@ -487,7 +488,7 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
 
 fn rejected_credential() -> Error {
     Error::S3(crate::error::S3Error {
-        host: Some("nightly.quilttest.com".parse().unwrap()),
+        host: Some(fixtures::host()),
         kind: crate::error::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
     })
 }
@@ -646,7 +647,7 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
                     "bucket": "locked",
                     "namespace": "test/denied",
                     "hash": "{installed_hash}",
-                    "origin": "nightly.quilttest.com"
+                    "origin": "quilt.test"
                 }},
                 "base_hash": "{installed_hash}",
                 "latest_hash": "{installed_hash}",
@@ -717,7 +718,7 @@ async fn test_status_propagates_a_rejected_credential() -> Res {
                     "bucket": "my-bucket",
                     "namespace": "test/rejectedcred",
                     "hash": "",
-                    "origin": "nightly.quilttest.com"
+                    "origin": "quilt.test"
                 },
                 "base_hash": "",
                 "latest_hash": "",
@@ -771,7 +772,7 @@ async fn test_status_propagates_login_required() -> Res {
                     "bucket": "my-bucket",
                     "namespace": "test/needslogin",
                     "hash": "",
-                    "origin": "nightly.quilttest.com"
+                    "origin": "quilt.test"
                 },
                 "base_hash": "",
                 "latest_hash": "",
@@ -839,7 +840,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/pull_refresh",
                         "hash": "{install_hash}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{install_hash}",
                     "latest_hash": "{install_hash}",
@@ -934,7 +935,7 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/pull_outcome",
                         "hash": "{install_hash}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{install_hash}",
                     "latest_hash": "{install_hash}",
@@ -1092,7 +1093,7 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/diverged_hash",
                         "hash": "{remote_hash}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{base_hash}",
                     "latest_hash": "{latest_hash}",
@@ -1167,7 +1168,7 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/never_pushed",
                         "hash": "",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "",
                     "latest_hash": "",
@@ -1271,7 +1272,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
         "bucket": "bkt",
         "namespace": "test/refreshed",
         "hash": "abcdef",
-        "catalog": "test.quilt.dev"
+        "catalog": "quilt.test"
     }"#;
 
     let reached = status_with(Some("abcdef"), "null", remote_json, "abcdef").await?;
@@ -1295,7 +1296,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
         "bucket": "bkt",
         "namespace": "test/refreshed",
         "hash": "",
-        "catalog": "test.quilt.dev"
+        "catalog": "quilt.test"
     }"#;
     let unpublished = status_with(None, committed_json, unpublished_json, "").await?;
     assert!(unpublished.latest_refreshed, "the missing tag was read");
@@ -1377,7 +1378,7 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
             "bucket": "bkt",
             "namespace": "test/state",
             "hash": "abcdef",
-            "origin": "test.quilt.dev"
+            "origin": "quilt.test"
         }"#,
     )
     .await?;

@@ -1,6 +1,7 @@
 //! Tests for configuring a package's remote via `set_remote`.
 
 use super::*;
+use quilt_uri::fixtures;
 
 use test_log::test;
 
@@ -58,7 +59,7 @@ async fn test_set_remote_on_local_package() -> Res {
     package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -70,7 +71,7 @@ async fn test_set_remote_on_local_package() -> Res {
         .expect("remote_uri should be set");
     assert_eq!(
         remote_uri.origin.as_ref().unwrap().to_string(),
-        "example.com"
+        "quilt.test"
     );
     assert_eq!(remote_uri.bucket, "my-bucket");
     assert_eq!(remote_uri.hash, "");
@@ -119,7 +120,7 @@ async fn test_set_remote_empty_bucket_error() -> Res {
     let result = package
         .set_remote(
             String::new(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await;
@@ -231,7 +232,7 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
     let result = package
         .set_remote(
             "typo-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await;
@@ -275,7 +276,7 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
                     "bucket": "old-bucket",
                     "namespace": "test/overwrite",
                     "hash": "abc123",
-                    "origin": "old.host"
+                    "origin": "one.quilt.test"
                 },
                 "base_hash": "abc123",
                 "latest_hash": "abc123",
@@ -300,7 +301,7 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
     let result = package
         .set_remote(
             "new-bucket".to_string(),
-            Some("new.host".parse()?),
+            Some(fixtures::another_host()),
             WorkflowIntent::BucketDefault,
         )
         .await;
@@ -338,7 +339,7 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
                     "bucket": "my-bucket",
                     "namespace": "test/idempotent",
                     "hash": "abc123",
-                    "origin": "my.host"
+                    "origin": "quilt.test"
                 },
                 "base_hash": "abc123",
                 "latest_hash": "abc123",
@@ -364,7 +365,7 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
     package
         .set_remote(
             "my-bucket".to_string(),
-            Some("my.host".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -400,7 +401,7 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
                     "bucket": "old-bucket",
                     "namespace": "test/unpushed",
                     "hash": "",
-                    "origin": "old.host"
+                    "origin": "one.quilt.test"
                 },
                 "base_hash": "",
                 "latest_hash": "",
@@ -425,7 +426,7 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
     package
         .set_remote(
             "new-bucket".to_string(),
-            Some("new.host".parse()?),
+            Some(fixtures::another_host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -435,7 +436,10 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
         .remote_uri
         .as_ref()
         .expect("remote_uri should be set");
-    assert_eq!(remote_uri.origin.as_ref().unwrap().to_string(), "new.host");
+    assert_eq!(
+        remote_uri.origin.as_ref().unwrap().to_string(),
+        "another.quilt.test"
+    );
     assert_eq!(remote_uri.bucket, "new-bucket");
     assert_eq!(remote_uri.hash, "", "hash should remain empty");
 
@@ -512,7 +516,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         std::time::Duration::from_secs(30),
         package.set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         ),
     )
@@ -528,7 +532,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         .expect("remote_uri should be set");
     assert_eq!(
         remote_uri.origin.as_ref().unwrap().to_string(),
-        "example.com"
+        "quilt.test"
     );
     assert_eq!(remote_uri.bucket, "my-bucket");
 
@@ -693,7 +697,7 @@ schemas:
     let outcome = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -806,7 +810,7 @@ schemas:
     package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -911,11 +915,7 @@ schemas:
         .await?;
 
     package
-        .set_remote(
-            "my-bucket".to_string(),
-            Some("example.com".parse()?),
-            intent,
-        )
+        .set_remote("my-bucket".to_string(), Some(fixtures::host()), intent)
         .await?;
 
     let lineage = package.lineage().await?;
@@ -1033,7 +1033,7 @@ async fn test_set_remote_propagates_named_workflow_error() -> Res {
     let result = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::Named("nope".to_string()),
         )
         .await;
@@ -1074,7 +1074,7 @@ schemas:
     let outcome = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -1171,7 +1171,7 @@ async fn test_set_remote_no_workflow_against_required_bucket_is_rejected() -> Re
     let err = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::NoWorkflow,
         )
         .await
@@ -1218,7 +1218,7 @@ schemas:
     let err = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await
