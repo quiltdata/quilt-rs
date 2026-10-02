@@ -254,26 +254,26 @@ pub mod old_revisions {
         paths
             .scaffold_for_installing(&storage, &home, &namespace)
             .await?;
-        let lineage_json = format!(
-            r#"{{
-                "packages": {{
-                    "test/history": {{
-                        "commit": null,
-                        "remote": {{
-                            "bucket": "bucket",
-                            "namespace": "test/history",
-                            "hash": "current-rev",
-                            "origin": "quilt.test"
-                        }},
-                        "base_hash": "current-rev",
-                        "latest_hash": "current-rev",
-                        "paths": {{}}
-                    }}
-                }},
-                "home": "{}"
-            }}"#,
-            home_dir.path().display()
-        );
+        // Built as JSON, not formatted in: a Windows path's backslashes
+        // would be escapes inside a JSON string.
+        let lineage_json = serde_json::json!({
+            "packages": {
+                "test/history": {
+                    "commit": null,
+                    "remote": {
+                        "bucket": "bucket",
+                        "namespace": "test/history",
+                        "hash": "current-rev",
+                        "origin": "quilt.test"
+                    },
+                    "base_hash": "current-rev",
+                    "latest_hash": "current-rev",
+                    "paths": {}
+                }
+            },
+            "home": home_dir.path(),
+        })
+        .to_string();
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
             .await?;
