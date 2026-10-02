@@ -140,9 +140,11 @@ pub fn CurrentRevisionPane(
                         open=open
                         aria_label="Revisions you have"
                         align=Align::End
+                        contained=true
                     >
                         // The live region is the caller's (`kit/load_failure.rs`).
                         <div
+                            class=style::live
                             aria-live="polite"
                             aria-busy=move || if loading() { "true" } else { "false" }
                         >
@@ -524,7 +526,7 @@ mod tests {
                 .is_none(),
             "a kept row has no trash"
         );
-        element_saying(&surface, "Remove 2 older \u{b7} frees 6.9 MB");
+        element_saying(&surface, "Remove all 2 unused \u{b7} frees 6.9 MB");
     }
 
     /// The trash asks first; Remove closes the dialog and starts the removal,
@@ -606,7 +608,7 @@ mod tests {
         let el = removal_pane(removable, removes_busy, w, crate::kit::Activities::new());
         let surface = opened(&el).await;
 
-        element_saying(&surface, "Remove 2 older \u{b7} frees 6.9 MB").click();
+        element_saying(&surface, "Remove all 2 unused \u{b7} frees 6.9 MB").click();
         leptos::task::tick().await;
         let dialog = el
             .query_selector("dialog")
@@ -616,7 +618,7 @@ mod tests {
             dialog
                 .text_content()
                 .unwrap_or_default()
-                .contains("Remove 2 older revisions? This frees 6.9 MB.")
+                .contains("Remove all 2 unused revisions? This frees 6.9 MB.")
         );
         crate::test_support::button_saying(&dialog, "Remove").click();
         settle().await;

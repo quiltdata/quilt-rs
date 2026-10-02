@@ -7,8 +7,8 @@
 //!
 //! A removable row says under its time what removing it alone frees and ends
 //! in a trash button. A protected one says why it is kept in a short tag, with
-//! the reasons spelled out for the pointer, and has no button. The footer
-//! removes every removable row, at the figure the backend measured for the set,
+//! the reasons spelled out for the pointer, and has no button. The footer,
+//! "Remove all 4 unused", removes every removable row, at the figure the backend measured for the set,
 //! which can be more than the rows add up to.
 //!
 //! # The confirmation is the page's
@@ -109,6 +109,26 @@ fn plural(count: usize, one: &str, many: &str) -> String {
     }
 }
 
+/// The footer's set in the dialog's sentence: "all 4 unused revisions". The
+/// rows a trash icon is on, named by what they are rather than by age, since a
+/// newer revision can be kept and an older one not.
+fn unused(count: usize) -> String {
+    if count == 1 {
+        "1 unused revision".to_string()
+    } else {
+        format!("all {count} unused revisions")
+    }
+}
+
+/// The same on the button: "all 4 unused".
+fn unused_short(count: usize) -> String {
+    if count == 1 {
+        "1 unused".to_string()
+    } else {
+        format!("all {count} unused")
+    }
+}
+
 /// A protected row's tag: `current · not pushed`.
 pub(super) fn kept_tag(kept: &[KeptReason]) -> String {
     kept.iter()
@@ -172,14 +192,14 @@ pub struct Ask {
 
 impl Ask {
     /// The footer's: every removable row, freed as a set.
-    pub(super) fn older(namespace: &str, removable: &[&RevisionHistoryRow], frees: u64) -> Self {
+    pub(super) fn unused(namespace: &str, removable: &[&RevisionHistoryRow], frees: u64) -> Self {
         Self {
             namespace: namespace.to_string(),
             hashes: removable.iter().map(|row| row.hash.clone()).collect(),
-            title: "Remove old revisions",
+            title: "Remove unused revisions",
             consequence: format!(
                 "Remove {}? This frees {}.",
-                plural(removable.len(), "older revision", "older revisions"),
+                unused(removable.len()),
                 spelled(frees),
             ),
         }
@@ -462,7 +482,7 @@ fn footer(rows: &[RevisionHistoryRow], frees: u64, remover: Remover) -> AnyView 
     };
     let button = (!removable.is_empty()).then(|| {
         let count = removable.len();
-        let ask = Ask::older(&namespace, &removable, frees);
+        let ask = Ask::unused(&namespace, &removable, frees);
         let hashes = ask.hashes.clone();
         // Spinning when the set it names is the one being removed; only
         // disabled when a row's removal, a sync or a page command holds it.
@@ -480,7 +500,7 @@ fn footer(rows: &[RevisionHistoryRow], frees: u64, remover: Remover) -> AnyView 
                 disabled=Signal::derive(move || remover.blocked())
                 on_click=move |_| remover.confirm(ask.clone())
             >
-                {format!("Remove {count} older \u{b7} frees {}", size(frees))}
+                {format!("Remove {} \u{b7} frees {}", unused_short(count), size(frees))}
             </Button>
         }
     });
@@ -593,11 +613,11 @@ mod tests {
             Ask::one("user/plate-07", &unnamed).consequence,
             "Remove the revision with no message? This frees no space."
         );
-        let older = Ask::older("user/plate-07", &[&initial, &unnamed], 6_900_000);
-        assert_eq!(older.title, "Remove old revisions");
+        let unused = Ask::unused("user/plate-07", &[&initial, &unnamed], 6_900_000);
+        assert_eq!(unused.title, "Remove unused revisions");
         assert_eq!(
-            older.consequence,
-            "Remove 2 older revisions? This frees 6.9 MB."
+            unused.consequence,
+            "Remove all 2 unused revisions? This frees 6.9 MB."
         );
         assert_eq!(
             progress(4, "user/plate-07"),

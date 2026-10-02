@@ -9,7 +9,7 @@
 //!
 //! # Every removal is confirmed by the kit's `ConfirmDialog`
 //!
-//! The footer's "Remove N older" and each row's trash open the same dialog,
+//! The footer's "Remove all N unused" and each row's trash open the same dialog,
 //! whose sentence says what goes and what it frees. Cancel is first and the
 //! verb is the Danger `Remove`, so the kit's rule — only `ConfirmDialog` draws a
 //! Danger button — holds without an exception.
@@ -239,13 +239,17 @@ struct Ask {
 
 impl Ask {
     /// The footer's: every removable row, freed as a set.
-    fn older(set: &[usize], remaining: &[usize]) -> Self {
+    fn unused(set: &[usize], remaining: &[usize]) -> Self {
         Self {
             set: set.to_vec(),
-            title: "Remove old revisions",
+            title: "Remove unused revisions",
             consequence: format!(
                 "Remove {}? This frees {}.",
-                plural(set.len(), "older revision", "older revisions"),
+                if set.len() == 1 {
+                    "1 unused revision".to_string()
+                } else {
+                    format!("all {} unused revisions", set.len())
+                },
                 spelled(freed(set, remaining)),
             ),
         }
@@ -515,10 +519,10 @@ fn footer(flow: Flow) -> impl IntoView {
                     loading=loading
                     disabled=disabled
                     on_click=move |_| {
-                        flow.confirm(Ask::older(&set, &flow.remaining.get_untracked()));
+                        flow.confirm(Ask::unused(&set, &flow.remaining.get_untracked()));
                     }
                 >
-                    {format!("Remove {count} older · frees {total}")}
+                    {format!("Remove all {count} unused · frees {total}")}
                 </Button>
             }
         });
@@ -689,6 +693,7 @@ fn pane(flow: Flow) -> AnyView {
                             open=open
                             aria_label="Revisions you have"
                             align=Align::End
+                            contained=true
                         >
                             {body(flow)}
                         </AnchoredOverlay>
@@ -796,7 +801,7 @@ pub fn OldRevisionsInlineScene() -> impl IntoView {
                 {surface(Flow::new(&ALL))}
             </Cell>
             <Cell wide=true label="confirm from the footer">
-                {confirmation(Ask::older(&OLDER, &ALL))}
+                {confirmation(Ask::unused(&OLDER, &ALL))}
             </Cell>
             <Cell wide=true label="confirm from a row — Initial upload">
                 {confirmation(remove_one)}

@@ -3,6 +3,14 @@
   flex: none;
 }
 
+/* The popover's live region: a column the contained surface bounds, so the
+ * removal's list scrolls inside it. */
+.live {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .bucket {
   color: var(--q-fgColor-muted);
   font-size: var(--q-text-body);
