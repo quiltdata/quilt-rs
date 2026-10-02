@@ -34,7 +34,7 @@
 
 ### Deprecated
 
-- `quilt push --origin` (`-o`) is deprecated in favor of `--host`, the name `login` and `role` use. It still works, with a warning (<https://github.com/quiltdata/quilt-rs/pull/1039>)
+- `quilt push --origin` (`-o`) is deprecated; use `--host`, so every command names the catalog host the same way. `--origin` still works, with a warning (<https://github.com/quiltdata/quilt-rs/pull/1039>)
 
 ### quilt-rs
 
