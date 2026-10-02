@@ -1675,7 +1675,7 @@ mod tests {
                     state: PackageState::Unknown,
                     changed_at: None,
                     bucket: None,
-                    host: Some("solo.registry.io".to_string()),
+                    host: Some("quilt.test".to_string()),
                     provisional: false,
                     role_switch_host: None,
                 },
@@ -1684,7 +1684,7 @@ mod tests {
                     state: PackageState::Latest,
                     changed_at: None,
                     bucket: None,
-                    host: Some("solo.registry.io".to_string()),
+                    host: Some("quilt.test".to_string()),
                     provisional: false,
                     role_switch_host: None,
                 },
@@ -1698,7 +1698,7 @@ mod tests {
     fn one_signed_out_host() -> MainPageAccountsData {
         MainPageAccountsData {
             hosts: vec![AccountHostData {
-                host: "solo.registry.io".to_string(),
+                host: "quilt.test".to_string(),
                 signed_in: false,
                 current_role: None,
                 roles: Vec::new(),
@@ -2698,14 +2698,11 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Signed out from solo.registry.io"),
+            text.contains("Signed out from quilt.test"),
             "the queue joined the packages against the accounts payload: {text}"
         );
         assert!(
-            strip_of(&el)
-                .text_content()
-                .unwrap()
-                .contains("solo.registry.io"),
+            strip_of(&el).text_content().unwrap().contains("quilt.test"),
             "and the same accounts payload drew the card"
         );
         assert_eq!(
@@ -3733,7 +3730,7 @@ mod tests {
             PackageState::RoleDenied {
                 role: Some("ReadOnly".to_string()),
             },
-            Some("test.quilt.dev".to_string()),
+            Some("quilt.test".to_string()),
             true,
         );
         row.apply(MainPagePackageRefreshData {
@@ -3754,7 +3751,7 @@ mod tests {
             state: PackageState::RoleDenied {
                 role: Some("ReadOnly".to_string()),
             },
-            role_switch_host: Some("test.quilt.dev".to_string()),
+            role_switch_host: Some("quilt.test".to_string()),
         });
 
         assert_eq!(
@@ -3765,7 +3762,7 @@ mod tests {
         );
         assert_eq!(
             row.role_switch_host.get_untracked().as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
     }
 

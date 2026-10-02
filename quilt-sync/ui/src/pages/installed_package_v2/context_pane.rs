@@ -232,7 +232,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     const PUBLISHED_URL: &str =
-        "https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash";
+        "https://quilt.test/b/test/packages/team/dataset/tree/published-hash";
 
     type Answer = Pin<Box<dyn Future<Output = Result<Vec<RevisionHistoryRow>, String>>>>;
 

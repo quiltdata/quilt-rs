@@ -248,16 +248,12 @@ mod tests {
     /// the other end of a paste.
     #[test]
     fn a_file_address_names_its_bucket_package_path_and_catalog() {
-        let package = package_uri(
-            "team-bucket",
-            &ns("user/plate-07"),
-            Some("example.quilt.dev"),
-        );
+        let package = package_uri("team-bucket", &ns("user/plate-07"), Some("quilt.test"));
         let file = file_uri(&package, "runs/a/one.csv");
 
         assert_eq!(
             file.display(),
-            "quilt+s3://team-bucket#package=user/plate-07&path=runs/a/one.csv&catalog=example.quilt.dev"
+            "quilt+s3://team-bucket#package=user/plate-07&path=runs/a/one.csv&catalog=quilt.test"
         );
         assert_eq!(
             S3PackageUri::try_from(file.display().as_str()).expect("it parses back"),

@@ -1478,9 +1478,10 @@ mod tests {
         let package = crate::util::package_uri(
             "team-bucket",
             &"user/plate-07".try_into().unwrap(),
-            Some("example.quilt.dev"),
+            Some("quilt.test"),
         );
-        let address = "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=example.quilt.dev";
+        let address =
+            "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=quilt.test";
         let copy_uri = RowCommand::CopyUri("runs/one.csv".to_string());
         let (text, event) = clipped(&copy_uri, "user/plate-07", Some(&package), at_home)
             .await
@@ -2229,12 +2230,12 @@ mod tests {
         let mismatch = routes::DeepLinkOutcome::Mismatch(routes::RevisionMismatch {
             hash: "c41d8f02".to_string(),
             bucket: "quilt-lab".to_string(),
-            catalog: Some("https://open.quilt.bio".to_string()),
+            catalog: Some("https://quilt.test".to_string()),
         });
         assert_eq!(
             normalized_address(true, "team/dataset", &page_data(), Some(&mismatch)),
             Some(format!(
-                "{PLAIN}&mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio"
+                "{PLAIN}&mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fquilt.test"
             ))
         );
     }

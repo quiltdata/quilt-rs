@@ -818,7 +818,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn sign_in_is_offered_only_where_the_state_names_a_host() {
         let with_host = mount_header(data(kit::PackageState::NoSession {
-            host: Some("demo.quiltdata.com".to_string()),
+            host: Some("quilt.test".to_string()),
         }));
         assert!(
             labelled(&with_host)
@@ -1088,7 +1088,7 @@ mod tests {
             role: Some("analyst".to_string()),
         });
         d.role_switch = Some(commands::RoleSwitch {
-            host: "demo.quiltdata.com".to_string(),
+            host: "quilt.test".to_string(),
             alternatives: vec!["admin".to_string()],
         });
         let el = mount_header(d);
@@ -1121,7 +1121,7 @@ mod tests {
             role: role.map(str::to_string),
         });
         d.role_switch = Some(commands::RoleSwitch {
-            host: "demo.quiltdata.com".to_string(),
+            host: "quilt.test".to_string(),
             alternatives: vec!["admin".to_string()],
         });
         let el = mount_header(d);
@@ -1180,7 +1180,7 @@ mod tests {
             role: Some("analyst".to_string()),
         });
         d.role_switch = Some(commands::RoleSwitch {
-            host: "demo.quiltdata.com".to_string(),
+            host: "quilt.test".to_string(),
             alternatives: vec!["admin".to_string()],
         });
         let el = mount_header(d);
@@ -1485,7 +1485,7 @@ mod tests {
 
         let mut with_catalog = data(kit::PackageState::Latest);
         with_catalog.uri = Some(
-            "quilt+s3://team-bucket#package=team/dataset&catalog=open.quiltdata.com"
+            "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
                 .parse()
                 .expect("a uri with a catalog"),
         );

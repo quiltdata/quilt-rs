@@ -415,11 +415,11 @@ mod tests {
     #[wasm_bindgen_test]
     fn a_missing_session_names_its_deployment_in_the_header() {
         let s = PackageState::NoSession {
-            host: Some("demo.quiltdata.com".to_string()),
+            host: Some("quilt.test".to_string()),
         };
         assert_eq!(
             render(&s, Site::PageHeader).words,
-            "Signed out of demo.quiltdata.com"
+            "Signed out of quilt.test"
         );
         assert_eq!(
             render(&s, Site::PageHeader).action,
@@ -449,10 +449,10 @@ mod tests {
         }
         for s in [
             PackageState::NoSession {
-                host: Some("demo.quiltdata.com".to_string()),
+                host: Some("quilt.test".to_string()),
             },
             PackageState::SignInExpired {
-                host: Some("demo.quiltdata.com".to_string()),
+                host: Some("quilt.test".to_string()),
             },
         ] {
             assert_eq!(
@@ -466,10 +466,10 @@ mod tests {
     #[wasm_bindgen_test]
     fn an_expired_sign_in_is_its_own_state_with_the_same_remedy() {
         let expired = PackageState::SignInExpired {
-            host: Some("demo.quiltdata.com".to_string()),
+            host: Some("quilt.test".to_string()),
         };
         let absent = PackageState::NoSession {
-            host: Some("demo.quiltdata.com".to_string()),
+            host: Some("quilt.test".to_string()),
         };
         assert_eq!(render(&expired, Site::PageHeader).words, "Sign-in expired");
         assert_ne!(
@@ -748,7 +748,7 @@ mod tests {
             // interpolates one, and it is the interpolated form the banned-word
             // sweep below has to see.
             PackageState::NoSession {
-                host: Some("demo.quiltdata.com".to_string()),
+                host: Some("quilt.test".to_string()),
             },
             PackageState::SignInExpired { host: None },
             PackageState::Paused,
