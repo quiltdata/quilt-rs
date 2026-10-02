@@ -16,13 +16,14 @@ use super::registry::QuiltStackConfig;
 use super::registry::RemoteCredentials;
 use super::test_utils::*;
 use crate::io::storage::mocks::MockStorage;
+use quilt_uri::fixtures;
 
 #[test(tokio::test)]
 async fn test_auth_refresh_credentials() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let credentials = auth
         .refresh_credentials(&TestHttpClient, &host, ACCESS_TOKEN)
@@ -56,7 +57,7 @@ async fn test_login_oauth() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
-    let host = get_host();
+    let host = fixtures::host();
 
     let params = OAuthParams {
         code: AUTH_CODE.to_string(),
@@ -75,7 +76,7 @@ async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     // Seed an expired access token and a stored OAuth client.
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
@@ -121,7 +122,7 @@ async fn test_get_credentials_or_refresh_without_tokens_requires_login() -> Res 
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
-    let host = get_host();
+    let host = fixtures::host();
 
     let result = auth
         .get_credentials_or_refresh(&OAuthTestHttpClient::default(), &host)
@@ -139,7 +140,7 @@ async fn test_get_or_register_client() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
-    let host = get_host();
+    let host = fixtures::host();
 
     // First call registers via DCR
     let client = auth
@@ -155,7 +156,7 @@ async fn test_get_or_register_client() -> Res {
     assert_eq!(client2.client_id, "test-dcr-client-id");
 
     // Third call with different redirect_uri re-registers
-    let new_redirect = "quilt://auth/callback?host=other.quilt.dev";
+    let new_redirect = "quilt://auth/callback?host=quilt.test&v=2";
     let client3 = auth
         .get_or_register_client(&OAuthTestHttpClient::default(), &host, new_redirect)
         .await?;
@@ -193,7 +194,7 @@ impl HttpClient for RetryMockClient {
         _auth_token: Option<&str>,
     ) -> Res<T> {
         let registry = get_registry();
-        if url == format!("https://{}/config.json", get_host()) {
+        if url == format!("https://{}/config.json", fixtures::host()) {
             let config = QuiltStackConfig {
                 registry_url: format!("https://{registry}").parse()?,
             };
@@ -224,7 +225,7 @@ impl HttpClient for RetryMockClient {
         url: &str,
         form_data: &HashMap<String, String>,
     ) -> Res<T> {
-        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(url, connect_token_url(&fixtures::host()));
         let n = self.token_calls.fetch_add(1, Ordering::SeqCst);
         if n < self.token_fail_first_n {
             return Err(reqwest_error_with_status(401).await);
@@ -287,7 +288,7 @@ async fn test_credentials_transient_401_recovers_via_force_token_refresh() -> Re
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
     seed_fresh_tokens(&storage, &paths, &host).await;
 
     let client = RetryMockClient::new(/*cred_fail=*/ 1, /*token_fail=*/ 0);
@@ -314,7 +315,7 @@ async fn test_credentials_persistent_401_maps_to_login_required() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
     seed_fresh_tokens(&storage, &paths, &host).await;
 
     let client = RetryMockClient::new(/*cred_fail=*/ usize::MAX, /*token_fail=*/ 0);
@@ -340,7 +341,7 @@ async fn test_token_refresh_transient_401_recovers() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     // Seed *expired* tokens so the proactive refresh path is taken.
     let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
@@ -490,7 +491,7 @@ async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
@@ -539,7 +540,7 @@ async fn switch_role_waits_for_an_in_flight_vend_before_flushing() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
@@ -595,8 +596,8 @@ async fn test_auth_refresh_lock_is_per_host() -> Res {
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
 
-    let host_a: Host = "a.quilt.dev".parse().unwrap();
-    let host_b: Host = "b.quilt.dev".parse().unwrap();
+    let host_a = fixtures::one_host();
+    let host_b = fixtures::another_host();
 
     // Seed each host separately; they live under distinct paths.
     seed_expired_creds_fresh_tokens(&AuthIo::new(storage.clone(), paths.auth_host(&host_a)))
@@ -661,7 +662,7 @@ async fn test_refresh_lock_map_sweeps_dead_entries() -> Res {
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
 
-    let host: Host = "x.quilt.dev".parse().unwrap();
+    let host = fixtures::host();
 
     // First lookup inserts a live Weak.
     let arc1 = auth.refresh_lock_for(&host);
@@ -707,7 +708,7 @@ async fn auth_with_cached_credentials()
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
     auth_io
@@ -1062,7 +1063,7 @@ async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
@@ -1170,7 +1171,7 @@ async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
     auth_io

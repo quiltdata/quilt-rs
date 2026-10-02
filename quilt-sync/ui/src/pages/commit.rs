@@ -1048,8 +1048,8 @@ mod tests {
         assert_eq!(commit_denied_hint(None), None);
 
         assert_eq!(
-            crate::util::commit_no_session_hint(true, Some("nightly.quilttest.com")).as_deref(),
-            Some("Not signed in to nightly.quilttest.com. Sign in to commit.")
+            crate::util::commit_no_session_hint(true, Some("quilt.test")).as_deref(),
+            Some("Not signed in to quilt.test. Sign in to commit.")
         );
         // A bare bucket on ambient credentials has no deployment to sign in
         // to, and must still block rather than falling through to enabled.

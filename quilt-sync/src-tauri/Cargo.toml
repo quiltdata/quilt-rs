@@ -60,6 +60,7 @@ zip = { version = "8", default-features = false, features = ["deflate"] }
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
+quilt-uri = { path = "../../quilt-uri", features = ["test-support"] }
 serde_yaml.workspace = true
 serial_test = "4"
 tokio-test.workspace = true

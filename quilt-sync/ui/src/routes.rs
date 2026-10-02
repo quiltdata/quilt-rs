@@ -164,8 +164,8 @@ mod tests {
     #[test]
     fn the_sign_in_link_comes_back_to_the_page_the_reader_was_on() {
         assert_eq!(
-            sign_in_href("open.quiltdata.com"),
-            "/login?host=open.quiltdata.com&back=%2F"
+            sign_in_href("quilt.test"),
+            "/login?host=quilt.test&back=%2F"
         );
     }
 
@@ -252,10 +252,10 @@ mod tests {
         assert_eq!(
             keeping_outcome(
                 package_page_href(&ns("org/pkg")),
-                Some(&mismatch(Some("https://open.quilt.bio")))
+                Some(&mismatch(Some("https://quilt.test")))
             ),
             "/installed-package?namespace=org%2Fpkg&filter=unmodified\
-             &mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio"
+             &mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fquilt.test"
         );
         assert_eq!(
             keeping_outcome(resolve_href(&ns("org/pkg")), Some(&mismatch(None))),
@@ -300,10 +300,10 @@ mod tests {
         query.insert("mrbucket", "quilt-lab".to_string());
         assert_eq!(DeepLinkOutcome::from_query(&query), Some(mismatch(None)));
 
-        query.insert("mrcatalog", "https://open.quilt.bio".to_string());
+        query.insert("mrcatalog", "https://quilt.test".to_string());
         assert_eq!(
             DeepLinkOutcome::from_query(&query),
-            Some(mismatch(Some("https://open.quilt.bio")))
+            Some(mismatch(Some("https://quilt.test")))
         );
     }
 

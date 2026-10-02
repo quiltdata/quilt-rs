@@ -159,18 +159,12 @@ impl OAuthState {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_host() -> quilt_uri::Host {
-        "test.quilt.dev".parse().unwrap()
-    }
+    use quilt_uri::fixtures;
 
     #[test]
     fn redirect_uri_encodes_host() {
-        let host = test_host();
-        assert_eq!(
-            redirect_uri(&host),
-            "quilt://auth/callback?host=test.quilt.dev"
-        );
+        let host = fixtures::host();
+        assert_eq!(redirect_uri(&host), "quilt://auth/callback?host=quilt.test");
     }
 
     #[test]
@@ -198,7 +192,7 @@ mod tests {
     async fn take_params_succeeds_immediately() {
         tokio::time::pause();
         let oauth = OAuthState::default();
-        let host = test_host();
+        let host = fixtures::host();
         let req = oauth.start_login(&host, "client-id", None).await;
         let state = extract_state(&req.authorize_url);
         let result = oauth
@@ -210,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn take_params_errors_for_unknown_host() {
         let oauth = OAuthState::default();
-        let host = test_host();
+        let host = fixtures::host();
         // No start_login call — simulates an unsolicited deep link.
         let result = oauth
             .take_params(&host, "auth-code".to_string(), "state")
@@ -228,7 +222,7 @@ mod tests {
     async fn take_params_errors_after_ttl() {
         tokio::time::pause();
         let oauth = OAuthState::default();
-        let host = test_host();
+        let host = fixtures::host();
         let req = oauth.start_login(&host, "client-id", None).await;
         let state = extract_state(&req.authorize_url);
         tokio::time::advance(TTL + Duration::from_secs(1)).await;
@@ -248,8 +242,8 @@ mod tests {
     async fn start_login_evicts_expired_entries() {
         tokio::time::pause();
         let oauth = OAuthState::default();
-        let host_a: quilt_uri::Host = "host-a.quilt.dev".parse().unwrap();
-        let host_b: quilt_uri::Host = "host-b.quilt.dev".parse().unwrap();
+        let host_a = fixtures::one_host();
+        let host_b = fixtures::another_host();
 
         // Login for host A — will expire.
         oauth.start_login(&host_a, "client-id", None).await;
@@ -262,6 +256,6 @@ mod tests {
         // Only host B should remain; the expired host A entry must be gone.
         let guard = oauth.pending.lock().await;
         assert_eq!(guard.len(), 1);
-        assert!(guard.contains_key("host-b.quilt.dev"));
+        assert!(guard.contains_key("another.quilt.test"));
     }
 }

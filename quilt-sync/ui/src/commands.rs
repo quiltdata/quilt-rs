@@ -1865,7 +1865,7 @@ mod tests {
     #[test]
     fn revision_history_wire_form_is_verbatim() {
         let rows = serde_json::from_str::<Vec<RevisionHistoryRow>>(
-            r#"[{"message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash"},{"message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null}]"#,
+            r#"[{"message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://quilt.test/b/test/packages/team/dataset/tree/published-hash"},{"message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null}]"#,
         )
         .unwrap();
 
@@ -1880,7 +1880,7 @@ mod tests {
         assert!(published.published);
         assert_eq!(
             published.catalog_url.as_deref(),
-            Some("https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash")
+            Some("https://quilt.test/b/test/packages/team/dataset/tree/published-hash")
         );
         assert_eq!(unpublished.message, None);
         assert!(
@@ -1901,7 +1901,7 @@ mod tests {
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
         let item = serde_json::from_str::<PackageItemData>(
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"acme.quilt.dev"}"#,
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"quilt.test"}"#,
         )
         .unwrap();
         assert_eq!(item.namespace.to_string(), "acme/data");
@@ -1920,7 +1920,7 @@ mod tests {
             item.no_access_reason.as_deref(),
             Some("Current role ReadOnly has no access to this bucket")
         );
-        assert_eq!(item.role_switch_host.as_deref(), Some("acme.quilt.dev"));
+        assert_eq!(item.role_switch_host.as_deref(), Some("quilt.test"));
     }
 
     /// The mirror types must deserialize the exact tagged JSON the backend
@@ -2078,7 +2078,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn main_page_packages_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPagePackagesData>(
-            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","host":"test.quilt.dev","provisional":true,"roleSwitchHost":null}]}"#,
+            r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","host":"quilt.test","provisional":true,"roleSwitchHost":null}]}"#,
         )
         .unwrap();
         assert_eq!(data.packages.len(), 1);
@@ -2086,7 +2086,7 @@ mod tests {
         assert_eq!(pkg.namespace.to_string(), "team/latest");
         assert_eq!(pkg.state, crate::kit::PackageState::Latest);
         assert_eq!(pkg.changed_at, None);
-        assert_eq!(pkg.host.as_deref(), Some("test.quilt.dev"));
+        assert_eq!(pkg.host.as_deref(), Some("quilt.test"));
         assert!(pkg.provisional);
         assert_eq!(pkg.role_switch_host, None);
     }
@@ -2275,7 +2275,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn main_page_accounts_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPageAccountsData>(
-            r#"{"hosts":[{"host":"open.quiltdata.com","signedIn":true,"currentRole":null,"roles":[],"provisional":true},{"host":"solo.registry.io","signedIn":false,"currentRole":null,"roles":[],"provisional":false}]}"#,
+            r#"{"hosts":[{"host":"one.quilt.test","signedIn":true,"currentRole":null,"roles":[],"provisional":true},{"host":"another.quilt.test","signedIn":false,"currentRole":null,"roles":[],"provisional":false}]}"#,
         )
         .unwrap();
         assert_eq!(data.hosts.len(), 2);
@@ -2295,7 +2295,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn a_settled_account_arrives_with_its_role_and_alternatives() {
         let host = serde_json::from_str::<super::AccountHostData>(
-            r#"{"host":"open.quiltdata.com","signedIn":true,"currentRole":"analyst","roles":["analyst","admin"],"provisional":false}"#,
+            r#"{"host":"quilt.test","signedIn":true,"currentRole":"analyst","roles":["analyst","admin"],"provisional":false}"#,
         )
         .unwrap();
         assert_eq!(host.current_role.as_deref(), Some("analyst"));
@@ -2308,7 +2308,7 @@ mod tests {
         // R5's wire form. `HostRow` maps this to "Role unavailable"; an empty string
         // would be indistinguishable from a role literally named "".
         let host = serde_json::from_str::<super::AccountHostData>(
-            r#"{"host":"open.quiltdata.com","signedIn":true,"currentRole":null,"roles":[],"provisional":false}"#,
+            r#"{"host":"quilt.test","signedIn":true,"currentRole":null,"roles":[],"provisional":false}"#,
         )
         .unwrap();
         assert!(host.signed_in);

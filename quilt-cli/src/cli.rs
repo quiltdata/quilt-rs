@@ -332,24 +332,28 @@ enum Commands {
         pkg: PackageRef,
     },
     /// Push
+    #[command(group(clap::ArgGroup::new("push_host").args(["host", "origin"])))]
     Push {
         #[command(flatten)]
         pkg: PackageRef,
         /// S3 bucket (required for first push of local-only packages)
-        #[arg(short, long, requires = "origin")]
+        #[arg(short, long, requires = "push_host")]
         bucket: Option<String>,
-        /// Remote host (required for first push of local-only packages)
+        /// Quilt stack to push to (required for first push of local-only packages).
         /// Ex. open.quiltdata.com
-        #[arg(short, long, requires = "bucket")]
+        #[arg(long, requires = "bucket")]
+        host: Option<Host>,
+        /// Deprecated: use --host
+        #[arg(short, long, requires = "bucket", conflicts_with = "host")]
         origin: Option<Host>,
-        /// Workflow ID for the first push (requires --bucket/--origin).
+        /// Workflow ID for the first push (requires --bucket/--host).
         /// Ex. `"my_workflow"`
         /// Omit to use the bucket's default workflow.
         /// Meaningful only on a first push: a subsequent push uploads an
         /// already-created commit whose workflow was chosen at commit time.
         #[arg(short, long)]
         workflow: Option<String>,
-        /// First push with no workflow (explicit opt-out; requires --bucket/--origin)
+        /// First push with no workflow (explicit opt-out; requires --bucket/--host)
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
@@ -404,6 +408,19 @@ pub const WAITING_NOTICE: &str = "waiting for another quilt process…";
 /// output on stdout stays clean.
 pub fn notice_lock_waits(print: impl Fn(&str) + Send + Sync + 'static) {
     quilt_rs::on_package_lock_wait(move || print(WAITING_NOTICE));
+}
+
+/// The Quilt stack `quilt push` names, from `--host` or the deprecated
+/// `--origin`/`-o`, which warns on `stderr`. Clap rejects passing both.
+fn push_host(
+    host: Option<Host>,
+    origin: Option<Host>,
+    stderr: &mut impl std::io::Write,
+) -> Result<Option<Host>, Error> {
+    if origin.is_some() {
+        writeln!(stderr, "warning: --origin is deprecated; use --host")?;
+    }
+    Ok(host.or(origin))
 }
 
 impl Commands {
@@ -560,10 +577,12 @@ pub async fn init(args: Args) -> Result<Std, Error> {
         Commands::Push {
             pkg,
             bucket,
+            host,
             origin,
             workflow,
             no_workflow,
         } => {
+            let origin = push_host(host, origin, &mut std::io::stderr())?;
             let namespace = pkg.resolve(&m).await?;
             // The workflow flags only take effect on a first push, where
             // set_remote→recommit resolves them. On a subsequent push the
@@ -660,7 +679,7 @@ Then run:
     WorkflowEmpty,
 
     #[error(
-        "--workflow/--no-workflow apply only to a first push; pass --bucket and --origin to set the remote, or omit them (the workflow was chosen at commit time)"
+        "--workflow/--no-workflow apply only to a first push; pass --bucket and --host to set the remote, or omit them (the workflow was chosen at commit time)"
     )]
     WorkflowRequiresBucket,
 
@@ -727,7 +746,7 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use quilt_uri::fixtures;
     use test_log::test;
 
     use crate::cli::model::create_model_in_temp_dir;
@@ -775,11 +794,10 @@ mod tests {
     /// verbatim. `quilt_rs` is the library crate and ships no binary.
     #[test]
     fn login_required_hint_names_the_binary_not_the_crate() {
-        let message =
-            Error::LoginRequired("open.quiltdata.com".parse().expect("valid host")).to_string();
+        let message = Error::LoginRequired(fixtures::host()).to_string();
 
         assert!(
-            message.contains("> quilt login --host open.quiltdata.com"),
+            message.contains("> quilt login --host quilt.test"),
             "hint should name the `quilt` binary: {message}"
         );
         assert!(
@@ -815,10 +833,7 @@ mod tests {
                 Error::NamespaceNotFound(("demo", "sales").into()),
                 "namespace_not_found",
             ),
-            (
-                Error::LoginRequired("open.quiltdata.com".parse().expect("valid host")),
-                "login_required",
-            ),
+            (Error::LoginRequired(fixtures::host()), "login_required"),
             (
                 Error::Json(
                     serde_json::from_str::<serde_json::Value>("{").expect_err("malformed JSON"),
@@ -838,7 +853,7 @@ mod tests {
             ),
             (
                 Error::Quilt(quilt_rs::Error::Auth(
-                    "open.quiltdata.com".parse().expect("valid host"),
+                    fixtures::host(),
                     quilt_rs::AuthError::TokensRead("boom".to_string()),
                 )),
                 "auth",
@@ -905,23 +920,108 @@ mod tests {
     /// would silently degrade `quilt role --set X` into a plain listing.
     #[test]
     fn role_set_flag_is_parsed() {
-        let listing = Args::try_parse_from(["quilt", "role", "--host", "example.com"]).unwrap();
+        let listing = Args::try_parse_from(["quilt", "role", "--host", "quilt.test"]).unwrap();
         assert!(matches!(listing.command, Commands::Role { set: None, .. }));
 
-        let switching = Args::try_parse_from([
-            "quilt",
-            "role",
-            "--host",
-            "example.com",
-            "--set",
-            "ReadOnly",
-        ])
-        .unwrap();
+        let switching =
+            Args::try_parse_from(["quilt", "role", "--host", "quilt.test", "--set", "ReadOnly"])
+                .unwrap();
         let Commands::Role { host, set } = switching.command else {
             panic!("expected the role command");
         };
-        assert_eq!(host.to_string(), "example.com");
+        assert_eq!(host.to_string(), "quilt.test");
         assert_eq!(set.as_deref(), Some("ReadOnly"));
+    }
+
+    /// `--host` names the Quilt stack for a first push, as in `login` and
+    /// `role`, and does it without a warning.
+    #[test]
+    fn push_host_flag_is_parsed() -> Result<(), Error> {
+        let args = Args::try_parse_from([
+            "quilt",
+            "push",
+            "--namespace",
+            "foo/bar",
+            "--bucket",
+            "some-bucket",
+            "--host",
+            "quilt.test",
+        ])
+        .unwrap();
+        let Commands::Push { host, origin, .. } = args.command else {
+            panic!("expected the push command");
+        };
+        let mut stderr = Vec::new();
+        let chosen = push_host(host, origin, &mut stderr)?;
+        assert_eq!(chosen.unwrap().to_string(), "quilt.test");
+        assert_eq!(String::from_utf8(stderr).unwrap(), "");
+        Ok(())
+    }
+
+    /// The deprecated `--origin` and `-o` still name the stack, with a warning.
+    #[test]
+    fn push_origin_flag_still_works_and_warns() -> Result<(), Error> {
+        for spelling in ["--origin", "-o"] {
+            let args = Args::try_parse_from([
+                "quilt",
+                "push",
+                "--namespace",
+                "foo/bar",
+                "--bucket",
+                "some-bucket",
+                spelling,
+                "quilt.test",
+            ])
+            .unwrap();
+            let Commands::Push { host, origin, .. } = args.command else {
+                panic!("expected the push command");
+            };
+            let mut stderr = Vec::new();
+            let chosen = push_host(host, origin, &mut stderr)?;
+            assert_eq!(chosen.unwrap().to_string(), "quilt.test");
+            assert_eq!(
+                String::from_utf8(stderr).unwrap(),
+                "warning: --origin is deprecated; use --host\n",
+                "{spelling} warns"
+            );
+        }
+        Ok(())
+    }
+
+    /// `--host` and the deprecated `--origin` are one flag: passing both is a
+    /// usage error rather than a silent pick.
+    #[test]
+    fn push_host_and_origin_together_are_rejected() {
+        let err = Args::try_parse_from([
+            "quilt",
+            "push",
+            "--bucket",
+            "some-bucket",
+            "--host",
+            "one.quilt.test",
+            "--origin",
+            "another.quilt.test",
+        ])
+        .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    /// A bucket needs a stack and a stack needs a bucket, whichever spelling
+    /// names the stack.
+    #[test]
+    fn push_bucket_and_host_require_each_other() {
+        for argv in [
+            &["quilt", "push", "--bucket", "some-bucket"][..],
+            &["quilt", "push", "--host", "quilt.test"][..],
+            &["quilt", "push", "--origin", "quilt.test"][..],
+        ] {
+            let err = Args::try_parse_from(argv).unwrap_err();
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument,
+                "{argv:?}"
+            );
+        }
     }
 
     #[test]
@@ -1116,7 +1216,7 @@ mod tests {
         let commands = [
             Commands::Login {
                 code: None,
-                host: "open.quiltdata.com".parse().expect("valid host"),
+                host: fixtures::host(),
             },
             Commands::Browse {
                 uri: "not-a-package-uri".to_string(),
@@ -1158,7 +1258,7 @@ mod tests {
             json: false,
             command: Commands::Login {
                 code: None,
-                host: "open.quiltdata.com".parse().expect("valid host"),
+                host: fixtures::host(),
             },
         };
 
@@ -1345,6 +1445,7 @@ mod tests {
                     namespace: Some("foo/bar".to_string()),
                 },
                 bucket: None,
+                host: None,
                 origin: None,
                 workflow: Some("x".to_string()),
                 no_workflow: false,
@@ -1374,6 +1475,7 @@ mod tests {
                     namespace: Some("foo/bar".to_string()),
                 },
                 bucket: None,
+                host: None,
                 origin: None,
                 workflow: None,
                 no_workflow: true,
@@ -1388,7 +1490,7 @@ mod tests {
         Ok(())
     }
 
-    /// With `--bucket`/`--origin` present the workflow flag is accepted: the
+    /// With `--bucket`/`--host` present the workflow flag is accepted: the
     /// boundary check passes and the command threads the intent into
     /// `push::Input`, reaching `push_package` (which then reports the missing
     /// local package rather than a workflow error).
@@ -1406,7 +1508,8 @@ mod tests {
                     namespace: Some("foo/bar".to_string()),
                 },
                 bucket: Some("some-bucket".to_string()),
-                origin: Some(Host::from_str("open.quiltdata.com").unwrap()),
+                host: Some(fixtures::host()),
+                origin: None,
                 workflow: Some("x".to_string()),
                 no_workflow: false,
             },

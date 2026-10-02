@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn test_catalog() -> Res {
         let uri: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=quilt.test".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
@@ -641,7 +641,7 @@ mod tests {
         };
         assert_eq!(
             uri.to_string(),
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev"
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=quilt.test"
         );
     }
 
@@ -768,14 +768,14 @@ mod tests {
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         assert_eq!(
             uri_latest.display_for_host(&host)?.as_str(),
-            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+            "https://quilt.test/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
         let uri_versioned: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar@AaBbCcDdEeFfGgHhJjKk&path=read/me.md".parse()?;
         assert_eq!(
             uri_versioned.display_for_host(&host)?.as_str(),
-            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/AaBbCcDdEeFfGgHhJjKk/read/me.md"
+            "https://quilt.test/b/bucket/packages/foo/bar/tree/AaBbCcDdEeFfGgHhJjKk/read/me.md"
         );
         Ok(())
     }
@@ -783,10 +783,10 @@ mod tests {
     #[test]
     fn test_display_for_catalog() -> Res {
         let uri_with_catalog: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=quilt.test".parse()?;
         assert_eq!(
             uri_with_catalog.display_for_catalog()?.as_str(),
-            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+            "https://quilt.test/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
         let uri_without_catalog: S3PackageUri =
@@ -1009,7 +1009,7 @@ mod tests {
         };
         assert_eq!(
             timestamped.display(),
-            "quilt+s3://bucket#package=foo/bar:1697916638&catalog=test.quilt.dev"
+            "quilt+s3://bucket#package=foo/bar:1697916638&catalog=quilt.test"
         );
     }
 

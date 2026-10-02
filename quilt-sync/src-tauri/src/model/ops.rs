@@ -388,6 +388,7 @@ pub async fn get_or_register_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use mockall::predicate::{always, eq};
 
@@ -405,7 +406,7 @@ mod tests {
             bucket: "requested-bucket".to_string(),
             namespace: ns.clone(),
             hash: "requestedhash0000".to_string(),
-            origin: Some("other.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
 
         let mut model = MockQuiltModel::new();
@@ -579,7 +580,7 @@ mod tests {
             )
             .returning(|_, _, _, _| Ok(None));
 
-        let origin: quilt_uri::Host = "test.quilt.dev".parse().unwrap();
+        let origin = fixtures::host();
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
     }

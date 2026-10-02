@@ -61,11 +61,12 @@ impl fmt::Display for Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures;
 
     #[test]
     fn test_host_from_str_valid() {
-        let host = Host::from_str("example.com").unwrap();
-        assert_eq!(host.to_string(), "example.com");
+        let host = Host::from_str("quilt.test").unwrap();
+        assert_eq!(host.to_string(), "quilt.test");
     }
 
     #[test]
@@ -78,9 +79,9 @@ mod tests {
 
     #[test]
     fn test_host_serde_round_trip() {
-        let host = Host::from_str("example.com").unwrap();
+        let host = fixtures::host();
         let json = serde_json::to_string(&host).unwrap();
-        assert_eq!(json, "\"example.com\"");
+        assert_eq!(json, "\"quilt.test\"");
         let parsed: Host = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, host);
     }
@@ -93,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_host_url_host_round_trip() {
-        let host = Host::from_str("example.com").unwrap();
+        let host = fixtures::host();
         let inner: url::Host = host.clone().into();
         let back: Host = inner.into();
         assert_eq!(back, host);

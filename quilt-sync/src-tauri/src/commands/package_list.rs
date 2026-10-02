@@ -571,6 +571,7 @@ pub async fn refresh_package_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use std::sync::{Arc, Mutex};
 
@@ -587,7 +588,7 @@ mod tests {
     /// intersection is about.
     fn make_manifest_uri_in_bucket(bucket: &str, namespace: &str) -> quilt_uri::ManifestUri {
         quilt_uri::ManifestUri {
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
             bucket: bucket.to_string(),
             namespace: namespace.try_into().unwrap(),
             hash: "abcdef".to_string(),
@@ -661,7 +662,7 @@ mod tests {
         model
     }
 
-    /// A single package on `test.quilt.dev` whose status call fails with
+    /// A single package on `quilt.test` whose status call fails with
     /// `err`, with the host's roles under the test's control and a clean
     /// working tree.
     fn mock_model_with_status_error(err: Error, roles: Option<RoleInfo>) -> MockQuiltModel {
@@ -812,7 +813,7 @@ mod tests {
         );
         assert_eq!(
             item.role_switch_host.as_deref(),
-            Some("test.quilt.dev"),
+            Some("quilt.test"),
             "a user holding two roles gets the switch affordance, pointed at the row's host"
         );
     }
@@ -1299,7 +1300,7 @@ mod tests {
 
         assert_eq!(
             *cache_clears.lock().expect("cache clear log"),
-            vec!["test.quilt.dev".to_string(), "test.quilt.dev".to_string()],
+            vec!["quilt.test".to_string(), "quilt.test".to_string()],
             "each load's fetch must finish the flush, or the S3 clients keep \
              signing as the role the user left"
         );
@@ -1310,7 +1311,7 @@ mod tests {
     #[tokio::test]
     async fn a_switch_drops_the_cached_role() {
         let roles = RoleCache::default();
-        let host: quilt_uri::Host = "test.quilt.dev".parse().expect("host");
+        let host = fixtures::host();
 
         let mut first = MockQuiltModel::new();
         first
@@ -1446,7 +1447,7 @@ mod tests {
         assert_eq!(ahead_uri.namespace.to_string(), "test/ahead");
         assert_eq!(
             catalog_host(ahead.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         assert!(ahead.remote_display.is_some());
 
@@ -1500,7 +1501,7 @@ mod tests {
         assert!(!pkg.has_changes); // Always false in light phase
         assert_eq!(
             catalog_host(pkg.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
 
         Ok(())
@@ -1599,7 +1600,7 @@ mod tests {
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
                 let uri = quilt_uri::ManifestUri {
-                    origin: Some("test.quilt.dev".parse().unwrap()),
+                    origin: Some(fixtures::host()),
                     bucket: "test".to_string(),
                     namespace: pkg.namespace.clone(),
                     hash: String::new(),
@@ -1631,7 +1632,7 @@ mod tests {
         // Has origin (for Push button and disabled Catalog button in UI).
         assert_eq!(
             catalog_host(pkg.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
 
         Ok(())
@@ -1928,11 +1929,11 @@ mod tests {
             no_access_reason: Some(
                 "Current role ReadOnly has no access to this bucket".to_string(),
             ),
-            role_switch_host: Some("acme.quilt.dev".to_string()),
+            role_switch_host: Some("quilt.test".to_string()),
         };
         assert_eq!(
             serde_json::to_string(&item).unwrap(),
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"acme.quilt.dev"}"#
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"quilt.test"}"#
         );
     }
 }

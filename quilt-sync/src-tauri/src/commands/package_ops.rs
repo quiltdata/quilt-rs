@@ -977,6 +977,7 @@ pub async fn get_revision_message(
 
 #[cfg(test)]
 mod tests {
+    use quilt_uri::fixtures;
     use std::sync::Arc;
 
     use crate::Error;
@@ -1361,7 +1362,7 @@ mod tests {
 
     fn expired_session_error() -> Error {
         Error::from(quilt::Error::S3(quilt::S3Error {
-            host: Some("demo.quiltdata.com".parse().unwrap()),
+            host: Some(fixtures::host()),
             kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
         }))
     }
@@ -1374,10 +1375,7 @@ mod tests {
         let msg = super::write_failure_message("push package", &expired_session_error());
 
         assert!(msg.contains("sign in again"), "got: {msg}");
-        assert!(
-            msg.contains("demo.quiltdata.com"),
-            "must name the host, got: {msg}"
-        );
+        assert!(msg.contains("quilt.test"), "must name the host, got: {msg}");
         assert!(!msg.contains("ExpiredToken"), "raw SDK text leaked: {msg}");
         assert!(!msg.contains("S3 error"), "got: {msg}");
     }
@@ -1387,7 +1385,7 @@ mod tests {
     /// and this path did not share the push path's remedy text.
     #[test]
     fn commit_while_signed_out_names_signing_in() {
-        let host: quilt_uri::Host = "nightly.quilttest.com".parse().unwrap();
+        let host = fixtures::host();
         let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
             host.clone(),
         ))));
@@ -1395,10 +1393,7 @@ mod tests {
             super::auth_failure_message(&err).unwrap_or_else(|| format!("Failed to commit: {err}"));
 
         assert!(msg.contains("sign in again"), "got: {msg}");
-        assert!(
-            msg.contains("nightly.quilttest.com"),
-            "must name the host: {msg}"
-        );
+        assert!(msg.contains("quilt.test"), "must name the host: {msg}");
         assert!(!msg.contains("Failed to commit"), "fell through: {msg}");
     }
 
@@ -1415,17 +1410,14 @@ mod tests {
     /// through to `Failed to push package: …` and a bare error label.
     #[test]
     fn push_while_signed_out_names_signing_in() {
-        let host: quilt_uri::Host = "demo.quiltdata.com".parse().unwrap();
+        let host = fixtures::host();
         let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
             host.clone(),
         ))));
         let msg = super::write_failure_message("push package", &err);
 
         assert!(msg.contains("sign in again"), "got: {msg}");
-        assert!(
-            msg.contains("demo.quiltdata.com"),
-            "must name the host: {msg}"
-        );
+        assert!(msg.contains("quilt.test"), "must name the host: {msg}");
         assert!(!msg.contains("Failed to push"), "fell through: {msg}");
         assert!(!msg.contains("No session"), "raw label leaked: {msg}");
     }
@@ -1481,7 +1473,7 @@ mod tests {
     /// deliberately different from anything installed.
     fn requested_uri() -> quilt_uri::S3PackageUri {
         quilt_uri::S3PackageUri {
-            catalog: Some("cat.example.com".parse().unwrap()),
+            catalog: Some(fixtures::host()),
             bucket: "reqbucket".to_string(),
             namespace: ("foo", "bar").into(),
             revision: quilt_uri::RevisionPointer::Hash("aaaa1111".to_string()),
@@ -1494,12 +1486,12 @@ mod tests {
         let dv = super::RemoteBanner::DifferentVersion {
             requested_hash: "aaaa1111".to_string(),
             requested_bucket: "reqbucket".to_string(),
-            requested_origin: Some("cat.example.com".parse().unwrap()),
+            requested_origin: Some(fixtures::host()),
             installed_hash: "bbbb2222".to_string(),
         };
         assert_eq!(
             serde_json::to_string(&dv).unwrap(),
-            r#"{"kind":"differentVersion","requestedHash":"aaaa1111","requestedBucket":"reqbucket","requestedOrigin":"cat.example.com","installedHash":"bbbb2222"}"#
+            r#"{"kind":"differentVersion","requestedHash":"aaaa1111","requestedBucket":"reqbucket","requestedOrigin":"quilt.test","installedHash":"bbbb2222"}"#
         );
         assert_eq!(
             serde_json::to_string(&super::RemoteBanner::LocalOnly).unwrap(),
@@ -1518,7 +1510,7 @@ mod tests {
             Some(super::RemoteBanner::DifferentVersion {
                 requested_hash: "aaaa1111".to_string(),
                 requested_bucket: "reqbucket".to_string(),
-                requested_origin: Some("cat.example.com".parse().unwrap()),
+                requested_origin: Some(fixtures::host()),
                 installed_hash: "bbbb2222".to_string(),
             })
         );

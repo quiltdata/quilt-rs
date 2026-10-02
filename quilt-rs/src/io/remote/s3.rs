@@ -705,6 +705,7 @@ impl Remote for RemoteS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
     use test_log::test;
 
     use std::io::Write;
@@ -1357,10 +1358,8 @@ mod tests {
     /// keeps the rest; `clear_client_cache(None)` empties the whole cache.
     #[test]
     fn test_clear_client_cache_filters_by_host() {
-        use std::str::FromStr;
-
-        let host_a = Host::from_str("a.example.com").unwrap();
-        let host_b = Host::from_str("b.example.com").unwrap();
+        let host_a = fixtures::one_host();
+        let host_b = fixtures::another_host();
 
         let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
 
@@ -1506,8 +1505,6 @@ mod tests {
     /// it is the one we can actually drive.
     #[test(tokio::test)]
     async fn remote_exposes_the_role_api() -> Res<()> {
-        use std::str::FromStr;
-
         use tempfile::TempDir;
 
         let _ = role_api_shapes;
@@ -1517,7 +1514,7 @@ mod tests {
             DomainPaths::new(temp.path().to_path_buf()),
             LocalStorage::new(),
         );
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
 
         remote.expire_credentials(&host).await?;
         Ok(())
@@ -1529,8 +1526,6 @@ mod tests {
     /// credential fields map correctly to the SDK ones.
     #[test(tokio::test)]
     async fn test_quilt_credentials_provider_returns_stored_creds() -> Res<()> {
-        use std::str::FromStr;
-
         use tempfile::TempDir;
 
         use crate::io::storage::auth::AuthIo;
@@ -1539,7 +1534,7 @@ mod tests {
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());
         let storage = Arc::new(LocalStorage::new());
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
 
         let stored = QuiltCreds {
             access_key: "AKIAEXAMPLE".to_string(),
@@ -1579,7 +1574,7 @@ mod tests {
         ) -> Res<T> {
             if url.ends_with("/config.json") {
                 let body = serde_json::json!({
-                    "registryUrl": "https://registry.example.com",
+                    "registryUrl": "https://registry.quilt.test",
                 });
                 return Ok(serde_json::from_value(body)?);
             }
@@ -1632,8 +1627,6 @@ mod tests {
     /// not the stale on-disk ones.
     #[test(tokio::test)]
     async fn test_quilt_credentials_provider_refreshes_when_expired() -> Res<()> {
-        use std::str::FromStr;
-
         use tempfile::TempDir;
 
         use crate::io::storage::auth::AuthIo;
@@ -1643,7 +1636,7 @@ mod tests {
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());
         let storage = Arc::new(LocalStorage::new());
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
 
         let auth_io = AuthIo::new(Arc::clone(&storage), paths.auth_host(&host));
         // Expired credentials — force the refresh path.
@@ -1684,8 +1677,6 @@ mod tests {
     /// show. A shape assertion would pass over a severed chain.
     #[test(tokio::test)]
     async fn an_absent_session_survives_the_sdk_wrap() -> Res<()> {
-        use std::str::FromStr;
-
         use tempfile::TempDir;
 
         // An empty domain: no tokens on disk, so the provider has nothing to
@@ -1693,7 +1684,7 @@ mod tests {
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());
         let storage = Arc::new(LocalStorage::new());
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
 
         let provider = QuiltCredentialsProvider {
             auth: auth::Auth::new(paths, storage),
@@ -1742,9 +1733,7 @@ mod tests {
     /// above while making the classification strictly worse.
     #[test(tokio::test)]
     async fn a_plain_transport_failure_stays_an_s3_error() -> Res<()> {
-        use std::str::FromStr;
-
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
         let config = aws_config::defaults(BehaviorVersion::latest())
             .region(Region::new("us-east-1"))
             .credentials_provider(Credentials::for_tests())

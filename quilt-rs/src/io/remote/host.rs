@@ -198,7 +198,7 @@ mod tests {
     async fn test_fetch_host_config_crc64_enabled() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://test.quilt.dev/config.json".to_string(),
+            "https://quilt.test/config.json".to_string(),
             Ok(r#"{"crc64Checksums": true}"#.to_string()),
         );
 
@@ -212,7 +212,7 @@ mod tests {
     async fn test_fetch_host_config_crc64_disabled() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://test.quilt.dev/config.json".to_string(),
+            "https://quilt.test/config.json".to_string(),
             Ok(r#"{"crc64Checksums": false}"#.to_string()),
         );
 
@@ -226,7 +226,7 @@ mod tests {
     async fn test_fetch_host_config_crc64_missing() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://test.quilt.dev/config.json".to_string(),
+            "https://quilt.test/config.json".to_string(),
             Ok(r"{}".to_string()),
         );
 
@@ -240,7 +240,7 @@ mod tests {
     async fn test_fetch_host_config_other_fields_ignored() -> Res<()> {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://test.quilt.dev/config.json".to_string(),
+            "https://quilt.test/config.json".to_string(),
             Ok(r#"{"crc64Checksums": true, "mode": "OPEN", "other": "ignored"}"#.to_string()),
         );
 
@@ -254,7 +254,7 @@ mod tests {
     async fn test_fetch_host_config_network_error() {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://test.quilt.dev/config.json".to_string(),
+            "https://quilt.test/config.json".to_string(),
             Err("Network error".to_string()),
         );
 
@@ -267,7 +267,7 @@ mod tests {
     async fn test_fetch_host_config_invalid_json() {
         let mut client = MockHttpClient::new();
         client.add_response(
-            "https://test.quilt.dev/config.json".to_string(),
+            "https://quilt.test/config.json".to_string(),
             Ok(r"invalid json".to_string()),
         );
 

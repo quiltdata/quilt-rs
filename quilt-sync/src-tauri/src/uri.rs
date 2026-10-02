@@ -354,23 +354,23 @@ mod tests {
     #[test]
     fn test_parse_auth_params() {
         let url =
-            Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz").unwrap();
+            Url::parse("quilt://auth/callback?code=ABC123&host=quilt.test&state=xyz").unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
         assert_eq!(params.state, "xyz");
-        assert_eq!(params.host.to_string(), "test.quilt.dev");
+        assert_eq!(params.host.to_string(), "quilt.test");
         assert_eq!(params.redirect, None);
     }
 
     #[test]
     fn test_parse_auth_params_with_redirect() {
         let url = Url::parse(
-            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz&redirect=https%3A%2F%2Flocalhost%3A1234%2Fremote-package"
+            "quilt://auth/callback?code=ABC123&host=quilt.test&state=xyz&redirect=https%3A%2F%2Flocalhost%3A1234%2Fremote-package"
         ).unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
         assert_eq!(params.state, "xyz");
-        assert_eq!(params.host.to_string(), "test.quilt.dev");
+        assert_eq!(params.host.to_string(), "quilt.test");
         assert_eq!(
             params.redirect.as_deref(),
             Some("https://localhost:1234/remote-package")
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params_missing_code() {
-        let url = Url::parse("quilt://auth/callback?host=test.quilt.dev&state=xyz").unwrap();
+        let url = Url::parse("quilt://auth/callback?host=quilt.test&state=xyz").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params_missing_state() {
-        let url = Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
+        let url = Url::parse("quilt://auth/callback?code=ABC123&host=quilt.test").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }

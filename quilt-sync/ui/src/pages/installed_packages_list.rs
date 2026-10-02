@@ -972,7 +972,7 @@ mod tests {
             reason: RwSignal::new(Some(
                 "Current role ReadOnly has no access to this bucket".to_string(),
             )),
-            role_switch_host: RwSignal::new(Some("acme.quilt.dev".to_string())),
+            role_switch_host: RwSignal::new(Some("quilt.test".to_string())),
         }
     }
 
@@ -1008,7 +1008,7 @@ mod tests {
         access.apply(
             true,
             Some("Current role ReadOnly has no access to this bucket".to_string()),
-            Some("acme.quilt.dev".to_string()),
+            Some("quilt.test".to_string()),
         );
 
         assert!(access.no_access.get_untracked());
