@@ -452,6 +452,11 @@ mod tests {
         let (paths, _dir) = fixture()?;
         let objects = paths.objects_dir();
         std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o555))?;
+        // Root ignores the mode, so there the object would go: nothing to test.
+        if std::fs::write(objects.join(".probe"), "").is_ok() {
+            std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o755))?;
+            return Ok(());
+        }
 
         let result = remove_revisions(
             &paths,
