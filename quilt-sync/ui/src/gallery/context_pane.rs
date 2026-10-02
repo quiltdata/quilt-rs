@@ -266,12 +266,15 @@ pub(crate) fn bytes(n: u64) -> String {
     if n < 1000 {
         return format!("{n}\u{a0}B");
     }
-    let mut scale = 1000u64;
+    // In u128, so `n * 10 + scale / 2` cannot overflow for any u64: the
+    // largest is under 2^68.
+    let n = u128::from(n);
+    let mut scale = 1000u128;
     let mut tenths = 0;
     let mut unit = UNITS[0];
     for next in UNITS {
         unit = next;
-        tenths = (n.saturating_mul(10) + scale / 2) / scale;
+        tenths = (n * 10 + scale / 2) / scale;
         // Rounding up into the next unit's "1000.0" moves on to that unit.
         if tenths < 10_000 {
             break;
@@ -693,6 +696,23 @@ mod tests {
         assert_eq!(plain(&bytes(1_900_000)), "1.9 MB");
         assert_eq!(plain(&bytes(999_960)), "1.0 MB");
         assert_eq!(plain(&bytes(1_200_000_000_000)), "1.2 TB");
+    }
+
+    /// No u64 overflows the arithmetic, and rounding at each unit's edge moves
+    /// on to the next unit rather than reading "1000.0".
+    #[test]
+    fn sizes_hold_at_the_unit_edges_and_at_the_top() {
+        assert_eq!(plain(&bytes(1_000)), "1.0 kB");
+        assert_eq!(plain(&bytes(999_949)), "999.9 kB");
+        assert_eq!(plain(&bytes(999_950)), "1.0 MB");
+        assert_eq!(plain(&bytes(999_949_999)), "999.9 MB");
+        assert_eq!(plain(&bytes(999_950_000)), "1.0 GB");
+        assert_eq!(plain(&bytes(999_950_000_000)), "1.0 TB");
+        assert_eq!(plain(&bytes(999_949_999_999_999)), "999.9 TB");
+        // Past the last unit the figure grows instead of the unit.
+        assert_eq!(plain(&bytes(999_950_000_000_000)), "1000.0 TB");
+        assert_eq!(plain(&bytes(u64::MAX - 1)), "18446744.1 TB");
+        assert_eq!(plain(&bytes(u64::MAX)), "18446744.1 TB");
     }
 
     #[test]
