@@ -2,6 +2,7 @@
 //! flag-gating and tray-aggregator cases that share the same fixtures.
 
 use super::*;
+use quilt_uri::fixtures;
 
 /// A pull that advanced to `uri` and moved nothing — the tick only reads the
 /// success of the call, not the report it now carries.
@@ -70,7 +71,7 @@ fn fixture_with_lineage_and_status(
 }
 
 fn remote_for(ns: &Namespace) -> quilt_uri::ManifestUri {
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -186,7 +187,7 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         // anything.
         let hosts = reporter.hosts.lock().unwrap();
         assert_eq!(hosts.len(), 1);
-        assert_eq!(hosts[0].to_string(), "catalog.dev");
+        assert_eq!(hosts[0].to_string(), "quilt.test");
     }
     {
         let statuses = reporter.statuses.lock().unwrap();
@@ -496,7 +497,7 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
 #[tokio::test]
 async fn run_once_publishes_local_first_push() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let lineage = quilt::lineage::PackageLineage {
         remote_uri: Some(quilt_uri::ManifestUri {
             bucket: "bucket".to_string(),
@@ -574,7 +575,7 @@ async fn run_once_pauses_on_classic_diverged() -> Result<(), Error> {
 #[tokio::test]
 async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     // Foreign-remote `Diverged`: `remote.hash` empty, `latest_hash`
     // non-empty (a teammate published under the same namespace).
     let lineage = quilt::lineage::PackageLineage {
@@ -863,7 +864,7 @@ async fn run_once_backoffs_on_transient_publish_error() -> Result<(), Error> {
 #[tokio::test]
 async fn run_once_login_required_on_publish() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let mut changes = BTreeMap::new();
     changes.insert(
         std::path::PathBuf::from("file.txt"),

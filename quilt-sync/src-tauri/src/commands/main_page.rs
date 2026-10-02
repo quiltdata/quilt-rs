@@ -1119,6 +1119,7 @@ pub async fn get_main_page_recent_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use crate::commands::test_support::*;
     use crate::quilt::lineage::UpstreamState;
@@ -1287,8 +1288,8 @@ mod tests {
         // R1. The queue groups signed-out packages by host, and `role_switch_host`
         // cannot serve: it is `Some` only when the user holds more than one role
         // there, so it is absent exactly when the user is signed out.
-        let row = row_for_catalog(Some("open.quiltdata.com"));
-        assert_eq!(row.package.host.as_deref(), Some("open.quiltdata.com"));
+        let row = row_for_catalog(Some("quilt.test"));
+        assert_eq!(row.package.host.as_deref(), Some("quilt.test"));
     }
 
     #[test]
@@ -1305,17 +1306,17 @@ mod tests {
         // R2. Roster-only would hide a session the user holds but has no packages
         // from, making it impossible to sign out of from this page. Auth-only would
         // hide the host every "signed out from X — 11 packages" cause names.
-        let rows = rows_for_hosts(&[Some("open.quiltdata.com"), Some("team.registry.io")]);
+        let rows = rows_for_hosts(&[Some("one.quilt.test"), Some("third.quilt.test")]);
         let auth = vec![
-            "open.quiltdata.com".to_string(),
-            "solo.registry.io".to_string(),
+            "one.quilt.test".to_string(),
+            "another.quilt.test".to_string(),
         ];
         assert_eq!(
             account_hosts(&rows, &auth),
             vec![
-                "open.quiltdata.com".to_string(),
-                "solo.registry.io".to_string(),
-                "team.registry.io".to_string(),
+                "another.quilt.test".to_string(),
+                "one.quilt.test".to_string(),
+                "third.quilt.test".to_string(),
             ],
             "sorted, deduplicated, and a host in both appears once"
         );
@@ -1327,18 +1328,15 @@ mod tests {
         // package (no `uri` at all) has no host. It must not become an
         // empty-string row, and must not suppress the host of a row that
         // legitimately has one — the roster's own hosts are not just this one.
-        let rows = rows_for_hosts(&[None, Some("team.registry.io")]);
-        assert_eq!(
-            account_hosts(&rows, &[]),
-            vec!["team.registry.io".to_string()]
-        );
+        let rows = rows_for_hosts(&[None, Some("quilt.test")]);
+        assert_eq!(account_hosts(&rows, &[]), vec!["quilt.test".to_string()]);
     }
 
     #[test]
     fn a_signed_out_host_is_settled_not_provisional() {
         // R4. There is no session to ask about, so the row is final on arrival and
         // the heavy phase must never be asked to fill it in.
-        let host = AccountHost::light("solo.registry.io".to_string(), false);
+        let host = AccountHost::light("quilt.test".to_string(), false);
         assert!(!host.signed_in);
         assert!(!host.provisional, "nothing to wait for");
         assert_eq!(host.current_role, None);
@@ -1350,7 +1348,7 @@ mod tests {
         // Its role costs a round trip, so the light phase paints it unresolved and
         // the heavy phase settles it — the same split `provisional` already carries
         // on the package payload.
-        let host = AccountHost::light("open.quiltdata.com".to_string(), true);
+        let host = AccountHost::light("quilt.test".to_string(), true);
         assert!(host.signed_in);
         assert!(host.provisional);
         assert_eq!(host.current_role, None);
@@ -1362,17 +1360,17 @@ mod tests {
         // Compared against real serializer output, never a literal against itself.
         let payload = MainPageAccounts {
             hosts: vec![
-                AccountHost::light("open.quiltdata.com".to_string(), true),
-                AccountHost::light("solo.registry.io".to_string(), false),
+                AccountHost::light("one.quilt.test".to_string(), true),
+                AccountHost::light("another.quilt.test".to_string(), false),
             ],
         };
         assert_eq!(
             serde_json::to_value(&payload).unwrap(),
             serde_json::json!({
                 "hosts": [
-                    {"host": "open.quiltdata.com", "signedIn": true, "currentRole": null,
+                    {"host": "one.quilt.test", "signedIn": true, "currentRole": null,
                      "roles": [], "provisional": true},
-                    {"host": "solo.registry.io", "signedIn": false, "currentRole": null,
+                    {"host": "another.quilt.test", "signedIn": false, "currentRole": null,
                      "roles": [], "provisional": false}
                 ]
             })
@@ -1423,7 +1421,7 @@ mod tests {
             available: vec!["analyst".to_string(), "admin".to_string()],
         });
         let roles = RoleCache::default();
-        let host = refresh_account_for(&m, &roles, "open.quiltdata.com", true).await;
+        let host = refresh_account_for(&m, &roles, "quilt.test", true).await;
 
         assert_eq!(host.current_role.as_deref(), Some("analyst"));
         assert_eq!(host.roles, vec!["analyst".to_string(), "admin".to_string()]);
@@ -1438,7 +1436,7 @@ mod tests {
         // a [Sign in] button to someone already signed in.
         let m = mock_whose_role_query_fails();
         let roles = RoleCache::default();
-        let host = refresh_account_for(&m, &roles, "open.quiltdata.com", true).await;
+        let host = refresh_account_for(&m, &roles, "quilt.test", true).await;
 
         assert!(host.signed_in, "a network failure is not a logout");
         assert_eq!(host.current_role, None);
@@ -1455,7 +1453,7 @@ mod tests {
         // zero, so `.times(0)` is the assertion, not the absence of one.
         let m = mock_that_must_not_be_asked();
         let roles = RoleCache::default();
-        let host = refresh_account_for(&m, &roles, "solo.registry.io", false).await;
+        let host = refresh_account_for(&m, &roles, "quilt.test", false).await;
 
         assert!(!host.signed_in);
         assert!(!host.provisional);
@@ -1484,7 +1482,7 @@ mod tests {
     #[test]
     fn a_settled_account_serializes_the_wire_shape() {
         let host = AccountHost {
-            host: "open.quiltdata.com".to_string(),
+            host: "quilt.test".to_string(),
             signed_in: true,
             current_role: Some("analyst".to_string()),
             roles: vec!["analyst".to_string(), "admin".to_string()],
@@ -1493,7 +1491,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&host).unwrap(),
             serde_json::json!({
-                "host": "open.quiltdata.com",
+                "host": "quilt.test",
                 "signedIn": true,
                 "currentRole": "analyst",
                 "roles": ["analyst", "admin"],
@@ -1649,7 +1647,7 @@ mod tests {
                     "state": {"kind": "latest"},
                     "changedAt": null,
                     "bucket": "test",
-                    "host": "test.quilt.dev",
+                    "host": "quilt.test",
                     "provisional": true,
                     "roleSwitchHost": null,
                 }]
@@ -1907,7 +1905,7 @@ mod tests {
     /// different buckets — the shape the readable-bucket intersection is about.
     fn make_manifest_uri_in_bucket(bucket: &str, namespace: &str) -> quilt_uri::ManifestUri {
         quilt_uri::ManifestUri {
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
             bucket: bucket.to_string(),
             namespace: namespace.try_into().unwrap(),
             hash: "abcdef".to_string(),
@@ -2008,7 +2006,7 @@ mod tests {
         );
         assert_eq!(
             row(&rows, "team/locked").role_switch_host.as_deref(),
-            Some("test.quilt.dev"),
+            Some("quilt.test"),
             "the user holds a second role, so the switch is not a dead end"
         );
         assert_ne!(
@@ -2329,7 +2327,7 @@ mod tests {
         );
     }
 
-    /// A single package on `test.quilt.dev` whose status call answers with `status`,
+    /// A single package on `quilt.test` whose status call answers with `status`,
     /// with the host's roles under the test's control.
     fn mock_one_package(
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
@@ -2482,10 +2480,7 @@ mod tests {
                 role: Some("ReadOnly".to_string())
             }
         );
-        assert_eq!(
-            refreshed.role_switch_host.as_deref(),
-            Some("test.quilt.dev")
-        );
+        assert_eq!(refreshed.role_switch_host.as_deref(), Some("quilt.test"));
     }
 
     #[tokio::test]

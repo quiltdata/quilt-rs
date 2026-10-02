@@ -389,8 +389,7 @@ impl str::FromStr for Paths {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use quilt_uri::Host;
+    use quilt_uri::fixtures;
 
     use crate::Result;
 
@@ -514,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_login() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let back = Paths::InstalledPackagesList.to_string();
         let page_url = from_url(
             Paths::Login(host.clone(), back.clone()),
@@ -523,7 +522,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/login?host=test.quilt.dev&back=%2Finstalled-packages-list"
+            "http://test:1234/login?host=quilt.test&back=%2Finstalled-packages-list"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -531,7 +530,7 @@ mod tests {
         assert_eq!(route, Paths::Login(host, back));
         assert_eq!(
             format!("{route}"),
-            "/login?host=test.quilt.dev&back=%2Finstalled-packages-list"
+            "/login?host=quilt.test&back=%2Finstalled-packages-list"
         );
 
         Ok(())
@@ -539,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_login_error() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let title = "Login failed";
         let error = "Auth failed: invalid_grant (token expired)";
         let page_url = from_url(
@@ -547,7 +546,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert!(page_url_str.starts_with("http://test:1234/error?host=test.quilt.dev&title="));
+        assert!(page_url_str.starts_with("http://test:1234/error?host=quilt.test&title="));
 
         let route: Paths = page_url_str.parse()?;
         assert_eq!(
@@ -560,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_login_error_without_title_defaults_to_login_failed() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let error = "Auth failed";
         let url = format!(
             "http://test:1234/error?host={host}&error={}",
@@ -644,12 +643,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pathname_privacy() -> Result<()> {
+    fn test_pathname_privacy() {
         let commit_path =
             Paths::Commit(("sensitive", "namespace").into(), EntriesFilter::default());
         assert_eq!(commit_path.pathname(), "commit");
 
-        let login_path = Paths::Login("sensitive.host.com".parse()?, "/secret-page".into());
+        let login_path = Paths::Login(fixtures::host(), "/secret-page".into());
         assert_eq!(login_path.pathname(), "login");
 
         let installed_package_path =
@@ -676,8 +675,6 @@ mod tests {
         // But pathname() does not
         assert!(!commit_path.pathname().contains("sensitive"));
         assert!(!commit_path.pathname().contains("namespace"));
-
-        Ok(())
     }
 
     #[test]
@@ -750,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_login_with_encoded_back() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let back = Paths::InstalledPackage(
             ("foo", "bar").into(),
             EntriesFilter::for_installed_package(),
