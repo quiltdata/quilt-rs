@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -196,6 +197,54 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 revision,
             })
             .collect())
+    }
+
+    /// What removing this package's revisions would free: which objects each
+    /// uses that nothing else does. A read, under no lock, for showing; the
+    /// removal measures again under its locks. See [`flow::RevisionUsage`].
+    pub async fn revision_usage(&self) -> Res<flow::RevisionUsage> {
+        flow::RevisionUsage::read(&self.paths, &self.storage, &self.namespace).await
+    }
+
+    /// Remove `hashes`, old revisions this copy holds, and the objects only
+    /// they used. See [`flow::remove_revisions`].
+    ///
+    /// Try-locks the package: while another writer holds it, nothing is
+    /// removed and the error is [`Error::PackageBusy`]. Under the lock it
+    /// re-reads the lineage and the registry listing, and a hash that is
+    /// [protected](flow::protection) or not held refuses the whole request
+    /// with [`Error::RevisionNotRemovable`]. A listing that fails refuses it
+    /// too, since an unpublished revision cannot be told apart without it.
+    pub async fn remove_revisions(&self, hashes: &BTreeSet<String>) -> Res<flow::RemovalReport> {
+        let Some(_locked) = self.try_lock().await? else {
+            return Err(Error::PackageBusy(self.namespace.clone()));
+        };
+        let lineage = self.lineage().await?;
+        let history = self.revision_history(&lineage).await?;
+        let kept = flow::protection(&lineage, &history);
+        for hash in hashes {
+            let why = match kept.get(hash) {
+                Some(reasons) => format!(
+                    "it is kept ({})",
+                    reasons
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" \u{b7} ")
+                ),
+                None if !history.iter().any(|entry| entry.revision.hash == *hash) => {
+                    "this copy does not hold it".to_string()
+                }
+                None => continue,
+            };
+            return Err(Error::RevisionNotRemovable {
+                namespace: self.namespace.clone(),
+                hash: hash.clone(),
+                why,
+            });
+        }
+        let domain = self.lineage.read_domain(&self.storage).await?;
+        flow::remove_revisions(&self.paths, &self.storage, &domain, &self.namespace, hashes).await
     }
 
     /// The revisions the registry of `lineage`'s remote lists. No remote,

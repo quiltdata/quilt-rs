@@ -72,7 +72,7 @@ impl std::fmt::Display for GcReport {
 }
 
 /// Decimal units, as Finder counts them, with one decimal past bytes.
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
     if bytes < 1000 {
         return format!("{bytes} B");
@@ -104,13 +104,13 @@ pub async fn gc(
         "⏳ Collecting garbage in {}",
         paths.dot_quilt_dir().display()
     );
-    let _held = lock_every_package(paths, storage, lineage).await?;
+    let _held = lock_every_package(paths, storage, lineage, None).await?;
 
     let mut report = GcReport::default();
 
     let objects = list_files(storage, &paths.objects_dir()).await?;
     let candidates = objects.iter().map(|(name, _, _)| name.clone()).collect();
-    let in_use = objects_in_use(paths, storage, candidates).await?;
+    let in_use = objects_in_use(paths, storage, candidates, None).await?;
     for (name, path, len) in objects {
         if in_use.contains(&name) {
             continue;
@@ -235,12 +235,12 @@ pub(crate) async fn prune(
     if candidates.is_empty() {
         return Ok(Pruned::Freed(GcReport::default()));
     }
-    let _held = match lock_every_package(paths, storage, lineage).await {
+    let _held = match lock_every_package(paths, storage, lineage, None).await {
         Ok(held) => held,
         Err(Error::PackageBusy(namespace)) => return Ok(Pruned::Busy(namespace)),
         Err(err) => return Err(err),
     };
-    let in_use = objects_in_use(paths, storage, candidates.keys().cloned().collect()).await?;
+    let in_use = objects_in_use(paths, storage, candidates.keys().cloned().collect(), None).await?;
     let mut report = GcReport::default();
     for (name, len) in candidates {
         if in_use.contains(&name) {
@@ -267,16 +267,24 @@ pub(crate) async fn prune(
 /// name. The two usually agree; a row carried over by a recommit can keep
 /// its old key under a new hash, so both count.
 ///
+/// `skip` names a package whose manifests are not read: a caller that reads
+/// them itself asks only about everyone else's.
+///
 /// Stops reading once every candidate is found. Fails on a manifest it
 /// cannot read, rather than treat its objects as unused.
 pub(crate) async fn objects_in_use(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     mut candidates: BTreeSet<String>,
+    skip: Option<&Namespace>,
 ) -> Res<BTreeSet<String>> {
+    let skipped = skip.map(|namespace| paths.installed_manifests_dir(namespace));
     let mut in_use = BTreeSet::new();
     for owner in list_dirs(storage, &paths.installed_dir()).await? {
         for package in list_dirs(storage, &owner).await? {
+            if skipped.as_ref() == Some(&package) {
+                continue;
+            }
             for (_, manifest_path, _) in list_files(storage, &package).await? {
                 if candidates.is_empty() {
                     return Ok(in_use);
@@ -297,7 +305,7 @@ pub(crate) async fn objects_in_use(
 
 /// The object names one row uses: its digest's hex, and the file name of a
 /// `file://` key into an `objects/` directory.
-fn row_objects(
+pub(crate) fn row_objects(
     hash: &crate::object_hash::ObjectHash,
     physical_key: &str,
 ) -> impl Iterator<Item = String> {
@@ -322,10 +330,14 @@ fn row_objects(
 /// is not held here, so its new objects are not protected. That is by
 /// design: only the user starts a new package, background updates touch
 /// only installed ones, and starting one while gc runs is unsupported.
-async fn lock_every_package(
+///
+/// `except` is a package the caller already holds: the lock is not
+/// reentrant, so trying it again would find it busy.
+pub(crate) async fn lock_every_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     lineage: &DomainLineage,
+    except: Option<&Namespace>,
 ) -> Res<Vec<LockGuard>> {
     let mut namespaces: BTreeSet<Namespace> = lineage.namespaces().into_iter().collect();
     for owner_dir in list_dirs(storage, &paths.locks_dir()).await? {
@@ -348,6 +360,9 @@ async fn lock_every_package(
         }
     }
 
+    if let Some(except) = except {
+        namespaces.remove(except);
+    }
     let mut held = Vec::with_capacity(namespaces.len());
     for namespace in namespaces {
         match package_lock::try_lock(storage, paths, &namespace).await? {
@@ -398,7 +413,7 @@ async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathB
 /// The visible files of `dir` as `(name, path, length)`, or none if it does
 /// not exist. A hidden file is a write's stranded `.tmp-<uuid>` or the OS's
 /// own, and is left alone.
-async fn list_files(
+pub(crate) async fn list_files(
     storage: &(impl Storage + Sync),
     dir: &Path,
 ) -> Res<Vec<(String, PathBuf, u64)>> {
@@ -628,7 +643,7 @@ mod tests {
         std::fs::write(&installed, manifest.to_jsonlines())?;
 
         let candidates = [digest.clone(), "old-name".into(), "unused".into()].into();
-        let in_use = objects_in_use(&paths, &storage, candidates).await?;
+        let in_use = objects_in_use(&paths, &storage, candidates, None).await?;
 
         assert_eq!(in_use, [digest, "old-name".to_string()].into());
         Ok(())

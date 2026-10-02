@@ -24,6 +24,10 @@ use crate::quilt;
 use crate::quilt::lineage::UpstreamState;
 use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::RemotePackageEvent;
+use crate::telemetry::prelude::*;
+use crate::toast::ToastCenter;
+use crate::toast::ToastDraft;
+use crate::toast::ToastKind;
 
 /// Everything the v2 package page draws, for one package.
 #[derive(Serialize)]
@@ -144,18 +148,61 @@ pub struct CurrentRevisionData {
     pub obtained_at: f64,
 }
 
+/// `Revisions you have`: the rows, and what removing every removable one
+/// frees, measured for the set.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionHistoryData {
+    pub rows: Vec<RevisionHistoryRow>,
+    /// The footer's figure. `None` when nothing is removable, or when what a
+    /// removal frees could not be read — then no row is offered for removal.
+    pub removable_frees: Option<u64>,
+}
+
 /// One row of `Revisions you have`, newest obtained first.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RevisionHistoryRow {
+    /// The handle `remove_revisions` takes. Never drawn: a revision is named
+    /// by its message and time.
+    pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
     pub published: bool,
     /// The catalog page for exactly this revision, or `None`: an unpublished
     /// row has no page to link, and a remote with no catalog host has no
-    /// catalog. Built here rather than from the header's `uri` so the hash that
-    /// addresses it never crosses the wire as data.
+    /// catalog. Built here rather than from the header's `uri`, so the page
+    /// never formats an address from the hash.
     pub catalog_url: Option<String>,
+    /// Why it cannot be removed, in the order the row says them; empty when
+    /// it can.
+    pub kept: Vec<KeptReason>,
+    /// What removing it alone frees. `None` when it is kept, or when the
+    /// measure could not be read.
+    pub frees: Option<u64>,
+}
+
+/// Why a revision is kept. Mirrors `quilt::flow::Kept`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeptReason {
+    Current,
+    Latest,
+    Base,
+    NotPushed,
+    Unpublished,
+}
+
+impl From<quilt::flow::Kept> for KeptReason {
+    fn from(kept: quilt::flow::Kept) -> Self {
+        match kept {
+            quilt::flow::Kept::Current => Self::Current,
+            quilt::flow::Kept::Latest => Self::Latest,
+            quilt::flow::Kept::Base => Self::Base,
+            quilt::flow::Kept::NotPushed => Self::NotPushed,
+            quilt::flow::Kept::Unpublished => Self::Unpublished,
+        }
+    }
 }
 
 /// The header region: identity, one resolved condition, and what the overflow
@@ -628,7 +675,46 @@ async fn get_package_page_data_from_model(
     })
 }
 
-/// Project the engine's entries onto wire rows, in the engine's order.
+/// What removing a set of revisions frees, in bytes.
+type Measure<'a> = &'a dyn Fn(&BTreeSet<String>) -> u64;
+
+/// Project the engine's entries onto wire rows, in the engine's order, with
+/// each row's protection and what removing it frees. `frees` measures a set;
+/// `None` means it could not be read, and then nothing is offered.
+fn revision_history_data(
+    lineage: &quilt::lineage::PackageLineage,
+    entries: Vec<quilt::flow::HistoryEntry>,
+    frees: Option<Measure<'_>>,
+) -> RevisionHistoryData {
+    let kept = quilt::flow::protection(lineage, &entries);
+    let removable: BTreeSet<String> = entries
+        .iter()
+        .map(|entry| entry.revision.hash.clone())
+        .filter(|hash| !kept.contains_key(hash))
+        .collect();
+    let rows = revision_history_rows(lineage, entries)
+        .into_iter()
+        .map(|row| {
+            let reasons = kept.get(&row.hash).cloned().unwrap_or_default();
+            RevisionHistoryRow {
+                frees: frees
+                    .filter(|_| reasons.is_empty())
+                    .map(|frees| frees(&BTreeSet::from([row.hash.clone()]))),
+                kept: reasons.into_iter().map(KeptReason::from).collect(),
+                ..row
+            }
+        })
+        .collect();
+    RevisionHistoryData {
+        rows,
+        removable_frees: frees
+            .filter(|_| !removable.is_empty())
+            .map(|frees| frees(&removable)),
+    }
+}
+
+/// Project the engine's entries onto wire rows, in the engine's order, with
+/// nothing yet said about removing them.
 fn revision_history_rows(
     lineage: &quilt::lineage::PackageLineage,
     entries: Vec<quilt::flow::HistoryEntry>,
@@ -636,6 +722,9 @@ fn revision_history_rows(
     entries
         .into_iter()
         .map(|entry| RevisionHistoryRow {
+            hash: entry.revision.hash.clone(),
+            kept: Vec::new(),
+            frees: None,
             catalog_url: lineage
                 .remote_uri
                 .as_ref()
@@ -663,7 +752,7 @@ fn revision_history_rows(
 pub async fn get_revision_history(
     m: tauri::State<'_, model::Model>,
     namespace: String,
-) -> Result<Vec<RevisionHistoryRow>, String> {
+) -> Result<RevisionHistoryData, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
@@ -676,7 +765,7 @@ pub async fn get_revision_history(
 async fn get_revision_history_from_model(
     m: &impl model::QuiltModel,
     namespace: &quilt_uri::Namespace,
-) -> Result<Vec<RevisionHistoryRow>, Error> {
+) -> Result<RevisionHistoryData, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
             namespace.to_owned(),
@@ -687,7 +776,77 @@ async fn get_revision_history_from_model(
     let entries = m
         .get_installed_package_revision_history(&installed, &lineage)
         .await?;
-    Ok(revision_history_rows(&lineage, entries))
+    // A manifest anywhere that cannot be read stops the measure, as it would
+    // stop the removal: the list still draws, offering nothing to remove.
+    let usage = match m.get_installed_package_revision_usage(&installed).await {
+        Ok(usage) => Some(usage),
+        Err(err) => {
+            warn!("Could not measure what removing revisions of {namespace} frees: {err}");
+            None
+        }
+    };
+    let frees = usage
+        .as_ref()
+        .map(|usage| move |set: &BTreeSet<String>| usage.frees(set));
+    Ok(revision_history_data(
+        &lineage,
+        entries,
+        frees
+            .as_ref()
+            .map(|f| f as &dyn Fn(&BTreeSet<String>) -> u64),
+    ))
+}
+
+/// Remove old revisions of `namespace` and the objects only they used, then
+/// post what it freed to the notification stack. A refusal (busy, protected,
+/// gone) is the error, for the page's band; nothing was removed.
+///
+/// Not under the page's command lock: the package's own lock guards it, and
+/// the rest of the page stays usable meanwhile (`page-lock`).
+#[tauri::command]
+pub async fn remove_revisions(
+    m: tauri::State<'_, model::Model>,
+    toasts: tauri::State<'_, ToastCenter>,
+    namespace: String,
+    hashes: Vec<String>,
+) -> Result<String, String> {
+    remove_revisions_command(&*m, &toasts, namespace, hashes).await
+}
+
+async fn remove_revisions_command(
+    m: &impl model::QuiltModel,
+    toasts: &ToastCenter,
+    namespace: String,
+    hashes: Vec<String>,
+) -> Result<String, String> {
+    let notify = Notify::new(format!("Removing old revisions of {namespace}"));
+    let result = remove_revisions_from_model(m, &namespace, hashes).await;
+    if let Ok(report) = &result {
+        toasts
+            .post(ToastDraft {
+                kind: ToastKind::Success,
+                body: report.to_string(),
+                ..ToastDraft::default()
+            })
+            .await;
+    }
+    let msg_err = |err: &Error| format!("Could not remove old revisions: {}", err.user_facing());
+    // The toast has said it; the band says nothing more.
+    notify.map(result.map(|_| ()), String::new(), msg_err)
+}
+
+async fn remove_revisions_from_model(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    hashes: Vec<String>,
+) -> Result<quilt::flow::RemovalReport, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = m
+        .get_installed_package(&namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    let hashes: BTreeSet<String> = hashes.into_iter().collect();
+    m.package_remove_revisions(&installed, &hashes).await
 }
 
 /// Install the backlog the page read listed — Keeping's `Download N files`.
@@ -1702,24 +1861,33 @@ mod tests {
 
     #[test]
     fn revision_history_wire_form_is_verbatim() {
-        let rows = vec![
-            RevisionHistoryRow {
-                message: Some("Sent".to_string()),
-                obtained_at: 1_758_500_000_000.0,
-                published: true,
-                catalog_url: Some(PUBLISHED_URL.to_string()),
-            },
-            RevisionHistoryRow {
-                message: None,
-                obtained_at: 1_758_400_000_000.0,
-                published: false,
-                catalog_url: None,
-            },
-        ];
+        let data = RevisionHistoryData {
+            rows: vec![
+                RevisionHistoryRow {
+                    hash: "published-hash".to_string(),
+                    message: Some("Sent".to_string()),
+                    obtained_at: 1_758_500_000_000.0,
+                    published: true,
+                    catalog_url: Some(PUBLISHED_URL.to_string()),
+                    kept: Vec::new(),
+                    frees: Some(1_200_000),
+                },
+                RevisionHistoryRow {
+                    hash: "local-hash".to_string(),
+                    message: None,
+                    obtained_at: 1_758_400_000_000.0,
+                    published: false,
+                    catalog_url: None,
+                    kept: vec![KeptReason::Current, KeptReason::NotPushed],
+                    frees: None,
+                },
+            ],
+            removable_frees: Some(1_200_000),
+        };
 
         assert_eq!(
-            serde_json::to_string(&rows).unwrap(),
-            r#"[{"message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://quilt.test/b/test/packages/team/dataset/tree/published-hash"},{"message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null}]"#,
+            serde_json::to_string(&data).unwrap(),
+            r#"{"rows":[{"hash":"published-hash","message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://quilt.test/b/test/packages/team/dataset/tree/published-hash","kept":[],"frees":1200000},{"hash":"local-hash","message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null,"kept":["current","notPushed"],"frees":null}],"removableFrees":1200000}"#,
         );
     }
 
@@ -1739,10 +1907,13 @@ mod tests {
         assert_eq!(
             rows,
             vec![RevisionHistoryRow {
+                hash: "published-hash".to_string(),
                 message: Some("Sent".to_string()),
                 obtained_at: 1_758_500_000_000.0,
                 published: true,
                 catalog_url: Some(PUBLISHED_URL.to_string()),
+                kept: Vec::new(),
+                frees: None,
             }]
         );
         assert!(
@@ -1801,6 +1972,151 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some("Third"), Some("First"), Some("Second")]
         );
+    }
+
+    /// Installed from `mine`, which is current and base; `abcdef` is latest.
+    fn removal_lineage() -> quilt::lineage::PackageLineage {
+        remote_lineage(quilt_uri::ManifestUri {
+            hash: "mine".to_string(),
+            ..make_manifest_uri(NS)
+        })
+    }
+
+    fn removal_entries() -> Vec<quilt::flow::HistoryEntry> {
+        vec![
+            history_entry("abcdef", 1_758_500_000_000, Some("Latest"), true),
+            history_entry("mine", 1_758_400_000_000, Some("Mine"), true),
+            history_entry("old-1", 1_758_300_000_000, Some("Old"), true),
+            history_entry("old-2", 1_758_200_000_000, Some("Older"), true),
+            history_entry("draft", 1_758_100_000_000, Some("Draft"), false),
+        ]
+    }
+
+    /// A stand-in measure: each old revision frees 10 alone, and the two
+    /// together free 25, since they share objects nothing else uses.
+    fn measure(set: &BTreeSet<String>) -> u64 {
+        match set.len() {
+            1 => 10,
+            2 => 25,
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn a_kept_row_says_why_and_frees_nothing_and_the_footer_measures_the_set() {
+        let data = revision_history_data(&removal_lineage(), removal_entries(), Some(&measure));
+
+        let said: Vec<(&str, &[KeptReason], Option<u64>)> = data
+            .rows
+            .iter()
+            .map(|row| (row.message.as_deref().unwrap(), &row.kept[..], row.frees))
+            .collect();
+        assert_eq!(
+            said,
+            vec![
+                ("Latest", &[KeptReason::Latest][..], None),
+                ("Mine", &[KeptReason::Current, KeptReason::Base][..], None),
+                ("Old", &[][..], Some(10)),
+                ("Older", &[][..], Some(10)),
+                ("Draft", &[KeptReason::Unpublished][..], None),
+            ]
+        );
+        assert_eq!(
+            data.removable_frees,
+            Some(25),
+            "measured as a set, not summed"
+        );
+    }
+
+    /// Without a measure the list still draws, and offers nothing.
+    #[test]
+    fn without_a_measure_nothing_is_offered() {
+        let data = revision_history_data(&removal_lineage(), removal_entries(), None);
+
+        assert!(data.rows.iter().all(|row| row.frees.is_none()));
+        assert_eq!(data.removable_frees, None);
+        assert_eq!(
+            data.rows[2].kept,
+            Vec::new(),
+            "still removable, just unmeasured"
+        );
+    }
+
+    #[test]
+    fn nothing_removable_has_no_footer_figure() {
+        let data = revision_history_data(
+            &removal_lineage(),
+            removal_entries().into_iter().take(2).collect(),
+            Some(&measure),
+        );
+
+        assert_eq!(data.removable_frees, None);
+    }
+
+    struct Collector(std::sync::Arc<std::sync::Mutex<Vec<crate::toast::Toast>>>);
+
+    impl crate::toast::ToastEmitter for Collector {
+        fn emit(&self, toast: &crate::toast::Toast) {
+            self.0.lock().unwrap().push(toast.clone());
+        }
+    }
+
+    fn report() -> quilt::flow::RemovalReport {
+        quilt::flow::RemovalReport {
+            namespace: NS.try_into().unwrap(),
+            revisions: 4,
+            objects: 6,
+            bytes: 6_900_000,
+            kept_for: None,
+            kept_bytes: 0,
+        }
+    }
+
+    /// The result is the stack's to say: a Success toast with the report's
+    /// own sentence, and nothing for the band.
+    #[tokio::test]
+    async fn a_removal_posts_its_report_as_a_success_toast() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_remove_revisions()
+            .withf(|_, hashes| hashes == &BTreeSet::from(["old-1".to_string()]))
+            .returning(|_, _| Ok(report()));
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let toasts = ToastCenter::new(Box::new(Collector(std::sync::Arc::clone(&seen))));
+
+        let said =
+            remove_revisions_command(&m, &toasts, NS.to_string(), vec!["old-1".to_string()]).await;
+
+        assert_eq!(said, Ok(String::new()));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].kind, ToastKind::Success);
+        assert_eq!(
+            seen[0].body,
+            "Removed 4 old revisions of team/dataset \u{b7} freed 6.9 MB"
+        );
+    }
+
+    /// A refusal goes to the band, and the stack says nothing.
+    #[tokio::test]
+    async fn a_busy_package_is_the_bands_and_posts_nothing() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_package_remove_revisions()
+            .returning(|installed, _| {
+                Err(quilt::Error::PackageBusy(installed.namespace.clone()).into())
+            });
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let toasts = ToastCenter::new(Box::new(Collector(std::sync::Arc::clone(&seen))));
+
+        let said =
+            remove_revisions_command(&m, &toasts, NS.to_string(), vec!["old-1".to_string()]).await;
+
+        let err = said.expect_err("refused");
+        assert!(err.contains("team/dataset is busy"), "{err}");
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

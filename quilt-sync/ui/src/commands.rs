@@ -486,17 +486,46 @@ pub struct CurrentRevisionData {
     pub obtained_at: f64,
 }
 
+/// `Revisions you have`: the rows, and the footer's figure. Mirrors
+/// `src-tauri/src/commands/package_page.rs` field for field.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionHistoryData {
+    pub rows: Vec<RevisionHistoryRow>,
+    /// What removing every removable row frees, measured for the set. `None`
+    /// when nothing is removable or the measure could not be read.
+    pub removable_frees: Option<u64>,
+}
+
+/// Why a revision is kept. Mirrors `KeptReason` in
+/// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KeptReason {
+    Current,
+    Latest,
+    Base,
+    NotPushed,
+    Unpublished,
+}
+
 /// One row of `Revisions you have`. Mirrors
 /// `src-tauri/src/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RevisionHistoryRow {
+    /// What `remove_revisions` takes. Never drawn.
+    pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
     pub published: bool,
     /// The catalog page for exactly this revision; `None` when unpublished or
     /// when the remote has no catalog host.
     pub catalog_url: Option<String>,
+    /// Why it cannot be removed; empty when it can.
+    pub kept: Vec<KeptReason>,
+    /// What removing it alone frees; `None` when kept or unmeasured.
+    pub frees: Option<u64>,
 }
 
 /// The header region: identity, one resolved condition, and what the overflow
@@ -582,13 +611,26 @@ pub async fn get_package_page_data(namespace: String) -> Result<PackagePageData,
 
 /// The revisions this copy holds, newest obtained first. Called when the
 /// context pane's popover opens, never on page load.
-pub async fn get_revision_history(namespace: String) -> Result<Vec<RevisionHistoryRow>, String> {
+pub async fn get_revision_history(namespace: String) -> Result<RevisionHistoryData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
     }
     tauri::invoke("get_revision_history", &Args { namespace }).await
+}
+
+/// Remove these old revisions of an installed package, and the objects only
+/// they used. The backend posts the result to the notification stack; the
+/// answer is empty on success, and the refusal's sentence otherwise.
+pub async fn remove_revisions(namespace: String, hashes: Vec<String>) -> Result<String, String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        namespace: String,
+        hashes: Vec<String>,
+    }
+    tauri::invoke("remove_revisions", &Args { namespace, hashes }).await
 }
 
 /// Install these paths of an installed package: Keeping's backlog, and the
@@ -1753,8 +1795,8 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
-        PackageContextData, PackageItemData, PullOutcome, ResolveData, RevisionHistoryRow,
-        RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        KeptReason, PackageContextData, PackageItemData, PullOutcome, ResolveData,
+        RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
 
@@ -1864,14 +1906,15 @@ mod tests {
     /// `revision_history_wire_form_is_verbatim` test.
     #[test]
     fn revision_history_wire_form_is_verbatim() {
-        let rows = serde_json::from_str::<Vec<RevisionHistoryRow>>(
-            r#"[{"message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://quilt.test/b/test/packages/team/dataset/tree/published-hash"},{"message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null}]"#,
+        let data = serde_json::from_str::<RevisionHistoryData>(
+            r#"{"rows":[{"hash":"published-hash","message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://quilt.test/b/test/packages/team/dataset/tree/published-hash","kept":[],"frees":1200000},{"hash":"local-hash","message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null,"kept":["current","notPushed"],"frees":null}],"removableFrees":1200000}"#,
         )
         .unwrap();
 
-        let [published, unpublished] = rows.as_slice() else {
-            panic!("two rows, got {rows:?}");
+        let [published, unpublished] = data.rows.as_slice() else {
+            panic!("two rows, got {data:?}");
         };
+        assert_eq!(published.hash, "published-hash");
         assert_eq!(published.message.as_deref(), Some("Sent"));
         assert!(
             (published.obtained_at - 1_758_500_000_000.0).abs() < f64::EPSILON,
@@ -1882,6 +1925,8 @@ mod tests {
             published.catalog_url.as_deref(),
             Some("https://quilt.test/b/test/packages/team/dataset/tree/published-hash")
         );
+        assert_eq!(published.kept, Vec::new());
+        assert_eq!(published.frees, Some(1_200_000));
         assert_eq!(unpublished.message, None);
         assert!(
             (unpublished.obtained_at - 1_758_400_000_000.0).abs() < f64::EPSILON,
@@ -1889,6 +1934,12 @@ mod tests {
         );
         assert!(!unpublished.published);
         assert_eq!(unpublished.catalog_url, None);
+        assert_eq!(
+            unpublished.kept,
+            vec![KeptReason::Current, KeptReason::NotPushed]
+        );
+        assert_eq!(unpublished.frees, None);
+        assert_eq!(data.removable_frees, Some(1_200_000));
     }
 
     /// The mirror struct must deserialize the exact JSON the backend

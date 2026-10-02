@@ -54,6 +54,16 @@
 //! the icon is a real anchor, the navigation is cancelled, and what the caller
 //! gave it is called. A caller cannot supply one without the other, which is the
 //! only way the rule survives the next call site.
+//!
+//! # A detail after the time, and an action at the end
+//!
+//! A list that offers to remove its rows says on each what removing it frees,
+//! or why it cannot be removed: `3 days ago · frees 1.2 MB`, `2 hours ago ·
+//! latest · base`. That is a fact about the row and not a third line, so it
+//! joins the time's, and a `detail_title` can spell a short tag out for the
+//! pointer. The action itself — the trash — comes last, after the catalog
+//! icon, so the catalog icons of a column line up; a row with no action passes
+//! a spacer of the action's width when its neighbours have one.
 
 use leptos::prelude::*;
 
@@ -117,6 +127,16 @@ pub fn RevisionRow(
     /// catalog host.
     #[prop(optional_no_strip)]
     catalog: Option<CatalogLink>,
+    /// Said after the time, on its line: what removing it frees, or why it is
+    /// kept.
+    #[prop(optional, into)]
+    detail: Option<String>,
+    /// The detail spelled out, for the pointer.
+    #[prop(optional, into)]
+    detail_title: Option<String>,
+    /// The row's own action, after the catalog icon.
+    #[prop(optional)]
+    trailing: Option<AnyView>,
 ) -> impl IntoView {
     // An empty message is reachable — nothing stops a publish without one — and
     // it must not render as a pair of bare quotes.
@@ -195,13 +215,21 @@ pub fn RevisionRow(
             {glyph}
             <div class=style::body>
                 {body}
-                {at.map(|at| view! {
-                    <span class=style::when>
-                        <RelativeTime at=at />
-                    </span>
+                {(at.is_some() || detail.is_some()).then(|| {
+                    let dot = (at.is_some() && detail.is_some()).then_some(" \u{b7} ");
+                    view! {
+                        <span class=style::when>
+                            {at.map(|at| view! { <RelativeTime at=at /> })}
+                            {dot}
+                            {detail.map(|detail| view! {
+                                <span class=style::detail title=detail_title>{detail}</span>
+                            })}
+                        </span>
+                    }
                 })}
             </div>
             {link}
+            {trailing.map(|action| view! { <span class=style::trailing>{action}</span> })}
         </div>
     }
 }
@@ -320,6 +348,45 @@ mod tests {
             web_sys::window().unwrap().location().href().unwrap(),
             before,
             "the test page did not navigate"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_detail_follows_the_time_and_an_action_ends_the_row() {
+        let el = mount(|| {
+            view! {
+                <RevisionRow
+                    message="Old"
+                    at=1_758_500_000_000.0
+                    published=true
+                    catalog=Some(CatalogLink::new(HREF, Callback::new(|_: String| ())))
+                    detail="latest \u{b7} base"
+                    detail_title="Kept: the latest published revision"
+                    trailing=view! { <button>"Remove"</button> }.into_any()
+                />
+            }
+        });
+        let detail = element_saying(&el, "latest \u{b7} base");
+        assert_eq!(
+            detail.get_attribute("title").as_deref(),
+            Some("Kept: the latest published revision")
+        );
+        assert!(
+            detail
+                .parent_element()
+                .unwrap()
+                .query_selector("time")
+                .unwrap()
+                .is_some(),
+            "on the time's line; markup was {}",
+            el.inner_html()
+        );
+        let link = el.query_selector("a").unwrap().expect("the catalog link");
+        let button = el.query_selector("button").unwrap().expect("the action");
+        assert_eq!(
+            link.compare_document_position(&button) & web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+            web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+            "the action comes after the catalog icon"
         );
     }
 

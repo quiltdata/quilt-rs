@@ -67,10 +67,14 @@ fn loading_actions() -> AnyView {
 /// One autopull activity, for a bar of its own.
 fn activities(label: &str) -> Activities {
     let activities = Activities::new();
-    activities.set(vec![Activity {
-        kind: ActivityKind::Autopull,
-        label: label.to_owned(),
-    }]);
+    activities.set(
+        ActivityKind::Autopull,
+        vec![Activity {
+            kind: ActivityKind::Autopull,
+            label: label.to_owned(),
+            package: None,
+        }],
+    );
     activities
 }
 

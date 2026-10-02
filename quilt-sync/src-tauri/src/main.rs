@@ -272,6 +272,7 @@ fn main() {
             commands::get_main_page_watcher,
             commands::get_package_page_data,
             commands::get_revision_history,
+            commands::remove_revisions,
             commands::package_download_backlog,
             commands::refresh_package_status,
             commands::package_uninstall,

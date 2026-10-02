@@ -5,9 +5,9 @@
 //! `currentColor` and hidden from assistive tech: the control that holds it
 //! carries the name.
 //!
-//! Ten are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
+//! Eleven are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
 //! `chevron-down-16`, `chevron-right-16`, `kebab-horizontal-16`, `check-16`,
-//! `cloud-16`, `cloud-offline-16` and `link-external-16` — MIT
+//! `cloud-16`, `cloud-offline-16`, `link-external-16` and `trash-16` — MIT
 //! License, Copyright (c) GitHub Inc. —
 //! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
 //! because at 15px a stroked gear's spokes read as a sun.
@@ -181,6 +181,18 @@ pub fn link_external() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
             <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// Removes something this copy holds. A removable row's trailing action in the
+/// revisions popover; the dialog it opens says what goes.
+#[must_use]
+pub fn trash() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z" />
         </svg>
     }
     .into_any()

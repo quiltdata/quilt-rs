@@ -1,8 +1,8 @@
 //! Autopull's side of the appbar's activity line: while the tick pulls or
 //! publishes a package, the line says so.
 //!
-//! It is the line's only producer today, and what it reports is autopull's
-//! transfers and nothing else. Mounted once in `App`, beside the notification
+//! What it reports is autopull's transfers and nothing else, in autopull's own
+//! slot of the line: the page's removal of old revisions is the other producer. Mounted once in `App`, beside the notification
 //! stack, and drawing nothing itself: it writes the [`kit::Activities`] that
 //! `App` provides, and the kit's [`ActivityLine`](kit::ActivityLine) draws them.
 //!
@@ -10,7 +10,7 @@
 //!
 //! The backend sends the whole of autopull's activity on every change — the
 //! one transfer running, or `None` — never a start and a stop. So each payload
-//! replaces the line's list outright, and a missed update costs nothing: the
+//! replaces autopull's slot outright, and a missed update costs nothing: the
 //! next one says what is true.
 //!
 //! # Not the notification stack
@@ -42,6 +42,7 @@ pub fn activities_for(activity: Option<&commands::AutopullActivity>) -> Vec<Acti
             Activity {
                 kind: ActivityKind::Autopull,
                 label,
+                package: Some(running.namespace.to_string()),
             }
         })
         .into_iter()
@@ -80,14 +81,16 @@ impl Feed {
     /// Adopt a read's answer only if nothing has arrived since it was asked for.
     fn apply_if_current(self, stamp: u64, activity: Option<&commands::AutopullActivity>) {
         if self.stamp.try_get_value().unwrap_or_default() == stamp {
-            self.activities.set(activities_for(activity));
+            self.activities
+                .set(ActivityKind::Autopull, activities_for(activity));
         }
     }
 
     /// An event is the newest word: adopt it at once.
     fn follow(self, activity: Option<&commands::AutopullActivity>) {
         self.bump();
-        self.activities.set(activities_for(activity));
+        self.activities
+            .set(ActivityKind::Autopull, activities_for(activity));
     }
 
     /// Read the backend's activity and adopt it if it is still the newest word.
@@ -137,6 +140,7 @@ mod tests {
         Activity {
             kind: ActivityKind::Autopull,
             label: label.to_owned(),
+            package: Some("team/pkg".to_owned()),
         }
     }
 

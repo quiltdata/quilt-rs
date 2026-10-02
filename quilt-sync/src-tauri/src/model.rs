@@ -211,6 +211,25 @@ pub trait QuiltModel {
         Ok(package.revision_history(lineage).await?)
     }
 
+    /// Which objects each revision uses that nothing else does: what the
+    /// popover's rows and footer say removing them frees.
+    async fn get_installed_package_revision_usage(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<quilt::flow::RevisionUsage, Error> {
+        Ok(package.revision_usage().await?)
+    }
+
+    /// Remove old revisions of `package` and the objects only they used. It
+    /// takes the package's own lock, and refuses while another writer holds it.
+    async fn package_remove_revisions(
+        &self,
+        package: &quilt::InstalledPackage,
+        hashes: &BTreeSet<String>,
+    ) -> Result<quilt::flow::RemovalReport, Error> {
+        Ok(package.remove_revisions(hashes).await?)
+    }
+
     /// The logical keys of the manifest `lineage` selects — the same snapshot
     /// the rest of the page read uses, so a pull landing mid-read cannot pair
     /// one revision's keys with another's tracked paths.
