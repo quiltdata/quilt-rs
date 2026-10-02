@@ -16,15 +16,15 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.4.2-dev]
+## [v0.4.2] - 2026-10-02
 
 ### Added
 
-- `fixtures::one_host()` and `fixtures::another_host()`, behind the `test-support` feature, return `one.quilt.test` and `another.quilt.test` for tests that need two different hosts (<https://github.com/quiltdata/quilt-rs/pull/1041>)
+- `fixtures::one_host()` and `fixtures::another_host()` (`test-support` feature) return two different hosts, for tests that need them (<https://github.com/quiltdata/quilt-rs/pull/1041>)
 
 ### Changed
 
-- `fixtures::host()`, behind the `test-support` feature, returns `quilt.test` instead of `test.quilt.dev`. Names under `.test` are reserved for testing and never resolve, so a test can't reach a real Quilt stack by accident (<https://github.com/quiltdata/quilt-rs/pull/1041>)
+- `fixtures::host()` (`test-support` feature) returns `quilt.test` instead of `test.quilt.dev`. Names under `.test` never resolve, so a test can't reach a real Quilt stack (<https://github.com/quiltdata/quilt-rs/pull/1041>)
 
 ## [v0.4.1] - 2026-09-18
 

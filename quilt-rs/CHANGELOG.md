@@ -19,15 +19,14 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.42.0-dev]
+## [v0.42.0] - 2026-10-02
 
 ### Added
 
-- `InstalledPackageStatus::latest_refreshed` is `true` when `InstalledPackage::status` read the remote's `latest` tip in that call (a package never published reads as no tip, which also counts), and `false` when the package has no remote or the remote could not be reached and the status fell back to the last-known tip (<https://github.com/quiltdata/quilt-rs/pull/1032>)
-- `PackageState` resolves a package's state in the words front ends show it (`Latest`, `PendingCommit`, `PendingChanges`, `Behind`, `Diverged`, `Unpublished`, `NoRemote`, `Unknown`) from its `UpstreamState`, with `PackageState::resolve`; `PackageLineage::misconfigured_remote` says a remote has a bucket but no catalog host; and `InstalledPackage::state` checks a package's remote and working tree and resolves the result into a `PackageStateReport`, asking nothing for a package with no remote or a misconfigured one (<https://github.com/quiltdata/quilt-rs/pull/1032>)
-- `LocalDomain::gc` deletes the objects no installed manifest uses, everything in the `packages/` manifest cache and everything in `staging/`, and returns a `flow::GcReport` with the counts and bytes it freed. Its `Display` is the sentence to show a user. It try-locks every package first; if one is busy it deletes nothing and returns `Error::PackageBusy` naming it (<https://github.com/quiltdata/quilt-rs/pull/1030>)
-- `InstalledPackage::remove_revisions` deletes the chosen installed revisions of a package and the objects only they used, and returns a `flow::RemovalReport` whose `Display` is the sentence to show a user, for example "Removed 4 old revisions of user/plate-07 · freed 630.2 kB". It try-locks the package and returns `Error::PackageBusy` while another writer holds it. It refuses a protected revision (the current, latest and base revisions, the pending commit chain, and any revision the registry does not list) or one this copy does not hold with the new `Error::RevisionNotRemovable`, deleting nothing. If another package is busy it still deletes the revisions but keeps their objects, which `gc` frees later. `flow::protection` says which revisions are kept and why (`flow::Kept`), and `InstalledPackage::revision_usage` returns a `flow::RevisionUsage` whose `frees` measures what removing a set of revisions frees (<https://github.com/quiltdata/quilt-rs/pull/1043>)
-- `LocalDomain::uninstall_package_pruning` uninstalls a package, then deletes the objects its manifests used, every revision's, that no other installed manifest uses, and returns a `flow::Pruned`: the freed counts as a `GcReport`, or the busy package that kept them. Its `Display` is gc's sentence, for example `Freed 630.2 kB: 6 objects`. It leaves other unused objects, `packages/` and `staging/` to `gc` (<https://github.com/quiltdata/quilt-rs/pull/1040>)
+- `InstalledPackage::state` checks a package's remote and working tree and returns a `PackageStateReport` with the state front ends show: `Latest`, `PendingCommit`, `PendingChanges`, `Behind`, `Diverged`, `Unpublished`, `NoRemote` or `Unknown`. `PackageState::resolve` derives that state from an `UpstreamState`, `InstalledPackageStatus::latest_refreshed` says whether a status read the remote's `latest` tip or fell back to the last-known one, and `PackageLineage::misconfigured_remote` says whether a remote has a bucket but no catalog host (<https://github.com/quiltdata/quilt-rs/pull/1032>)
+- `LocalDomain::gc` deletes the objects no installed manifest uses, the `packages/` manifest cache and `staging/`, and returns a `flow::GcReport` whose `Display` is the sentence to show a user. While another writer holds a package it deletes nothing and returns `Error::PackageBusy` (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+- `LocalDomain::uninstall_package_pruning` uninstalls a package and deletes the objects that only its manifests used, returning a `flow::Pruned` (<https://github.com/quiltdata/quilt-rs/pull/1040>)
+- `InstalledPackage::remove_revisions` deletes chosen installed revisions and the objects only they used, and returns a `flow::RemovalReport`. It refuses a protected revision (current, latest, base, unpushed or not listed by the registry) with `Error::RevisionNotRemovable`. `flow::protection` says which revisions are kept and why, and `InstalledPackage::revision_usage` measures what removing revisions frees (<https://github.com/quiltdata/quilt-rs/pull/1043>)
 - `DomainPaths::installed_dir`, `locks_dir` and `cached_manifests_root` return the `installed/`, `locks/` and `packages/` directories (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 
 ### Changed
@@ -36,7 +35,7 @@
 
 ### quilt-uri
 
-- Updated [from v0.4.1 to v0.4.2-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.1...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+- Updated [from v0.4.1 to v0.4.2](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.1...quilt-uri/v0.4.2) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.41.0] - 2026-09-30
 

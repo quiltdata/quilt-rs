@@ -5,7 +5,7 @@ keywords = ["data", "versioning", "s3", "manifest", "reproducibility"]
 categories = ["filesystem", "science", "api-bindings"]
 
 # Inherit from workspace
-version = "0.42.0-dev"
+version = "0.42.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -53,12 +53,12 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tracing.workspace = true
-quilt-uri = { path = "../quilt-uri", version = "0.4.2-dev" }
+quilt-uri = { path = "../quilt-uri", version = "0.4.2" }
 url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-quilt-uri = { path = "../quilt-uri", version = "0.4.2-dev", features = ["test-support"] }
+quilt-uri = { path = "../quilt-uri", version = "0.4.2", features = ["test-support"] }
 test-log.workspace = true
 
 [lints]
