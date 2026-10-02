@@ -156,6 +156,23 @@ pub const DIFFERS_TITLE: &str =
 /// marked row names as its description.
 pub const DIFFERS_ID: &str = "resolve-differing";
 
+/// Another id for that sentence, for everything drawn inside the context that
+/// provides it.
+///
+/// The app draws one resolve sentence per page, so it provides nothing and
+/// keeps `DIFFERS_ID`. The gallery draws several on one page, one per cell that
+/// marks rows, and a fixed id there is several elements with one id: each
+/// cell's rows would be described by whichever sentence the browser found
+/// first. Each such cell provides its own, so its rows and its sentence agree.
+#[derive(Clone, Copy, Debug)]
+pub struct DiffersId(pub &'static str);
+
+/// The resolve sentence's id here: the provided `DiffersId`, or `DIFFERS_ID`.
+#[must_use]
+pub fn differs_id() -> &'static str {
+    use_context::<DiffersId>().map_or(DIFFERS_ID, |id| id.0)
+}
+
 #[component]
 pub fn EntryRow(
     /// What to show. The caller decides whether that is the whole path or the
@@ -282,7 +299,7 @@ pub fn EntryRow(
             // keyboard-reachable and is absent on touch, which is why the pane
             // also says it once in prose for the rows as a set.
             title=differs.then_some(DIFFERS_TITLE)
-            aria-describedby=differs.then_some(DIFFERS_ID)
+            aria-describedby=differs.then(differs_id)
         >
             {main}
             {if actions.with_untracked(Vec::is_empty) {
@@ -488,6 +505,29 @@ mod tests {
                 .is_none(),
             "markup was {}",
             plain.inner_html()
+        );
+    }
+
+    /// Where several sentences share a page, a provided id wins, so a row can
+    /// name the sentence beside it rather than the page's first.
+    #[wasm_bindgen_test]
+    fn a_provided_id_is_the_one_a_marked_row_names() {
+        use leptos::context::Provider;
+
+        let el = mount(|| {
+            view! {
+                <Provider value=DiffersId("resolve-differing-cell")>
+                    <EntryRow name="plate/a.csv" size="1 KB" differs=true />
+                </Provider>
+            }
+        });
+        let row = el
+            .query_selector("[aria-describedby]")
+            .unwrap()
+            .expect("a described row");
+        assert_eq!(
+            row.get_attribute("aria-describedby").as_deref(),
+            Some("resolve-differing-cell")
         );
     }
 

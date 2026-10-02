@@ -60,7 +60,7 @@ use leptos::prelude::*;
 
 use super::CheckState;
 use super::Checkbox;
-use super::DIFFERS_ID;
+use super::differs_id;
 use super::icons;
 
 stylance::import_crate_style!(style, "src/kit/entry_group.module.scss");
@@ -131,6 +131,7 @@ pub fn EntryGroup(
     let full_name = name.clone();
     let box_label = format!("Select all in {name}");
     let hides_difference = move || differs && !open.get();
+    let differs_id = differs_id();
 
     view! {
         <div class=style::root>
@@ -144,7 +145,7 @@ pub fn EntryGroup(
                     aria-label=move || {
                         if open.get() { "Collapse group" } else { "Expand group" }
                     }
-                    aria-describedby=move || hides_difference().then_some(DIFFERS_ID)
+                    aria-describedby=move || hides_difference().then_some(differs_id)
                     on:click=move |_| open.update(|o| *o = !*o)
                 >
                     {move || if open.get() { icons::chevron_down() } else { icons::chevron_right() }}

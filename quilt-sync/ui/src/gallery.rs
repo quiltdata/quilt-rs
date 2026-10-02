@@ -729,12 +729,16 @@ pub fn Scene(title: &'static str, note: &'static str, children: Children) -> imp
 }
 
 /// The resolve pane's sentence, for a cell that draws marked rows without the
-/// pane. A marked row's `aria-describedby` names `DIFFERS_ID`, which in the app
+/// pane. A marked row's `aria-describedby` names the sentence, which in the app
 /// only the pane carries; a cell without it would point at nothing.
 /// `count` is how many rows the cell marks, which the sentence counts.
+///
+/// Its id is the cell's own `kit::DiffersId`, read the same way the rows read
+/// it, so a cell that forgets to provide one draws `DIFFERS_ID` and the
+/// gallery's unique-id test names it.
 #[must_use]
 pub fn differs_caption(count: usize) -> AnyView {
-    view! { <p class="g-note" id=kit::DIFFERS_ID>{pages::differs_sentence(count)}</p> }.into_any()
+    view! { <p class="g-note" id=kit::differs_id()>{pages::differs_sentence(count)}</p> }.into_any()
 }
 
 #[component]
@@ -869,27 +873,73 @@ mod tests {
         ids
     }
 
-    /// The overview's frames share ids with the sections they come from, so
-    /// the swap between `#/` and `#/all` must take one set down before it puts
-    /// the other up. Driven through the gallery's own `hashchange` listener.
-    #[wasm_bindgen_test]
-    async fn switching_between_the_overview_and_everything_draws_no_id_twice() {
+    /// The gallery, mounted on `#/`, and a way to move it to another route
+    /// through its own `hashchange` listener. Dispatched by hand so the swap
+    /// does not wait on the browser's own event, which arrives a task later and
+    /// only sets the same route again.
+    fn mount_gallery() -> (web_sys::HtmlElement, impl Drop, impl Fn(&str)) {
         let window = web_sys::window().unwrap();
         let doc = window.document().unwrap();
-        let go = |hash: &str| {
-            window.location().set_hash(hash).unwrap();
-            // Dispatched by hand so the swap does not wait on the browser's own
-            // event, which arrives a task later and only sets the same route.
-            window
-                .dispatch_event(&web_sys::Event::new("hashchange").unwrap())
-                .unwrap();
-        };
         window.location().set_hash("/").unwrap();
         let container: web_sys::HtmlElement =
             doc.create_element("div").unwrap().dyn_into().unwrap();
         doc.body().unwrap().append_child(&container).unwrap();
         let handle = leptos::mount::mount_to(container.clone(), super::Gallery);
+        let go = move |hash: &str| {
+            window.location().set_hash(hash).unwrap();
+            window
+                .dispatch_event(&web_sys::Event::new("hashchange").unwrap())
+                .unwrap();
+        };
+        (container, handle, go)
+    }
 
+    /// Every id `container` draws more than once.
+    fn ids_twice(container: &web_sys::Element) -> Vec<String> {
+        let mut twice: Vec<String> = ids_in(container)
+            .windows(2)
+            .filter(|w| w[0] == w[1])
+            .map(|w| w[0].clone())
+            .collect();
+        twice.dedup();
+        twice
+    }
+
+    /// Every id an `aria-describedby` in `container` names that is not drawn
+    /// exactly once there, so the description is either missing or ambiguous.
+    ///
+    /// Except a form control's validation message while it has none to show:
+    /// `kit/form_control.rs` names that id from the start on purpose, so a
+    /// message that appears later is announced, and a missing id is ignored.
+    fn descriptions_not_drawn_once(container: &web_sys::Element) -> Vec<String> {
+        let unshown_validation = |id: &str| id.starts_with("q-control-") && id.ends_with("-error");
+        let ids = ids_in(container);
+        let described = container.query_selector_all("[aria-describedby]").unwrap();
+        let mut wrong = Vec::new();
+        for i in 0..described.length() {
+            let el: web_sys::Element = described.item(i).unwrap().dyn_into().unwrap();
+            for id in el
+                .get_attribute("aria-describedby")
+                .unwrap()
+                .split_whitespace()
+            {
+                let drawn = ids.iter().filter(|drawn| *drawn == id).count();
+                if drawn > 1 || (drawn == 0 && !unshown_validation(id)) {
+                    wrong.push(id.to_string());
+                }
+            }
+        }
+        wrong.sort();
+        wrong.dedup();
+        wrong
+    }
+
+    /// The overview's frames share ids with the sections they come from, so
+    /// the swap between `#/` and `#/all` must take one set down before it puts
+    /// the other up.
+    #[wasm_bindgen_test]
+    async fn switching_between_the_overview_and_everything_draws_no_id_twice() {
+        let (container, handle, go) = mount_gallery();
         let mut seen = Vec::new();
         for hash in ["", "/all", "/"] {
             if !hash.is_empty() {
@@ -898,21 +948,12 @@ mod tests {
             leptos::task::tick().await;
             let ids = ids_in(&container);
             let selecting = ids.iter().filter(|id| *id == "page-selecting").count();
-            // The long scroll draws the resolve sentence once per story that
-            // marks rows, each for its own cell, so that one id repeats there
-            // on purpose. Any other repeat is the swap leaving a page behind.
-            let mut twice: Vec<String> = ids
-                .windows(2)
-                .filter(|w| w[0] == w[1] && w[0] != crate::kit::DIFFERS_ID)
-                .map(|w| w[0].clone())
-                .collect();
-            twice.dedup();
             let frames = container.query_selector_all(".g-entry").unwrap().length() as usize;
-            seen.push((hash, frames, selecting, twice));
+            seen.push((hash, frames, selecting, ids_twice(&container)));
         }
         drop(handle);
         container.remove();
-        window.location().set_hash("").unwrap();
+        go("");
         // (route, frames drawn, how many `page-selecting`, the ids drawn twice)
         let none = Vec::<String>::new;
         assert_eq!(
@@ -923,6 +964,36 @@ mod tests {
                 ("/", 2, 1, none()),
             ]
         );
+    }
+
+    /// Every address the gallery has draws each id once, and every description
+    /// a row names is drawn once beside it. The long scroll is the hard case:
+    /// several cells mark rows and draw the resolve sentence, and each pairs
+    /// its rows with its own sentence through `kit::DiffersId`.
+    #[wasm_bindgen_test]
+    async fn every_route_draws_each_id_once_and_every_description_once() {
+        let mut hashes = vec!["/".to_string(), "/all".to_string()];
+        hashes.extend(Tier::ALL.iter().map(|t| format!("/{}", t.slug())));
+        hashes.extend(
+            ENTRIES
+                .iter()
+                .map(|e| e.href().trim_start_matches('#').to_string()),
+        );
+        let (container, handle, go) = mount_gallery();
+        let mut wrong = Vec::new();
+        for hash in &hashes {
+            go(hash);
+            leptos::task::tick().await;
+            let twice = ids_twice(&container);
+            let described = descriptions_not_drawn_once(&container);
+            if !twice.is_empty() || !described.is_empty() {
+                wrong.push((hash.clone(), twice, described));
+            }
+        }
+        drop(handle);
+        container.remove();
+        go("");
+        assert_eq!(wrong, Vec::new());
     }
 
     #[test]

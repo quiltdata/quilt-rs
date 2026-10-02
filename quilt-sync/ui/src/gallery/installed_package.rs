@@ -98,6 +98,7 @@
 //! context, then files, at every width. Wide, `order` draws the files on the
 //! leading side; stacked, the order resets and what you see is DOM order.
 
+use leptos::context::Provider;
 use leptos::prelude::*;
 
 use crate::Cell;
@@ -106,6 +107,7 @@ use crate::gallery::context_pane::ContextPaneRegion;
 use crate::gallery::file_pane::FilePaneRegion;
 use crate::gallery::package_header::PackageHeaderRegion;
 use crate::kit::Button;
+use crate::kit::DiffersId;
 use crate::kit::PackageState;
 use crate::kit::PageLayout;
 use crate::kit::icons;
@@ -150,15 +152,21 @@ fn page(
                         publish_choice=publish_choice
                         action_open=resolving
                     />
-                    <div class="g-ip-shell">
-                        <ContextPaneRegion
-                            resolving=resolving
-                            scope=scope
-                            pending=2
-                            exit=format!("#{name}")
-                        />
-                        <FilePaneRegion name=name ticked=ticked marked=resolving />
-                    </div>
+                    // The pane's sentence and the rows it describes, under one id
+                    // of their own: the context pane's scene draws the same pane.
+                    // Only the resolve frame draws either, so the five frames can
+                    // share it.
+                    <Provider value=DiffersId("resolve-differing-page")>
+                        <div class="g-ip-shell">
+                            <ContextPaneRegion
+                                resolving=resolving
+                                scope=scope
+                                pending=2
+                                exit=format!("#{name}")
+                            />
+                            <FilePaneRegion name=name ticked=ticked marked=resolving />
+                        </div>
+                    </Provider>
                 </div>
             </PageLayout>
         </div>

@@ -95,6 +95,7 @@
 //!   nothing and moves the segments beside it. `Segment::inert` is that state,
 //!   and the eighth cell is a package with nothing changed.
 
+use leptos::context::Provider;
 use leptos::prelude::*;
 
 use crate::Cell;
@@ -106,6 +107,7 @@ use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CheckState;
 use crate::kit::Dialog;
+use crate::kit::DiffersId;
 use crate::kit::EntryAction;
 use crate::kit::EntryGroup;
 use crate::kit::EntryRow;
@@ -1382,8 +1384,10 @@ pub fn FilePaneScene() -> impl IntoView {
                 })}
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
-                {pane(Pane { marked: MARKED, ..Pane::new("fp-marked") })}
-                {differs_caption(MARKED.len())}
+                <Provider value=DiffersId("resolve-differing-file-pane")>
+                    {pane(Pane { marked: MARKED, ..Pane::new("fp-marked") })}
+                    {differs_caption(MARKED.len())}
+                </Provider>
             </Cell>
             <Cell full=true label="Keeping → the whole package, all downloaded: no boxes, no footer, and the slot says so">
                 {pane(Pane { whole: true, files: downloaded_package(), ..Pane::new("fp-whole") })}
