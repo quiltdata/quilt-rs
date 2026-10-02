@@ -5,7 +5,7 @@
 //! spec corpus for why a v2 surface gets its own module rather than a wider v1
 //! one.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -86,9 +86,25 @@ pub struct PackageContextData {
     /// list: the list is `get_revision_history`, fetched on open.
     pub revision_count: usize,
     pub keeping: KeepingData,
+    /// The current revision's bytes, as Keeping's caption says them. `None`
+    /// when they cannot be read — the rows' sizes do not add up in a `u64` —
+    /// and the caption then gives the count alone.
+    pub size: Option<PackageSize>,
     /// `None` unless the package is diverged, as the status the header shows
     /// says; see `get_package_page_data_from_model`.
     pub resolve: Option<ResolveData>,
+}
+
+/// The current revision's size, summed from the sizes its manifest rows
+/// record: logical bytes, not disk usage, and no file is stat'ed for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSize {
+    /// Every listed file.
+    pub total: u64,
+    /// Every listed file not in the backlog — what `remote_only` leaves out,
+    /// so a file deleted here counts: Download would not fetch it.
+    pub downloaded: u64,
 }
 
 /// Which files this copy keeps, as the pane says it. Its own wire enum rather
@@ -111,6 +127,11 @@ pub struct KeepingData {
     /// Listed by the current revision and not downloaded here, sorted: the
     /// backlog, and exactly what `Download N files` installs.
     pub remote_only: Vec<String>,
+    /// Files deleted here: local changes waiting to commit, so not in the
+    /// backlog. The caption names them, since they count as downloaded. The
+    /// file pane's `counts.deleted`, carried here so the caption does not wait
+    /// on the list; 0 when the status could not be read.
+    pub deleted_here: usize,
 }
 
 /// The resolve mode's facts, or why they could not be read. Present only
@@ -368,27 +389,54 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
 /// local change at it — v1's `remote` rows (`package_data.rs:195-206`).
 /// `changes` is `None` when the status could not be read: then only
 /// tracking decides, and the engine still refuses to overwrite a local file.
+///
+/// The size follows the same rule, over the same rows: downloaded is every
+/// listed file's bytes less the backlog's. A file deleted here is a local
+/// change, so it counts as downloaded, and `deleted_here` says how many.
 fn keeping_data(
     lineage: &quilt::lineage::PackageLineage,
-    keys: &BTreeSet<PathBuf>,
+    sizes: &BTreeMap<PathBuf, u64>,
     changes: Option<&quilt::lineage::ChangeSet>,
-) -> KeepingData {
+) -> (KeepingData, Option<PackageSize>) {
     let scope = match lineage.sync_scope {
         quilt::lineage::SyncScope::IndividualFiles => KeepingScope::IndividualFiles,
         quilt::lineage::SyncScope::EntirePackage => KeepingScope::EntirePackage,
     };
-    let remote_only = keys
+    let outstanding: Vec<(&PathBuf, u64)> = sizes
         .iter()
-        .filter(|key| {
+        .filter(|(key, _)| {
             !lineage.paths.contains_key(*key) && changes.is_none_or(|c| !c.contains_key(*key))
         })
-        .map(|key| key.display().to_string())
+        .map(|(key, size)| (key, *size))
         .collect();
-    KeepingData {
+    let total = sizes
+        .values()
+        .try_fold(0u64, |sum, size| sum.checked_add(*size));
+    let missing = outstanding
+        .iter()
+        .try_fold(0u64, |sum, (_, size)| sum.checked_add(*size));
+    // `missing <= total` whenever `total` fits, since it sums a subset.
+    let size = total.zip(missing).map(|(total, missing)| PackageSize {
+        total,
+        downloaded: total - missing,
+    });
+    // Every deletion in the status, as the file pane's `EntryCounts.deleted`
+    // counts it, so the two panes give one number.
+    let deleted_here = changes.map_or(0, |c| {
+        c.values()
+            .filter(|change| matches!(change, quilt::lineage::Change::Removed(_)))
+            .count()
+    });
+    let keeping = KeepingData {
         scope,
-        total: keys.len(),
-        remote_only,
-    }
+        total: sizes.len(),
+        remote_only: outstanding
+            .into_iter()
+            .map(|(key, _)| key.display().to_string())
+            .collect(),
+        deleted_here,
+    };
+    (keeping, size)
 }
 
 /// The gate: the header's status decides, not the snapshot, whose `latest_hash` is stale here.
@@ -490,7 +538,7 @@ fn package_context_data(
     lineage: &quilt::lineage::PackageLineage,
     revision: Option<quilt::flow::Revision>,
     revision_count: usize,
-    keeping: KeepingData,
+    (keeping, size): (KeepingData, Option<PackageSize>),
     resolve: Option<ResolveData>,
 ) -> Result<PackageContextData, Error> {
     let revision = revision.ok_or_else(|| {
@@ -512,6 +560,7 @@ fn package_context_data(
             .filter(|bucket| !bucket.is_empty()),
         revision_count,
         keeping,
+        size,
         resolve,
     })
 }
@@ -638,7 +687,7 @@ async fn get_package_page_data_from_model(
     let status = status_read.as_ref().and_then(|r| r.as_ref().ok());
     let keeping = keeping_data(
         &lineage,
-        &m.get_installed_package_keys(&installed, &lineage).await?,
+        &m.get_installed_package_sizes(&installed, &lineage).await?,
         status.map(|s| &s.changes),
     );
     let resolve = resolve_for_page(m, &installed, &lineage, status_read.as_ref()).await;
@@ -1032,11 +1081,11 @@ mod tests {
         // `.times(1)`: one manifest read for Keeping per page read, and from
         // the page's own lineage snapshot.
         model
-            .expect_get_installed_package_keys()
+            .expect_get_installed_package_sizes()
             .times(1)
             .returning(|_, lineage| {
                 assert_eq!(lineage.current_hash(), Some("abcdef"));
-                Ok(keys(&["a.csv", "b.csv", "c.csv"]))
+                Ok(sizes(&["a.csv", "b.csv", "c.csv"]))
             });
         // `return_once`, not `returning`: `Error` is not `Clone`. `.times(1)`
         // makes "exactly one status call" an assertion — without it a caller
@@ -1073,8 +1122,8 @@ mod tests {
             .expect_get_installed_package_revision_count()
             .returning(|_| Ok(1));
         model
-            .expect_get_installed_package_keys()
-            .returning(|_, _| Ok(keys(&["a.csv"])));
+            .expect_get_installed_package_sizes()
+            .returning(|_, _| Ok(sizes(&["a.csv"])));
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(records(&["a.csv"])));
@@ -1251,17 +1300,19 @@ mod tests {
             bucket: Some("quilt-lab-plates".to_string()),
             revision_count: 4,
             keeping: keeping_fixture(),
+            size: Some(size_fixture()),
             resolve: None,
         };
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000},"resolve":null}"#,
         );
     }
 
-    fn keys(paths: &[&str]) -> BTreeSet<PathBuf> {
-        paths.iter().map(PathBuf::from).collect()
+    /// The listed paths, each 7 bytes, as `records` gives them.
+    fn sizes(paths: &[&str]) -> BTreeMap<PathBuf, u64> {
+        paths.iter().map(|path| (PathBuf::from(path), 7)).collect()
     }
 
     fn lineage_tracking(paths: &[&str]) -> quilt::lineage::PackageLineage {
@@ -1380,6 +1431,14 @@ mod tests {
             scope: KeepingScope::EntirePackage,
             total: 56,
             remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
+            deleted_here: 1,
+        }
+    }
+
+    fn size_fixture() -> PackageSize {
+        PackageSize {
+            total: 3_400_000,
+            downloaded: 1_900_000,
         }
     }
 
@@ -1387,7 +1446,7 @@ mod tests {
     fn keeping_wire_form_is_verbatim() {
         assert_eq!(
             serde_json::to_string(&keeping_fixture()).unwrap(),
-            r#"{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]}"#,
+            r#"{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1}"#,
         );
     }
 
@@ -1396,9 +1455,9 @@ mod tests {
         let lineage = lineage_tracking(&["a.csv"]);
         let changes = modified("b.csv");
 
-        let keeping = keeping_data(
+        let (keeping, _) = keeping_data(
             &lineage,
-            &keys(&["a.csv", "b.csv", "c.csv", "d.csv"]),
+            &sizes(&["a.csv", "b.csv", "c.csv", "d.csv"]),
             Some(&changes),
         );
 
@@ -1410,7 +1469,11 @@ mod tests {
     fn without_a_status_only_tracking_decides() {
         let lineage = lineage_tracking(&["a.csv"]);
 
-        let keeping = keeping_data(&lineage, &keys(&["a.csv", "b.csv", "c.csv", "d.csv"]), None);
+        let (keeping, _) = keeping_data(
+            &lineage,
+            &sizes(&["a.csv", "b.csv", "c.csv", "d.csv"]),
+            None,
+        );
 
         assert_eq!(keeping.remote_only, vec!["b.csv", "c.csv", "d.csv"]);
     }
@@ -1418,9 +1481,9 @@ mod tests {
     #[test]
     fn a_tracked_path_the_revision_no_longer_lists_is_not_counted() {
         let lineage = lineage_tracking(&["a.csv", "z.csv"]);
-        let listed = keys(&["a.csv", "b.csv"]);
+        let listed = sizes(&["a.csv", "b.csv"]);
 
-        let keeping = keeping_data(&lineage, &listed, None);
+        let (keeping, _) = keeping_data(&lineage, &listed, None);
 
         assert_eq!(keeping.total, listed.len());
         assert!(!keeping.remote_only.contains(&"z.csv".to_string()));
@@ -1428,17 +1491,136 @@ mod tests {
 
     #[test]
     fn the_scope_is_the_one_the_package_stores() {
-        let listed = keys(&["a.csv"]);
+        let listed = sizes(&["a.csv"]);
         let mut lineage = lineage_tracking(&[]);
         assert_eq!(
-            keeping_data(&lineage, &listed, None).scope,
+            keeping_data(&lineage, &listed, None).0.scope,
             KeepingScope::IndividualFiles
         );
 
         lineage.sync_scope = quilt::lineage::SyncScope::EntirePackage;
         assert_eq!(
-            keeping_data(&lineage, &listed, None).scope,
+            keeping_data(&lineage, &listed, None).0.scope,
             KeepingScope::EntirePackage
+        );
+    }
+
+    fn removed(path: &str) -> quilt::lineage::ChangeSet {
+        quilt::lineage::ChangeSet::from([(
+            PathBuf::from(path),
+            quilt::lineage::Change::Removed(quilt::manifest::ManifestRow::default()),
+        )])
+    }
+
+    fn sized(rows: &[(&str, u64)]) -> BTreeMap<PathBuf, u64> {
+        rows.iter()
+            .map(|(path, size)| (PathBuf::from(path), *size))
+            .collect()
+    }
+
+    /// The total is every listed row's size; downloaded leaves out the backlog's.
+    #[test]
+    fn the_size_is_the_rows_and_the_backlog_is_left_out_of_downloaded() {
+        let lineage = lineage_tracking(&["a.csv"]);
+        let changes = modified("b.csv");
+
+        let (keeping, size) = keeping_data(
+            &lineage,
+            &sized(&[
+                ("a.csv", 1),
+                ("b.csv", 20),
+                ("c.csv", 300),
+                ("d.csv", 4_000),
+            ]),
+            Some(&changes),
+        );
+
+        assert_eq!(keeping.remote_only, vec!["c.csv", "d.csv"]);
+        assert_eq!(
+            size,
+            Some(PackageSize {
+                total: 4_321,
+                downloaded: 21,
+            })
+        );
+    }
+
+    /// A file deleted here is a local change waiting to commit, not a file
+    /// Download fetches: it counts as downloaded, and Keeping names it.
+    #[test]
+    fn a_file_deleted_here_counts_as_downloaded_and_is_named() {
+        let lineage = lineage_tracking(&["a.csv", "b.csv"]);
+        let changes = removed("b.csv");
+
+        let (keeping, size) = keeping_data(
+            &lineage,
+            &sized(&[("a.csv", 1), ("b.csv", 20), ("c.csv", 300)]),
+            Some(&changes),
+        );
+
+        assert_eq!(keeping.remote_only, vec!["c.csv"]);
+        assert_eq!(keeping.deleted_here, 1);
+        assert_eq!(
+            size,
+            Some(PackageSize {
+                total: 321,
+                downloaded: 21,
+            })
+        );
+    }
+
+    /// Deleted is the status's own count, as the file pane counts it: a
+    /// modification is not one, and without a status none is known.
+    #[test]
+    fn deleted_here_is_every_removal_the_status_reports() {
+        let lineage = lineage_tracking(&["a.csv", "b.csv"]);
+        let listed = sized(&[("a.csv", 1), ("b.csv", 1)]);
+        let mut changes = removed("a.csv");
+        changes.extend(removed("b.csv"));
+        changes.extend(modified("c.csv"));
+
+        let (keeping, _) = keeping_data(&lineage, &listed, Some(&changes));
+        assert_eq!(keeping.deleted_here, 2);
+        let (keeping, _) = keeping_data(&lineage, &listed, Some(&modified("a.csv")));
+        assert_eq!(keeping.deleted_here, 0);
+        let (keeping, _) = keeping_data(&lineage, &listed, None);
+        assert_eq!(keeping.deleted_here, 0);
+    }
+
+    #[test]
+    fn an_empty_revision_weighs_nothing() {
+        let (keeping, size) = keeping_data(&lineage_tracking(&[]), &BTreeMap::new(), None);
+
+        assert_eq!(keeping.total, 0);
+        assert_eq!(
+            size,
+            Some(PackageSize {
+                total: 0,
+                downloaded: 0,
+            })
+        );
+    }
+
+    /// Sizes that do not add up in a `u64` are not read, rather than wrapped
+    /// or saturated into a figure nobody has: the count still crosses.
+    #[test]
+    fn a_size_past_u64_is_not_read_and_the_count_still_is() {
+        let (keeping, size) = keeping_data(
+            &lineage_tracking(&[]),
+            &sized(&[("a.csv", u64::MAX), ("b.csv", 1)]),
+            None,
+        );
+
+        assert_eq!(size, None);
+        assert_eq!(keeping.total, 2);
+        assert_eq!(keeping.remote_only, vec!["a.csv", "b.csv"]);
+    }
+
+    #[test]
+    fn package_size_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::to_string(&size_fixture()).unwrap(),
+            r#"{"total":3400000,"downloaded":1900000}"#,
         );
     }
 
@@ -1455,7 +1637,7 @@ mod tests {
             &lineage,
             Some(revision("Pending commit")),
             1,
-            keeping_fixture(),
+            (keeping_fixture(), Some(size_fixture())),
             None,
         )
         .unwrap();
@@ -1471,6 +1653,7 @@ mod tests {
                 bucket: Some("test".to_string()),
                 revision_count: 1,
                 keeping: keeping_fixture(),
+                size: Some(size_fixture()),
                 resolve: None,
             }
         );
@@ -1484,7 +1667,7 @@ mod tests {
             &quilt::lineage::PackageLineage::default(),
             Some(revision("Local commit")),
             1,
-            keeping_fixture(),
+            (keeping_fixture(), Some(size_fixture())),
             None,
         )
         .unwrap();
@@ -1504,7 +1687,7 @@ mod tests {
             &lineage,
             Some(revision("Initial upload")),
             1,
-            keeping_fixture(),
+            (keeping_fixture(), Some(size_fixture())),
             None,
         )
         .unwrap();
@@ -1520,7 +1703,7 @@ mod tests {
             &quilt::lineage::PackageLineage::default(),
             None,
             1,
-            keeping_fixture(),
+            (keeping_fixture(), Some(size_fixture())),
             None,
         )
         .unwrap_err();
@@ -1561,6 +1744,25 @@ mod tests {
             .keeping;
 
         assert_eq!(keeping.remote_only, vec!["a.csv", "c.csv"]);
+    }
+
+    /// From the rows Keeping already read: three of 7 bytes, none here.
+    #[tokio::test]
+    async fn the_page_read_carries_the_package_size() {
+        let status =
+            quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, removed("b.csv"));
+
+        let context = page(&RoleCache::default(), Ok(status), None).await.context;
+
+        assert_eq!(context.keeping.remote_only, vec!["a.csv", "c.csv"]);
+        assert_eq!(context.keeping.deleted_here, 1);
+        assert_eq!(
+            context.size,
+            Some(PackageSize {
+                total: 21,
+                downloaded: 7,
+            })
+        );
     }
 
     /// No role expectation: without a host, `RoleCache::get` is never reached.
@@ -1644,8 +1846,8 @@ mod tests {
             .returning(|_, _| Ok(Some(revision("Initial upload"))));
         m.expect_get_installed_package_revision_count()
             .returning(|_| Ok(1));
-        m.expect_get_installed_package_keys()
-            .returning(|_, _| Ok(keys(&["a.csv"])));
+        m.expect_get_installed_package_sizes()
+            .returning(|_, _| Ok(sizes(&["a.csv"])));
         match status {
             Some(status) => {
                 m.expect_get_installed_package_status()

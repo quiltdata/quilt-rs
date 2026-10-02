@@ -23,9 +23,14 @@
 
 ### Added
 
+- **New design preview**: the package page shows the package's size beside the file count, for example "54 of 56 files · 1.9 MB of 3.4 MB downloaded", and the **Download** buttons say how much they fetch, for example "Download 2 files · 1.5 MB" (<https://github.com/quiltdata/quilt-rs/pull/1046>)
 - **New design preview**: *Revisions you have* on the package page removes old revisions. Each one that can go says how much space removing it frees and has a trash button, and *Remove all N unused* removes them all; both ask first. The current revision, the latest and base ones, revisions not pushed yet and revisions never published are kept, each saying why. While it runs the top bar says so, and a notification reports what it freed, for example "Removed 4 old revisions of user/plate-07 · freed 6.9 MB" (<https://github.com/quiltdata/quilt-rs/pull/1043>)
 - **Settings → General → Free up space** deletes the downloaded files no installed package uses any more, cached package listings and leftovers of interrupted downloads, and says how much it freed, for example "Freed 630.2 kB: 6 objects, 2 cached manifests". It stops without deleting anything while a package is busy (<https://github.com/quiltdata/quilt-rs/pull/1030>)
 - **New design preview**: **Remove**'s confirmation has a checkbox, **Also delete downloaded files from disk**, checked by default. It deletes the package's downloaded files that no other installed package uses, and a notification says how much it freed, for example "Freed 630.2 kB: 6 objects". The confirmation now says commits that were never pushed are lost too, instead of saying committed content is kept (<https://github.com/quiltdata/quilt-rs/pull/1040>)
+
+### Changed
+
+- File sizes show one decimal everywhere, for example "44.0 kB" instead of "44.00 kB" (<https://github.com/quiltdata/quilt-rs/pull/1046>)
 
 ### quilt-rs
 

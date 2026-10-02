@@ -1337,7 +1337,12 @@ mod tests {
                     scope: commands::KeepingScope::IndividualFiles,
                     total: 1,
                     remote_only: Vec::new(),
+                    deleted_here: 0,
                 },
+                size: Some(commands::PackageSize {
+                    total: 7,
+                    downloaded: 7,
+                }),
                 resolve: None,
             },
             sync_paused: None,
@@ -1929,7 +1934,8 @@ mod tests {
             .expect("the option's radio")
             .unchecked_into();
         assert!(pick.checked(), "the stored scope is chosen");
-        element_saying(&el, "All files are downloaded.");
+        // The page read's size reaches the caption.
+        element_saying(&el, "All files are downloaded · 7\u{a0}B.");
         let buttons = el.query_selector_all("button").unwrap();
         let download = (0..buttons.length())
             .filter_map(|i| buttons.item(i))

@@ -430,8 +430,23 @@ pub struct PackageContextData {
     /// is `get_revision_history`, fetched on open.
     pub revision_count: usize,
     pub keeping: KeepingData,
+    /// The current revision's bytes; `None` when they cannot be read, and
+    /// Keeping's caption then gives the count alone.
+    pub size: Option<PackageSize>,
     /// The resolve comparison; `Some` only while the package is diverged.
     pub resolve: Option<ResolveData>,
+}
+
+/// The current revision's size, from its manifest rows: logical bytes, not
+/// disk usage. Mirrors `src-tauri/src/commands/package_page.rs`; the serde
+/// attributes MUST match.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSize {
+    /// Every listed file.
+    pub total: u64,
+    /// Every listed file outside the backlog, a file deleted here included.
+    pub downloaded: u64,
 }
 
 /// What each resolve choice would cost, or why that cannot be read.
@@ -474,6 +489,9 @@ pub struct KeepingData {
     pub total: usize,
     /// The backlog, and exactly what `Download N files` installs.
     pub remote_only: Vec<String>,
+    /// Files deleted here, which count as downloaded and the caption names;
+    /// 0 when the status could not be read.
+    pub deleted_here: usize,
 }
 
 /// The current revision's user-facing facts.
@@ -1795,7 +1813,7 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
-        KeptReason, PackageContextData, PackageItemData, PullOutcome, ResolveData,
+        KeptReason, PackageContextData, PackageItemData, PackageSize, PullOutcome, ResolveData,
         RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use wasm_bindgen_test::*;
@@ -1848,7 +1866,7 @@ mod tests {
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"]},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000},"resolve":null}"#,
         )
         .unwrap();
 
@@ -1863,7 +1881,27 @@ mod tests {
         assert_eq!(context.keeping.scope, KeepingScope::EntirePackage);
         assert_eq!(context.keeping.total, 56);
         assert_eq!(context.keeping.remote_only, ["plate/b.csv", "plate/c.csv"]);
+        assert_eq!(context.keeping.deleted_here, 1);
+        assert_eq!(
+            context.size,
+            Some(PackageSize {
+                total: 3_400_000,
+                downloaded: 1_900_000,
+            })
+        );
         assert_eq!(context.resolve, None);
+    }
+
+    /// A size the backend could not read crosses as `null`, and the caption
+    /// then gives the count alone.
+    #[test]
+    fn an_unread_package_size_crosses_as_null() {
+        let context = serde_json::from_str::<PackageContextData>(
+            r#"{"revision":{"hash":"abc123","message":null,"obtainedAt":0.0},"bucket":null,"revisionCount":1,"keeping":{"scope":"individualFiles","total":0,"remoteOnly":[],"deletedHere":0},"size":null,"resolve":null}"#,
+        )
+        .unwrap();
+
+        assert_eq!(context.size, None);
     }
 
     /// Anchored identically in the backend's

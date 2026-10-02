@@ -6,6 +6,11 @@
 //! only the whole package with files outstanding offers the counted download
 //! (`scope-and-backlog`). Choosing a scope stores it and moves no bytes; the
 //! download installs exactly the paths the page read listed.
+//!
+//! The size joins the count: the count says how much of the package is here,
+//! and the size says it in bytes. A file deleted here counts as downloaded — it
+//! is a local change waiting to commit, and Download would not fetch it — so
+//! the caption names those files rather than leave the count to explain them.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -13,8 +18,9 @@ use std::pin::Pin;
 use leptos::prelude::*;
 
 use super::{Wiring, run};
-use crate::commands::{self, KeepingScope};
+use crate::commands::{self, KeepingScope, PackageSize};
 use crate::kit::{Button, Choice, ChoiceGroup, PaneSection};
+use crate::util::{format_size, thousands};
 
 type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 
@@ -66,6 +72,9 @@ fn choice_value(scope: KeepingScope) -> &'static str {
 pub(super) fn KeepingSection(
     #[prop(into)] namespace: String,
     data: commands::KeepingData,
+    /// The revision's bytes, for the caption and the download; `None` leaves
+    /// them to the counts.
+    size: Option<PackageSize>,
     w: Wiring,
     commands: KeepingCommands,
 ) -> impl IntoView {
@@ -73,6 +82,7 @@ pub(super) fn KeepingSection(
         scope,
         total,
         remote_only,
+        deleted_here,
     } = data;
     let outstanding = remote_only.len();
     // What the backend holds: the payload's scope until a store succeeds, since
@@ -117,7 +127,7 @@ pub(super) fn KeepingSection(
         });
     }
 
-    let download = download_label(scope, outstanding).map(|label| {
+    let download = download_label(scope, outstanding, size).map(|label| {
         let press = move |_| {
             // The read's list, not what is outstanding by the time of the press.
             let (ns, paths) = (namespace.clone(), remote_only.clone());
@@ -149,7 +159,7 @@ pub(super) fn KeepingSection(
             // Sealed by the page's signal, so a section rebuilt mid-command is drawn sealed.
             <ChoiceGroup
                 label="Keeping"
-                caption=caption(scope, total, outstanding)
+                caption=caption(scope, Held { total, outstanding, deleted_here, size })
                 options=vec![
                     Choice::new("pick", "Files I pick"),
                     Choice::new("all", "The whole package"),
@@ -162,16 +172,20 @@ pub(super) fn KeepingSection(
     }
 }
 
+/// What the caption counts: the revision's files, those not here, those
+/// deleted here, and their bytes when they could be read.
+#[derive(Clone, Copy)]
+pub(super) struct Held {
+    pub total: usize,
+    pub outstanding: usize,
+    pub deleted_here: usize,
+    pub size: Option<PackageSize>,
+}
+
 /// What the choice means now: the present count, and — only under the whole
 /// package — the promise about files that do not exist yet.
-pub(super) fn caption(scope: KeepingScope, total: usize, outstanding: usize) -> String {
-    let counted = if outstanding == 0 {
-        "All files are downloaded".to_string()
-    } else {
-        // The read guarantees `outstanding <= total`; a wrong count beats a panic.
-        let here = total.saturating_sub(outstanding);
-        format!("{here} of {total} downloaded")
-    };
+pub(super) fn caption(scope: KeepingScope, held: Held) -> String {
+    let counted = counted(held);
     match scope {
         KeepingScope::EntirePackage => {
             format!("{counted} — files added later are downloaded too.")
@@ -180,21 +194,74 @@ pub(super) fn caption(scope: KeepingScope, total: usize, outstanding: usize) -> 
     }
 }
 
-/// `Download N files`, or `None`: only the whole package with a backlog offers
-/// it (`scope-and-backlog`).
-pub(super) fn download_label(scope: KeepingScope, outstanding: usize) -> Option<String> {
-    match (scope, outstanding) {
-        (KeepingScope::IndividualFiles, _) | (KeepingScope::EntirePackage, 0) => None,
-        (KeepingScope::EntirePackage, 1) => Some("Download 1 file".to_string()),
-        (KeepingScope::EntirePackage, n) => Some(format!("Download {n} files")),
+/// The count, with the size joined to it, and the files deleted here named.
+/// An empty revision says so: "All files are downloaded" is true of nothing.
+/// A size that cannot be read says nothing, not a dash: the count is still
+/// true.
+fn counted(held: Held) -> String {
+    let Held {
+        total,
+        outstanding,
+        deleted_here,
+        size,
+    } = held;
+    if total == 0 {
+        return "This revision has no files".to_string();
     }
+    // The read guarantees `outstanding <= total`; a wrong count beats a panic.
+    let here = total.saturating_sub(outstanding);
+    let counted = match size {
+        Some(size) if outstanding == 0 => {
+            format!("All files are downloaded · {}", format_size(size.total))
+        }
+        Some(size) if here == 0 => {
+            format!("No files are downloaded · {}", format_size(size.total))
+        }
+        Some(size) => format!(
+            "{} of {} files · {} of {} downloaded",
+            thousands(here),
+            thousands(total),
+            format_size(size.downloaded),
+            format_size(size.total),
+        ),
+        None if outstanding == 0 => "All files are downloaded".to_string(),
+        None if here == 0 => "No files are downloaded".to_string(),
+        None => format!("{} of {} downloaded", thousands(here), thousands(total)),
+    };
+    if deleted_here == 0 {
+        counted
+    } else {
+        format!("{counted} · {} deleted here", thousands(deleted_here))
+    }
+}
+
+/// `Download N files · 1.5 MB`, or `None`: only the whole package with a
+/// backlog offers it (`scope-and-backlog`). The bytes are the backlog's, total
+/// less downloaded, so a size that cannot be read leaves the count alone.
+pub(super) fn download_label(
+    scope: KeepingScope,
+    outstanding: usize,
+    size: Option<PackageSize>,
+) -> Option<String> {
+    let files = match (scope, outstanding) {
+        (KeepingScope::IndividualFiles, _) | (KeepingScope::EntirePackage, 0) => return None,
+        (KeepingScope::EntirePackage, 1) => "Download 1 file".to_string(),
+        (KeepingScope::EntirePackage, n) => format!("Download {} files", thousands(n)),
+    };
+    Some(match size {
+        Some(size) => format!(
+            "{files} · {}",
+            format_size(size.total.saturating_sub(size.downloaded))
+        ),
+        None => files,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, KeepingCommands, KeepingSection, caption, download_label};
-    use crate::commands::KeepingData;
+    use super::{Answer, Held, KeepingCommands, KeepingSection, caption, download_label};
     use crate::commands::KeepingScope::{self, EntirePackage, IndividualFiles};
+    use crate::commands::{KeepingData, PackageSize};
     use crate::kit::BannerVariant;
     use crate::pages::installed_package_v2::{Outcome, Wiring};
     use crate::test_support::{element_saying, mount, sleep_ms};
@@ -203,14 +270,145 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    #[test]
-    fn the_caption_counts_what_is_here() {
-        assert_eq!(caption(IndividualFiles, 56, 2), "54 of 56 downloaded.");
+    const MB: u64 = 1_000_000;
+
+    /// 56 files and 3.4 MB, of which 1.9 MB is here when two files are not.
+    fn plate(outstanding: usize) -> Held {
+        Held {
+            total: 56,
+            outstanding,
+            deleted_here: 0,
+            size: Some(PackageSize {
+                total: 34 * MB / 10,
+                downloaded: if outstanding == 0 {
+                    34 * MB / 10
+                } else {
+                    19 * MB / 10
+                },
+            }),
+        }
+    }
+
+    /// [`plate`] whose rows' sizes could not be read.
+    fn unread(outstanding: usize) -> Held {
+        Held {
+            size: None,
+            ..plate(outstanding)
+        }
+    }
+
+    /// The words as read, with the no-break spaces shown as spaces.
+    fn plain(words: &str) -> String {
+        words.replace('\u{a0}', " ")
     }
 
     #[test]
-    fn a_complete_copy_says_so() {
-        assert_eq!(caption(IndividualFiles, 56, 0), "All files are downloaded.");
+    fn the_caption_counts_what_is_here_with_its_size() {
+        assert_eq!(
+            plain(&caption(IndividualFiles, plate(2))),
+            "54 of 56 files · 1.9 MB of 3.4 MB downloaded."
+        );
+    }
+
+    #[test]
+    fn a_complete_copy_says_so_and_its_size() {
+        assert_eq!(
+            plain(&caption(IndividualFiles, plate(0))),
+            "All files are downloaded · 3.4 MB."
+        );
+    }
+
+    #[test]
+    fn a_copy_with_no_file_here_says_so() {
+        assert_eq!(
+            plain(&caption(IndividualFiles, plate(56))),
+            "No files are downloaded · 3.4 MB."
+        );
+        assert_eq!(
+            caption(IndividualFiles, unread(56)),
+            "No files are downloaded."
+        );
+    }
+
+    /// Not "All files are downloaded", which is true of nothing.
+    #[test]
+    fn an_empty_revision_says_it_has_no_files() {
+        let empty = Held {
+            total: 0,
+            outstanding: 0,
+            deleted_here: 0,
+            size: Some(PackageSize {
+                total: 0,
+                downloaded: 0,
+            }),
+        };
+        assert_eq!(
+            caption(IndividualFiles, empty),
+            "This revision has no files."
+        );
+        assert_eq!(
+            caption(
+                IndividualFiles,
+                Held {
+                    size: None,
+                    ..empty
+                }
+            ),
+            "This revision has no files."
+        );
+    }
+
+    #[test]
+    fn a_huge_package_groups_its_counts() {
+        let huge = Held {
+            total: 140_000,
+            outstanding: 127_600,
+            deleted_here: 0,
+            size: Some(PackageSize {
+                total: 1_200_000 * MB,
+                downloaded: 86_300 * MB,
+            }),
+        };
+        assert_eq!(
+            plain(&caption(IndividualFiles, huge)),
+            "12,400 of 140,000 files · 86.3 GB of 1.2 TB downloaded."
+        );
+        assert_eq!(
+            caption(IndividualFiles, Held { size: None, ..huge }),
+            "12,400 of 140,000 downloaded."
+        );
+    }
+
+    /// A size that cannot be read leaves the count alone.
+    #[test]
+    fn an_unread_size_leaves_the_count() {
+        assert_eq!(caption(IndividualFiles, unread(2)), "54 of 56 downloaded.");
+        assert_eq!(
+            caption(IndividualFiles, unread(0)),
+            "All files are downloaded."
+        );
+    }
+
+    /// A file deleted here counts as downloaded, so the caption names it.
+    #[test]
+    fn files_deleted_here_are_named() {
+        let deleted = |held: Held, n| Held {
+            deleted_here: n,
+            ..held
+        };
+        assert_eq!(
+            plain(&caption(IndividualFiles, deleted(plate(2), 1))),
+            "54 of 56 files · 1.9 MB of 3.4 MB downloaded · 1 deleted here."
+        );
+        assert_eq!(
+            plain(&caption(EntirePackage, deleted(plate(0), 1_200))),
+            "All files are downloaded · 3.4 MB · 1,200 deleted here — files added later are \
+             downloaded too."
+        );
+        assert_eq!(
+            caption(IndividualFiles, deleted(unread(2), 1)),
+            "54 of 56 downloaded · 1 deleted here."
+        );
     }
 
     /// Under individual-file scope the next revision can add a file and
@@ -219,15 +417,15 @@ mod tests {
     #[test]
     fn only_the_whole_package_promises_later_files() {
         assert_eq!(
-            caption(EntirePackage, 56, 2),
-            "54 of 56 downloaded — files added later are downloaded too."
+            plain(&caption(EntirePackage, plate(2))),
+            "54 of 56 files · 1.9 MB of 3.4 MB downloaded — files added later are downloaded too."
         );
         assert_eq!(
-            caption(EntirePackage, 56, 0),
-            "All files are downloaded — files added later are downloaded too."
+            plain(&caption(EntirePackage, plate(0))),
+            "All files are downloaded · 3.4 MB — files added later are downloaded too."
         );
         for outstanding in [2, 0] {
-            let words = caption(IndividualFiles, 56, outstanding);
+            let words = caption(IndividualFiles, plate(outstanding));
             for word in ["later", "will"] {
                 assert!(!words.contains(word), "{words:?} should not mention {word}");
             }
@@ -235,25 +433,46 @@ mod tests {
     }
 
     #[test]
-    fn the_download_is_counted() {
+    fn the_download_is_counted_in_files_and_bytes() {
+        let size = plate(2).size;
         assert_eq!(
-            download_label(EntirePackage, 1).as_deref(),
+            download_label(EntirePackage, 2, size)
+                .map(|w| plain(&w))
+                .as_deref(),
+            Some("Download 2 files · 1.5 MB")
+        );
+        assert_eq!(
+            download_label(EntirePackage, 1, size)
+                .map(|w| plain(&w))
+                .as_deref(),
+            Some("Download 1 file · 1.5 MB")
+        );
+        assert_eq!(
+            download_label(EntirePackage, 127_600, None).as_deref(),
+            Some("Download 127,600 files")
+        );
+    }
+
+    #[test]
+    fn an_unread_size_leaves_the_download_counted_in_files() {
+        assert_eq!(
+            download_label(EntirePackage, 1, None).as_deref(),
             Some("Download 1 file")
         );
         assert_eq!(
-            download_label(EntirePackage, 7).as_deref(),
+            download_label(EntirePackage, 7, None).as_deref(),
             Some("Download 7 files")
         );
     }
 
     #[test]
     fn nothing_to_download_offers_nothing() {
-        assert_eq!(download_label(EntirePackage, 0), None);
+        assert_eq!(download_label(EntirePackage, 0, plate(0).size), None);
     }
 
     #[test]
     fn files_i_pick_never_carries_the_whole_backlog() {
-        assert_eq!(download_label(IndividualFiles, 7), None);
+        assert_eq!(download_label(IndividualFiles, 7, plate(2).size), None);
     }
 
     fn data(scope: KeepingScope, total: usize, outstanding: &[&str]) -> KeepingData {
@@ -261,6 +480,7 @@ mod tests {
             scope,
             total,
             remote_only: outstanding.iter().map(ToString::to_string).collect(),
+            deleted_here: 0,
         }
     }
 
@@ -330,6 +550,16 @@ mod tests {
     /// The section answering from `commands`, with `RELOADS` counting each
     /// re-read it asks for.
     fn pressable(data: KeepingData, w: Wiring, commands: KeepingCommands) -> web_sys::Element {
+        mounted(data, None, w, commands)
+    }
+
+    /// [`pressable`], with the page read's size.
+    fn mounted(
+        data: KeepingData,
+        size: Option<PackageSize>,
+        w: Wiring,
+        commands: KeepingCommands,
+    ) -> web_sys::Element {
         mount(move || {
             Effect::new(move |seen: Option<()>| {
                 w.reload.track();
@@ -342,6 +572,7 @@ mod tests {
                 <KeepingSection
                     namespace="team/dataset"
                     data=data
+                    size=size
                     w=w
                     commands=commands
                 />
@@ -424,6 +655,30 @@ mod tests {
             "54 of 56 downloaded — files added later are downloaded too.",
         );
         let button = element_saying(&el, "Download 2 files")
+            .closest("button")
+            .unwrap();
+        assert!(button.is_some(), "the count is a button");
+    }
+
+    /// The page read's size reaches the caption and the button, and a file
+    /// deleted here is named.
+    #[wasm_bindgen_test]
+    fn the_size_joins_the_count_and_the_download() {
+        let el = mounted(
+            KeepingData {
+                deleted_here: 1,
+                ..data(EntirePackage, 56, &["plate/b.csv", "plate/c.csv"])
+            },
+            plate(2).size,
+            Wiring::new(),
+            idle_commands(),
+        );
+        element_saying(
+            &el,
+            "54 of 56 files · 1.9\u{a0}MB of 3.4\u{a0}MB downloaded · 1 deleted here — files \
+             added later are downloaded too.",
+        );
+        let button = element_saying(&el, "Download 2 files · 1.5\u{a0}MB")
             .closest("button")
             .unwrap();
         assert!(button.is_some(), "the count is a button");

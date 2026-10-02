@@ -54,6 +54,8 @@ use crate::kit::LoadFailure;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
 use crate::kit::SkeletonBox;
+use quilt_sync_ui::util::format_size;
+use quilt_sync_ui::util::thousands;
 
 /// The design's fixed pane width. Written here rather than taken from a token
 /// because it is this page's bet, not the system's: the file list grows and the
@@ -281,47 +283,6 @@ const UNREAD: Held = Held {
     ..plate(2)
 };
 
-/// A logical size, in decimal units and one decimal: the revisions surface's
-/// "1.2 MB", carried up to TB and down to bytes. The one formatter for the
-/// package's sizes, the Download buttons' included. The space is a no-break
-/// one: at 280px the caption wraps, and "1.2" ending a line with "TB" starting
-/// the next reads as two figures.
-pub(crate) fn bytes(n: u64) -> String {
-    const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
-    if n < 1000 {
-        return format!("{n}\u{a0}B");
-    }
-    // In u128, so `n * 10 + scale / 2` cannot overflow for any u64: the
-    // largest is under 2^68.
-    let n = u128::from(n);
-    let mut scale = 1000u128;
-    let mut tenths = 0;
-    let mut unit = UNITS[0];
-    for next in UNITS {
-        unit = next;
-        tenths = (n * 10 + scale / 2) / scale;
-        // Rounding up into the next unit's "1000.0" moves on to that unit.
-        if tenths < 10_000 {
-            break;
-        }
-        scale *= 1000;
-    }
-    format!("{}.{}\u{a0}{unit}", tenths / 10, tenths % 10)
-}
-
-/// A file count, grouped in thousands: "140,000" is read, "140000" is counted.
-pub(crate) fn count(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, digit) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
-}
-
 /// The count, with the size joined to it: the count already answers *how much
 /// of this package is here*, and the size is the same question in bytes. A
 /// size that cannot be read says nothing, not a dash: the count is still true.
@@ -332,20 +293,24 @@ fn counted(held: Held) -> String {
     match held.size {
         Size::Known { .. } if held.files == 0 => "This revision has no files".to_string(),
         Size::Known { total, .. } if held.pending == 0 => {
-            format!("All files are downloaded · {}", bytes(total))
+            format!("All files are downloaded · {}", format_size(total))
         }
         Size::Known { total, .. } if present == 0 => {
-            format!("No files are downloaded · {}", bytes(total))
+            format!("No files are downloaded · {}", format_size(total))
         }
         Size::Known { total, here } => format!(
             "{} of {} files · {} of {} downloaded",
-            count(present),
-            count(held.files),
-            bytes(here),
-            bytes(total),
+            thousands(present),
+            thousands(held.files),
+            format_size(here),
+            format_size(total),
         ),
         Size::Unread if held.pending == 0 => "All files are downloaded".to_string(),
-        Size::Unread => format!("{} of {} downloaded", count(present), count(held.files)),
+        Size::Unread => format!(
+            "{} of {} downloaded",
+            thousands(present),
+            thousands(held.files)
+        ),
     }
 }
 
@@ -368,15 +333,17 @@ fn consequence(scope: RwSignal<String>, held: Held) -> Signal<String> {
 
 /// The backlog action's words, `Download 2 files · 1.5 MB`: the bytes are the
 /// missing files', total less downloaded, so a size that cannot be read leaves
-/// the count alone. The real section takes them from the page read's size.
+/// the count alone. The live cell's section takes them from the page read's size.
 fn download_words(held: Held) -> String {
     let files = if held.pending == 1 {
         "Download 1 file".to_string()
     } else {
-        format!("Download {} files", count(held.pending))
+        format!("Download {} files", thousands(held.pending))
     };
     match held.size {
-        Size::Known { total, here } => format!("{files} · {}", bytes(total.saturating_sub(here))),
+        Size::Known { total, here } => {
+            format!("{files} · {}", format_size(total.saturating_sub(here)))
+        }
         Size::Unread => files,
     }
 }
@@ -613,7 +580,7 @@ pub fn ContextPaneScene() -> impl IntoView {
             <Cell
                 wide=true
                 label="live — current revision, bucket, history and keeping; the page's own \
-                       section, so no size until PackageContextData carries one"
+                       section, with the size PackageContextData carries and a file deleted here"
             >
                 <crate::pages::CurrentRevisionPane
                     data=crate::commands::PackageContextData {
@@ -628,7 +595,12 @@ pub fn ContextPaneScene() -> impl IntoView {
                             scope: crate::commands::KeepingScope::EntirePackage,
                             total: TOTAL,
                             remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
+                            deleted_here: 1,
                         },
+                        size: Some(crate::commands::PackageSize {
+                            total: 34 * MB / 10,
+                            downloaded: 19 * MB / 10,
+                        }),
                         resolve: None,
                     }
                     namespace=NAMESPACE
@@ -646,8 +618,8 @@ pub fn ContextPaneScene() -> impl IntoView {
             </Cell>
             <Cell
                 wide=true
-                label="the whole package, two files outstanding — the button says the bytes left; \
-                       the real section needs PackageContextData.size, total less downloaded"
+                label="the whole package, two files outstanding — the button says the bytes left, \
+                       total less downloaded"
             >
                 {pane(outstanding, revision_list(), whole, plate(2), false)}
             </Cell>
@@ -703,44 +675,11 @@ pub fn ContextPaneScene() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{EMPTY, HUGE, UNREAD, bytes, count, counted, download_words, on_page, plate};
+    use super::{EMPTY, HUGE, UNREAD, counted, download_words, on_page, plate};
 
     /// The words as read, with the no-break spaces shown as spaces.
     fn plain(words: &str) -> String {
         words.replace('\u{a0}', " ")
-    }
-
-    #[test]
-    fn sizes_take_one_decimal_in_the_largest_unit() {
-        assert_eq!(plain(&bytes(0)), "0 B");
-        assert_eq!(plain(&bytes(999)), "999 B");
-        assert_eq!(plain(&bytes(1_900_000)), "1.9 MB");
-        assert_eq!(plain(&bytes(999_960)), "1.0 MB");
-        assert_eq!(plain(&bytes(1_200_000_000_000)), "1.2 TB");
-    }
-
-    /// No u64 overflows the arithmetic, and rounding at each unit's edge moves
-    /// on to the next unit rather than reading "1000.0".
-    #[test]
-    fn sizes_hold_at_the_unit_edges_and_at_the_top() {
-        assert_eq!(plain(&bytes(1_000)), "1.0 kB");
-        assert_eq!(plain(&bytes(999_949)), "999.9 kB");
-        assert_eq!(plain(&bytes(999_950)), "1.0 MB");
-        assert_eq!(plain(&bytes(999_949_999)), "999.9 MB");
-        assert_eq!(plain(&bytes(999_950_000)), "1.0 GB");
-        assert_eq!(plain(&bytes(999_950_000_000)), "1.0 TB");
-        assert_eq!(plain(&bytes(999_949_999_999_999)), "999.9 TB");
-        // Past the last unit the figure grows instead of the unit.
-        assert_eq!(plain(&bytes(999_950_000_000_000)), "1000.0 TB");
-        assert_eq!(plain(&bytes(u64::MAX - 1)), "18446744.1 TB");
-        assert_eq!(plain(&bytes(u64::MAX)), "18446744.1 TB");
-    }
-
-    #[test]
-    fn counts_are_grouped() {
-        assert_eq!(count(56), "56");
-        assert_eq!(count(12_400), "12,400");
-        assert_eq!(count(140_000), "140,000");
     }
 
     #[test]

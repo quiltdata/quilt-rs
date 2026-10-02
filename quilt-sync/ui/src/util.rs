@@ -214,24 +214,45 @@ pub fn commit_no_session_hint(no_session: bool, no_session_host: Option<&str>) -
     })
 }
 
+/// A logical size, in decimal units: whole bytes under 1 kB, else one decimal
+/// in the largest unit that keeps the figure under 1000 — "999 B", "44.0 kB",
+/// "3.4 MB", up to "18.4 EB" for `u64::MAX`. The one formatter for sizes on
+/// every page. The space is a no-break one: in a narrow pane "1.2" ending a
+/// line with "TB" starting the next reads as two figures.
 pub fn format_size(bytes: u64) -> String {
-    const UNITS: &[&str] = &["B", "kB", "MB", "GB", "TB", "PB", "EB"];
-    if bytes == 0 {
-        return "0 B".to_string();
+    const UNITS: [&str; 6] = ["kB", "MB", "GB", "TB", "PB", "EB"];
+    if bytes < 1000 {
+        return format!("{bytes}\u{a0}B");
     }
-    // Display rounding only — the precision loss above ~9 PB is not user-visible.
-    #[allow(clippy::cast_precision_loss)]
-    let mut value = bytes as f64;
-    for unit in UNITS {
-        if value < 1000.0 {
-            if *unit == "B" {
-                return format!("{value} {unit}");
-            }
-            return format!("{value:.2} {unit}");
+    // In u128, so `n * 10 + scale / 2` cannot overflow for any u64: the
+    // largest is under 2^68. Integers, so no float rounds "999.95" either way.
+    let n = u128::from(bytes);
+    let mut scale = 1000u128;
+    let mut tenths = 0;
+    let mut unit = UNITS[0];
+    for next in UNITS {
+        unit = next;
+        tenths = (n * 10 + scale / 2) / scale;
+        // Rounding up into the next unit's "1000.0" moves on to that unit.
+        if tenths < 10_000 {
+            break;
         }
-        value /= 1000.0;
+        scale *= 1000;
     }
-    format!("{value:.2} EB")
+    format!("{}.{}\u{a0}{unit}", tenths / 10, tenths % 10)
+}
+
+/// A count, grouped in thousands: "140,000" is read, "140000" is counted.
+pub fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -382,24 +403,56 @@ mod tests {
         assert_eq!(commit_denied_hint(Some("")), None);
     }
 
-    #[test]
-    fn format_size_zero() {
-        assert_eq!(format_size(0), "0 B");
+    /// The words as read, with the no-break spaces shown as spaces.
+    fn plain(words: &str) -> String {
+        words.replace('\u{a0}', " ")
     }
 
     #[test]
-    fn format_size_bytes() {
-        assert_eq!(format_size(512), "512 B");
+    fn sizes_take_one_decimal_in_the_largest_unit() {
+        assert_eq!(plain(&format_size(0)), "0 B");
+        assert_eq!(plain(&format_size(512)), "512 B");
+        assert_eq!(plain(&format_size(999)), "999 B");
+        assert_eq!(plain(&format_size(1500)), "1.5 kB");
+        assert_eq!(plain(&format_size(44_000)), "44.0 kB");
+        assert_eq!(plain(&format_size(114_100)), "114.1 kB");
+        assert_eq!(plain(&format_size(1_900_000)), "1.9 MB");
+        assert_eq!(plain(&format_size(2_500_000)), "2.5 MB");
+        assert_eq!(plain(&format_size(999_960)), "1.0 MB");
+        assert_eq!(plain(&format_size(1_200_000_000_000)), "1.2 TB");
     }
 
     #[test]
-    fn format_size_kilobytes() {
-        assert_eq!(format_size(1500), "1.50 kB");
+    fn the_unit_is_held_to_its_number_by_a_no_break_space() {
+        assert_eq!(format_size(512), "512\u{a0}B");
+        assert_eq!(format_size(3_400_000), "3.4\u{a0}MB");
+    }
+
+    /// No u64 overflows the arithmetic, and rounding at each unit's edge moves
+    /// on to the next unit rather than reading "1000.0".
+    #[test]
+    fn sizes_hold_at_the_unit_edges_and_at_the_top() {
+        assert_eq!(plain(&format_size(1_000)), "1.0 kB");
+        assert_eq!(plain(&format_size(999_949)), "999.9 kB");
+        assert_eq!(plain(&format_size(999_950)), "1.0 MB");
+        assert_eq!(plain(&format_size(999_949_999)), "999.9 MB");
+        assert_eq!(plain(&format_size(999_950_000)), "1.0 GB");
+        assert_eq!(plain(&format_size(999_950_000_000)), "1.0 TB");
+        assert_eq!(plain(&format_size(999_949_999_999_999)), "999.9 TB");
+        assert_eq!(plain(&format_size(999_950_000_000_000)), "1.0 PB");
+        assert_eq!(plain(&format_size(999_950_000_000_000_000)), "1.0 EB");
+        assert_eq!(plain(&format_size(u64::MAX - 1)), "18.4 EB");
+        assert_eq!(plain(&format_size(u64::MAX)), "18.4 EB");
     }
 
     #[test]
-    fn format_size_megabytes() {
-        assert_eq!(format_size(2_500_000), "2.50 MB");
+    fn counts_carry_thousands_separators() {
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1_000), "1,000");
+        assert_eq!(thousands(4_312), "4,312");
+        assert_eq!(thousands(140_000), "140,000");
+        assert_eq!(thousands(1_234_567), "1,234,567");
     }
 }
 
