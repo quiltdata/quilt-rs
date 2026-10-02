@@ -7,6 +7,9 @@
 
 .root {
   display: inline-flex;
+  /* Hosts stack it in a flex column, whose stretch would make the whole row a
+   * click target. It is only as wide as its label. */
+  align-self: flex-start;
   align-items: center;
   gap: 2px;
   /* The chevron hangs into the gutter, so the label starts on the same x as the
