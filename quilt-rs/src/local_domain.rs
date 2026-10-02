@@ -252,10 +252,12 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         let prune = async {
             let lineage = self.lineage.read(&self.storage).await?;
             let pruned = flow::prune(&self.paths, &self.storage, &lineage, candidates).await?;
-            match (pruned, unread) {
-                // Some of its files could not be counted, so not all went.
-                (flow::Pruned::Freed(_), Some(err)) => Err(err),
-                (pruned, _) => Ok(pruned),
+            // Some of its files could not be counted, so not all went —
+            // whether or not a busy package kept the rest. The read error
+            // goes first: once the manifests are gone, no retry can show it.
+            match unread {
+                Some(err) => Err(err),
+                None => Ok(pruned),
             }
         };
         prune

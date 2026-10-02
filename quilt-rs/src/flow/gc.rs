@@ -905,6 +905,29 @@ mod tests {
         Ok(())
     }
 
+    /// An unreadable manifest of its own is reported even when another
+    /// package is busy: the busy package would otherwise hide it.
+    #[test(tokio::test)]
+    async fn its_own_unreadable_manifest_is_not_hidden_by_a_busy_package() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/busy", &[("a.txt", "a")]).await?;
+        create(&domain, "acme/broken", &[("b.txt", "bb")]).await?;
+        let namespace: Namespace = "acme/broken".try_into()?;
+        for entry in std::fs::read_dir(paths.installed_manifests_dir(&namespace))? {
+            std::fs::write(entry?.path(), "not a manifest")?;
+        }
+        let busy: Namespace = "acme/busy".try_into()?;
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+
+        let result = domain.uninstall_package_pruning(namespace).await;
+
+        assert!(
+            matches!(&result, Err(Error::PruneFailed(_, inner)) if !matches!(**inner, Error::PackageBusy(_))),
+            "{result:?}"
+        );
+        Ok(())
+    }
+
     /// No candidates: nothing to free, and no other package's lock is
     /// asked for, so a busy one does not read as files kept.
     #[test(tokio::test)]
