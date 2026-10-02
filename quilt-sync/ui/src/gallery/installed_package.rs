@@ -161,7 +161,6 @@ fn page(
                             <ContextPaneRegion
                                 resolving=resolving
                                 scope=scope
-                                pending=2
                                 exit=format!("#{name}")
                             />
                             <FilePaneRegion name=name ticked=ticked marked=resolving />
