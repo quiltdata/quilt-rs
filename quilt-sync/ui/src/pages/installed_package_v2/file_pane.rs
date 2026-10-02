@@ -74,7 +74,7 @@ use crate::kit::{
     GroupSelection, ListToolbar, LoadFailure, MenuAction, Naming, SearchInput, Segment,
     SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
 };
-use crate::util::format_size;
+use crate::util::{format_size, thousands};
 
 pub(crate) mod selection;
 
@@ -355,19 +355,6 @@ impl Place {
     }
 }
 
-/// `4312` as `4,312`.
-fn thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 /// The one line saying the list is not all of the package.
 ///
 /// It describes the loaded list, not the view: a facet or a search narrows the
@@ -393,6 +380,8 @@ fn CapNotice(total: usize, shown: usize) -> impl IntoView {
 #[derive(Clone, PartialEq, Eq)]
 struct Row {
     path: String,
+    /// The manifest's size, which the footer sums.
+    bytes: u64,
     size: String,
     place: Place,
     /// Matched by `.quiltignore`. Drawn only under [`Facet::Ignored`], where
@@ -406,6 +395,7 @@ impl From<EntryData> for Row {
     fn from(e: EntryData) -> Self {
         Self {
             place: Place::of(&e.status),
+            bytes: e.size,
             size: format_size(e.size),
             ignored: e.ignored_by.is_some(),
             ignored_by: e.ignored_by,
@@ -1024,38 +1014,53 @@ pub fn downloaded_words(files: usize) -> String {
 }
 
 /// The list box's last child while something is ticked: a right-aligned
-/// primary that counts what it will fetch, `Download 3`. The count is every
-/// loaded tick, hidden ones included, so it can exceed select-all's `1 of 1
-/// selected` under a search (owner, 2026-09-25).
+/// primary that says what it will fetch, `Download 3 · 114.1 kB`. The count
+/// and the bytes are every loaded tick, hidden ones included, so the count can
+/// exceed select-all's `1 of 1 selected` under a search (owner, 2026-09-25).
 ///
 /// Slides 4px and fades in over 160ms and has no exit (`.footer`, which copies
 /// the Banner's carve-out): unticking the last row grows the list back, and
 /// animating that would move rows under the pointer. Not the gallery's
 /// `g-fp-footer`: that is gallery chrome, which the app does not load.
-fn footer(picking: Picking, loaded: StoredValue<Vec<String>>) -> AnyView {
+fn footer(picking: Picking, rows: StoredValue<Vec<Row>>) -> AnyView {
     if picking.whole_package {
         return ().into_any();
     }
     let ticked = picking.ticked;
     // Every loaded row, not only the shown ones: a search hides a tick, it
     // does not undo it.
-    let chosen =
-        Memo::new(move |_| ticked.with(|t| loaded.with_value(|l| selection::ticked_among(t, l))));
+    let chosen = Memo::new(move |_| ticked.with(|t| rows.with_value(|rs| ticked_rows(t, rs))));
     view! {
-        <Show when=move || chosen.with(|c| !c.is_empty())>
+        <Show when=move || chosen.with(|(paths, _)| !paths.is_empty())>
             <div class=style::footer>
                 <Button
                     variant=ButtonVariant::Primary
                     loading=picking.downloading
                     disabled=picking.busy
-                    on_click=move |_| picking.on_download.run(chosen.get_untracked())
+                    on_click=move |_| picking.on_download.run(chosen.get_untracked().0)
                 >
-                    {move || format!("Download {}", thousands(chosen.with(Vec::len)))}
+                    {move || chosen.with(|(paths, bytes)| footer_words(paths.len(), *bytes))}
                 </Button>
             </div>
         </Show>
     }
     .into_any()
+}
+
+/// The ticked paths among the rows on offer, in path order, and their bytes:
+/// one pass over one set, so the count and the bytes cannot describe two.
+fn ticked_rows(ticked: &BTreeSet<String>, rows: &[Row]) -> (Vec<String>, u64) {
+    rows.iter()
+        .filter(|r| r.selectable() && ticked.contains(&r.path))
+        .fold((Vec::new(), 0), |(mut paths, bytes), r| {
+            paths.push(r.path.clone());
+            (paths, bytes.saturating_add(r.bytes))
+        })
+}
+
+/// The footer's `[Download]`, in files and bytes: `Download 3 · 114.1 kB`.
+fn footer_words(files: usize, bytes: u64) -> String {
+    format!("Download {} · {}", thousands(files), format_size(bytes))
 }
 
 /// The toolbar under the search row: select-all or the caption on the left,
@@ -1178,7 +1183,6 @@ fn ready(
     } = list;
     let loaded_count = entries.len();
     let rows: Vec<Row> = entries.into_iter().map(Row::from).collect();
-    let loaded = StoredValue::new(offered(&rows));
     let rows = StoredValue::new(rows);
     let drawing = Drawing {
         on_open,
@@ -1274,7 +1278,7 @@ fn ready(
                 <Card flush=true label="Files" fill=true>
                     {truncated.then(|| view! { <CapNotice total=total shown=loaded_count /> })}
                     {body}
-                    {footer(picking, loaded)}
+                    {footer(picking, rows)}
                 </Card>
             </div>
         </section>
@@ -1460,6 +1464,7 @@ mod facet_tests {
     fn shown_rows_takes_the_facet_and_the_search_together() {
         let row = |path: &str, status: &str| Row {
             path: path.to_string(),
+            bytes: 0,
             size: String::new(),
             place: Place::of(status),
             ignored: false,
@@ -2146,6 +2151,7 @@ mod pane_tests {
     fn only_a_missing_row_that_is_not_ignored_can_be_ticked() {
         let r = |place, ignored| Row {
             path: "a.csv".to_string(),
+            bytes: 0,
             size: String::new(),
             place,
             ignored,
@@ -2164,13 +2170,55 @@ mod pane_tests {
         }
     }
 
+    /// The footer says what the press fetches, in files and bytes.
     #[test]
-    fn counts_carry_thousands_separators() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(999), "999");
-        assert_eq!(thousands(1_000), "1,000");
-        assert_eq!(thousands(4_312), "4,312");
-        assert_eq!(thousands(1_234_567), "1,234,567");
+    fn the_footer_says_its_files_and_bytes() {
+        let plain = |words: String| words.replace('\u{a0}', " ");
+        assert_eq!(plain(footer_words(3, 114_100)), "Download 3 · 114.1 kB");
+        assert_eq!(plain(footer_words(2, 0)), "Download 2 · 0 B");
+        assert_eq!(
+            plain(footer_words(1_000, 86_300_000_000)),
+            "Download 1,000 · 86.3 GB"
+        );
+    }
+
+    /// The bytes are summed over exactly the rows the count counts: ticked
+    /// and on offer. A tick on a row that cannot be ticked any more — it was
+    /// downloaded — drops out of both.
+    #[test]
+    fn the_footers_count_and_bytes_are_one_set() {
+        let row = |path: &str, status: &str, bytes| Row {
+            bytes,
+            ..Row::from(EntryData {
+                filename: path.to_string(),
+                size: bytes,
+                status: status.to_string(),
+                junky_pattern: None,
+                ignored_by: None,
+                namespace: "team/dataset".try_into().unwrap(),
+            })
+        };
+        let rows = [
+            row("a.csv", "remote", 1),
+            row("b.csv", "remote", 20),
+            row("c.csv", "pristine", 300),
+            row("d.csv", "remote", 4_000),
+        ];
+        let ticked: BTreeSet<String> = ["a.csv", "c.csv", "d.csv", "gone.csv"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert_eq!(
+            ticked_rows(&ticked, &rows),
+            (vec!["a.csv".to_string(), "d.csv".to_string()], 4_001)
+        );
+        let huge = [row("a.csv", "remote", u64::MAX), row("d.csv", "remote", 1)];
+        assert_eq!(
+            ticked_rows(&ticked, &huge).1,
+            u64::MAX,
+            "saturates, never wraps"
+        );
     }
 
     /// The flag decides, never the length: a list of two that the backend says
@@ -2461,19 +2509,20 @@ mod pane_tests {
         // The list follows the search once typing settles.
         crate::test_support::sleep_ms(40).await;
         element_saying(&el, "Select all 1 shown");
-        // A search hides a tick without undoing it: `[Download]` counts both.
+        // A search hides a tick without undoing it: `[Download]` counts both,
+        // and sums both rows' bytes.
         picking
             .ticked
             .set(["remote-a.csv".to_string(), "remote-b.csv".to_string()].into());
         leptos::task::tick().await;
         element_saying(&el, "1 of 1 selected");
-        button_saying(&el, "Download 2");
+        button_saying(&el, "Download 2 · 8.2\u{a0}kB");
         search.set(String::new());
         facet.set(Facet::Ignored.key().to_string());
         leptos::task::tick().await;
         assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
         assert!(!text(&el).contains("Select all"));
-        button_saying(&el, "Download 2");
+        button_saying(&el, "Download 2 · 8.2\u{a0}kB");
     }
 
     /// Only a not-downloaded, non-ignored row carries a box — here two of
@@ -2573,7 +2622,8 @@ mod pane_tests {
         let button = download(&el).expect("the footer's Download");
         assert_eq!(
             button.text_content().unwrap_or_default().trim(),
-            "Download 2"
+            "Download 2 · 8.2\u{a0}kB",
+            "two rows of 4,100 bytes"
         );
         button.click();
         assert_eq!(
@@ -2612,7 +2662,7 @@ mod pane_tests {
         };
         picking.ticked.set(["remote-a.csv".to_string()].into());
         let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
-        let button = button_saying(&el, "Download 1");
+        let button = button_saying(&el, "Download 1 · 4.1\u{a0}kB");
         assert_eq!(button.get_attribute("aria-busy").as_deref(), Some("true"));
         assert!(button.disabled());
     }

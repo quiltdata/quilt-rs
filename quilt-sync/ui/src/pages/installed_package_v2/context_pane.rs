@@ -55,7 +55,7 @@ pub fn CurrentRevisionPane(
     w: Wiring,
     commands: KeepingCommands,
 ) -> impl IntoView {
-    let keeping = data.keeping;
+    let (keeping, size) = (data.keeping, data.size);
     let bucket = data.bucket.filter(|bucket| !bucket.is_empty()).map_or_else(
         || "No S3 bucket".to_string(),
         |bucket| format!("s3://{bucket}"),
@@ -149,6 +149,7 @@ pub fn CurrentRevisionPane(
                 <KeepingSection
                     namespace=namespace.get_value()
                     data=keeping
+                    size=size
                     w=w
                     commands=commands
                 />
@@ -253,7 +254,9 @@ mod tests {
                 scope: commands::KeepingScope::IndividualFiles,
                 total: 1,
                 remote_only: Vec::new(),
+                deleted_here: 0,
             },
+            size: None,
             resolve: None,
         }
     }

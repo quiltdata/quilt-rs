@@ -126,9 +126,7 @@ use crate::kit::SkeletonBox;
 use crate::kit::state_label::StateTone;
 use crate::pages::downloaded_words;
 use quilt_sync_ui::util::format_size;
-
-use crate::gallery::context_pane::bytes;
-use crate::gallery::context_pane::count;
+use quilt_sync_ui::util::thousands;
 
 /// The two files the resolve fixture has differing between the revisions. Both
 /// are local and both are in the first screen of the list, because a mark the
@@ -698,7 +696,7 @@ fn pane(p: Pane) -> AnyView {
     let all = StoredValue::new(all);
     // Seeded, because a gallery cell can open this from its own trigger as well
     // as from a row's menu.
-    let confirm = Confirm::new("raw/plate-03.csv (4.16 MB)");
+    let confirm = Confirm::new("raw/plate-03.csv (4.2\u{a0}MB)");
 
     let query_sig = RwSignal::new(query.to_string());
     let facet_sig = RwSignal::new(selected);
@@ -1015,8 +1013,8 @@ fn pane(p: Pane) -> AnyView {
                                                       font-size:var(--q-text-body)">
                                                 {format!(
                                                     "This package has {} files. This list covers the first {} by path.",
-                                                    count(total),
-                                                    count(LOADED),
+                                                    thousands(total),
+                                                    thousands(LOADED),
                                                 )}
                                             </p>
                                         }
@@ -1389,12 +1387,16 @@ fn over_the_cap() -> Vec<File> {
 }
 
 /// The footer's `[Download]`, in files and bytes: `Download 3 · 1.2 MB`, in the
-/// context pane's formatter, the one the Keeping line uses. A selection of
+/// app's one formatter, the one the Keeping line and the file rows use. A selection of
 /// empty files still says `0 B`: the clause is always there, so the button
 /// keeps one shape and no missing figure reads as a size that failed — and the
 /// files are still fetched, the press makes them.
 fn footer_words(chosen: Ticked) -> String {
-    format!("Download {} · {}", count(chosen.files), bytes(chosen.bytes))
+    format!(
+        "Download {} · {}",
+        thousands(chosen.files),
+        format_size(chosen.bytes)
+    )
 }
 
 /// The footer's selection: how many files are ticked and what they weigh.
@@ -1485,7 +1487,7 @@ pub fn FilePaneRegion(
 #[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
 pub fn FilePaneScene() -> impl IntoView {
     // The standalone trigger has no row behind it, so it names one.
-    let keeping = Confirm::new("raw/plate-03.csv (4.16 MB)");
+    let keeping = Confirm::new("raw/plate-03.csv (4.2\u{a0}MB)");
     let replacing = RwSignal::new(false);
 
     view! {
@@ -1496,8 +1498,8 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell
                 full=true
                 label="three ticked — the footer costs a row and a half of the list, and says the \
-                       bytes. Real build: the footer sums EntryData.size over the ticked rows, in \
-                       the memo that counts them; no I/O"
+                       bytes: the page sums EntryData.size over the ticked rows, in the memo that \
+                       counts them; no I/O"
             >
                 {pane(Pane { ticked: 3, ..Pane::new("fp-selecting") })}
             </Cell>

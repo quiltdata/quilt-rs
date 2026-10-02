@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use mockall::automock;
@@ -211,20 +211,21 @@ pub trait QuiltModel {
         Ok(package.revision_history(lineage).await?)
     }
 
-    /// The logical keys of the manifest `lineage` selects — the same snapshot
-    /// the rest of the page read uses, so a pull landing mid-read cannot pair
-    /// one revision's keys with another's tracked paths.
-    async fn get_installed_package_keys(
+    /// The logical keys of the manifest `lineage` selects, each with the size
+    /// its row records — the same snapshot the rest of the page read uses, so
+    /// a pull landing mid-read cannot pair one revision's keys with another's
+    /// tracked paths. The sizes are the manifest's, not a stat of the files.
+    async fn get_installed_package_sizes(
         &self,
         package: &quilt::InstalledPackage,
         lineage: &quilt::lineage::PackageLineage,
-    ) -> Result<BTreeSet<PathBuf>, Error> {
+    ) -> Result<BTreeMap<PathBuf, u64>, Error> {
         Ok(package
             .manifest_from_lineage(lineage)
             .await?
             .rows
             .into_iter()
-            .map(|row| row.logical_key)
+            .map(|row| (row.logical_key, row.size))
             .collect())
     }
 

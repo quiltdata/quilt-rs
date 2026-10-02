@@ -201,6 +201,24 @@ This is the page when Settings → Experimental → **New design preview** is of
 On, `/installed-package` renders the redesigned package page instead, with a
 header, a context pane and a file pane; it has no address of its own.
 
+On the redesigned page, the context pane's **Keeping** caption says how much of
+the current revision is here, in files and in bytes:
+
+- *"54 of 56 files · 1.9 MB of 3.4 MB downloaded."*
+- *"All files are downloaded · 3.4 MB."* when nothing is outstanding, and
+  *"No files are downloaded · 3.4 MB."* when nothing is here.
+- *"This revision has no files."* for an empty revision.
+- Under *The whole package* the caption adds *"— files added later are
+  downloaded too."*, and *Download 2 files · 1.5 MB* fetches the backlog.
+
+The sizes are the manifest rows' sizes summed, not disk usage. A file deleted
+here counts as downloaded: it is a local change waiting to commit, and Download
+would not fetch it. So the caption names those files, as in *"54 of 56 files ·
+1.9 MB of 3.4 MB downloaded · 1 deleted here."* When the sizes cannot be read
+the caption gives the count alone, *"54 of 56 downloaded."*, and the button
+*Download 2 files*. The file pane's footer says the ticked files' bytes the same
+way, *Download 3 · 114.1 kB*.
+
 ```text
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
