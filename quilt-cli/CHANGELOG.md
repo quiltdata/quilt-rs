@@ -23,7 +23,7 @@
 
 ### Added
 
-- `quilt remove-revisions` removes the old revisions this copy no longer needs, oldest first, with the stored files only they use, and says what it freed, for example `Removed 4 old revisions of user/plate-07 · freed 630.2 kB`. `--count N` removes only the N oldest. The revision the files are at, the remote's latest, the merge base and any revision not on the registry are kept; `--json` lists the removed hashes and what was freed (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- `quilt remove-revisions` removes the old revisions this copy no longer needs, oldest first, with the stored files only they use, and says what it freed, for example `Removed 4 old revisions of user/plate-07 · freed 630.2 kB`. `--count N` removes only the N oldest. The revision the files are at, the remote's latest, the merge base and any revision not on the registry are kept; `--json` lists the removed hashes and what was freed (<https://github.com/quiltdata/quilt-rs/pull/1051>)
 
 ## [v0.35.0] - 2026-10-02
 
