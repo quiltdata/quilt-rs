@@ -216,8 +216,9 @@ struct Held {
 
 const MB: u64 = 1_000_000;
 
-/// The scene's package, two files short or complete, in the numbers the rest
-/// of the page uses: 56 files, 3.4 MB, of which 1.9 MB is here when two are not.
+/// The standalone cells' package, two files short or complete: 56 files,
+/// 3.4 MB, of which 1.9 MB is here when two are not. Not the page's: beside the
+/// file pane the region reads [`on_page`] instead.
 const fn plate(pending: usize) -> Held {
     Held {
         files: TOTAL,
@@ -229,6 +230,20 @@ const fn plate(pending: usize) -> Held {
             } else {
                 19 * MB / 10
             },
+        },
+    }
+}
+
+/// The file pane's own package, as the region says it on the page: the two
+/// panes are on screen together there, so the sizes come from the same rows.
+fn on_page() -> Held {
+    let kept = crate::gallery::file_pane::kept();
+    Held {
+        files: kept.files,
+        pending: kept.pending,
+        size: Size::Known {
+            total: kept.total,
+            here: kept.here,
         },
     }
 }
@@ -541,10 +556,6 @@ pub fn ContextPaneRegion(
     resolving: bool,
     /// The standing scope, shared with whatever else on the page reads it.
     scope: RwSignal<String>,
-    /// How many files the scope leaves outstanding, which is what decides
-    /// whether `Keeping` carries a download action at all.
-    #[prop(optional)]
-    pending: usize,
     /// Where resolve mode's exit points. The page's own anchor, so that a link
     /// with no router behind it does not scroll somebody somewhere else.
     #[prop(into, optional)]
@@ -554,7 +565,7 @@ pub fn ContextPaneRegion(
     if resolving {
         resolve(&exit, compared())
     } else {
-        pane(open, revision_list(), scope, plate(pending), true)
+        pane(open, revision_list(), scope, on_page(), true)
     }
 }
 
@@ -682,7 +693,7 @@ pub fn ContextPaneScene() -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
-    use super::{EMPTY, HUGE, UNREAD, bytes, count, counted, download_words, plate};
+    use super::{EMPTY, HUGE, UNREAD, bytes, count, counted, download_words, on_page, plate};
 
     /// The words as read, with the no-break spaces shown as spaces.
     fn plain(words: &str) -> String {
@@ -747,5 +758,19 @@ mod tests {
             "Download 2 files · 1.5 MB"
         );
         assert_eq!(download_words(UNREAD), "Download 2 files");
+    }
+
+    /// On the page the pane counts the file pane's own rows: its 17 not
+    /// downloaded, and the plates' megabytes.
+    #[test]
+    fn on_the_page_the_sizes_are_the_file_panes() {
+        assert_eq!(
+            plain(&counted(on_page())),
+            "35 of 52 files · 95.7 MB of 161.9 MB downloaded"
+        );
+        assert_eq!(
+            plain(&download_words(on_page())),
+            "Download 17 files · 66.2 MB"
+        );
     }
 }

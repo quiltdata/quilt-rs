@@ -283,6 +283,36 @@ fn package() -> Vec<File> {
     files
 }
 
+/// What the context pane's Keeping line says about [`package`] when the page
+/// draws the two side by side, so the pane's sizes are these rows' sizes.
+pub(crate) struct Kept {
+    /// The revision's files: every row but the new and the ignored ones, which
+    /// are on disk and in no manifest.
+    pub(crate) files: usize,
+    /// The ones not downloaded, the rows the file pane can tick.
+    pub(crate) pending: usize,
+    /// The revision's bytes.
+    pub(crate) total: u64,
+    /// Those bytes less the not-downloaded rows'.
+    pub(crate) here: u64,
+}
+
+/// [`Kept`], read off [`package`].
+pub(crate) fn kept() -> Kept {
+    let revision: Vec<File> = package()
+        .into_iter()
+        .filter(|f| !matches!(f.mark, Mark::New | Mark::Ignored))
+        .collect();
+    let missing = || revision.iter().filter(|f| f.mark == Mark::Missing);
+    let total = revision.iter().map(|f| f.bytes).sum::<u64>();
+    Kept {
+        files: revision.len(),
+        pending: missing().count(),
+        total,
+        here: total - missing().map(|f| f.bytes).sum::<u64>(),
+    }
+}
+
 /// The same package with nothing changed, for the cell about a facet that
 /// matches nothing. Same files, three marks moved home — a clean copy is a state
 /// the page reaches constantly, not a special fixture.
