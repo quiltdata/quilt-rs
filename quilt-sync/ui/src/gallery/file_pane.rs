@@ -293,7 +293,10 @@ pub(crate) struct Kept {
     pub(crate) pending: usize,
     /// The revision's bytes.
     pub(crate) total: u64,
-    /// Those bytes less the not-downloaded rows'.
+    /// Those bytes less the not-downloaded rows'. A row deleted here still
+    /// counts: the real caption's backlog is the paths this copy neither tracks
+    /// nor has a local change at (`keeping_data` in the backend), and a delete
+    /// is a local change waiting to be committed, not something Download fetches.
     pub(crate) here: u64,
 }
 
