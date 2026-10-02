@@ -1,0 +1,225 @@
+// Styles for the gallery's old_revisions_inline.rs scene only.
+
+/* The surface's contents at the pane's width. 256 plus the surface's own 12px
+ * padding either side is the 280 the design gives the pane — and the popover
+ * would otherwise take its width from its longest message, up to 360. */
+.g-ori-body {
+  width: 256px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+/* A still copy of `AnchoredOverlay`'s surface: its border, padding, radius
+ * and the system's one shadow, which is what this is. */
+.g-ori-surface {
+  padding: var(--q-space-3);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+}
+
+.g-ori-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  width: 100%;
+  min-width: 0;
+}
+
+.g-ori-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* The kit's row, then the trash. The row gives up its width first, so the
+ * message ellipsises and neither icon is pushed out of 280px. */
+.g-ori-line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-1);
+  min-width: 0;
+}
+
+.g-ori-line > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The 24px button centred on the message's 20px line. */
+.g-ori-line > button {
+  margin-top: -2px;
+}
+
+/* The third line, under the time and aligned with it: 16px glyph plus the
+ * row's 8px gap. In the real build it joins the time's own line. */
+.g-ori-note {
+  padding-left: 24px;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}
+
+.g-ori-note[title] {
+  cursor: help;
+}
+
+.g-ori-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  width: 100%;
+}
+
+.g-ori-footer p {
+  margin: 0;
+  font-size: var(--q-text-body);
+}
+
+.g-ori-muted {
+  color: var(--q-fgColor-muted);
+}
+
+.g-ori-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.g-ori-result svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-success);
+}
+
+/* The live cell: the pane where the page puts it, beside the list the surface
+ * opens over. */
+.g-ori-page {
+  display: flex;
+  gap: var(--q-space-3);
+  width: 992px;
+  max-width: 100%;
+}
+
+.g-ori-files {
+  flex: 1;
+  min-width: 0;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--q-borderColor-muted);
+  border-radius: var(--q-radius);
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+.g-ori-pane {
+  width: 280px;
+  flex: none;
+}
+
+.g-ori-gap {
+  flex: none;
+  width: var(--q-control-height-sm);
+}
+
+/* A page around a still or live surface: the appbar, the notification's slot,
+ * then the pane. */
+.g-ori-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  width: 992px;
+  max-width: 100%;
+}
+
+/* A still surface sits where the popover hangs from the pane, at the right. */
+.g-ori-page--still {
+  align-items: flex-start;
+}
+
+.g-ori-page--still > .g-ori-surface {
+  flex: none;
+}
+
+/* Where the stack hangs: centred under the appbar. In the app it floats; here
+ * it is in the flow so it covers nothing. */
+.g-ori-toasts {
+  display: flex;
+  justify-content: center;
+}
+
+/* The live cell's slot keeps its height when empty, so a notification
+ * arriving does not move the pane under its open popover. */
+.g-ori-toasts--held {
+  min-height: 44px;
+}
+
+/* A copy of `.qui-v2 .qui-toast.success` (views/toasts.css), in the v2 tokens:
+ * the gallery does not load v1's stylesheet. */
+.g-ori-toast {
+  display: flex;
+  gap: var(--q-space-4);
+  align-items: center;
+  width: min(44rem, 100%);
+  padding: var(--q-space-2) var(--q-space-2) var(--q-space-2) var(--q-space-4);
+  color: var(--q-fgColor-default);
+  background: var(--q-bgColor-default);
+  border-left: 4px solid var(--q-fgColor-success);
+  border-radius: 2px;
+  font-size: var(--q-text-body);
+  box-shadow: rgb(0 0 0 / 32%) 0 10px 28px -6px, rgb(0 0 0 / 24%) 0 4px 10px -2px,
+    rgb(0 0 0 / 12%) 0 0 0 1px;
+}
+
+.g-ori-toast__body {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.g-ori-toast__close {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--q-fgColor-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+  border-radius: 2px;
+}
+
+.g-ori-toast__close:hover {
+  color: var(--q-fgColor-default);
+  background: var(--q-bgColor-neutral-muted);
+}
+
+/* The confirmation inline: `Dialog`'s box, title and footer at its width. */
+.g-ori-dialog {
+  width: min(440px, 100%);
+  padding: var(--q-space-4);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  box-shadow: var(--q-shadow-overlay);
+}
+
+.g-ori-dialog__title {
+  margin: 0 0 var(--q-space-3);
+  font-size: var(--q-text-lead);
+  font-weight: 600;
+}
+
+.g-ori-dialog__footer {
+  margin-top: var(--q-space-5);
+}

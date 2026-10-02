@@ -65,6 +65,7 @@ mod gallery {
     pub mod installed_package;
     pub mod list_toolbar;
     pub mod load_failure;
+    pub mod old_revisions_inline;
     pub mod package_header;
     pub mod packages;
     pub mod page;
@@ -295,6 +296,11 @@ const ENTRIES: &[Entry] = &[
         Scenes / "Installed package",
         "File pane",
         file_pane::FilePaneScene
+    ),
+    entry!(
+        Scenes / "Old revisions",
+        "Remove old revisions",
+        old_revisions_inline::OldRevisionsInlineScene
     ),
     entry!(Scenes / "Dialogs", "The three dialogs", forms::DialogScene),
     entry!(
