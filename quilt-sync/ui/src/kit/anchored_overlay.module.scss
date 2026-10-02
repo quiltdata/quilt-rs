@@ -42,3 +42,11 @@
 .tight {
   padding: var(--q-space-1);
 }
+
+/* Contents that scroll themselves. Only while open: an author `display` on a
+ * closed popover would override the UA's `display: none` and show it. */
+.contained:popover-open {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}

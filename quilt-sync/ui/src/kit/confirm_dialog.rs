@@ -27,6 +27,13 @@
 //! last, as every footer on this platform, so a UA that focuses the first control lands
 //! on Cancel too.
 //!
+//! # One option, at most
+//!
+//! A [`ConfirmOption`] adds one checkbox under the sentence: *Remove*'s offer to delete the
+//! downloaded files as well. It qualifies the verb rather than filling a form, so it is
+//! still not a `FormDialog`: the caller owns the signal, and its action reads it when the
+//! verb runs. A second option would be a form.
+//!
 //! # Escape is a dismissal here, and an answer in the quit prompt
 //!
 //! Escape answers Cancel, which is `Dialog`'s own default: the UA fires `cancel` and
@@ -39,11 +46,28 @@ use leptos::prelude::*;
 
 use super::Button;
 use super::ButtonVariant;
+use super::Checkbox;
 use super::Dialog;
 use super::Submit;
 use super::submission::Submission;
 
 stylance::import_crate_style!(style, "src/kit/confirm_dialog.module.scss");
+
+/// The one checkbox a confirmation may carry: its words and the caller's value.
+#[derive(Clone)]
+pub struct ConfirmOption {
+    label: String,
+    checked: RwSignal<bool>,
+}
+
+impl ConfirmOption {
+    pub fn new(label: impl Into<String>, checked: RwSignal<bool>) -> Self {
+        Self {
+            label: label.into(),
+            checked,
+        }
+    }
+}
 
 #[component]
 pub fn ConfirmDialog(
@@ -63,6 +87,9 @@ pub fn ConfirmDialog(
     /// exactly as its own submit does, and refuses a submit on top of it.
     #[prop(optional, into)]
     running: MaybeProp<bool>,
+    /// A checkbox under the sentence, sealed with the rest while the action runs.
+    #[prop(optional)]
+    option: Option<ConfirmOption>,
 ) -> impl IntoView {
     let Submit { label, action } = confirm;
     let submission = Submission::new(open, running);
@@ -89,6 +116,17 @@ pub fn ConfirmDialog(
         <Dialog open=open title=title held=busy footer=footer>
             {banner}
             <p class=style::consequence>{consequence}</p>
+            {option.map(|ConfirmOption { label, checked }| view! {
+                // The label names the box, so no `aria_label`.
+                <label class=style::option>
+                    <Checkbox
+                        state=Signal::derive(move || checked.get().into())
+                        on_toggle=move |next| checked.set(next)
+                        disabled=busy
+                    />
+                    <span>{label}</span>
+                </label>
+            })}
         </Dialog>
     }
 }
@@ -193,6 +231,44 @@ mod tests {
             !button(&el, "Cancel").class_name().contains("danger"),
             "and Cancel does not"
         );
+    }
+
+    /// An option draws as a labelled checkbox under the sentence, showing and
+    /// setting the caller's signal.
+    #[wasm_bindgen_test]
+    async fn an_option_is_a_checkbox_bound_to_the_caller_s_signal() {
+        let checked = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <ConfirmDialog
+                    open=RwSignal::new(true)
+                    title="Remove package"
+                    consequence=SENTENCE
+                    option=ConfirmOption::new("Also delete downloaded files", checked)
+                    confirm=Submit::new("Remove", move || async move { Ok(()) })
+                />
+            }
+        });
+        let input: web_sys::HtmlInputElement = el
+            .query_selector("dialog input[type=checkbox]")
+            .unwrap()
+            .expect("the checkbox")
+            .unchecked_into();
+        assert!(input.checked());
+        let label = input.closest("label").unwrap().expect("a label around it");
+        assert!(
+            label
+                .text_content()
+                .unwrap_or_default()
+                .contains("Also delete downloaded files")
+        );
+
+        input.click();
+        settle().await;
+        assert!(!checked.get_untracked(), "a click sets the caller's signal");
+        checked.set(true);
+        settle().await;
+        assert!(input.checked(), "and the box follows it");
     }
 
     /// Cancel chooses nothing: the dialog closes and the action is never asked.

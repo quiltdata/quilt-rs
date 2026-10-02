@@ -9,7 +9,7 @@
 //!
 //! # Every removal is confirmed by the kit's `ConfirmDialog`
 //!
-//! The footer's "Remove N older" and each row's trash open the same dialog,
+//! The footer's "Remove all N unused" and each row's trash open the same dialog,
 //! whose sentence says what goes and what it frees. Cancel is first and the
 //! verb is the Danger `Remove`, so the kit's rule — only `ConfirmDialog` draws a
 //! Danger button — holds without an exception.
@@ -49,18 +49,14 @@
 //! shared are now its alone. The footer's figure is computed for the set, which
 //! is why it is larger than the rows added up.
 //!
-//! # What the real build needs
+//! # Built from the kit
 //!
-//! - `icons::trash()` — drawn here from Octicons' `trash-16` until then.
-//! - `RevisionRow` wants a trailing-action slot and a detail after the time
-//!   (`3 days ago · frees 1.2 MB`); composed here as a wrapper and a third line.
-//! - `ActivityKind` has one variant, `Autopull`, which this stubs with. The
-//!   build needs a second (`RemoveRevisions`, say), and `Activities` needs a slot
-//!   per producer: autopull's feed replaces the whole list on every event, so a
-//!   second writer's entry would be wiped by the next tick.
-//! - The backend: a command that removes a set of revisions of one namespace and
-//!   answers what it freed, refusing while the package is locked; the activity
-//!   event while it runs; and a `ToastCenter::post` of the result when it ends.
+//! The trash is `icons::trash()`; the figure or the tag is `RevisionRow`'s
+//! detail after the time (`3 days ago · frees 1.2 MB`), and the trash its
+//! trailing action. The sync and the removal each set their own
+//! `ActivityKind`'s slot of the line, so the end of one never wipes the other.
+//! The app's popover (`pages/installed_package_v2/old_revisions.rs`) draws the
+//! same surface over the backend's answer.
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -232,17 +228,6 @@ fn catalog(hash: &str) -> CatalogLink {
     )
 }
 
-/// Octicons' `trash-16`, drawn here only until the kit has it (see the module
-/// comment). MIT, © GitHub Inc., as `kit/icons.rs` reproduces.
-fn trash() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
-            <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z" />
-        </svg>
-    }
-    .into_any()
-}
-
 /// What the confirmation asks: the set, and the words for its title and its
 /// one sentence.
 #[derive(Clone, Debug, PartialEq)]
@@ -254,13 +239,17 @@ struct Ask {
 
 impl Ask {
     /// The footer's: every removable row, freed as a set.
-    fn older(set: &[usize], remaining: &[usize]) -> Self {
+    fn unused(set: &[usize], remaining: &[usize]) -> Self {
         Self {
             set: set.to_vec(),
-            title: "Remove old revisions",
+            title: "Remove unused revisions",
             consequence: format!(
                 "Remove {}? This frees {}.",
-                plural(set.len(), "older revision", "older revisions"),
+                if set.len() == 1 {
+                    "1 unused revision".to_string()
+                } else {
+                    format!("all {} unused revisions", set.len())
+                },
                 spelled(freed(set, remaining)),
             ),
         }
@@ -362,26 +351,29 @@ impl Flow {
     }
 
     /// The appbar's line, drawn from what is running now: a sync's entry and a
-    /// removal's each come from their own state, so the end of one never wipes
-    /// the other's. The kind is a stub: see the module comment.
+    /// removal's each go to their own kind's slot, so the end of one never
+    /// wipes the other's.
     fn say(self) {
-        let syncing = self
-            .syncing
-            .get_untracked()
-            .then(|| format!("Getting latest for {NAMESPACE}\u{2026}"));
+        let activity = |kind, label| Activity {
+            kind,
+            label,
+            package: Some(NAMESPACE.to_string()),
+        };
+        let syncing = self.syncing.get_untracked().then(|| {
+            activity(
+                ActivityKind::Autopull,
+                format!("Getting latest for {NAMESPACE}\u{2026}"),
+            )
+        });
         let removing = self
             .removing
             .get_untracked()
-            .map(|set| Self::progress(set.len()));
+            .map(|set| activity(ActivityKind::RemoveRevisions, Self::progress(set.len())));
+        self.activities
+            .set(ActivityKind::Autopull, syncing.into_iter().collect());
         self.activities.set(
-            syncing
-                .into_iter()
-                .chain(removing)
-                .map(|label| Activity {
-                    kind: ActivityKind::Autopull,
-                    label,
-                })
-                .collect(),
+            ActivityKind::RemoveRevisions,
+            removing.into_iter().collect(),
         );
     }
 
@@ -443,47 +435,54 @@ impl Flow {
     }
 }
 
-/// One row: the kit's revision row, the trash after its catalog icon, and a
-/// third line saying what removing it frees — or why it cannot be removed.
+/// One row: the kit's revision row, its detail after the time saying what
+/// removing it frees — or why it cannot be removed — and the trash after its
+/// catalog icon.
 fn row(i: usize, flow: Flow) -> AnyView {
     let rev = &REVS[i];
-    let note = if let Some((tag, why)) = rev.kept {
-        view! { <span class="g-ori-note" title=why>{tag}</span> }.into_any()
-    } else {
-        let words = move || format!("frees {}", size(freed(&[i], &flow.remaining.get())));
-        view! { <span class="g-ori-note">{words}</span> }.into_any()
-    };
-    // A kept row holds the trash's width empty, so every catalog icon in the
-    // column lines up — except when the whole list is kept and no row has one.
-    let action = if rev.kept.is_some() {
+    if let Some((tag, why)) = rev.kept {
+        // A kept row holds the trash's width empty, so every catalog icon in the
+        // column lines up — except when the whole list is kept and no row has one.
         let holds = move || flow.removable().is_empty().then_some("display:none");
-        view! { <span class="g-ori-gap" aria-hidden="true" style=holds></span> }.into_any()
-    } else {
-        let label = format!("Remove {}", named(i));
-        view! {
-            <IconButton
-                icon=trash()
-                aria_label=label
-                variant=IconButtonVariant::Invisible
-                disabled=Signal::derive(move || flow.blocked())
-                on_click=move |_| flow.confirm(Ask::one(i, &flow.remaining.get_untracked()))
+        let gap = view! { <span class="g-ori-gap" aria-hidden="true" style=holds></span> };
+        return view! {
+            <RevisionRow
+                message=rev.message
+                at=ago(rev.obtained)
+                published=rev.hash.is_some()
+                catalog=rev.hash.map(catalog)
+                detail=tag
+                detail_title=why
+                trailing=gap.into_any()
             />
         }
-        .into_any()
+        .into_any();
+    }
+    let label = format!("Remove {}", named(i));
+    let trash = view! {
+        <IconButton
+            icon=icons::trash()
+            aria_label=label
+            variant=IconButtonVariant::Invisible
+            disabled=Signal::derive(move || flow.blocked())
+            on_click=move |_| flow.confirm(Ask::one(i, &flow.remaining.get_untracked()))
+        />
     };
+    // The figure is what it frees given what is left, so it is read once per
+    // drawing of the list, which redraws when a removal lands.
+    let words = format!(
+        "frees {}",
+        size(freed(&[i], &flow.remaining.get_untracked()))
+    );
     view! {
-        <div class="g-ori-row">
-            <div class="g-ori-line">
-                <RevisionRow
-                    message=rev.message
-                    at=ago(rev.obtained)
-                    published=rev.hash.is_some()
-                    catalog=rev.hash.map(catalog)
-                />
-                {action}
-            </div>
-            {note}
-        </div>
+        <RevisionRow
+            message=rev.message
+            at=ago(rev.obtained)
+            published=rev.hash.is_some()
+            catalog=rev.hash.map(catalog)
+            detail=words
+            trailing=trash.into_any()
+        />
     }
     .into_any()
 }
@@ -520,10 +519,10 @@ fn footer(flow: Flow) -> impl IntoView {
                     loading=loading
                     disabled=disabled
                     on_click=move |_| {
-                        flow.confirm(Ask::older(&set, &flow.remaining.get_untracked()));
+                        flow.confirm(Ask::unused(&set, &flow.remaining.get_untracked()));
                     }
                 >
-                    {format!("Remove {count} older · frees {total}")}
+                    {format!("Remove all {count} unused · frees {total}")}
                 </Button>
             }
         });
@@ -575,13 +574,15 @@ fn dialog(flow: Flow) -> impl IntoView {
 fn body(flow: Flow) -> AnyView {
     view! {
         <div class="g-ori-body">
-            <PaneSection>
-                <div class="g-ori-rows">
-                    {move || {
-                        flow.remaining.get().into_iter().map(|i| row(i, flow)).collect_view()
-                    }}
-                </div>
-            </PaneSection>
+            <div class="g-ori-list">
+                <PaneSection>
+                    <div class="g-ori-rows">
+                        {move || {
+                            flow.remaining.get().into_iter().map(|i| row(i, flow)).collect_view()
+                        }}
+                    </div>
+                </PaneSection>
+            </div>
             {footer(flow)}
         </div>
     }
@@ -692,6 +693,7 @@ fn pane(flow: Flow) -> AnyView {
                             open=open
                             aria_label="Revisions you have"
                             align=Align::End
+                            contained=true
                         >
                             {body(flow)}
                         </AnchoredOverlay>
@@ -799,7 +801,7 @@ pub fn OldRevisionsInlineScene() -> impl IntoView {
                 {surface(Flow::new(&ALL))}
             </Cell>
             <Cell wide=true label="confirm from the footer">
-                {confirmation(Ask::older(&OLDER, &ALL))}
+                {confirmation(Ask::unused(&OLDER, &ALL))}
             </Cell>
             <Cell wide=true label="confirm from a row — Initial upload">
                 {confirmation(remove_one)}

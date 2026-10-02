@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use mockall::automock;
@@ -209,6 +209,25 @@ pub trait QuiltModel {
         lineage: &quilt::lineage::PackageLineage,
     ) -> Result<Vec<quilt::flow::HistoryEntry>, Error> {
         Ok(package.revision_history(lineage).await?)
+    }
+
+    /// Which objects each revision uses that nothing else does: what the
+    /// popover's rows and footer say removing them frees.
+    async fn get_installed_package_revision_usage(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<quilt::flow::RevisionUsage, Error> {
+        Ok(package.revision_usage().await?)
+    }
+
+    /// Remove old revisions of `package` and the objects only they used. It
+    /// takes the package's own lock, and refuses while another writer holds it.
+    async fn package_remove_revisions(
+        &self,
+        package: &quilt::InstalledPackage,
+        hashes: &BTreeSet<String>,
+    ) -> Result<quilt::flow::RemovalReport, Error> {
+        Ok(package.remove_revisions(hashes).await?)
     }
 
     /// The logical keys of the manifest `lineage` selects, each with the size
@@ -475,11 +494,21 @@ pub trait QuiltModel {
         Ok(quilt.install_package(remote_manifest).await?)
     }
 
-    async fn package_uninstall(&self, namespace: quilt_uri::Namespace) -> Result<(), Error> {
+    /// With `prune`, also deletes the package's objects no other installed
+    /// package uses, and says what that freed.
+    async fn package_uninstall(
+        &self,
+        namespace: quilt_uri::Namespace,
+        prune: bool,
+    ) -> Result<Option<quilt::flow::Pruned>, Error> {
         // See `package_create`: an uninstall during the package's download
         // waits for it, and must not hold every other package up meanwhile.
         let quilt = self.get_quilt().lock().await.clone();
-        Ok(quilt.uninstall_package(namespace).await?)
+        if prune {
+            return Ok(Some(quilt.uninstall_package_pruning(namespace).await?));
+        }
+        quilt.uninstall_package(namespace).await?;
+        Ok(None)
     }
 
     async fn gc(&self) -> Result<quilt::flow::GcReport, Error> {
@@ -962,7 +991,7 @@ mod domain_writer_tests {
 
         // Another writer of the package, a download say, holds its lock.
         let downloading = installed.lock().await?;
-        let mut uninstall = std::pin::pin!(model.package_uninstall(namespace.clone()));
+        let mut uninstall = std::pin::pin!(model.package_uninstall(namespace.clone(), false));
         let early = tokio::time::timeout(Duration::from_millis(200), &mut uninstall).await;
         assert!(early.is_err(), "the uninstall waits for the download");
 

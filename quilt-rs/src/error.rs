@@ -370,8 +370,28 @@ pub enum Error {
     #[error("{0} is busy in another quilt process; try again once it finishes")]
     PackageBusy(Namespace),
 
+    /// A pruning uninstall removed the package, then failed before it had
+    /// deleted every object it meant to: it could not prove them unused, so
+    /// deleted none, or a deletion failed part way.
+    /// The third field is a package that was busy as well, which kept the
+    /// files that could be counted.
+    #[error(
+        "Uninstalled {0}, but not all of its downloaded files were deleted: {1}{busy}",
+        busy = kept_by_busy(.2.as_ref())
+    )]
+    PruneFailed(Namespace, Box<Error>, Option<Namespace>),
+
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
+
+    /// A revision asked to be removed is protected, or this copy does not
+    /// hold it. Nothing was removed.
+    #[error("Can't remove revision {hash} of {namespace}: {why}")]
+    RevisionNotRemovable {
+        namespace: Namespace,
+        hash: String,
+        why: String,
+    },
 
     #[error(transparent)]
     Role(#[from] RoleError),
@@ -516,4 +536,10 @@ impl From<StripPrefixError> for Error {
     fn from(err: StripPrefixError) -> Self {
         Error::Fs(FsError::PathPrefixNotFound(err))
     }
+}
+
+/// The tail [`Error::PruneFailed`] adds when a busy package kept the rest.
+fn kept_by_busy(busy: Option<&Namespace>) -> String {
+    busy.map(|namespace| format!("; {namespace} is busy, so the rest were kept too"))
+        .unwrap_or_default()
 }

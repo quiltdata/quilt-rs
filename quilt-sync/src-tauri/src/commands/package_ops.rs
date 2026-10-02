@@ -537,33 +537,91 @@ pub async fn package_pull_outcome(
         .map_err(|e| e.to_string())
 }
 
-async fn package_uninstall_command(m: &model::Model, namespace: &str) -> Result<(), Error> {
+async fn package_uninstall_command(
+    m: &model::Model,
+    namespace: &str,
+    prune: bool,
+) -> Result<Option<quilt::flow::Pruned>, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    model::package_uninstall(m, namespace.clone()).await?;
-    Ok(())
+    model::package_uninstall(m, namespace, prune).await
 }
 
+/// Remove a package; with `prune`, also delete its downloaded files that no
+/// other package uses.
+///
+/// What the prune freed goes to the toast stack, not the returned line: the
+/// v2 page that confirms it returns to the package list on success, and only
+/// the stack outlives that.
 #[tauri::command]
 pub async fn package_uninstall(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    toasts: tauri::State<'_, ToastCenter>,
     namespace: String,
     uri: Option<S3PackageUri>,
+    prune: bool,
 ) -> Result<String, String> {
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
 
+    let (result, toast) = settle_uninstall(
+        &namespace,
+        package_uninstall_command(&m, &namespace, prune).await,
+    );
+    if let Some(toast) = toast {
+        toasts.post(toast).await;
+    }
     Notify::new(msg_init)
         .on_success(
             &tracing,
             MixpanelEvent::PackageUninstalled(PackageEvent::for_uri(uri.as_ref())),
         )
-        .map(
-            package_uninstall_command(&m, &namespace).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
+}
+
+/// Split an uninstall's answer into the command's result and the toast it
+/// posts.
+///
+/// A prune that fails after the uninstall is not a failed uninstall: the
+/// package is gone, so the command succeeds and the page moves on, and the
+/// toast says what was left behind. Answering an error would leave the v2
+/// page's confirmation open on a package that no longer exists.
+fn settle_uninstall(
+    namespace: &str,
+    result: Result<Option<quilt::flow::Pruned>, Error>,
+) -> (Result<(), Error>, Option<crate::toast::ToastDraft>) {
+    match result {
+        Ok(pruned) => (Ok(()), pruned.map(|p| pruned_toast(namespace, &p))),
+        Err(Error::Quilt(err @ quilt::Error::PruneFailed(..))) => {
+            tracing::warn!("{err}");
+            let toast = crate::toast::ToastDraft {
+                kind: crate::toast::ToastKind::Warning,
+                title: Some(namespace.to_string()),
+                body: format!("{err}."),
+                groups: Vec::new(),
+                timeout_ms: None,
+            };
+            (Ok(()), Some(toast))
+        }
+        Err(err) => (Err(err), None),
+    }
+}
+
+/// The toast saying what removing `namespace` freed, in gc's sentence, or
+/// which busy package kept its files.
+fn pruned_toast(namespace: &str, pruned: &quilt::flow::Pruned) -> crate::toast::ToastDraft {
+    let kind = match pruned {
+        quilt::flow::Pruned::Freed(_) => crate::toast::ToastKind::Success,
+        quilt::flow::Pruned::Busy(_) => crate::toast::ToastKind::Info,
+    };
+    crate::toast::ToastDraft {
+        kind,
+        title: Some(namespace.to_string()),
+        body: format!("Removed. {pruned}."),
+        groups: Vec::new(),
+        timeout_ms: None,
+    }
 }
 
 /// Step the package back to the revision before its newest local commit.
@@ -1582,5 +1640,98 @@ mod tests {
             .expect_err("a dirty tree refuses");
 
         assert!(err.to_string().contains("value.txt"), "got: {err}");
+    }
+
+    /// The toast reads gc's sentence after the removal, or names the busy
+    /// package that kept the files.
+    #[test]
+    fn the_pruned_toast_says_what_was_freed() {
+        let freed = quilt::flow::Pruned::Freed(quilt::flow::GcReport {
+            objects: 6,
+            bytes: 630_200,
+            ..Default::default()
+        });
+        let toast = super::pruned_toast("acme/demo", &freed);
+        assert_eq!(toast.kind, crate::toast::ToastKind::Success);
+        assert_eq!(toast.title.as_deref(), Some("acme/demo"));
+        assert_eq!(toast.body, "Removed. Freed 630.2 kB: 6 objects.");
+
+        let busy = quilt::flow::Pruned::Busy(("acme", "other").into());
+        let toast = super::pruned_toast("acme/demo", &busy);
+        assert_eq!(toast.kind, crate::toast::ToastKind::Info);
+        assert_eq!(
+            toast.body,
+            "Removed. Kept downloaded files: acme/other is busy."
+        );
+    }
+
+    /// A prune that failed after the uninstall answers success, with a
+    /// warning toast saying what was left; any other failure stays one.
+    #[test]
+    fn a_failed_prune_is_a_removed_package_and_a_warning() {
+        let failed = Error::Quilt(quilt::Error::PruneFailed(
+            ("acme", "demo").into(),
+            Box::new(quilt::Error::PackageBusy(("acme", "other").into())),
+            None,
+        ));
+        let (result, toast) = super::settle_uninstall("acme/demo", Err(failed));
+        assert!(result.is_ok());
+        let toast = toast.expect("a toast");
+        assert_eq!(toast.kind, crate::toast::ToastKind::Warning);
+        assert!(
+            toast
+                .body
+                .starts_with("Uninstalled acme/demo, but not all of its downloaded files"),
+            "{}",
+            toast.body
+        );
+
+        let other = Error::General("boom".to_string());
+        let (result, toast) = super::settle_uninstall("acme/demo", Err(other));
+        assert!(result.is_err());
+        assert!(toast.is_none());
+
+        let (result, toast) = super::settle_uninstall("acme/demo", Ok(None));
+        assert!(result.is_ok());
+        assert!(toast.is_none(), "no prune, no toast");
+    }
+
+    /// `prune` deletes the package's objects; without it they stay.
+    #[tokio::test]
+    async fn uninstall_prunes_only_when_asked() -> Result<(), Error> {
+        use crate::model::QuiltModel as _;
+
+        let dir = tempfile::TempDir::new()?;
+        let model = crate::model::Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await?;
+        let source = tempfile::TempDir::new()?;
+        std::fs::write(source.path().join("a.txt"), "abc")?;
+        for name in ["kept", "gone"] {
+            model
+                .package_create(
+                    ("acme", name).into(),
+                    Some(source.path().to_path_buf()),
+                    None,
+                )
+                .await?;
+        }
+        std::fs::write(source.path().join("b.txt"), "bb")?;
+        model
+            .package_create(
+                ("acme", "pruned").into(),
+                Some(source.path().to_path_buf()),
+                None,
+            )
+            .await?;
+
+        let kept = super::package_uninstall_command(&model, "acme/kept", false).await?;
+        assert_eq!(kept, None);
+        let pruned = super::package_uninstall_command(&model, "acme/pruned", true).await?;
+        assert_eq!(
+            pruned.map(|p| p.to_string()).as_deref(),
+            Some("Freed 2 B: 1 object"),
+            "a.txt is still used by acme/gone"
+        );
+        Ok(())
     }
 }

@@ -5,6 +5,7 @@
 //! installed manifest, of every package, while holding every package's lock:
 //! an object none of them names is one no package can reach.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
@@ -71,7 +72,7 @@ impl std::fmt::Display for GcReport {
 }
 
 /// Decimal units, as Finder counts them, with one decimal past bytes.
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
     if bytes < 1000 {
         return format!("{bytes} B");
@@ -103,13 +104,13 @@ pub async fn gc(
         "⏳ Collecting garbage in {}",
         paths.dot_quilt_dir().display()
     );
-    let _held = lock_every_package(paths, storage, lineage).await?;
+    let _held = lock_every_package(paths, storage, lineage, None).await?;
 
     let mut report = GcReport::default();
 
     let objects = list_files(storage, &paths.objects_dir()).await?;
     let candidates = objects.iter().map(|(name, _, _)| name.clone()).collect();
-    let in_use = objects_in_use(paths, storage, candidates).await?;
+    let in_use = objects_in_use(paths, storage, candidates, None).await?;
     for (name, path, len) in objects {
         if in_use.contains(&name) {
             continue;
@@ -136,6 +137,128 @@ pub async fn gc(
     Ok(report)
 }
 
+/// What a pruning uninstall did with its package's objects.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pruned {
+    /// The objects no other installed manifest uses were deleted; only
+    /// `objects` and `bytes` are counted.
+    Freed(GcReport),
+    /// Another writer held this package's lock, so nothing was deleted.
+    Busy(Namespace),
+}
+
+/// gc's sentence for what was freed, or the busy package that kept it.
+impl std::fmt::Display for Pruned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Freed(report) => write!(f, "{report}"),
+            Self::Busy(namespace) => write!(f, "Kept downloaded files: {namespace} is busy"),
+        }
+    }
+}
+
+/// The objects `namespace`'s installed manifests use, every revision, with
+/// their lengths: the candidates a pruning uninstall may delete. Read before
+/// the uninstall removes the manifests.
+///
+/// Only names present in `objects/` count, each looked up by name rather
+/// than by listing the store, so the work follows the package's size.
+///
+/// A manifest or an object that can't be read does not stop it: the rest
+/// are still candidates, and the first such error comes back beside them,
+/// so the caller can say not every file was deleted. Refusing instead would
+/// leave a surface that always prunes unable to remove the package.
+pub(crate) async fn package_objects(
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    namespace: &Namespace,
+) -> Res<(BTreeMap<String, u64>, Option<Error>)> {
+    let objects = paths.objects_dir();
+    let mut seen = BTreeSet::new();
+    let mut candidates = BTreeMap::new();
+    let mut unread = None;
+    let manifests = paths.installed_manifests_dir(namespace);
+    for (_, manifest_path, _) in list_files(storage, &manifests).await? {
+        let manifest = match Manifest::from_path(storage, &manifest_path).await {
+            Ok(manifest) => manifest,
+            Err(err) => {
+                unread.get_or_insert(err);
+                continue;
+            }
+        };
+        for row in &manifest.rows {
+            for name in row_objects(&row.hash, &row.physical_key) {
+                if !seen.insert(name.clone()) {
+                    continue;
+                }
+                match object_len(storage, &objects.join(&name)).await {
+                    Ok(Some(len)) => {
+                        candidates.insert(name, len);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        unread.get_or_insert(err);
+                    }
+                }
+            }
+        }
+    }
+    Ok((candidates, unread))
+}
+
+/// The length of the object at `path`, or `None` if there is none. Any
+/// other failure to read it is an error, not an absence.
+async fn object_len(storage: &(impl Storage + Sync), path: &Path) -> Res<Option<u64>> {
+    let file = match storage.open_file(path).await {
+        Ok(file) => file,
+        Err(err) if err.is_not_found() => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    Ok(Some(file.metadata().await?.len()))
+}
+
+/// Delete the `candidates` no installed manifest uses, after an uninstall
+/// removed the manifests that named them.
+///
+/// Try-locks every package first, as [`gc`] does: a commit elsewhere files
+/// an object before it writes the manifest naming it, so without the locks
+/// this could delete an object a new manifest is about to name. A busy one
+/// deletes nothing and is answered as [`Pruned::Busy`]. The caller must not
+/// hold any package's lock.
+pub(crate) async fn prune(
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+    lineage: &DomainLineage,
+    candidates: BTreeMap<String, u64>,
+) -> Res<Pruned> {
+    // Nothing to delete needs no lock, and a busy package then keeps nothing.
+    if candidates.is_empty() {
+        return Ok(Pruned::Freed(GcReport::default()));
+    }
+    let _held = match lock_every_package(paths, storage, lineage, None).await {
+        Ok(held) => held,
+        Err(Error::PackageBusy(namespace)) => return Ok(Pruned::Busy(namespace)),
+        Err(err) => return Err(err),
+    };
+    let in_use = objects_in_use(paths, storage, candidates.keys().cloned().collect(), None).await?;
+    let mut report = GcReport::default();
+    for (name, len) in candidates {
+        if in_use.contains(&name) {
+            continue;
+        }
+        let path = paths.objects_dir().join(&name);
+        if !storage.exists(&path).await {
+            continue;
+        }
+        debug!("🗑️ Removing object {name}");
+        storage.remove_file(&path).await?;
+        report.objects += 1;
+        report.bytes += len;
+    }
+    info!("✔️ Pruned: {report:?}");
+    Ok(Pruned::Freed(report))
+}
+
 /// Of `candidates` — object file names — those some installed manifest
 /// uses: any revision of any package under `installed/`.
 ///
@@ -144,16 +267,24 @@ pub async fn gc(
 /// name. The two usually agree; a row carried over by a recommit can keep
 /// its old key under a new hash, so both count.
 ///
+/// `skip` names a package whose manifests are not read: a caller that reads
+/// them itself asks only about everyone else's.
+///
 /// Stops reading once every candidate is found. Fails on a manifest it
 /// cannot read, rather than treat its objects as unused.
 pub(crate) async fn objects_in_use(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     mut candidates: BTreeSet<String>,
+    skip: Option<&Namespace>,
 ) -> Res<BTreeSet<String>> {
+    let skipped = skip.map(|namespace| paths.installed_manifests_dir(namespace));
     let mut in_use = BTreeSet::new();
     for owner in list_dirs(storage, &paths.installed_dir()).await? {
         for package in list_dirs(storage, &owner).await? {
+            if skipped.as_ref() == Some(&package) {
+                continue;
+            }
             for (_, manifest_path, _) in list_files(storage, &package).await? {
                 if candidates.is_empty() {
                     return Ok(in_use);
@@ -174,7 +305,7 @@ pub(crate) async fn objects_in_use(
 
 /// The object names one row uses: its digest's hex, and the file name of a
 /// `file://` key into an `objects/` directory.
-fn row_objects(
+pub(crate) fn row_objects(
     hash: &crate::object_hash::ObjectHash,
     physical_key: &str,
 ) -> impl Iterator<Item = String> {
@@ -199,10 +330,14 @@ fn row_objects(
 /// is not held here, so its new objects are not protected. That is by
 /// design: only the user starts a new package, background updates touch
 /// only installed ones, and starting one while gc runs is unsupported.
-async fn lock_every_package(
+///
+/// `except` is a package the caller already holds: the lock is not
+/// reentrant, so trying it again would find it busy.
+pub(crate) async fn lock_every_package(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
     lineage: &DomainLineage,
+    except: Option<&Namespace>,
 ) -> Res<Vec<LockGuard>> {
     let mut namespaces: BTreeSet<Namespace> = lineage.namespaces().into_iter().collect();
     for owner_dir in list_dirs(storage, &paths.locks_dir()).await? {
@@ -225,6 +360,9 @@ async fn lock_every_package(
         }
     }
 
+    if let Some(except) = except {
+        namespaces.remove(except);
+    }
     let mut held = Vec::with_capacity(namespaces.len());
     for namespace in namespaces {
         match package_lock::try_lock(storage, paths, &namespace).await? {
@@ -275,7 +413,7 @@ async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathB
 /// The visible files of `dir` as `(name, path, length)`, or none if it does
 /// not exist. A hidden file is a write's stranded `.tmp-<uuid>` or the OS's
 /// own, and is left alone.
-async fn list_files(
+pub(crate) async fn list_files(
     storage: &(impl Storage + Sync),
     dir: &Path,
 ) -> Res<Vec<(String, PathBuf, u64)>> {
@@ -505,7 +643,7 @@ mod tests {
         std::fs::write(&installed, manifest.to_jsonlines())?;
 
         let candidates = [digest.clone(), "old-name".into(), "unused".into()].into();
-        let in_use = objects_in_use(&paths, &storage, candidates).await?;
+        let in_use = objects_in_use(&paths, &storage, candidates, None).await?;
 
         assert_eq!(in_use, [digest, "old-name".to_string()].into());
         Ok(())
@@ -553,6 +691,324 @@ mod tests {
         std::fs::write(paths.locks_dir().join(".DS_Store"), "")?;
 
         assert!(domain.gc().await?.is_empty());
+        Ok(())
+    }
+
+    /// Uninstalling with prune deletes the package's own objects and keeps
+    /// the one another package still uses.
+    #[test(tokio::test)]
+    async fn a_pruning_uninstall_deletes_only_its_unshared_objects() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(
+            &domain,
+            "acme/kept",
+            &[("shared.txt", "shared"), ("a.txt", "a")],
+        )
+        .await?;
+        let kept = object_names(&paths)?;
+        create(
+            &domain,
+            "acme/gone",
+            &[("shared.txt", "shared"), ("b.txt", "bb")],
+        )
+        .await?;
+
+        let pruned = domain
+            .uninstall_package_pruning("acme/gone".try_into()?)
+            .await?;
+
+        assert_eq!(
+            pruned,
+            Pruned::Freed(GcReport {
+                objects: 1,
+                bytes: 2,
+                ..GcReport::default()
+            })
+        );
+        assert_eq!(pruned.to_string(), "Freed 2 B: 1 object");
+        assert_eq!(object_names(&paths)?, kept);
+        assert!(
+            domain
+                .get_installed_package(&"acme/gone".try_into()?)
+                .await?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    /// Every revision's objects are candidates, not only the latest one's.
+    #[test(tokio::test)]
+    async fn a_pruning_uninstall_deletes_every_revisions_objects() -> Res {
+        let (domain, paths, dir) = domain().await?;
+        create(&domain, "acme/gone", &[("b.txt", "b1")]).await?;
+        let namespace: Namespace = "acme/gone".try_into()?;
+        std::fs::write(dir.path().join("home/acme/gone/b.txt"), "b22")?;
+        domain
+            .get_installed_package(&namespace)
+            .await?
+            .expect("installed")
+            .commit(
+                "second".to_string(),
+                crate::flow::UserMeta::Keep,
+                None,
+                None,
+            )
+            .await?;
+        assert_eq!(object_names(&paths)?.len(), 2);
+
+        let pruned = domain.uninstall_package_pruning(namespace).await?;
+
+        assert_eq!(pruned.to_string(), "Freed 5 B: 2 objects");
+        assert!(object_names(&paths)?.is_empty());
+        Ok(())
+    }
+
+    /// The prune is scoped: another uninstall's leftovers, the manifest
+    /// cache and staging stay for gc.
+    #[test(tokio::test)]
+    async fn a_pruning_uninstall_leaves_other_leftovers() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/earlier", &[("x.txt", "x")]).await?;
+        domain.uninstall_package("acme/earlier".try_into()?).await?;
+        let leftover = object_names(&paths)?;
+        let bucket = paths.cached_manifests_dir("bucket");
+        std::fs::create_dir_all(&bucket)?;
+        std::fs::write(bucket.join("1111"), "12345")?;
+        let stranded = paths.staging_dir().join("some-uuid");
+        std::fs::create_dir_all(&stranded)?;
+
+        create(&domain, "acme/gone", &[("b.txt", "bb")]).await?;
+        let pruned = domain
+            .uninstall_package_pruning("acme/gone".try_into()?)
+            .await?;
+
+        assert_eq!(pruned.to_string(), "Freed 2 B: 1 object");
+        assert_eq!(object_names(&paths)?, leftover);
+        assert!(bucket.join("1111").is_file());
+        assert!(stranded.is_dir());
+        Ok(())
+    }
+
+    /// Every object still in use by another package: nothing to free.
+    #[test(tokio::test)]
+    async fn a_pruning_uninstall_of_shared_content_frees_nothing() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/kept", &[("a.txt", "a")]).await?;
+        create(&domain, "acme/gone", &[("a.txt", "a")]).await?;
+        let before = object_names(&paths)?;
+
+        let pruned = domain
+            .uninstall_package_pruning("acme/gone".try_into()?)
+            .await?;
+
+        assert_eq!(pruned.to_string(), "Nothing to free");
+        assert_eq!(object_names(&paths)?, before);
+        Ok(())
+    }
+
+    /// Another package busy in another writer: the uninstall stands, the
+    /// objects stay, and the result names the busy package.
+    #[test(tokio::test)]
+    async fn a_busy_package_keeps_the_objects_but_not_the_package() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/busy", &[("a.txt", "a")]).await?;
+        create(&domain, "acme/gone", &[("b.txt", "bb")]).await?;
+        let before = object_names(&paths)?;
+        let busy: Namespace = "acme/busy".try_into()?;
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+
+        let pruned = domain
+            .uninstall_package_pruning("acme/gone".try_into()?)
+            .await?;
+
+        assert_eq!(pruned, Pruned::Busy(busy));
+        assert_eq!(
+            pruned.to_string(),
+            "Kept downloaded files: acme/busy is busy"
+        );
+        assert_eq!(object_names(&paths)?, before);
+        assert!(
+            domain
+                .get_installed_package(&"acme/gone".try_into()?)
+                .await?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    /// Another package's manifest that can't be read stops the prune with
+    /// nothing deleted; the uninstall has happened, and the error says so.
+    #[test(tokio::test)]
+    async fn an_unreadable_manifest_keeps_the_objects() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/broken", &[("a.txt", "a")]).await?;
+        create(&domain, "acme/gone", &[("b.txt", "bb")]).await?;
+        let before = object_names(&paths)?;
+        let broken = paths.installed_manifests_dir(&"acme/broken".try_into()?);
+        for entry in std::fs::read_dir(&broken)? {
+            std::fs::write(entry?.path(), "not a manifest")?;
+        }
+
+        let result = domain
+            .uninstall_package_pruning("acme/gone".try_into()?)
+            .await;
+
+        let Err(err @ Error::PruneFailed(_, _, None)) = result else {
+            panic!("expected PruneFailed, got {result:?}");
+        };
+        assert!(
+            err.to_string().starts_with(
+                "Uninstalled acme/gone, but not all of its downloaded files were deleted: "
+            ),
+            "{err}"
+        );
+        assert_eq!(object_names(&paths)?, before);
+        assert!(
+            domain
+                .get_installed_package(&"acme/gone".try_into()?)
+                .await?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    /// The package's own manifest that can't be read does not stop the
+    /// removal: the package goes, the objects of what could be read go, and
+    /// the error says not every file was deleted.
+    #[test(tokio::test)]
+    async fn its_own_unreadable_manifest_removes_and_says_files_were_left() -> Res {
+        let (domain, paths, dir) = domain().await?;
+        create(&domain, "acme/broken", &[("b.txt", "b1")]).await?;
+        let namespace: Namespace = "acme/broken".try_into()?;
+        let first: Vec<_> = std::fs::read_dir(paths.installed_manifests_dir(&namespace))?
+            .map(|entry| entry.map(|e| e.path()))
+            .collect::<Result<_, _>>()?;
+        std::fs::write(dir.path().join("home/acme/broken/b.txt"), "b22")?;
+        domain
+            .get_installed_package(&namespace)
+            .await?
+            .expect("installed")
+            .commit(
+                "second".to_string(),
+                crate::flow::UserMeta::Keep,
+                None,
+                None,
+            )
+            .await?;
+        for path in first {
+            std::fs::write(path, "not a manifest")?;
+        }
+
+        let result = domain.uninstall_package_pruning(namespace.clone()).await;
+
+        let Err(err @ Error::PruneFailed(_, _, None)) = result else {
+            panic!("expected PruneFailed, got {result:?}");
+        };
+        assert!(
+            err.to_string().starts_with(
+                "Uninstalled acme/broken, but not all of its downloaded files were deleted: "
+            ),
+            "{err}"
+        );
+        assert!(domain.get_installed_package(&namespace).await?.is_none());
+        assert_eq!(
+            object_names(&paths)?.len(),
+            1,
+            "the readable revision's object went; the unread one's stays for gc"
+        );
+        assert_eq!(domain.gc().await?.objects, 1, "and gc frees it");
+        Ok(())
+    }
+
+    /// An unreadable revision of its own and a busy package together: the
+    /// error names both, the read error for the files it could not count and
+    /// the busy package for the ones it counted and kept.
+    #[test(tokio::test)]
+    async fn an_unreadable_revision_and_a_busy_package_are_both_named() -> Res {
+        let (domain, paths, dir) = domain().await?;
+        create(&domain, "acme/busy", &[("a.txt", "a")]).await?;
+        create(&domain, "acme/broken", &[("b.txt", "b1")]).await?;
+        let namespace: Namespace = "acme/broken".try_into()?;
+        let first: Vec<_> = std::fs::read_dir(paths.installed_manifests_dir(&namespace))?
+            .map(|entry| entry.map(|e| e.path()))
+            .collect::<Result<_, _>>()?;
+        std::fs::write(dir.path().join("home/acme/broken/b.txt"), "b22")?;
+        domain
+            .get_installed_package(&namespace)
+            .await?
+            .expect("installed")
+            .commit(
+                "second".to_string(),
+                crate::flow::UserMeta::Keep,
+                None,
+                None,
+            )
+            .await?;
+        for path in first {
+            std::fs::write(path, "not a manifest")?;
+        }
+        let before = object_names(&paths)?;
+        let busy: Namespace = "acme/busy".try_into()?;
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+
+        let result = domain.uninstall_package_pruning(namespace).await;
+
+        let Err(err @ Error::PruneFailed(_, _, Some(_))) = result else {
+            panic!("expected PruneFailed naming the busy package, got {result:?}");
+        };
+        let words = err.to_string();
+        assert!(
+            words.starts_with(
+                "Uninstalled acme/broken, but not all of its downloaded files were deleted: "
+            ),
+            "{words}"
+        );
+        assert!(
+            words.ends_with("; acme/busy is busy, so the rest were kept too"),
+            "{words}"
+        );
+        assert_eq!(
+            object_names(&paths)?,
+            before,
+            "the busy package kept them all"
+        );
+        Ok(())
+    }
+
+    /// No candidates: nothing to free, and no other package's lock is
+    /// asked for, so a busy one does not read as files kept.
+    #[test(tokio::test)]
+    async fn no_candidates_free_nothing_without_taking_locks() -> Res {
+        let (domain, paths, _dir) = domain().await?;
+        create(&domain, "acme/busy", &[("a.txt", "a")]).await?;
+        create(&domain, "acme/empty", &[]).await?;
+        let busy: Namespace = "acme/busy".try_into()?;
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+
+        let pruned = domain
+            .uninstall_package_pruning("acme/empty".try_into()?)
+            .await?;
+
+        assert_eq!(pruned, Pruned::Freed(GcReport::default()));
+        Ok(())
+    }
+
+    /// A package that is not installed is refused before anything else.
+    #[test(tokio::test)]
+    async fn a_pruning_uninstall_of_a_missing_package_is_refused() -> Res {
+        let (domain, _paths, _dir) = domain().await?;
+        let result = domain
+            .uninstall_package_pruning("acme/none".try_into()?)
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(Error::InstallPackage(
+                    crate::InstallPackageError::NotInstalled(_)
+                ))
+            ),
+            "{result:?}"
+        );
         Ok(())
     }
 

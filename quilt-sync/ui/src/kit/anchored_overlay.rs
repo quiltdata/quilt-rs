@@ -102,16 +102,23 @@ pub fn AnchoredOverlay(
     /// otherwise stop short of the surface it is drawn inside.
     #[prop(optional)]
     tight: bool,
+    /// The contents scroll themselves: the surface stops scrolling its
+    /// overflow and lays them out as a column it bounds, so a list can scroll
+    /// under a footer that stays in view. One scrollbar, never two.
+    #[prop(optional)]
+    contained: bool,
     /// The surface's contents. Rendered once and kept: the popover hides and
     /// shows the same subtree, so a caller whose body changes drives it with a
     /// signal rather than expecting a rebuild.
     children: Children,
 ) -> impl IntoView {
-    let surface_class = if tight {
-        format!("{} {}", style::surface, style::tight)
-    } else {
-        String::from(style::surface)
-    };
+    let mut surface_class = String::from(style::surface);
+    for (on, class) in [(tight, style::tight), (contained, style::contained)] {
+        if on {
+            surface_class.push(' ');
+            surface_class.push_str(class);
+        }
+    }
     let anchor: NodeRef<leptos::html::Div> = NodeRef::new();
     let surface: NodeRef<leptos::html::Div> = NodeRef::new();
     let surface_id = unique_id("overlay");
