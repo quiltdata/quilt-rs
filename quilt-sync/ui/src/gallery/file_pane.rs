@@ -697,7 +697,8 @@ fn pane(p: Pane) -> AnyView {
                 .count()
         })
     });
-    let chosen = Signal::derive(move || {
+    // Select-all's own number: the ticks among the rows on screen.
+    let shown_ticked = Signal::derive(move || {
         all.with_value(|rs| {
             shown
                 .get()
@@ -706,17 +707,12 @@ fn pane(p: Pane) -> AnyView {
                 .count()
         })
     });
-    // The bytes the press fetches: every ticked row's manifest size, shown or
-    // not, as the real footer counts every loaded tick. Only a missing file
-    // takes a tick, so this is exactly what is downloaded — a sum over rows
-    // the page already holds, with no I/O.
-    let fetching = Signal::derive(move || {
-        all.with_value(|rs| {
-            rs.iter()
-                .filter(|r| r.pick.is_some_and(|slot| picks.with(|p| p[slot])))
-                .fold(0u64, |sum, r| sum.saturating_add(r.bytes))
-        })
-    });
+    // What the footer's press fetches, its count and its bytes read off one
+    // set: every loaded tick, shown or not, as the real footer counts them — a
+    // search hides a tick, it does not undo it. Only a missing file takes a
+    // tick, so the bytes are exactly what is downloaded, summed over rows the
+    // page already holds, with no I/O.
+    let chosen = Memo::new(move |_| all.with_value(|rs| picks.with(|p| chosen_among(rs, p))));
     let narrowed =
         Signal::derive(move || !query_sig.get().is_empty() || !facet_sig.get().starts_with("All"));
 
@@ -737,7 +733,7 @@ fn pane(p: Pane) -> AnyView {
         boxes,
         capped: body == Body::Capped,
     };
-    let footer_shown = Signal::derive(move || boxes && chosen.get() > 0);
+    let footer_shown = Signal::derive(move || boxes && chosen.get().files > 0);
     let marked: Vec<String> = marked.iter().map(|&p| p.to_string()).collect();
     let marked = StoredValue::new(marked);
     let empty_package = pickable == 0 && all.with_value(Vec::is_empty);
@@ -887,7 +883,7 @@ fn pane(p: Pane) -> AnyView {
                                 }>
                                     <span style="flex:0 0 28px" />
                                     <SelectAll
-                                        selected=chosen
+                                        selected=shown_ticked
                                         total=offered
                                         narrowed=narrowed
                                         on_toggle=move |next| {
@@ -1019,7 +1015,7 @@ fn pane(p: Pane) -> AnyView {
                                 loading=running
                                 on_click=move |_| ()
                             >
-                                {move || footer_words(chosen.get(), fetching.get())}
+                                {move || footer_words(chosen.get())}
                             </Button>
                         </div>
                     </Show>
@@ -1342,8 +1338,26 @@ fn over_the_cap() -> Vec<File> {
 /// empty files still says `0 B`: the clause is always there, so the button
 /// keeps one shape and no missing figure reads as a size that failed — and the
 /// files are still fetched, the press makes them.
-fn footer_words(files: usize, fetching: u64) -> String {
-    format!("Download {} · {}", count(files), bytes(fetching))
+fn footer_words(chosen: Ticked) -> String {
+    format!("Download {} · {}", count(chosen.files), bytes(chosen.bytes))
+}
+
+/// The footer's selection: how many files are ticked and what they weigh.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Ticked {
+    files: usize,
+    bytes: u64,
+}
+
+/// Every ticked row among `rows`, which are all the loaded ones, counted and
+/// summed in one pass so the count and the bytes cannot describe two sets.
+fn chosen_among(rows: &[Row], picks: &[bool]) -> Ticked {
+    rows.iter()
+        .filter(|r| r.pick.is_some_and(|slot| picks[slot]))
+        .fold(Ticked::default(), |sum, r| Ticked {
+            files: sum.files + 1,
+            bytes: sum.bytes.saturating_add(r.bytes),
+        })
 }
 
 /// Everything here but two empty files a run leaves to mark it done, so the
@@ -1530,12 +1544,42 @@ mod tests {
     #[test]
     fn the_footer_says_its_bytes() {
         let plain = |w: String| w.replace('\u{a0}', " ");
-        assert_eq!(plain(footer_words(3, 1_200_000)), "Download 3 · 1.2 MB");
-        assert_eq!(plain(footer_words(2, 0)), "Download 2 · 0 B");
-        assert_eq!(
-            plain(footer_words(1_000, 86_300_000_000)),
-            "Download 1,000 · 86.3 GB"
-        );
+        let words = |files, bytes| plain(footer_words(Ticked { files, bytes }));
+        assert_eq!(words(3, 1_200_000), "Download 3 · 1.2 MB");
+        assert_eq!(words(2, 0), "Download 2 · 0 B");
+        assert_eq!(words(1_000, 86_300_000_000), "Download 1,000 · 86.3 GB");
+    }
+
+    /// The footer's count and bytes are one set: every loaded tick, the rows a
+    /// search or a facet hides included, and nothing that is not ticked.
+    #[test]
+    fn the_footers_count_and_bytes_are_one_set() {
+        let all = rows(&package());
+        let slots = all.iter().filter(|r| r.pick.is_some()).count();
+        let mut picks = vec![false; slots];
+        // A tick on a `raw/` plate and one on `manifest.jsonl`, which a search
+        // for "plate" hides.
+        let manifest = all.iter().find(|r| r.path == "manifest.jsonl").unwrap();
+        let plate = all.iter().find(|r| r.path == "raw/plate-23.csv").unwrap();
+        picks[manifest.pick.unwrap()] = true;
+        picks[plate.pick.unwrap()] = true;
+
+        let chosen = chosen_among(&all, &picks);
+        assert_eq!(chosen.files, 2);
+        assert_eq!(chosen.bytes, manifest.bytes + plate.bytes);
+
+        // Whatever is ticked, the bytes are the sum over exactly the rows the
+        // count counts.
+        for n in 0..=slots {
+            let picks: Vec<bool> = (0..slots).map(|i| i < n).collect();
+            let chosen = chosen_among(&all, &picks);
+            let set: Vec<&Row> = all
+                .iter()
+                .filter(|r| r.pick.is_some_and(|s| picks[s]))
+                .collect();
+            assert_eq!(chosen.files, set.len());
+            assert_eq!(chosen.bytes, set.iter().map(|r| r.bytes).sum::<u64>());
+        }
     }
 
     /// The live cell over the cap says what the page would: the whole count,
