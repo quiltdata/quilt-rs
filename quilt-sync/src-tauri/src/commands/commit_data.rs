@@ -790,6 +790,7 @@ pub async fn validate_commit_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use crate::commands::test_support::*;
     use crate::model::mocks;
@@ -810,7 +811,7 @@ mod tests {
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
@@ -844,7 +845,7 @@ mod tests {
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
@@ -852,15 +853,18 @@ mod tests {
     /// The model mocks shared by the denial-contrast pair below: an installed
     /// package with a remote, a cached manifest, and an ungoverned bucket. The
     /// caller wires up the status call, which is the only thing that differs.
-    fn denial_contrast_model() -> crate::model::MockQuiltModel {
+    fn denial_contrast_model(origin: quilt_uri::Host) -> crate::model::MockQuiltModel {
         let mut model = mocks::create();
         model
             .expect_get_installed_package()
             .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
         model
             .expect_get_installed_package_lineage()
-            .returning(|pkg| {
-                let uri = make_manifest_uri(&pkg.namespace.to_string());
+            .returning(move |pkg| {
+                let uri = quilt_uri::ManifestUri {
+                    origin: Some(origin.clone()),
+                    ..make_manifest_uri(&pkg.namespace.to_string())
+                };
                 Ok(quilt::lineage::PackageLineage::from_remote(
                     uri,
                     "abcdef".to_string(),
@@ -884,15 +888,15 @@ mod tests {
     async fn commit_data_opens_when_there_is_no_session() -> Result<(), String> {
         for err in [
             Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
-                "demo.quiltdata.com".parse().unwrap(),
+                fixtures::another_host(),
             )))),
             Error::from(quilt::Error::S3(quilt::S3Error {
-                host: Some("demo.quiltdata.com".parse().unwrap()),
+                host: Some(fixtures::another_host()),
                 kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
             })),
         ] {
             let described = err.to_string();
-            let mut model = denial_contrast_model();
+            let mut model = denial_contrast_model(fixtures::one_host());
             model
                 .expect_get_installed_package_status()
                 .return_once(move |_, _| Err(err));
@@ -920,7 +924,7 @@ mod tests {
             // the page states a fact about the package in front of the user.
             assert_eq!(
                 data.no_session_host.as_deref(),
-                Some("test.quilt.dev"),
+                Some("one.quilt.test"),
                 "the page must name its own deployment so the commit action can \
                  explain itself, instead of looking ready ({described})"
             );
@@ -947,7 +951,7 @@ mod tests {
     /// affordances to quote.
     #[tokio::test]
     async fn commit_data_opens_and_states_the_denial() -> Result<(), String> {
-        let mut model = denial_contrast_model();
+        let mut model = denial_contrast_model(fixtures::host());
         model
             .expect_get_installed_package_status()
             .returning(|_, _| Err(access_denied_error()));
@@ -989,7 +993,7 @@ mod tests {
     /// carries no reason at all, so the commit affordances stay live.
     #[tokio::test]
     async fn commit_data_on_a_readable_bucket_states_no_denial() -> Result<(), String> {
-        let mut model = denial_contrast_model();
+        let mut model = denial_contrast_model(fixtures::host());
         model
             .expect_get_installed_package_status()
             .returning(|_, _| {
@@ -1036,7 +1040,7 @@ mod tests {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
         model
             .expect_get_installed_package()
@@ -1105,7 +1109,7 @@ mod tests {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
         model
             .expect_get_installed_package()
@@ -1171,7 +1175,7 @@ mod tests {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
         model
             .expect_get_installed_package()
@@ -1229,7 +1233,7 @@ mod tests {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
         model
             .expect_get_installed_package()
@@ -1311,12 +1315,12 @@ workflows:
         assert_eq!(ids, vec!["dummy", "alpha"]);
         assert_eq!(workflows[0].name.as_deref(), Some("Dummy workflow"));
         assert_eq!(workflows[0].description.as_deref(), Some("Do nothing."));
-        // The package has a catalog host (test.quilt.dev) and remote bucket
+        // The package has a catalog host (quilt.test) and remote bucket
         // (quilt-example), so the config object gets a catalog link. These
         // workflows declare no schemas, so their schema links stay None.
         assert_eq!(
             config_url.as_deref(),
-            Some("https://test.quilt.dev/b/quilt-example/tree/.quilt/workflows/config.yml")
+            Some("https://quilt.test/b/quilt-example/tree/.quilt/workflows/config.yml")
         );
         assert!(
             workflows
@@ -1376,13 +1380,13 @@ workflows:
                 id: "alpha".to_string(),
                 name: Some("Alpha".to_string()),
                 description: None,
-                metadata_schema_url: Some("https://catalog/b/bucket/tree/meta.json".to_string()),
+                metadata_schema_url: Some("https://quilt.test/b/bucket/tree/meta.json".to_string()),
                 entries_schema_url: None,
             }],
             default_workflow: Some("alpha".to_string()),
             is_workflow_required: true,
             config_url: Some(
-                "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
+                "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
             ),
         };
         assert_eq!(
@@ -1393,12 +1397,12 @@ workflows:
                     "id": "alpha",
                     "name": "Alpha",
                     "description": null,
-                    "metadataSchemaUrl": "https://catalog/b/bucket/tree/meta.json",
+                    "metadataSchemaUrl": "https://quilt.test/b/bucket/tree/meta.json",
                     "entriesSchemaUrl": null,
                 }],
                 "defaultWorkflow": "alpha",
                 "isWorkflowRequired": true,
-                "configUrl": "https://catalog/b/bucket/tree/.quilt/workflows/config.yml",
+                "configUrl": "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml",
             })
         );
         assert_eq!(
@@ -1413,14 +1417,14 @@ workflows:
             serde_json::to_value(CommitWorkflows::Invalid {
                 reason: "bad schema".to_string(),
                 config_url: Some(
-                    "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
+                    "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
                 ),
             })
             .unwrap(),
             serde_json::json!({
                 "state": "invalid",
                 "reason": "bad schema",
-                "configUrl": "https://catalog/b/bucket/tree/.quilt/workflows/config.yml",
+                "configUrl": "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml",
             })
         );
     }
@@ -1457,7 +1461,7 @@ workflows:
         // the user can open and fix it (catalog host + remote bucket in scope).
         assert_eq!(
             config_url.as_deref(),
-            Some("https://test.quilt.dev/b/quilt-example/tree/.quilt/workflows/config.yml")
+            Some("https://quilt.test/b/quilt-example/tree/.quilt/workflows/config.yml")
         );
         Ok(())
     }
@@ -1591,7 +1595,7 @@ schemas:
             .expect_get_bucket_workflows_config()
             .return_once(move |_, _| Ok(Some(config)));
 
-        let host: quilt_uri::Host = "test.quilt.dev".parse().map_err(|_| "bad host")?;
+        let host = fixtures::host();
         let workflows = get_bucket_workflows_from_model(&model, Some(host), "my-bucket").await;
 
         let CommitWorkflows::Available {
@@ -1604,17 +1608,17 @@ schemas:
         };
         assert_eq!(
             config_url.as_deref(),
-            Some("https://test.quilt.dev/b/my-bucket/tree/.quilt/workflows/config.yml")
+            Some("https://quilt.test/b/my-bucket/tree/.quilt/workflows/config.yml")
         );
         // `alpha` declares both schemas; each is linked against its own bucket.
         let alpha = &workflows[0];
         assert_eq!(
             alpha.metadata_schema_url.as_deref(),
-            Some("https://test.quilt.dev/b/schemas-bucket/tree/meta.json")
+            Some("https://quilt.test/b/schemas-bucket/tree/meta.json")
         );
         assert_eq!(
             alpha.entries_schema_url.as_deref(),
-            Some("https://test.quilt.dev/b/schemas-bucket/tree/entries.json")
+            Some("https://quilt.test/b/schemas-bucket/tree/entries.json")
         );
         // `bare` declares neither schema, so it has no schema links.
         let bare = &workflows[1];

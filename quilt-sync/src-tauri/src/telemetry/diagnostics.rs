@@ -260,31 +260,31 @@ mod tests {
         let domain_paths = DomainPaths::new(data_tmp.path().to_path_buf());
         write_file(&domain_paths.lineage(), data_json);
 
-        let demo_host = "demo.quiltdata.com";
-        let open_host = "open.quiltdata.com";
-        let demo_client = br#"{"client_id":"abc"}"#;
-        let open_client = br#"{"client_id":"def"}"#;
+        let one_host = "one.quilt.test";
+        let another_host = "another.quilt.test";
+        let one_client = br#"{"client_id":"abc"}"#;
+        let another_client = br#"{"client_id":"def"}"#;
         write_file(
             &data_tmp
                 .path()
                 .join(quilt::paths::AUTH_DIR)
-                .join(demo_host)
+                .join(one_host)
                 .join(quilt::paths::AUTH_CLIENT),
-            demo_client,
+            one_client,
         );
         write_file(
             &data_tmp
                 .path()
                 .join(quilt::paths::AUTH_DIR)
-                .join(open_host)
+                .join(another_host)
                 .join(quilt::paths::AUTH_CLIENT),
-            open_client,
+            another_client,
         );
 
         let info = make_info(
             data_tmp.path().to_path_buf(),
             logs_tmp.path().to_path_buf(),
-            vec![demo_host.to_string(), open_host.to_string()],
+            vec![one_host.to_string(), another_host.to_string()],
         );
 
         let zip_path = save_diagnostic_zip(&info).expect("save zip");
@@ -293,15 +293,15 @@ mod tests {
 
         let entries = read_zip_entries(&zip_path);
 
-        let demo_entry = format!("auth/{demo_host}/client.json");
-        let open_entry = format!("auth/{open_host}/client.json");
+        let one_entry = format!("auth/{one_host}/client.json");
+        let another_entry = format!("auth/{another_host}/client.json");
         let expected_names: Vec<&str> = vec![
             "metadata.json",
             "logs/quiltsync.log",
             "logs/quiltsync.log.1",
             "data.json",
-            &demo_entry,
-            &open_entry,
+            &one_entry,
+            &another_entry,
         ];
         let actual_names: Vec<&str> = entries.keys().map(String::as_str).collect();
         for name in &expected_names {
@@ -319,8 +319,8 @@ mod tests {
         assert_eq!(entries["logs/quiltsync.log"], current_log);
         assert_eq!(entries["logs/quiltsync.log.1"], rotated_log);
         assert_eq!(entries["data.json"], data_json);
-        assert_eq!(entries[&demo_entry], demo_client);
-        assert_eq!(entries[&open_entry], open_client);
+        assert_eq!(entries[&one_entry], one_client);
+        assert_eq!(entries[&another_entry], another_client);
 
         let parsed: DiagnosticMetadata =
             serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");

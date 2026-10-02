@@ -339,7 +339,7 @@ impl From<Error> for String {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use quilt_uri::fixtures;
 
     use super::*;
 
@@ -382,13 +382,13 @@ mod tests {
 
     #[test]
     fn to_frontend_string_session_absent_with_host() {
-        let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
+        let host = fixtures::host();
         let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(Some(
             host,
         ))));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
         assert_eq!(json["kind"], "session_absent");
-        assert_eq!(json["host"], "catalog.dev");
+        assert_eq!(json["host"], "quilt.test");
         assert!(json["message"].as_str().unwrap().contains("No session"));
     }
 
@@ -409,7 +409,7 @@ mod tests {
     /// answers by navigating to `/login` — a page that cannot fix a config
     /// file, for a problem the user has no way to act on.
     fn to_frontend_string_missing_registry_is_not_a_dead_session() {
-        let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
+        let host = fixtures::host();
         let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host)));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
         assert_eq!(json["kind"], "registry_url_missing");
@@ -417,10 +417,10 @@ mod tests {
             json["kind"], "session_absent",
             "a misconfiguration must not route the user to sign in"
         );
-        assert_eq!(json["host"], "catalog.dev");
+        assert_eq!(json["host"], "quilt.test");
         let message = json["message"].as_str().unwrap();
         assert!(
-            message.contains("catalog.dev"),
+            message.contains("quilt.test"),
             "must name the host: {message}"
         );
         assert!(
@@ -470,7 +470,7 @@ mod tests {
     /// in with no way to do so.
     #[test]
     fn to_frontend_string_expired_session_sends_the_user_to_login() {
-        let host: quilt_uri::Host = "demo.quiltdata.com".parse().unwrap();
+        let host = fixtures::host();
         let err = Error::Quilt(quilt::Error::S3(quilt::S3Error {
             host: Some(host.clone()),
             kind: quilt::S3ErrorKind::InvalidCredentials(

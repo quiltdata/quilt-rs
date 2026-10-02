@@ -332,14 +332,14 @@ mod tests {
         MainPageAccountsData {
             hosts: vec![
                 AccountHostData {
-                    host: "open.quiltdata.com".to_string(),
+                    host: "one.quilt.test".to_string(),
                     signed_in: true,
                     current_role: Some("ReadWriteQuiltBucket".to_string()),
                     roles: vec!["ReadWriteQuiltBucket".to_string()],
                     provisional: false,
                 },
                 AccountHostData {
-                    host: "solo.registry.io".to_string(),
+                    host: "another.quilt.test".to_string(),
                     signed_in: false,
                     current_role: None,
                     roles: Vec::new(),
@@ -353,14 +353,14 @@ mod tests {
         MainPageAccountsData {
             hosts: vec![
                 AccountHostData {
-                    host: "many.quiltdata.com".to_string(),
+                    host: "one.quilt.test".to_string(),
                     signed_in: true,
                     current_role: Some("ReadOnly".to_string()),
                     roles: vec!["ReadOnly".to_string(), "ReadWriteQuiltBucket".to_string()],
                     provisional: false,
                 },
                 AccountHostData {
-                    host: "solo.registry.io".to_string(),
+                    host: "another.quilt.test".to_string(),
                     signed_in: true,
                     current_role: Some("ReadOnly".to_string()),
                     roles: vec!["ReadOnly".to_string()],
@@ -373,7 +373,7 @@ mod tests {
     fn nameless_role() -> MainPageAccountsData {
         MainPageAccountsData {
             hosts: vec![AccountHostData {
-                host: "quiet.quiltdata.com".to_string(),
+                host: "quilt.test".to_string(),
                 signed_in: true,
                 current_role: None,
                 roles: Vec::new(),
@@ -394,7 +394,7 @@ mod tests {
     fn waiting_for_a_role() -> MainPageAccountsData {
         MainPageAccountsData {
             hosts: vec![AccountHostData {
-                host: "quiet.quiltdata.com".to_string(),
+                host: "quilt.test".to_string(),
                 signed_in: true,
                 current_role: None,
                 roles: Vec::new(),
@@ -494,8 +494,8 @@ mod tests {
             1,
             "one [Sign in], for the one signed-out host"
         );
-        assert!(el.text_content().unwrap().contains("open.quiltdata.com"));
-        assert!(el.text_content().unwrap().contains("solo.registry.io"));
+        assert!(el.text_content().unwrap().contains("one.quilt.test"));
+        assert!(el.text_content().unwrap().contains("another.quilt.test"));
     }
 
     #[wasm_bindgen_test]
@@ -542,8 +542,8 @@ mod tests {
         // `back` is `/` and percent-encoded, as every other login link in the app
         // builds it — `routes::Paths` in the backend has to parse it for OAuth.
         assert_eq!(
-            sign_in_href("custom.registry.io"),
-            "/login?host=custom.registry.io&back=%2F"
+            sign_in_href("quilt.test"),
+            "/login?host=quilt.test&back=%2F"
         );
     }
     #[wasm_bindgen_test]
@@ -617,7 +617,7 @@ mod tests {
             before
                 .text_content()
                 .unwrap_or_default()
-                .contains("quiet.quiltdata.com"),
+                .contains("quilt.test"),
             "the region is a sibling of the rows, not inside one — a row is \
              replaced whole when it settles, and a replaced region never fires"
         );
@@ -626,32 +626,29 @@ mod tests {
     #[wasm_bindgen_test]
     fn the_words_name_the_role_each_row_settled_on() {
         assert_eq!(
-            role_clause(&answered_host("one.quiltdata.com", Some("ReadOnly"))),
-            "Role at one.quiltdata.com: ReadOnly"
+            role_clause(&answered_host("one.quilt.test", Some("ReadOnly"))),
+            "Role at one.quilt.test: ReadOnly"
         );
         assert_eq!(
-            role_clause(&answered_host("two.quiltdata.com", None)),
-            "Role at two.quiltdata.com unavailable"
+            role_clause(&answered_host("another.quilt.test", None)),
+            "Role at another.quilt.test unavailable"
         );
         let signed_out = AccountHostData {
             signed_in: false,
-            ..answered_host("three.quiltdata.com", None)
+            ..answered_host("third.quilt.test", None)
         };
-        assert_eq!(
-            role_clause(&signed_out),
-            "three.quiltdata.com is signed out"
-        );
+        assert_eq!(role_clause(&signed_out), "third.quilt.test is signed out");
     }
 
     #[wasm_bindgen_test]
     fn nothing_is_said_until_every_waiting_row_has_answered() {
         let hosts = vec![
-            waiting_host("first.quiltdata.com"),
-            waiting_host("second.registry.io"),
+            waiting_host("one.quilt.test"),
+            waiting_host("another.quilt.test"),
         ];
         let watch = RoleWatch::new(&hosts);
 
-        watch.answered(0, Some("Role at first.quiltdata.com: ReadOnly".to_string()));
+        watch.answered(0, Some("Role at one.quilt.test: ReadOnly".to_string()));
         assert_eq!(
             watch.said.get_untracked(),
             "",
@@ -660,51 +657,51 @@ mod tests {
 
         watch.answered(
             1,
-            Some("Role at second.registry.io unavailable".to_string()),
+            Some("Role at another.quilt.test unavailable".to_string()),
         );
         assert_eq!(
             watch.said.get_untracked(),
-            "Role at first.quiltdata.com: ReadOnly. Role at second.registry.io unavailable"
+            "Role at one.quilt.test: ReadOnly. Role at another.quilt.test unavailable"
         );
     }
 
     #[wasm_bindgen_test]
     fn the_words_follow_the_card_rather_than_the_order_the_answers_arrived() {
         let hosts = vec![
-            waiting_host("first.quiltdata.com"),
-            waiting_host("second.registry.io"),
+            waiting_host("one.quilt.test"),
+            waiting_host("another.quilt.test"),
         ];
         let watch = RoleWatch::new(&hosts);
 
-        watch.answered(1, Some("Role at second.registry.io: ReadOnly".to_string()));
-        watch.answered(0, Some("Role at first.quiltdata.com: Admin".to_string()));
+        watch.answered(1, Some("Role at another.quilt.test: ReadOnly".to_string()));
+        watch.answered(0, Some("Role at one.quilt.test: Admin".to_string()));
 
         assert_eq!(
             watch.said.get_untracked(),
-            "Role at first.quiltdata.com: Admin. Role at second.registry.io: ReadOnly"
+            "Role at one.quilt.test: Admin. Role at another.quilt.test: ReadOnly"
         );
     }
 
     #[wasm_bindgen_test]
     fn a_row_whose_query_never_landed_is_left_out_of_the_words() {
         let hosts = vec![
-            waiting_host("first.quiltdata.com"),
-            waiting_host("second.registry.io"),
+            waiting_host("one.quilt.test"),
+            waiting_host("another.quilt.test"),
         ];
         let watch = RoleWatch::new(&hosts);
 
         watch.answered(0, None);
-        watch.answered(1, Some("Role at second.registry.io: ReadOnly".to_string()));
+        watch.answered(1, Some("Role at another.quilt.test: ReadOnly".to_string()));
 
         assert_eq!(
             watch.said.get_untracked(),
-            "Role at second.registry.io: ReadOnly"
+            "Role at another.quilt.test: ReadOnly"
         );
     }
 
     #[wasm_bindgen_test]
     fn a_card_where_nothing_could_answer_stays_silent() {
-        let hosts = vec![waiting_host("first.quiltdata.com")];
+        let hosts = vec![waiting_host("quilt.test")];
         let watch = RoleWatch::new(&hosts);
 
         watch.answered(0, None);
@@ -714,14 +711,11 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_words_are_taken_back_once_they_have_been_read() {
-        let hosts = vec![waiting_host("first.quiltdata.com")];
+        let hosts = vec![waiting_host("quilt.test")];
         let watch = RoleWatch::new(&hosts);
 
-        watch.answered(0, Some("Role at first.quiltdata.com: ReadOnly".to_string()));
-        assert_eq!(
-            watch.said.get_untracked(),
-            "Role at first.quiltdata.com: ReadOnly"
-        );
+        watch.answered(0, Some("Role at quilt.test: ReadOnly".to_string()));
+        assert_eq!(watch.said.get_untracked(), "Role at quilt.test: ReadOnly");
 
         let window = i32::try_from(ANNOUNCE_FOR.as_millis()).expect("a timeout's own window");
         sleep_ms(window + 100).await;

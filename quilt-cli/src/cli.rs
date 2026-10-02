@@ -739,7 +739,7 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use quilt_uri::fixtures;
     use test_log::test;
 
     use crate::cli::model::create_model_in_temp_dir;
@@ -784,11 +784,10 @@ mod tests {
     /// verbatim. `quilt_rs` is the library crate and ships no binary.
     #[test]
     fn login_required_hint_names_the_binary_not_the_crate() {
-        let message =
-            Error::LoginRequired("open.quiltdata.com".parse().expect("valid host")).to_string();
+        let message = Error::LoginRequired(fixtures::host()).to_string();
 
         assert!(
-            message.contains("> quilt login --host open.quiltdata.com"),
+            message.contains("> quilt login --host quilt.test"),
             "hint should name the `quilt` binary: {message}"
         );
         assert!(
@@ -824,10 +823,7 @@ mod tests {
                 Error::NamespaceNotFound(("demo", "sales").into()),
                 "namespace_not_found",
             ),
-            (
-                Error::LoginRequired("open.quiltdata.com".parse().expect("valid host")),
-                "login_required",
-            ),
+            (Error::LoginRequired(fixtures::host()), "login_required"),
             (
                 Error::Json(
                     serde_json::from_str::<serde_json::Value>("{").expect_err("malformed JSON"),
@@ -847,7 +843,7 @@ mod tests {
             ),
             (
                 Error::Quilt(quilt_rs::Error::Auth(
-                    "open.quiltdata.com".parse().expect("valid host"),
+                    fixtures::host(),
                     quilt_rs::AuthError::TokensRead("boom".to_string()),
                 )),
                 "auth",
@@ -914,22 +910,16 @@ mod tests {
     /// would silently degrade `quilt role --set X` into a plain listing.
     #[test]
     fn role_set_flag_is_parsed() {
-        let listing = Args::try_parse_from(["quilt", "role", "--host", "example.com"]).unwrap();
+        let listing = Args::try_parse_from(["quilt", "role", "--host", "quilt.test"]).unwrap();
         assert!(matches!(listing.command, Commands::Role { set: None, .. }));
 
-        let switching = Args::try_parse_from([
-            "quilt",
-            "role",
-            "--host",
-            "example.com",
-            "--set",
-            "ReadOnly",
-        ])
-        .unwrap();
+        let switching =
+            Args::try_parse_from(["quilt", "role", "--host", "quilt.test", "--set", "ReadOnly"])
+                .unwrap();
         let Commands::Role { host, set } = switching.command else {
             panic!("expected the role command");
         };
-        assert_eq!(host.to_string(), "example.com");
+        assert_eq!(host.to_string(), "quilt.test");
         assert_eq!(set.as_deref(), Some("ReadOnly"));
     }
 
@@ -945,7 +935,7 @@ mod tests {
             "--bucket",
             "some-bucket",
             "--host",
-            "open.quiltdata.com",
+            "quilt.test",
         ])
         .unwrap();
         let Commands::Push { host, origin, .. } = args.command else {
@@ -953,7 +943,7 @@ mod tests {
         };
         let mut stderr = Vec::new();
         let chosen = push_host(host, origin, &mut stderr)?;
-        assert_eq!(chosen.unwrap().to_string(), "open.quiltdata.com");
+        assert_eq!(chosen.unwrap().to_string(), "quilt.test");
         assert_eq!(String::from_utf8(stderr).unwrap(), "");
         Ok(())
     }
@@ -970,7 +960,7 @@ mod tests {
                 "--bucket",
                 "some-bucket",
                 spelling,
-                "open.quiltdata.com",
+                "quilt.test",
             ])
             .unwrap();
             let Commands::Push { host, origin, .. } = args.command else {
@@ -978,7 +968,7 @@ mod tests {
             };
             let mut stderr = Vec::new();
             let chosen = push_host(host, origin, &mut stderr)?;
-            assert_eq!(chosen.unwrap().to_string(), "open.quiltdata.com");
+            assert_eq!(chosen.unwrap().to_string(), "quilt.test");
             assert_eq!(
                 String::from_utf8(stderr).unwrap(),
                 "warning: --origin is deprecated; use --host\n",
@@ -998,9 +988,9 @@ mod tests {
             "--bucket",
             "some-bucket",
             "--host",
-            "a.example.com",
+            "one.quilt.test",
             "--origin",
-            "b.example.com",
+            "another.quilt.test",
         ])
         .unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
@@ -1012,8 +1002,8 @@ mod tests {
     fn push_bucket_and_host_require_each_other() {
         for argv in [
             &["quilt", "push", "--bucket", "some-bucket"][..],
-            &["quilt", "push", "--host", "open.quiltdata.com"][..],
-            &["quilt", "push", "--origin", "open.quiltdata.com"][..],
+            &["quilt", "push", "--host", "quilt.test"][..],
+            &["quilt", "push", "--origin", "quilt.test"][..],
         ] {
             let err = Args::try_parse_from(argv).unwrap_err();
             assert_eq!(
@@ -1200,7 +1190,7 @@ mod tests {
         let commands = [
             Commands::Login {
                 code: None,
-                host: "open.quiltdata.com".parse().expect("valid host"),
+                host: fixtures::host(),
             },
             Commands::Browse {
                 uri: "not-a-package-uri".to_string(),
@@ -1242,7 +1232,7 @@ mod tests {
             json: false,
             command: Commands::Login {
                 code: None,
-                host: "open.quiltdata.com".parse().expect("valid host"),
+                host: fixtures::host(),
             },
         };
 
@@ -1492,7 +1482,7 @@ mod tests {
                     namespace: Some("foo/bar".to_string()),
                 },
                 bucket: Some("some-bucket".to_string()),
-                host: Some(Host::from_str("open.quiltdata.com").unwrap()),
+                host: Some(fixtures::host()),
                 origin: None,
                 workflow: Some("x".to_string()),
                 no_workflow: false,

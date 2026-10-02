@@ -368,8 +368,8 @@ impl SyncTrayAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
-    use quilt_uri::Host;
     use quilt_uri::Namespace;
     use tokio::sync::watch;
 
@@ -433,11 +433,11 @@ mod tests {
     fn note_login_required_promotes_mode_to_error() {
         let (agg, rx) = new_aggregator();
         let ns: Namespace = ("acme", "demo").into();
-        let host: Host = "catalog.dev".parse().unwrap();
+        let host = fixtures::host();
         agg.note_login_required(&ns, Some(host));
         let after = rx.borrow().clone();
         assert_eq!(after.mode, TrayMode::Error);
-        assert!(after.error.as_deref().unwrap().contains("catalog.dev"));
+        assert!(after.error.as_deref().unwrap().contains("quilt.test"));
     }
 
     #[test]

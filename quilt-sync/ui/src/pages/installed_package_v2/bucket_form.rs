@@ -579,13 +579,10 @@ mod tests {
             (Some("Enter a valid hostname"), None)
         );
         assert_eq!(
-            field_errors("open.quiltdata.com", ""),
+            field_errors("quilt.test", ""),
             (None, Some("Enter an S3 bucket name"))
         );
-        assert_eq!(
-            field_errors("open.quiltdata.com", "my-bucket"),
-            (None, None)
-        );
+        assert_eq!(field_errors("quilt.test", "my-bucket"), (None, None));
     }
 
     /// The read-only shape is what `remote_locked` selects, and it is not a
@@ -626,7 +623,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_failed_workflow_fetch_degrades_to_the_bucket_default() {
         let el = mount_dialog(data());
-        type_into(&el, "Host", "open.quiltdata.com");
+        type_into(&el, "Host", "quilt.test");
         type_into(&el, "Bucket", "my-bucket");
         sleep_ms(600).await;
 
@@ -685,7 +682,7 @@ mod tests {
 
     fn published() -> commands::PackageHeaderData {
         let uri: quilt_uri::S3PackageUri =
-            "quilt+s3://team-bucket#package=team/dataset&catalog=open.quiltdata.com"
+            "quilt+s3://team-bucket#package=team/dataset&catalog=one.quilt.test"
                 .parse()
                 .unwrap();
         commands::PackageHeaderData {
@@ -706,7 +703,7 @@ mod tests {
     /// Another package on another remote, for a rebuild that changes package.
     fn other_package() -> commands::PackageHeaderData {
         let uri: quilt_uri::S3PackageUri =
-            "quilt+s3://other-bucket#package=team/other&catalog=other.quiltdata.com"
+            "quilt+s3://other-bucket#package=team/other&catalog=third.quilt.test"
                 .parse()
                 .unwrap();
         commands::PackageHeaderData {
@@ -802,10 +799,10 @@ mod tests {
         leptos::task::tick().await;
         assert_eq!(
             value_of(&el, "Host"),
-            "open.quiltdata.com",
+            "one.quilt.test",
             "opened on the remote"
         );
-        type_into(&el, "Host", "example.quiltdata.com");
+        type_into(&el, "Host", "another.quilt.test");
         type_into(&el, "Bucket", "other-bucket");
         leptos::task::tick().await;
 
@@ -818,7 +815,7 @@ mod tests {
             "still open; markup was {}",
             el.inner_html()
         );
-        assert_eq!(value_of(&el, "Host"), "example.quiltdata.com");
+        assert_eq!(value_of(&el, "Host"), "another.quilt.test");
         assert_eq!(value_of(&el, "Bucket"), "other-bucket");
     }
 
@@ -832,7 +829,7 @@ mod tests {
         let el = mount_rebuilt(w, header);
         w.dialogs.bucket.set(true);
         leptos::task::tick().await;
-        type_into(&el, "Host", "example.quiltdata.com");
+        type_into(&el, "Host", "another.quilt.test");
         type_into(&el, "Bucket", "other-bucket");
         sleep_ms(SETTLED_MS).await;
         assert_eq!(
@@ -847,7 +844,7 @@ mod tests {
         leptos::task::tick().await;
         sleep_ms(50).await;
 
-        assert_eq!(value_of(&el, "Host"), "example.quiltdata.com");
+        assert_eq!(value_of(&el, "Host"), "another.quilt.test");
         assert_eq!(value_of(&el, "Bucket"), "other-bucket");
         assert_eq!(value_of(&el, "Workflow"), "Beta");
     }
@@ -865,7 +862,7 @@ mod tests {
         leptos::task::tick().await;
         sleep_ms(SETTLED_MS).await;
         choose(&el, "Workflow", "Beta");
-        type_into(&el, "Host", "example.quiltdata.com");
+        type_into(&el, "Host", "another.quilt.test");
         leptos::task::tick().await;
 
         w.dialogs.bucket.set(false);
@@ -876,7 +873,7 @@ mod tests {
         leptos::task::tick().await;
         sleep_ms(SETTLED_MS).await;
 
-        assert_eq!(value_of(&el, "Host"), "open.quiltdata.com");
+        assert_eq!(value_of(&el, "Host"), "one.quilt.test");
         assert_eq!(value_of(&el, "Bucket"), "team-bucket");
         assert_eq!(value_of(&el, "Workflow"), "Alpha (default)");
         assert_eq!(WORKFLOW_READS.get(), 2, "each opening reads afresh");
@@ -941,7 +938,7 @@ mod tests {
         let el = mount_rebuilt(w, header);
         w.dialogs.bucket.set(true);
         leptos::task::tick().await;
-        type_into(&el, "Host", "example.quiltdata.com");
+        type_into(&el, "Host", "another.quilt.test");
         type_into(&el, "Bucket", "typed-bucket");
         leptos::task::tick().await;
 
@@ -954,7 +951,7 @@ mod tests {
             "still open; markup was {}",
             el.inner_html()
         );
-        assert_eq!(value_of(&el, "Host"), "other.quiltdata.com");
+        assert_eq!(value_of(&el, "Host"), "third.quilt.test");
         assert_eq!(value_of(&el, "Bucket"), "other-bucket");
     }
 }

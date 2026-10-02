@@ -838,10 +838,10 @@ pub mod mocks;
 /// the call is guaranteed to suspend.
 #[cfg(test)]
 mod domain_lock_tests {
+    use quilt_uri::fixtures;
     use std::future::Future;
     use std::future::poll_fn;
     use std::pin::pin;
-    use std::str::FromStr;
     use std::task::Poll;
 
     use tempfile::TempDir;
@@ -850,7 +850,6 @@ mod domain_lock_tests {
 
     use super::Model;
     use super::QuiltModel;
-    use quilt_uri::Host;
 
     /// A runtime whose blocking pool is a single thread, so a test can hold
     /// it and starve every file read the call under test issues.
@@ -902,7 +901,7 @@ mod domain_lock_tests {
         runtime_with_one_blocking_thread().block_on(async {
             let temp = TempDir::new().expect("temp dir");
             let model = Model::create(temp.path());
-            let host = Host::from_str("test.quilt.dev").expect("host");
+            let host = fixtures::host();
 
             assert_domain_lock_is_free_while_awaiting(
                 &model,
@@ -919,7 +918,7 @@ mod domain_lock_tests {
         runtime_with_one_blocking_thread().block_on(async {
             let temp = TempDir::new().expect("temp dir");
             let model = Model::create(temp.path());
-            let host = Host::from_str("test.quilt.dev").expect("host");
+            let host = fixtures::host();
 
             assert_domain_lock_is_free_while_awaiting(&model, model.refresh_roles(&host)).await;
             assert_domain_lock_is_free_while_awaiting(&model, model.readable_buckets(&host)).await;

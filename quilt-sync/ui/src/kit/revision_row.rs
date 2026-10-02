@@ -213,7 +213,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    const HREF: &str = "https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash";
+    const HREF: &str = "https://quilt.test/b/test/packages/team/dataset/tree/published-hash";
 
     fn published(open: Callback<String>) -> web_sys::Element {
         mount(move || {

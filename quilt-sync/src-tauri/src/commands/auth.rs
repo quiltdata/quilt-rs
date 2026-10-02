@@ -496,6 +496,7 @@ pub async fn login_oauth(
 
 #[cfg(test)]
 mod tests {
+    use quilt_uri::fixtures;
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -563,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn switch_role_clears_the_remote_client_cache() {
         let recording = mock_model_recording_cache_clears("ReadOnly");
-        let host = "test.quilt.dev";
+        let host = "quilt.test";
 
         switch_role_command(
             &recording.model,
@@ -607,7 +608,7 @@ mod tests {
             &RoleCache::default(),
             &watcher,
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "ReadWrite",
         )
         .await
@@ -643,7 +644,7 @@ mod tests {
             &RoleCache::default(),
             &watcher,
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "ReadWrite",
         )
         .await;
@@ -671,7 +672,7 @@ mod tests {
             &RoleCache::default(),
             &test_watcher(),
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "readonly",
         )
         .await
@@ -709,7 +710,7 @@ mod tests {
             &RoleCache::default(),
             &test_watcher(),
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "ReadOnly",
         )
         .await;
@@ -777,7 +778,7 @@ mod tests {
     #[tokio::test]
     async fn logging_out_a_host_with_nothing_stored_reports_an_anomaly() {
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["one.quilt.test"]);
 
         let mut m = MockQuiltModel::new();
         m.expect_clear_remote_client_cache().returning(|_| ());
@@ -788,7 +789,7 @@ mod tests {
             &m,
             &RoleCache::default(),
             &telemetry,
-            "never-logged-in.quilt.dev",
+            "another.quilt.test",
         )
         .await
         .expect("a logout that finds nothing stored is still a success");
@@ -811,7 +812,7 @@ mod tests {
     #[tokio::test]
     async fn a_successful_logout_reports_no_fault() {
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["quilt.test"]);
 
         let mut m = MockQuiltModel::new();
         m.expect_clear_remote_client_cache().returning(|_| ());
@@ -822,7 +823,7 @@ mod tests {
             &m,
             &RoleCache::default(),
             &telemetry,
-            "a.quilt.dev",
+            "quilt.test",
         )
         .await
         .expect("logout");
@@ -837,7 +838,7 @@ mod tests {
     #[tokio::test]
     async fn logging_out_erases_only_its_own_host() {
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["a.quilt.dev", "b.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["one.quilt.test", "another.quilt.test"]);
 
         let mut m = MockQuiltModel::new();
         m.expect_clear_remote_client_cache().returning(|_| ());
@@ -847,15 +848,18 @@ mod tests {
             &m,
             &RoleCache::default(),
             &Telemetry::default(),
-            "a.quilt.dev",
+            "one.quilt.test",
         )
         .await
         .expect("logout");
 
         let auth = data_dir.path().join(quilt::paths::AUTH_DIR);
-        assert!(!auth.join("a.quilt.dev").exists(), "its own host is gone");
         assert!(
-            auth.join("b.quilt.dev").exists(),
+            !auth.join("one.quilt.test").exists(),
+            "its own host is gone"
+        );
+        assert!(
+            auth.join("another.quilt.test").exists(),
             "another host's credentials must survive someone else's logout"
         );
     }
@@ -874,7 +878,7 @@ mod tests {
             &m,
             &RoleCache::default(),
             &Telemetry::default(),
-            "never.logged.in",
+            "quilt.test",
         )
         .await
         .expect("nothing to erase is not a failure");
@@ -900,10 +904,10 @@ mod tests {
 
     #[tokio::test]
     async fn logging_out_drops_the_cached_role() {
-        let host: Host = "test.quilt.dev".parse().expect("host");
+        let host = fixtures::host();
         let roles = warmed_role_cache(&host).await;
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["test.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["quilt.test"]);
 
         let mut erasing = MockQuiltModel::new();
         erasing.expect_clear_remote_client_cache().returning(|_| ());
@@ -912,7 +916,7 @@ mod tests {
             &erasing,
             &roles,
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
         )
         .await
         .expect("logout");
@@ -948,7 +952,7 @@ mod tests {
         });
         model.expect_clear_remote_client_cache().returning(|_| ());
 
-        let data = get_roles_command(&model, &RoleCache::default(), "test.quilt.dev")
+        let data = get_roles_command(&model, &RoleCache::default(), "quilt.test")
             .await
             .expect("roles");
 
@@ -993,25 +997,21 @@ mod tests {
     #[tokio::test]
     async fn test_get_login_error_data() -> Result<(), String> {
         let data = get_login_error_data(
-            "test.quilt.dev".to_string(),
+            "quilt.test".to_string(),
             Some("Login failed".to_string()),
             "Auth failed".to_string(),
         )
         .await?;
         assert_eq!(data.title, "Login failed");
         assert_eq!(data.message, "Auth failed");
-        assert_eq!(data.login_host, "test.quilt.dev");
+        assert_eq!(data.login_host, "quilt.test");
         Ok(())
     }
 
     #[tokio::test]
     async fn test_get_login_error_data_default_title() -> Result<(), String> {
-        let data = get_login_error_data(
-            "test.quilt.dev".to_string(),
-            None,
-            "Auth failed".to_string(),
-        )
-        .await?;
+        let data =
+            get_login_error_data("quilt.test".to_string(), None, "Auth failed".to_string()).await?;
         assert_eq!(data.title, "Login failed");
         assert_eq!(data.message, "Auth failed");
         Ok(())
@@ -1023,14 +1023,14 @@ mod tests {
     #[tokio::test]
     async fn test_get_login_data() -> Result<(), String> {
         let data = get_login_data(
-            "test.quilt.dev".to_string(),
+            "quilt.test".to_string(),
             "/installed-packages-list".to_string(),
         )
         .await?;
 
-        assert_eq!(data.host, "test.quilt.dev");
+        assert_eq!(data.host, "quilt.test");
         assert_eq!(data.back, "/installed-packages-list");
-        assert_eq!(data.catalog_url, "https://test.quilt.dev/code");
+        assert_eq!(data.catalog_url, "https://quilt.test/code");
         Ok(())
     }
 
@@ -1038,11 +1038,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_login_data_empty_back() -> Result<(), String> {
-        let data = get_login_data("test.quilt.dev".to_string(), String::new()).await?;
+        let data = get_login_data("quilt.test".to_string(), String::new()).await?;
 
-        assert_eq!(data.host, "test.quilt.dev");
+        assert_eq!(data.host, "quilt.test");
         assert_eq!(data.back, "");
-        assert_eq!(data.catalog_url, "https://test.quilt.dev/code");
+        assert_eq!(data.catalog_url, "https://quilt.test/code");
         Ok(())
     }
 }

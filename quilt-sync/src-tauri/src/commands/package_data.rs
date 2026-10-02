@@ -233,6 +233,7 @@ pub async fn get_installed_package_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use crate::commands::test_support::*;
     use crate::model::mocks;
@@ -265,7 +266,7 @@ mod tests {
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         // Mock has one record "NAME" — should appear as an entry
         assert!(!data.entries.is_empty());
@@ -376,7 +377,7 @@ mod tests {
         assert_eq!(data.status, "error");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
@@ -500,7 +501,7 @@ mod tests {
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
                 let uri = quilt_uri::ManifestUri {
-                    origin: Some("test.quilt.dev".parse().unwrap()),
+                    origin: Some(fixtures::host()),
                     bucket: "test".to_string(),
                     namespace: pkg.namespace.clone(),
                     hash: String::new(),
@@ -535,7 +536,7 @@ mod tests {
         // Has origin for Push button and disabled Catalog button.
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
