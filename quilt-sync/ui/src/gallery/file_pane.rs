@@ -127,6 +127,9 @@ use crate::kit::state_label::StateTone;
 use crate::pages::downloaded_words;
 use quilt_sync_ui::util::format_size;
 
+use crate::gallery::context_pane::bytes;
+use crate::gallery::context_pane::count;
+
 /// The two files the resolve fixture has differing between the revisions. Both
 /// are local and both are in the first screen of the list, because a mark the
 /// reader has to scroll to proves nothing about the marking. The context pane's
@@ -366,6 +369,8 @@ struct Row {
     folder: Option<String>,
     leaf: String,
     size: String,
+    /// The manifest's `size`, which the footer sums over the ticked rows.
+    bytes: u64,
     mark: Mark,
     /// Its slot in the selection vector, for the rows a tick can act on.
     pick: Option<usize>,
@@ -397,6 +402,7 @@ fn rows(files: &[File]) -> Vec<Row> {
                 folder,
                 leaf,
                 size: format_size(f.bytes),
+                bytes: f.bytes,
                 mark: f.mark,
                 pick,
             }
@@ -698,6 +704,17 @@ fn pane(p: Pane) -> AnyView {
                 .iter()
                 .filter(|&&i| rs[i].pick.is_some_and(|slot| picks.with(|p| p[slot])))
                 .count()
+        })
+    });
+    // The bytes the press fetches: every ticked row's manifest size, shown or
+    // not, as the real footer counts every loaded tick. Only a missing file
+    // takes a tick, so this is exactly what is downloaded — a sum over rows
+    // the page already holds, with no I/O.
+    let fetching = Signal::derive(move || {
+        all.with_value(|rs| {
+            rs.iter()
+                .filter(|r| r.pick.is_some_and(|slot| picks.with(|p| p[slot])))
+                .fold(0u64, |sum, r| sum.saturating_add(r.bytes))
         })
     });
     let narrowed =
@@ -1002,7 +1019,7 @@ fn pane(p: Pane) -> AnyView {
                                 loading=running
                                 on_click=move |_| ()
                             >
-                                {move || format!("Download {}", chosen.get())}
+                                {move || footer_words(chosen.get(), fetching.get())}
                             </Button>
                         </div>
                     </Show>
@@ -1320,6 +1337,39 @@ fn over_the_cap() -> Vec<File> {
     files
 }
 
+/// The footer's `[Download]`, in files and bytes: `Download 3 · 1.2 MB`, in the
+/// context pane's formatter, the one the Keeping line uses. A selection of
+/// empty files still says `0 B`: the clause is always there, so the button
+/// keeps one shape and no missing figure reads as a size that failed — and the
+/// files are still fetched, the press makes them.
+fn footer_words(files: usize, fetching: u64) -> String {
+    format!("Download {} · {}", count(files), bytes(fetching))
+}
+
+/// Everything here but two empty files a run leaves to mark it done, so the
+/// only ticks there are weigh nothing.
+fn empty_selection() -> Vec<File> {
+    let mut files = downloaded_package();
+    files.push(File::new("raw/plate-07.done", 0, Mark::Missing));
+    files.push(File::new("raw/plate-08.done", 0, Mark::Missing));
+    files
+}
+
+/// Everything here but a folder of 1,000 large plates this copy has not
+/// fetched — the most a selection can hold, since the page loads the first
+/// 1,000 rows by path and only a loaded row takes a tick.
+fn heavy_selection() -> Vec<File> {
+    let mut files = downloaded_package();
+    for i in 1..=1_000 {
+        files.push(File::new(
+            format!("imaging/plate-{i:04}.tiff"),
+            86_300_000,
+            Mark::Missing,
+        ));
+    }
+    files
+}
+
 const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a \
     row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
     either way, so the pane never changes height. Type in the search or pick a facet: \
@@ -1362,6 +1412,7 @@ pub fn FilePaneRegion(
 }
 
 #[component]
+#[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
 pub fn FilePaneScene() -> impl IntoView {
     // The standalone trigger has no row behind it, so it names one.
     let keeping = Confirm::new("raw/plate-03.csv (4.16 MB)");
@@ -1372,7 +1423,12 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="at rest — nothing ticked, so no footer and 313px of list">
                 {pane(Pane::new("fp-rest"))}
             </Cell>
-            <Cell full=true label="three ticked — the footer costs a row and a half of the list">
+            <Cell
+                full=true
+                label="three ticked — the footer costs a row and a half of the list, and says the \
+                       bytes. Real build: the footer sums EntryData.size over the ticked rows, in \
+                       the memo that counts them; no I/O"
+            >
                 {pane(Pane { ticked: 3, ..Pane::new("fp-selecting") })}
             </Cell>
             <Cell full=true label="downloading — the footer's button carries it, the rows do not">
@@ -1380,6 +1436,27 @@ pub fn FilePaneScene() -> impl IntoView {
                     ticked: 3,
                     running: true,
                     ..Pane::new("fp-running")
+                })}
+            </Cell>
+            <Cell
+                full=true
+                label="two empty files ticked — `0 B` stays, so the button keeps one shape and no \
+                       missing figure reads as a failure"
+            >
+                {pane(Pane {
+                    files: empty_selection(),
+                    ticked: 2,
+                    ..Pane::new("fp-weightless")
+                })}
+            </Cell>
+            <Cell
+                full=true
+                label="a huge selection — all 1,000 loaded rows, the most a tick can reach"
+            >
+                {pane(Pane {
+                    files: heavy_selection(),
+                    ticked: 1_000,
+                    ..Pane::new("fp-heavy")
                 })}
             </Cell>
             <Cell full=true label="resolve mode — the two files that differ, marked in place">
@@ -1448,6 +1525,18 @@ mod tests {
     use super::*;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
+
+    /// The footer says what the press fetches, in files and bytes.
+    #[test]
+    fn the_footer_says_its_bytes() {
+        let plain = |w: String| w.replace('\u{a0}', " ");
+        assert_eq!(plain(footer_words(3, 1_200_000)), "Download 3 · 1.2 MB");
+        assert_eq!(plain(footer_words(2, 0)), "Download 2 · 0 B");
+        assert_eq!(
+            plain(footer_words(1_000, 86_300_000_000)),
+            "Download 1,000 · 86.3 GB"
+        );
+    }
 
     /// The live cell over the cap says what the page would: the whole count,
     /// and that the loaded rows are the first 1,000 by path.
