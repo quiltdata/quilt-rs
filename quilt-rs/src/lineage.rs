@@ -351,6 +351,11 @@ impl PackageLineageIo {
             .await
     }
 
+    /// The whole domain's record this package's entry lives in.
+    pub(crate) async fn read_domain(&self, storage: &(impl Storage + Sync)) -> Res<DomainLineage> {
+        self.domain_lineage.read(storage).await
+    }
+
     pub async fn package_home(&self, storage: &(impl Storage + Sync)) -> Res<PathBuf> {
         Ok(self
             .domain_home(storage)

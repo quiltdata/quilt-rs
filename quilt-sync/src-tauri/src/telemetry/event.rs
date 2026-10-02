@@ -308,6 +308,11 @@ impl From<&crate::quilt::Error> for Failure {
 
             E::PackageBusy(_) => Self::Refusal(RefusalKind::Busy),
 
+            // The page offered a revision this copy no longer holds, or one that
+            // became protected since the list was drawn: either way the
+            // revision the user meant is no longer there to remove.
+            E::RevisionNotRemovable { .. } => Self::Refusal(RefusalKind::Missing),
+
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same
             // answer, since an unclassifiable failure must stay visible.
@@ -595,6 +600,19 @@ mod tests {
         let err = Error::Quilt(quilt::Error::PackageBusy(("acme", "demo").into()));
 
         assert_eq!(refusal(&err), Some(RefusalKind::Busy));
+    }
+
+    /// A removal asked for a revision that is protected now, or gone: the list
+    /// it came from was stale, which is nobody's bug.
+    #[test]
+    fn a_revision_no_longer_removable_is_a_refusal() {
+        let err = Error::Quilt(quilt::Error::RevisionNotRemovable {
+            namespace: ("acme", "demo").into(),
+            hash: "abc".into(),
+            why: "this copy does not hold it".into(),
+        });
+
+        assert_eq!(refusal(&err), Some(RefusalKind::Missing));
     }
 
     /// The property that makes the refusal series comparable: `action` is exactly

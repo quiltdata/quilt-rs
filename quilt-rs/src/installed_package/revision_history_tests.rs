@@ -277,3 +277,106 @@ async fn a_refused_listing_fails_the_history() -> Res {
     assert!(err.is_access_denied(), "{err:?}");
     Ok(())
 }
+
+/// `published-rev` is current, base and latest; `old-rev` is published
+/// and old; `local-rev` was never published.
+async fn package_with_old_revisions() -> Res<(InstalledPackage<LocalStorage, MockRemote>, [TempDir; 2])>
+{
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "history").into();
+    for (tag, hash) in [("1758500000", "published-rev"), ("1758400000", "old-rev")] {
+        remote
+            .put_object(
+                None,
+                &format!("s3://bucket/{}", tag_key(&namespace, tag)).parse()?,
+                hash.as_bytes().to_vec(),
+            )
+            .await?;
+    }
+    let (package, dirs) = package_over(remote, REMOTE).await?;
+    for hash in ["published-rev", "old-rev", "local-rev"] {
+        install_manifest(&package, hash, r#"{"version":"v0"}"#).await?;
+    }
+    Ok((package, dirs))
+}
+
+fn hashes(hashes: &[&str]) -> std::collections::BTreeSet<String> {
+    hashes.iter().map(|h| (*h).to_string()).collect()
+}
+
+async fn held<R: Remote>(package: &InstalledPackage<LocalStorage, R>) -> Res<Vec<String>> {
+    let mut held: Vec<String> = package
+        .revisions()
+        .await?
+        .into_iter()
+        .map(|revision| revision.hash)
+        .collect();
+    held.sort();
+    Ok(held)
+}
+
+#[test(tokio::test)]
+async fn an_old_published_revision_is_removed() -> Res {
+    let (package, _dirs) = package_with_old_revisions().await?;
+
+    let report = package.remove_revisions(&hashes(&["old-rev"])).await?;
+
+    assert_eq!(report.revisions, 1);
+    assert_eq!(held(&package).await?, vec!["local-rev", "published-rev"]);
+    Ok(())
+}
+
+/// A protected or absent hash refuses the whole request: `old-rev`, asked
+/// for beside it, stays too.
+#[test(tokio::test)]
+async fn a_kept_or_absent_revision_refuses_the_whole_removal() -> Res {
+    let (package, _dirs) = package_with_old_revisions().await?;
+
+    for (refused, why) in [
+        ("published-rev", "it is kept (current \u{b7} latest \u{b7} base)"),
+        ("local-rev", "it is kept (unpublished)"),
+        ("gone-rev", "this copy does not hold it"),
+    ] {
+        let err = package
+            .remove_revisions(&hashes(&["old-rev", refused]))
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&err, Error::RevisionNotRemovable { hash, why: said, .. }
+                if hash == refused && said == why),
+            "{err:?}"
+        );
+    }
+    assert_eq!(
+        held(&package).await?,
+        vec!["local-rev", "old-rev", "published-rev"]
+    );
+    Ok(())
+}
+
+/// A sync holding the package's lock refuses it before anything is read.
+#[test(tokio::test)]
+async fn a_busy_package_refuses_the_removal() -> Res {
+    let (package, _dirs) = package_with_old_revisions().await?;
+    let _syncing = package.lock().await?;
+
+    let err = package
+        .remove_revisions(&hashes(&["old-rev"]))
+        .await
+        .expect_err("busy");
+
+    assert!(matches!(&err, Error::PackageBusy(ns) if *ns == package.namespace), "{err:?}");
+    assert_eq!(held(&package).await?.len(), 3);
+    Ok(())
+}
+
+/// Without a listing, an unpublished revision cannot be told apart.
+#[test(tokio::test)]
+async fn a_refused_listing_refuses_the_removal() -> Res {
+    let (package, _dirs) = package_over(DeniedRemote, REMOTE).await?;
+    install_manifest(&package, "old-rev", r#"{"version":"v0"}"#).await?;
+
+    assert!(package.remove_revisions(&hashes(&["old-rev"])).await.is_err());
+    assert_eq!(held(&package).await?, vec!["old-rev"]);
+    Ok(())
+}

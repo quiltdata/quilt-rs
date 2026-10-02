@@ -373,6 +373,15 @@ pub enum Error {
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
 
+    /// A revision asked to be removed is protected, or this copy does not
+    /// hold it. Nothing was removed.
+    #[error("Can't remove revision {hash} of {namespace}: {why}")]
+    RevisionNotRemovable {
+        namespace: Namespace,
+        hash: String,
+        why: String,
+    },
+
     #[error(transparent)]
     Role(#[from] RoleError),
 
