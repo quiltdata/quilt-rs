@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.42.1-dev]
+
+### Added
+
+- `flow::format_bytes` formats a size the way the report sentences do, for example `630.2 kB` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
+
 ## [v0.42.0] - 2026-10-02
 
 ### Added

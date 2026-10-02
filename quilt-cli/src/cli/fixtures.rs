@@ -181,3 +181,172 @@ pub fn get_browse_output() -> Result<String, std::io::Error> {
     let path = std::env::current_dir()?.join("fixtures/reference-quilt-rs-browse-output.txt");
     std::fs::read_to_string(path)
 }
+
+/// A package holding kept and removable revisions over an in-memory registry,
+/// for `log` and `remove-revisions`.
+pub mod old_revisions {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use std::time::SystemTime;
+
+    use tempfile::TempDir;
+
+    use quilt_rs::InstalledPackage;
+    use quilt_rs::io::remote::Remote;
+    use quilt_rs::io::remote::mocks::MockRemote;
+    use quilt_rs::io::storage::LocalStorage;
+    use quilt_rs::io::storage::Storage;
+    use quilt_rs::lineage::DomainLineageIo;
+    use quilt_rs::lineage::Home;
+    use quilt_rs::lineage::PackageLineageIo;
+    use quilt_rs::manifest::Manifest;
+    use quilt_rs::manifest::ManifestRow;
+    use quilt_rs::paths::DomainPaths;
+    use quilt_uri::Namespace;
+    use quilt_uri::paths::tag_key;
+
+    use crate::cli::Error;
+
+    pub const NAMESPACE: (&str, &str) = ("test", "history");
+
+    /// The revisions, oldest first, each with the size of the one object
+    /// only it uses. All but `local-rev` are published. `current-rev` is
+    /// current, latest and base, and `local-rev` is unpublished, so those two
+    /// are kept; the `old-*` ones are removable.
+    pub const REVISIONS: [(&str, usize); 5] = [
+        ("old-1", 210_400),
+        ("old-2", 1_500),
+        ("old-3", 0),
+        ("current-rev", 7),
+        ("local-rev", 9),
+    ];
+
+    pub type Package = InstalledPackage<LocalStorage, MockRemote>;
+
+    /// [`NAMESPACE`] holding [`REVISIONS`], each obtained a minute after the
+    /// one before it, its remote at `current-rev` on a catalog. The temp dirs
+    /// must outlive the package.
+    pub async fn package() -> Result<(Package, [TempDir; 2]), Error> {
+        let remote = MockRemote::default();
+        let namespace: Namespace = NAMESPACE.into();
+        for (n, (hash, _)) in REVISIONS.iter().enumerate() {
+            if *hash == "local-rev" {
+                continue;
+            }
+            remote
+                .put_object(
+                    None,
+                    &format!(
+                        "s3://bucket/{}",
+                        tag_key(&namespace, &format!("175850000{n}"))
+                    )
+                    .parse()?,
+                    hash.as_bytes().to_vec(),
+                )
+                .await?;
+        }
+
+        let home_dir = TempDir::new()?;
+        let paths_dir = TempDir::new()?;
+        let home = Home::new(home_dir.path().to_path_buf());
+        let paths = DomainPaths::new(paths_dir.path().to_path_buf());
+        let storage = LocalStorage::new();
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/history": {{
+                        "commit": null,
+                        "remote": {{
+                            "bucket": "bucket",
+                            "namespace": "test/history",
+                            "hash": "current-rev",
+                            "origin": "quilt.test"
+                        }},
+                        "base_hash": "current-rev",
+                        "latest_hash": "current-rev",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": "{}"
+            }}"#,
+            home_dir.path().display()
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+
+        std::fs::create_dir_all(paths.objects_dir())?;
+        let start = SystemTime::now() - Duration::from_secs(3600);
+        for (n, (hash, len)) in REVISIONS.iter().enumerate() {
+            let mut rows = Vec::new();
+            if *len > 0 {
+                let object = paths.objects_dir().join(format!("{hash}-object"));
+                std::fs::write(&object, "x".repeat(*len))?;
+                rows.push(ManifestRow {
+                    logical_key: format!("{hash}.txt").into(),
+                    physical_key: url::Url::from_file_path(&object)
+                        .expect("absolute")
+                        .to_string(),
+                    ..ManifestRow::default()
+                });
+            }
+            let manifest = Manifest {
+                rows,
+                ..Manifest::default()
+            };
+            let path = paths.installed_manifest(&namespace, hash);
+            std::fs::write(&path, manifest.to_jsonlines())?;
+            let minutes = u64::try_from(n).expect("a few revisions") * 60;
+            std::fs::File::options()
+                .write(true)
+                .open(&path)?
+                .set_modified(start + Duration::from_secs(minutes))?;
+        }
+
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
+            paths,
+            remote: Arc::new(remote),
+            storage,
+            namespace,
+        };
+        Ok((package, [home_dir, paths_dir]))
+    }
+
+    /// The same, with a registry whose listing fails: an entry under the
+    /// package's pointers that is a folder, not a pointer.
+    pub async fn package_with_a_broken_registry() -> Result<(Package, [TempDir; 2]), Error> {
+        let (package, dirs) = package().await?;
+        package
+            .remote
+            .put_object(
+                None,
+                &format!(
+                    "s3://bucket/{}",
+                    tag_key(&package.namespace, "not-a-pointer/inside")
+                )
+                .parse()?,
+                b"x".to_vec(),
+            )
+            .await?;
+        Ok((package, dirs))
+    }
+
+    /// The hashes `package` holds, sorted.
+    pub async fn held(package: &Package) -> Result<Vec<String>, Error> {
+        let mut held: Vec<String> = package
+            .revisions()
+            .await?
+            .into_iter()
+            .map(|revision| revision.hash)
+            .collect();
+        held.sort();
+        Ok(held)
+    }
+}

@@ -38,6 +38,7 @@ pub use commit::commit_package as commit;
 pub use create_package::create_package as create;
 pub use gc::GcReport;
 pub use gc::Pruned;
+pub use gc::format_bytes;
 pub use gc::gc;
 pub(crate) use gc::package_objects;
 pub(crate) use gc::prune;

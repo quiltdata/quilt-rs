@@ -140,118 +140,12 @@ pub async fn remove_old<S: Storage + Clone + Sync, R: Remote>(
 mod tests {
     use super::*;
 
-    use std::sync::Arc;
-    use std::time::Duration;
-    use std::time::SystemTime;
-
-    use tempfile::TempDir;
     use test_log::test;
 
-    use quilt_rs::io::remote::mocks::MockRemote;
-    use quilt_rs::io::storage::LocalStorage;
-    use quilt_rs::lineage::DomainLineageIo;
-    use quilt_rs::lineage::Home;
-    use quilt_rs::lineage::PackageLineageIo;
-    use quilt_rs::paths::DomainPaths;
-    use quilt_uri::paths::tag_key;
-
     use crate::cli::create;
+    use crate::cli::fixtures::old_revisions::held;
+    use crate::cli::fixtures::old_revisions::package as package_with_old_revisions;
     use crate::cli::model::create_model_in_temp_dir;
-
-    /// The published revisions, oldest first. `current-rev` is current,
-    /// latest and base, so it is kept even though it is published.
-    const PUBLISHED: [&str; 4] = ["old-1", "old-2", "old-3", "current-rev"];
-
-    /// `test/history`, its remote at `current-rev` on a catalog, holding
-    /// `PUBLISHED` and an unpublished `local-rev`, each obtained a minute
-    /// after the one before it in that order. The temp dirs must outlive the
-    /// package.
-    async fn package_with_old_revisions()
-    -> Result<(InstalledPackage<LocalStorage, MockRemote>, [TempDir; 2]), Error> {
-        let remote = MockRemote::default();
-        let namespace: Namespace = ("test", "history").into();
-        for (n, hash) in PUBLISHED.iter().enumerate() {
-            remote
-                .put_object(
-                    None,
-                    &format!(
-                        "s3://bucket/{}",
-                        tag_key(&namespace, &format!("175850000{n}"))
-                    )
-                    .parse()?,
-                    hash.as_bytes().to_vec(),
-                )
-                .await?;
-        }
-
-        let home_dir = TempDir::new()?;
-        let paths_dir = TempDir::new()?;
-        let home = Home::new(home_dir.path().to_path_buf());
-        let paths = DomainPaths::new(paths_dir.path().to_path_buf());
-        let storage = LocalStorage::new();
-        paths
-            .scaffold_for_installing(&storage, &home, &namespace)
-            .await?;
-        let lineage_json = format!(
-            r#"{{
-                "packages": {{
-                    "test/history": {{
-                        "commit": null,
-                        "remote": {{
-                            "bucket": "bucket",
-                            "namespace": "test/history",
-                            "hash": "current-rev",
-                            "origin": "quilt.test"
-                        }},
-                        "base_hash": "current-rev",
-                        "latest_hash": "current-rev",
-                        "paths": {{}}
-                    }}
-                }},
-                "home": "{}"
-            }}"#,
-            home_dir.path().display()
-        );
-        storage
-            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
-            .await?;
-
-        let start = SystemTime::now() - Duration::from_secs(3600);
-        for (n, hash) in PUBLISHED.iter().chain(&["local-rev"]).enumerate() {
-            let path = paths.installed_manifest(&namespace, hash);
-            std::fs::write(&path, r#"{"version":"v0"}"#)?;
-            let minutes = u64::try_from(n).expect("a few revisions") * 60;
-            std::fs::File::options()
-                .write(true)
-                .open(&path)?
-                .set_modified(start + Duration::from_secs(minutes))?;
-        }
-
-        let package = InstalledPackage {
-            lineage: PackageLineageIo::new(
-                DomainLineageIo::new(paths.lineage()),
-                namespace.clone(),
-            ),
-            paths,
-            remote: Arc::new(remote),
-            storage,
-            namespace,
-        };
-        Ok((package, [home_dir, paths_dir]))
-    }
-
-    async fn held(
-        package: &InstalledPackage<LocalStorage, MockRemote>,
-    ) -> Result<Vec<String>, Error> {
-        let mut held: Vec<String> = package
-            .revisions()
-            .await?
-            .into_iter()
-            .map(|revision| revision.hash)
-            .collect();
-        held.sort();
-        Ok(held)
-    }
 
     /// Without a count, every removable revision goes, and the kept ones stay:
     /// the current one and the unpublished one.
@@ -264,7 +158,7 @@ mod tests {
         assert_eq!(output.removed, ["old-1", "old-2", "old-3"]);
         assert_eq!(
             output.to_string(),
-            "Removed 3 old revisions of test/history \u{b7} freed no space"
+            "Removed 3 old revisions of test/history \u{b7} freed 211.9 kB"
         );
         assert_eq!(
             output.to_json(),
@@ -272,8 +166,8 @@ mod tests {
                 "namespace": "test/history",
                 "removed": ["old-1", "old-2", "old-3"],
                 "revisions": 3,
-                "objects": 0,
-                "bytes": 0,
+                "objects": 2,
+                "bytes": 211_900,
                 "kept_for": null,
                 "kept_bytes": 0,
             })
@@ -292,7 +186,7 @@ mod tests {
         assert_eq!(output.removed, ["old-1", "old-2"]);
         assert_eq!(
             output.to_string(),
-            "Removed 2 old revisions of test/history \u{b7} freed no space"
+            "Removed 2 old revisions of test/history \u{b7} freed 211.9 kB"
         );
         assert_eq!(held(&package).await?, ["current-rev", "local-rev", "old-3"]);
         Ok(())

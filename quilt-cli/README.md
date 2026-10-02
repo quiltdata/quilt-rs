@@ -45,7 +45,7 @@ cargo install quilt-cli
 | `push`      | Upload a local revision to the remote            |
 | `pull`      | Fetch the latest remote revision                 |
 | `list`      | List installed packages and their commit status  |
-| `log`       | List the revisions this copy has, newest first    |
+| `log`       | List the revisions this copy has, and why each is kept |
 | `uninstall` | Remove a package; `--prune` also deletes its files |
 | `gc`        | Delete stored files no installed package uses    |
 | `remove-revisions` | Remove old revisions this copy no longer needs |
@@ -86,6 +86,23 @@ is created. While any package is installed, a different home is refused,
 because the packages' files stay in the old folder. `--overwrite` changes it
 anyway, and the installed packages then point at empty folders, so their files
 read as deleted. `quilt home --json` prints `{"home": "<path>"}`.
+
+`log` lists the revisions this copy holds, newest first. Each says why it is
+kept, or how much removing it would free, so it shows what `remove-revisions`
+would remove:
+
+```text
+revision  obtained (UTC)       kept                  frees     message
+a1b2c3d4  2026-10-01 09:12:00  current · not pushed            fix labels
+e5f6a7b8  2026-09-28 14:03:11  latest · base                   v3
+0c9d8e7f  2026-09-20 10:40:52                        210.4 kB  v2
+```
+
+Telling an unpublished revision apart asks the remote's registry. If that
+fails, `log` still lists the revisions, leaves out `kept` and `frees`, and warns
+on stderr. Under `--json` each revision has `kept`, a list of reasons (empty
+when removable), and `frees`, in bytes or `null` when kept; both are `null`
+when the registry could not be read.
 
 `remove-revisions` removes the old revisions of a package this copy holds,
 oldest first, with the stored files only they use, and prints what it freed:

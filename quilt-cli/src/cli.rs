@@ -323,6 +323,12 @@ enum Commands {
     /// recorded locally — a manifest carries no timestamp of its own, so for a
     /// revision fetched from a remote this is the fetch time, not the commit
     /// time.
+    ///
+    /// Each revision says why it is kept (current, latest, base, not pushed,
+    /// unpublished), or, when `quilt remove-revisions` would remove it, how
+    /// much removing it frees. Reading what is kept asks the remote's
+    /// registry; if that fails, the log leaves both columns out and warns on
+    /// stderr.
     Log {
         #[command(flatten)]
         pkg: PackageRef,
