@@ -441,9 +441,7 @@ async fn send_wire(analytics: &Analytics, events: Vec<Event>) -> crate::Result<(
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use quilt_uri::Host;
+    use quilt_uri::fixtures;
 
     use super::*;
     use crate::Result;
@@ -451,12 +449,8 @@ mod tests {
         AuthEvent, LoginEvent, LoginFlow, PackageEvent, PackageFileEvent, RemotePackageEvent,
     };
 
-    fn host() -> Host {
-        Host::from_str("example.quilt.dev").expect("valid test host")
-    }
-
     fn host_value() -> Value {
-        Value::String("example.quilt.dev".to_string())
+        Value::String("quilt.test".to_string())
     }
 
     /// The events that carry no payload: name only, no properties object.
@@ -488,7 +482,8 @@ mod tests {
     /// A remote operation reports the deployment it ran against.
     #[test]
     fn test_remote_package_event_reports_its_host() -> Result {
-        let event = MixpanelEvent::PackagePulled(RemotePackageEvent::for_host(Some(host())));
+        let event =
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_host(Some(fixtures::host())));
 
         let (name, props) = event_payload(&event)?;
 
@@ -543,7 +538,7 @@ mod tests {
     #[test]
     fn test_user_logged_in_keeps_its_wire_shape() -> Result {
         let event = MixpanelEvent::UserLoggedIn(LoginEvent {
-            host: host(),
+            host: fixtures::host(),
             flow: LoginFlow::OAuth,
         });
 
@@ -561,18 +556,24 @@ mod tests {
     fn test_auth_events_report_a_guaranteed_host() -> Result {
         for (event, expected) in [
             (
-                MixpanelEvent::RoleSwitched(AuthEvent { host: host() }),
+                MixpanelEvent::RoleSwitched(AuthEvent {
+                    host: fixtures::host(),
+                }),
                 "role_switched",
             ),
             // `snake_case` splits the leading acronym, so this event has always
             // been reported under this slightly odd name. Renaming it would break
             // the continuity of its history, so the name stays and this records it.
             (
-                MixpanelEvent::OAuthLoginInitiated(AuthEvent { host: host() }),
+                MixpanelEvent::OAuthLoginInitiated(AuthEvent {
+                    host: fixtures::host(),
+                }),
                 "o_auth_login_initiated",
             ),
             (
-                MixpanelEvent::AuthErased(AuthEvent { host: host() }),
+                MixpanelEvent::AuthErased(AuthEvent {
+                    host: fixtures::host(),
+                }),
                 "auth_erased",
             ),
         ] {
@@ -622,7 +623,7 @@ mod tests {
 
         let (name, props) = wire_payload(
             &MixpanelEvent::UserLoggedIn(LoginEvent {
-                host: host(),
+                host: fixtures::host(),
                 flow: LoginFlow::OAuth,
             }),
             Some(&id),
@@ -731,7 +732,7 @@ mod tests {
         let id = install_id();
 
         let wire = Queued::now(MixpanelEvent::UserLoggedIn(LoginEvent {
-            host: host(),
+            host: fixtures::host(),
             flow: LoginFlow::OAuth,
         }))
         .wire(Some(&id))?;
@@ -886,13 +887,13 @@ mod tests {
         use crate::telemetry::event::{AutosyncEvent, AutosyncPausedEvent, PausedKind};
 
         let (name, props) = event_payload(&MixpanelEvent::AutosyncPublished(AutosyncEvent {
-            host: host(),
+            host: fixtures::host(),
         }))?;
         assert_eq!(name, "autosync_published");
         assert_eq!(props.expect("host").get("host"), Some(&host_value()));
 
         let (name, props) = event_payload(&MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
-            host: host(),
+            host: fixtures::host(),
             reason: PausedKind::RoleDenied,
         }))?;
         assert_eq!(name, "autosync_paused");
@@ -922,7 +923,7 @@ mod tests {
             PausedReason::Other("a raw refusal mentioning /home/someone/path".to_owned()),
         ] {
             let (_, props) = event_payload(&MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
-                host: host(),
+                host: fixtures::host(),
                 reason: PausedKind::from(&reason),
             }))?;
 
@@ -1024,17 +1025,14 @@ mod tests {
     fn dry_run_reports_the_wire_name_and_properties() -> Result {
         let line = dry_run_line(
             &MixpanelEvent::UserLoggedIn(LoginEvent {
-                host: host(),
+                host: fixtures::host(),
                 flow: LoginFlow::OAuth,
             }),
             None,
         )?;
 
         assert!(line.contains("user_logged_in"), "wire name missing: {line}");
-        assert!(
-            line.contains("example.quilt.dev"),
-            "host property missing: {line}"
-        );
+        assert!(line.contains("quilt.test"), "host property missing: {line}");
         assert!(line.contains("oauth"), "flow property missing: {line}");
 
         Ok(())
@@ -1070,22 +1068,26 @@ mod tests {
     #[test]
     fn test_host_accessor_matches_the_payload() {
         assert_eq!(
-            MixpanelEvent::PackagePulled(RemotePackageEvent::for_host(Some(host()))).host(),
-            Some(&host())
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_host(Some(fixtures::host())))
+                .host(),
+            Some(&fixtures::host())
         );
         assert_eq!(
-            MixpanelEvent::AuthErased(AuthEvent { host: host() }).host(),
-            Some(&host())
+            MixpanelEvent::AuthErased(AuthEvent {
+                host: fixtures::host()
+            })
+            .host(),
+            Some(&fixtures::host())
         );
         assert_eq!(MixpanelEvent::AppLaunched.host(), None);
         // Autosync's host is guaranteed, so the accessor must find it — an
         // unattributed autosync event would be a contradiction.
         assert_eq!(
             MixpanelEvent::AutosyncPublished(crate::telemetry::event::AutosyncEvent {
-                host: host()
+                host: fixtures::host()
             })
             .host(),
-            Some(&host())
+            Some(&fixtures::host())
         );
         assert_eq!(
             MixpanelEvent::PackageCommitted(PackageEvent::for_uri(None)).host(),

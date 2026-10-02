@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn a_json_error_reads_as_its_message() {
         assert_eq!(
-            readable(r#"{"kind":"access_denied","message":"No access.","host":"example.com"}"#),
+            readable(r#"{"kind":"access_denied","message":"No access.","host":"quilt.test"}"#),
             "No access."
         );
     }

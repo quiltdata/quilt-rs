@@ -178,7 +178,7 @@ mod tests {
     /// footer's `form` association is the only thing that could provide one.
     #[component]
     fn Fields() -> impl IntoView {
-        let host = RwSignal::new("open.quiltdata.com".to_string());
+        let host = RwSignal::new("quilt.test".to_string());
         let bucket = RwSignal::new(String::new());
         view! {
             <FormControl

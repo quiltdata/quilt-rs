@@ -16,7 +16,7 @@ const REMOTE: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/resolve",
     "hash": "base-rev",
-    "origin": "test.quilt.dev"
+    "origin": "quilt.test"
 }"#;
 
 const REMOTE_WITHOUT_CATALOG: &str = r#"{

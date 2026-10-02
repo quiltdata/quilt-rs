@@ -19,18 +19,14 @@ use super::registry::RemoteTokens;
 use crate::Error;
 use crate::Res;
 use crate::io::remote::client::HttpClient;
-use quilt_uri::Host;
+use quilt_uri::fixtures;
 
 pub(super) const ACCESS_TOKEN: &str = "test-access-token";
 pub(super) const REFRESH_TOKEN: &str = "test-refresh-token";
 pub(super) const TIMESTAMP: i64 = 1_708_444_800;
 
-pub(super) fn get_host() -> Host {
-    "test.quilt.dev".parse().unwrap()
-}
-
 pub(super) fn get_registry() -> String {
-    "registry-test.quilt.dev".to_string()
+    "registry.quilt.test".to_string()
 }
 
 pub(super) fn get_registry_host() -> url::Host {
@@ -140,7 +136,7 @@ impl HttpClient for GraphQlTestHttpClient {
         url: &str,
         _auth_token: Option<&str>,
     ) -> Res<T> {
-        assert_eq!(url, format!("https://{}/config.json", get_host()));
+        assert_eq!(url, format!("https://{}/config.json", fixtures::host()));
         let config = QuiltStackConfig {
             registry_url: format!("https://{}", get_registry()).parse()?,
         };
@@ -158,7 +154,7 @@ impl HttpClient for GraphQlTestHttpClient {
         url: &str,
         form_data: &HashMap<String, String>,
     ) -> Res<T> {
-        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(url, connect_token_url(&fixtures::host()));
         assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
         self.token_calls.fetch_add(1, Ordering::SeqCst);
 
@@ -236,7 +232,7 @@ impl HttpClient for GraphQlTestHttpClient {
 pub(super) const AUTH_CODE: &str = "test-auth-code";
 pub(super) const CODE_VERIFIER: &str = "test-code-verifier-that-is-at-least-43-characters-long";
 pub(super) const CLIENT_ID: &str = "test-client-id";
-pub(super) const REDIRECT_URI: &str = "quilt://auth/callback?host=test.quilt.dev";
+pub(super) const REDIRECT_URI: &str = "quilt://auth/callback?host=quilt.test";
 
 pub(super) const REFRESHED_ACCESS_TOKEN: &str = "refreshed-access-token";
 
@@ -252,7 +248,7 @@ impl HttpClient for TestHttpClient {
         let registry = get_registry();
 
         match url {
-            u if u == format!("https://{}/config.json", get_host()) => {
+            u if u == format!("https://{}/config.json", fixtures::host()) => {
                 let config = QuiltStackConfig {
                     registry_url: format!("https://{registry}").parse()?,
                 };
@@ -335,7 +331,7 @@ impl HttpClient for OAuthTestHttpClient {
         let registry = get_registry();
 
         match url {
-            u if u == format!("https://{}/config.json", get_host()) => {
+            u if u == format!("https://{}/config.json", fixtures::host()) => {
                 let config = QuiltStackConfig {
                     registry_url: format!("https://{registry}").parse()?,
                 };
@@ -364,7 +360,7 @@ impl HttpClient for OAuthTestHttpClient {
         url: &str,
         form_data: &HashMap<String, String>,
     ) -> Res<T> {
-        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(url, connect_token_url(&fixtures::host()));
 
         let tokens = match form_data.get("grant_type").map(String::as_str) {
             Some("authorization_code") => {
@@ -397,7 +393,7 @@ impl HttpClient for OAuthTestHttpClient {
         url: &str,
         body: &B,
     ) -> Res<T> {
-        assert_eq!(url, connect_register_url(&get_host()));
+        assert_eq!(url, connect_register_url(&fixtures::host()));
         let json = serde_json::to_value(body)?;
         assert_eq!(json["client_name"], "QuiltSync");
         assert_eq!(json["token_endpoint_auth_method"], "none");

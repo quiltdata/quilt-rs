@@ -148,21 +148,19 @@ mod tests {
     use test_log::test;
 
     use crate::auth::test_utils::*;
+    use quilt_uri::fixtures;
 
     #[test(tokio::test)]
     async fn test_get_registry_url() {
         let client = TestHttpClient;
-        let result = get_registry_url(&client, &get_host()).await.unwrap();
-        assert_eq!(
-            result,
-            url::Host::Domain("registry-test.quilt.dev".to_string())
-        );
+        let result = get_registry_url(&client, &fixtures::host()).await.unwrap();
+        assert_eq!(result, url::Host::Domain("registry.quilt.test".to_string()));
     }
 
     #[test(tokio::test)]
     async fn test_get_auth_tokens() {
         let client = TestHttpClient;
-        let tokens = get_auth_tokens(&client, &get_host(), REFRESH_TOKEN)
+        let tokens = get_auth_tokens(&client, &fixtures::host(), REFRESH_TOKEN)
             .await
             .unwrap();
         assert_eq!(tokens.access_token, ACCESS_TOKEN);
@@ -176,7 +174,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_refresh_credentials() {
         let client = TestHttpClient;
-        let credentials = refresh_credentials(&client, &get_host(), ACCESS_TOKEN)
+        let credentials = refresh_credentials(&client, &fixtures::host(), ACCESS_TOKEN)
             .await
             .unwrap();
         assert_eq!(credentials.access_key, "test-access-key");

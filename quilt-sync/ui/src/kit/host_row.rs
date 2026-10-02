@@ -132,7 +132,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <HostRow
-                    host="a-very-long-catalog-hostname.example.quiltdata.com"
+                    host="a-very-long-catalog-hostname.quilt.test"
                     role=RwSignal::new("analyst".to_string())
                     on_sign_in=|_| {}
                 />
@@ -144,7 +144,7 @@ mod tests {
             .expect("the host");
         assert_eq!(
             span.get_attribute("title").as_deref(),
-            Some("a-very-long-catalog-hostname.example.quiltdata.com"),
+            Some("a-very-long-catalog-hostname.quilt.test"),
         );
     }
 }
