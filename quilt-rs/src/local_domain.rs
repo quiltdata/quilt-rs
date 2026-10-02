@@ -226,9 +226,57 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
         let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+        self.uninstall_locked(&namespace).await
+    }
 
+    /// Uninstall, then delete the package's objects that no other installed
+    /// manifest uses — every revision's. Nothing else: other unused objects,
+    /// the manifest cache and staging stay for [`Self::gc`].
+    ///
+    /// The uninstall stands whatever the prune finds. Another package busy
+    /// in another writer keeps the objects, answered as
+    /// [`flow::Pruned::Busy`]; a manifest that can't be read keeps them too,
+    /// as [`Error::PruneFailed`]. So does one of the package's own manifests
+    /// or objects that can't be read: the package is still removed, and what
+    /// was read is still pruned.
+    pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
+        info!("Uninstalling package and its objects: {}", namespace);
+        let (candidates, unread) = {
+            let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+            let found = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
+            self.uninstall_locked(&namespace).await?;
+            found
+        };
+        // The package's own lock is released above: the prune try-locks
+        // every package, this one among them.
+        let prune = async {
+            let lineage = self
+                .lineage
+                .read(&self.storage)
+                .await
+                .map_err(|err| (err, None))?;
+            let pruned = flow::prune(&self.paths, &self.storage, &lineage, candidates)
+                .await
+                .map_err(|err| (err, None))?;
+            // Some of its files could not be counted, so not all went. The
+            // read error goes first, since once the manifests are gone no
+            // retry can show it, and a busy package that kept the rest is
+            // named beside it.
+            match (unread, pruned) {
+                (None, pruned) => Ok(pruned),
+                (Some(err), flow::Pruned::Busy(busy)) => Err((err, Some(busy))),
+                (Some(err), flow::Pruned::Freed(_)) => Err((err, None)),
+            }
+        };
+        prune
+            .await
+            .map_err(|(err, busy)| Error::PruneFailed(namespace, Box::new(err), busy))
+    }
+
+    /// Uninstall `namespace`, whose lock the caller holds.
+    async fn uninstall_locked(&self, namespace: &Namespace) -> Res<()> {
         debug!("Preparing paths for uninstallation");
-        self.scaffold_paths_for_installing(&namespace).await?;
+        self.scaffold_paths_for_installing(namespace).await?;
 
         debug!("Reading current lineage state");
         let lineage = self.lineage.read(&self.storage).await?;
@@ -240,7 +288,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
 
         debug!("Updating domain lineage after uninstallation");
         self.lineage
-            .update_package_lineage(&self.storage, &namespace, |entry| {
+            .update_package_lineage(&self.storage, namespace, |entry| {
                 *entry = None;
                 Ok(())
             })

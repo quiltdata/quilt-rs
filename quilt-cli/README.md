@@ -46,7 +46,7 @@ cargo install quilt-cli
 | `pull`      | Fetch the latest remote revision                 |
 | `list`      | List installed packages and their commit status  |
 | `log`       | List the revisions this copy has, newest first    |
-| `uninstall` | Remove a package from local tracking             |
+| `uninstall` | Remove a package; `--prune` also deletes its files |
 | `gc`        | Delete stored files no installed package uses    |
 | `login`     | Authenticate against a Quilt stack               |
 | `role`      | Show or switch your active role on a stack       |

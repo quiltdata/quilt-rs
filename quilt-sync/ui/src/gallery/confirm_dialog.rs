@@ -9,6 +9,7 @@ use crate::kit::BannerVariant;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::ConfirmDialog;
+use crate::kit::ConfirmOption;
 use crate::kit::Submit;
 
 /// Names the package: a consequence that does not say *what* is removed is a warning,
@@ -63,6 +64,10 @@ pub fn ConfirmScene() -> impl IntoView {
                 open=live
                 title="Remove package"
                 consequence=CONSEQUENCE
+                option=ConfirmOption::new(
+                    "Also delete downloaded files from disk",
+                    RwSignal::new(true),
+                )
                 confirm=Submit::new(
                     "Remove",
                     || async {

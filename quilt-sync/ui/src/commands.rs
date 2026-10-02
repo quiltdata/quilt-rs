@@ -1390,16 +1390,28 @@ pub async fn package_pull_outcome(namespace: String) -> Result<PullPreview, Stri
     tauri::invoke("package_pull_outcome", &Args { namespace }).await
 }
 
+/// Remove a package; with `prune`, also delete its downloaded files that no
+/// other package uses. What that freed arrives as a toast.
 pub async fn package_uninstall(
     namespace: String,
     uri: Option<S3PackageUri>,
+    prune: bool,
 ) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         namespace: String,
         uri: Option<S3PackageUri>,
+        prune: bool,
     }
-    tauri::invoke("package_uninstall", &Args { namespace, uri }).await
+    tauri::invoke(
+        "package_uninstall",
+        &Args {
+            namespace,
+            uri,
+            prune,
+        },
+    )
+    .await
 }
 
 pub async fn package_install_paths(uri: String, paths: Vec<String>) -> Result<String, String> {
