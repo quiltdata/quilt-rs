@@ -390,8 +390,10 @@ fn danger_dialogs(
         <ConfirmDialog
             open=remove_open
             title="Remove this package"
-            consequence="Deletes this package's working files, including edits that have \
-                         never been committed. The object store keeps committed content only."
+            // No promise about the object store: a commit never pushed is named
+            // only by the manifests uninstall deletes, so it is lost either way.
+            consequence="Deletes this package's working files, including edits and commits \
+                         that were never pushed."
             option=ConfirmOption::new("Also delete downloaded files from disk", prune)
             confirm=Submit::new("Remove", move || {
                 let ns = ns_remove.clone();
@@ -1308,8 +1310,15 @@ mod tests {
             .expect("the confirmation");
         let words = dialog.text_content().unwrap_or_default();
         assert!(
-            words.contains("including edits that have never been committed"),
+            words.contains(
+                "Deletes this package's working files, including edits and commits that were \
+                 never pushed."
+            ),
             "the consequence names what is lost: {words}"
+        );
+        assert!(
+            !words.contains("keeps committed content"),
+            "no promise that unpushed commits survive: {words}"
         );
         assert_eq!(
             footer_labels(&el),

@@ -24,7 +24,7 @@
 ### Added
 
 - **Settings → General → Free up space** deletes the downloaded files no installed package uses any more, cached package listings and leftovers of interrupted downloads, and says how much it freed, for example "Freed 630.2 kB: 6 objects, 2 cached manifests". It stops without deleting anything while a package is busy (<https://github.com/quiltdata/quilt-rs/pull/1030>)
-- **New design preview**: **Remove**'s confirmation has a checkbox, **Also delete downloaded files from disk**, checked by default. It deletes the package's downloaded files that no other installed package uses, and a notification says how much it freed, for example "Freed 630.2 kB: 6 objects" (<https://github.com/quiltdata/quilt-rs/pull/1040>)
+- **New design preview**: **Remove**'s confirmation has a checkbox, **Also delete downloaded files from disk**, checked by default. It deletes the package's downloaded files that no other installed package uses, and a notification says how much it freed, for example "Freed 630.2 kB: 6 objects". The confirmation now says commits that were never pushed are lost too, instead of saying committed content is kept (<https://github.com/quiltdata/quilt-rs/pull/1040>)
 
 ### quilt-rs
 
