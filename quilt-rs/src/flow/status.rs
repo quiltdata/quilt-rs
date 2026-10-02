@@ -321,7 +321,7 @@ mod tests {
             lineage.remote_uri = Some(ManifestUri {
                 hash: dummy_hash.clone(),
                 bucket: "test-bucket".to_string(),
-                origin: Some("catalog.dev".parse().unwrap()),
+                origin: Some(quilt_uri::fixtures::host()),
                 ..ManifestUri::default()
             });
         }
