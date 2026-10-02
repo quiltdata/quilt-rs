@@ -625,9 +625,9 @@ fn build_toolbar_actions(
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                // No confirmation here to hold the choice, so the
-                // confirmation's default: delete the downloaded files too.
-                match commands::package_uninstall(ns.to_string(), uri, true).await {
+                // v1 keeps the downloaded files: only the v2 confirmation
+                // offers to delete them.
+                match commands::package_uninstall(ns.to_string(), uri, false).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
                         navigate("/", NavigateOptions::default());

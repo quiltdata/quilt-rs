@@ -302,7 +302,7 @@ the namespace. Resolution of either is user-action only.
 Removes tracking, installed manifests, and the working directory, and
 leaves `objects/` and the `packages/` cache (shared content, no reference
 counting). With `--prune` (`LocalDomain::uninstall_package_pruning`, and
-QuiltSync's Remove by default) it then deletes the package's objects no
+QuiltSync's v2 Remove by default) it then deletes the package's objects no
 other installed manifest uses; the rest stays for `gc`.
 
 ## Resolving Diverged
